@@ -1,0 +1,20 @@
+{
+  "name": "webapp",
+  "version": "1.0.0",
+  "description": "this is webapp of my project",
+  "homepage": "https://github.com/isharoverwhite/Final-Project#readme",
+  "bugs": {
+    "url": "https://github.com/isharoverwhite/Final-Project/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/isharoverwhite/Final-Project.git"
+  },
+  "license": "ISC",
+  "author": "Experience (Kien)",
+  "type": "nextjs",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
