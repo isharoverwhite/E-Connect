@@ -1,18 +1,134 @@
-from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime
+from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime, Text, ForeignKey, Enum, TIMESTAMP
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
+import enum
+
+class AccountType(str, enum.Enum):
+    admin = "admin"
+    parent = "parent"
+    child = "child"
+
+class DeviceMode(str, enum.Enum):
+    no_code = "no-code"
+    library = "library"
+
+class PinMode(str, enum.Enum):
+    INPUT = "INPUT"
+    OUTPUT = "OUTPUT"
+    PWM = "PWM"
+    ADC = "ADC"
+    I2C = "I2C"
+
+class EventType(str, enum.Enum):
+    state_change = "state_change"
+    online = "online"
+    offline = "offline"
+    error = "error"
+
+class User(Base):
+    __tablename__ = "users"
+
+    user_id = Column(Integer, primary_key=True, autoincrement=True)
+    fullname = Column(String(255), nullable=False)
+    username = Column(String(100), nullable=False, unique=True)
+    authentication = Column(String(255), nullable=False) # hashed_password
+    account_type = Column(Enum(AccountType), default=AccountType.parent)
+    ui_layout = Column(JSON, comment='Lưu cấu hình Grid Layout cá nhân của từng user')
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+    rooms = relationship("Room", back_populates="user")
+    devices = relationship("Device", back_populates="owner")
+    automations = relationship("Automation", back_populates="creator")
+    history_logs = relationship("DeviceHistory", back_populates="user")
+
+class Room(Base):
+    __tablename__ = "rooms"
+
+    room_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    name = Column(String(255), nullable=False)
+
+    user = relationship("User", back_populates="rooms")
+    devices = relationship("Device", back_populates="room")
 
 class Device(Base):
     __tablename__ = "devices"
 
-    uuid = Column(String(100), primary_key=True, index=True)
-    name = Column(String(255))
-    board = Column(String(100))
-    mode = Column(String(50), default="no-code")
-    is_authorized = Column(Boolean, default=False)
+    device_id = Column(String(36), primary_key=True, comment='UUID v4 duy nhất')
+    mac_address = Column(String(17), nullable=False, unique=True)
+    name = Column(String(255), nullable=False)
+    room_id = Column(Integer, ForeignKey("rooms.room_id"))
+    owner_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    is_active = Column(Boolean, default=False, comment='Trạng thái phê duyệt (Handshake)')
+    mode = Column(Enum(DeviceMode), default=DeviceMode.library)
+    firmware_version = Column(String(50))
+    last_seen = Column(DateTime, nullable=True)
+    topic_pub = Column(String(255), comment='MQTT Publish Topic')
+    topic_sub = Column(String(255), comment='MQTT Subscribe Topic')
+
+    room = relationship("Room", back_populates="devices")
+    owner = relationship("User", back_populates="devices")
+    pin_configurations = relationship("PinConfiguration", back_populates="device", cascade="all, delete-orphan")
+    backup_archives = relationship("BackupArchive", back_populates="device", cascade="all, delete-orphan")
+    history = relationship("DeviceHistory", back_populates="device", cascade="all, delete-orphan")
+
+class PinConfiguration(Base):
+    __tablename__ = "pin_configurations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_id = Column(String(36), ForeignKey("devices.device_id"), nullable=False)
+    gpio_pin = Column(Integer, nullable=False)
+    mode = Column(Enum(PinMode), nullable=False)
+    function = Column(String(100), comment='VD: Light, TempSensor, Fan')
+    label = Column(String(255))
+    v_pin = Column(Integer, comment='Virtual Pin để map lên dashboard')
+    extra_params = Column(JSON, comment='Lưu các thông số phụ như PWM frequency, ADC resolution')
+
+    device = relationship("Device", back_populates="pin_configurations")
+
+class Automation(Base):
+    __tablename__ = "automations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    creator_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    name = Column(String(255), nullable=False)
+    script_code = Column(Text, nullable=False, comment='Mã nguồn Python')
+    is_enabled = Column(Boolean, default=True)
+    last_triggered = Column(DateTime, nullable=True)
+
+    creator = relationship("User", back_populates="automations")
+
+class BackupArchive(Base):
+    __tablename__ = "backup_archives"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_id = Column(String(36), ForeignKey("devices.device_id"), nullable=False)
+    backup_at = Column(TIMESTAMP, server_default=func.now())
+    full_config_snapshot = Column(JSON, nullable=False, comment='Snapshot trọn gói: UUID + Pin Map + Settings')
+    note = Column(String(255))
+
+    device = relationship("Device", back_populates="backup_archives")
+
+class DeviceHistory(Base):
+    __tablename__ = "device_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    device_id = Column(String(36), ForeignKey("devices.device_id"), nullable=False)
+    timestamp = Column(TIMESTAMP, server_default=func.now())
+    event_type = Column(Enum(EventType), nullable=False)
+    payload = Column(Text, comment='Dữ liệu thay đổi hoặc giá trị cảm biến')
+    changed_by = Column(Integer, ForeignKey("users.user_id"), nullable=True, comment='User thực hiện thay đổi, NULL nếu do Automation')
+
+    device = relationship("Device", back_populates="history")
+    user = relationship("User", back_populates="history_logs")
+
+# Legacy Firmware table support (optional, keeping for OTA feature)
+class Firmware(Base):
+    __tablename__ = "firmwares"
+
+    id = Column(Integer, primary_key=True, index=True)
     version = Column(String(50))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    # Storing complex nested structures as JSON for flexibility
-    connectivity = Column(JSON)
-    hardware_config = Column(JSON)
+    board = Column(String(100))
+    filename = Column(String(255))
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())

@@ -1,0 +1,151 @@
+from pydantic import BaseModel, Field
+from typing import List, Optional, Literal, Dict, Any
+from datetime import datetime
+from enum import Enum
+
+# --- Enums ---
+class AccountType(str, Enum):
+    admin = "admin"
+    parent = "parent"
+    child = "child"
+
+class DeviceMode(str, Enum):
+    no_code = "no-code"
+    library = "library"
+
+class PinMode(str, Enum):
+    INPUT = "INPUT"
+    OUTPUT = "OUTPUT"
+    PWM = "PWM"
+    ADC = "ADC"
+    I2C = "I2C"
+
+class EventType(str, Enum):
+    state_change = "state_change"
+    online = "online"
+    offline = "offline"
+    error = "error"
+
+# --- User & Auth ---
+class UserBase(BaseModel):
+    fullname: str
+    username: str
+    account_type: AccountType = AccountType.parent
+    ui_layout: Optional[Dict[str, Any]] = None
+
+class UserCreate(UserBase):
+    password: str
+
+class UserResponse(UserBase):
+    user_id: int
+    created_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+class Token(BaseModel):
+    access_token: str
+    token_type: str
+
+class TokenData(BaseModel):
+    username: Optional[str] = None
+    role: Optional[str] = None
+
+# --- Pin Configuration ---
+class PinConfigCreate(BaseModel):
+    gpio_pin: int
+    mode: PinMode
+    function: Optional[str] = None
+    label: Optional[str] = None
+    v_pin: Optional[int] = None
+    extra_params: Optional[Dict[str, Any]] = None
+
+class PinConfigResponse(PinConfigCreate):
+    id: int
+    device_id: str
+
+    class Config:
+        from_attributes = True
+
+# --- Device ---
+class DeviceBase(BaseModel):
+    mac_address: str
+    name: str
+    mode: DeviceMode = DeviceMode.library
+    firmware_version: Optional[str] = None
+    topic_pub: Optional[str] = None
+    topic_sub: Optional[str] = None
+
+class DeviceCreate(DeviceBase):
+    device_id: str # UUID from device
+    pin_configurations: List[PinConfigCreate] = []
+
+class DeviceRegister(BaseModel):
+    # Payload from device during handshake
+    device_id: str
+    mac_address: str
+    name: str
+    mode: DeviceMode = DeviceMode.library
+    firmware_version: Optional[str] = None
+    pins: List[PinConfigCreate] = []
+
+class DeviceResponse(DeviceBase):
+    device_id: str
+    room_id: Optional[int] = None
+    owner_id: int
+    is_active: bool
+    last_seen: Optional[datetime] = None
+    pin_configurations: List[PinConfigResponse] = []
+
+    class Config:
+        from_attributes = True
+
+# --- Room ---
+class RoomCreate(BaseModel):
+    name: str
+
+class RoomResponse(RoomCreate):
+    room_id: int
+    user_id: int
+    
+    class Config:
+        from_attributes = True
+
+# --- Automation ---
+class AutomationCreate(BaseModel):
+    name: str
+    script_code: str
+    is_enabled: bool = True
+
+class AutomationResponse(AutomationCreate):
+    id: int
+    creator_id: int
+    last_triggered: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+# --- History / Sensor Data ---
+class DeviceHistoryCreate(BaseModel):
+    event_type: EventType
+    payload: str
+    
+class DeviceHistoryResponse(DeviceHistoryCreate):
+    id: int
+    device_id: str
+    timestamp: datetime
+    changed_by: Optional[int] = None
+
+    class Config:
+        from_attributes = True
+
+# --- Firmware (Legacy/OTA) ---
+class FirmwareResponse(BaseModel):
+    id: int
+    version: str
+    board: str
+    filename: str
+    uploaded_at: datetime
+
+    class Config:
+        from_attributes = True

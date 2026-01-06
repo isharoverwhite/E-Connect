@@ -4,4 +4,7 @@ pydantic
 python-multipart
 sqlalchemy
 pymysql
+pymysql
 python-dotenv
+passlib[bcrypt]
+python-jose
