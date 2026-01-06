@@ -1,0 +1,139 @@
+import axios from 'axios';
+import fs from 'fs';
+import path from 'path';
+
+// Configuration
+const SERIAL_NUMBER = "test-esp32-node-sim";
+const SERVER_URL = "http://localhost:8000/api/v1";
+const BOARD_TYPE = "ESP32";
+const CURRENT_VERSION = "0.0.1";
+
+// Mock Device Configuration
+const deviceConfig = {
+    device: {
+        uuid: SERIAL_NUMBER,
+        name: "NodeJS Simulator Device",
+        board: BOARD_TYPE,
+        mode: "no-code",
+        is_authorized: true,
+        version: CURRENT_VERSION,
+        created_at: new Date().toISOString()
+    },
+    connectivity: {
+        protocol: "mqtt",
+        broker: "192.168.1.100",
+        port: 1883,
+        secure: false
+    },
+    hardware_config: {
+        pins: [
+            {
+                pin: 2,
+                mode: "OUTPUT",
+                type: "DIGITAL",
+                function: "LED",
+                label: "Status LED",
+                init: "LOW"
+            }
+        ]
+    }
+};
+
+async function registerDevice() {
+    try {
+        console.log(`\n[1] Registering Device: ${SERIAL_NUMBER}...`);
+        const response = await axios.post(`${SERVER_URL}/config`, deviceConfig);
+        console.log("✅ Registration Successful:", response.data.device.uuid);
+        return true;
+    } catch (error) {
+        console.error("❌ Registration Failed:", error.message);
+        if (error.response) console.error("   Status:", error.response.status, error.response.data);
+        return false;
+    }
+}
+
+async function checkFirmwareUpdate() {
+    try {
+        console.log(`\n[2] Checking for OTA updates for board: ${BOARD_TYPE}...`);
+        const response = await axios.get(`${SERVER_URL}/ota/latest/${BOARD_TYPE}`);
+
+        const latestVersion = response.data.version;
+        const downloadUrl = response.data.filename;
+
+        console.log(`   Current: ${CURRENT_VERSION}, Latest: ${latestVersion}`);
+
+        if (latestVersion > CURRENT_VERSION) {
+            console.log("🚀 New firmware found! Downloading...");
+            await downloadFirmware(downloadUrl);
+        } else {
+            console.log("✅ Device is up to date.");
+        }
+    } catch (error) {
+        if (error.response && error.response.status === 404) {
+            console.log("ℹ️  No firmware updates available according to server.");
+        } else {
+            console.error("❌ Failed to check updates:", error.message);
+        }
+    }
+}
+
+async function downloadFirmware(filename) {
+    try {
+        const url = `${SERVER_URL}/ota/download/${filename}`;
+        const writer = fs.createWriteStream(path.join(process.cwd(), `downloaded_${filename}`));
+
+        const response = await axios({
+            url,
+            method: 'GET',
+            responseType: 'stream'
+        });
+
+        response.data.pipe(writer);
+
+        return new Promise((resolve, reject) => {
+            writer.on('finish', () => {
+                console.log("✅ Firmware downloaded successfully to:", `downloaded_${filename}`);
+                resolve();
+            });
+            writer.on('error', reject);
+        });
+    } catch (error) {
+        console.error("❌ Download failed:", error.message);
+    }
+}
+
+async function testAutomationScript() {
+    try {
+        console.log(`\n[3] Testing Automation Script Upload...`);
+        const scriptPayload = {
+            name: "node_sim_script",
+            content: "print('Hello from Node Simulator')",
+            device_uuid: SERIAL_NUMBER,
+            is_active: true
+        };
+
+        const response = await axios.post(`${SERVER_URL}/automation/script`, scriptPayload);
+        console.log("✅ Script uploaded successfully. ID:", response.data.id);
+    } catch (error) {
+        console.error("❌ Script upload failed:", error.message);
+    }
+}
+
+async function main() {
+    console.log("🚀 Starting ESP32 Simulator (Node.js)");
+    console.log("Server URL:", SERVER_URL);
+
+    // 1. Register
+    const registered = await registerDevice();
+    if (!registered) return;
+
+    // 2. Automation Script Test
+    await testAutomationScript();
+
+    // 3. OTA Check
+    await checkFirmwareUpdate();
+
+    console.log("\n✨ Simulation finished.");
+}
+
+main();
