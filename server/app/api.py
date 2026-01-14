@@ -251,6 +251,26 @@ async def send_command(device_id: str, command: dict, db: Session = Depends(get_
     db.commit()
     return {"status": "sent", "command": command}
 
+@router.get("/device/{device_id}/command/latest")
+async def get_latest_command(device_id: str, db: Session = Depends(get_db)):
+    """
+    Get the most recent command sent to the device (Polling fallback).
+    """
+    cmd = db.query(DeviceHistory).filter(
+        DeviceHistory.device_id == device_id, 
+        DeviceHistory.event_type == EventType.state_change
+    ).order_by(DeviceHistory.timestamp.desc()).first()
+    
+    if not cmd:
+        return {"status": "none"}
+    
+    return {
+        "status": "ok",
+        "command_id": cmd.id,
+        "payload": cmd.payload,
+        "timestamp": cmd.timestamp
+    }
+
 # --- Telemetry / History ---
 
 @router.post("/device/{device_id}/history", response_model=DeviceHistoryResponse)

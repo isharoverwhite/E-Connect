@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from app.api import router as device_router
 from app.database import engine, Base
 
@@ -18,6 +19,8 @@ app.add_middleware(
 )
 
 app.include_router(device_router, prefix="/api/v1")
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 def read_root():
