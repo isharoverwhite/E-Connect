@@ -9,6 +9,21 @@ class AccountType(str, Enum):
     parent = "parent"
     child = "child"
 
+class HouseholdRole(str, Enum):
+    owner = "owner"
+    admin = "admin"
+    member = "member"
+    guest = "guest"
+
+class AuthStatus(str, Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+class ConnStatus(str, Enum):
+    online = "online"
+    offline = "offline"
+
 class DeviceMode(str, Enum):
     no_code = "no-code"
     library = "library"
@@ -25,16 +40,18 @@ class EventType(str, Enum):
     online = "online"
     offline = "offline"
     error = "error"
+    command_requested = "command_requested"
+    command_failed = "command_failed"
 
 # --- User & Auth ---
 class UserBase(BaseModel):
     fullname: str
-    username: str
+    username: str = Field(..., min_length=3)
     account_type: AccountType = AccountType.parent
-    ui_layout: Optional[Dict[str, Any]] = None
+    ui_layout: Optional[Any] = None
 
 class UserCreate(UserBase):
-    password: str
+    password: str = Field(..., min_length=8)
 
 class UserResponse(UserBase):
     user_id: int
@@ -43,13 +60,32 @@ class UserResponse(UserBase):
     class Config:
         from_attributes = True
 
+class HouseholdBase(BaseModel):
+    name: str
+
+class HouseholdCreate(HouseholdBase):
+    pass
+
+class HouseholdResponse(HouseholdBase):
+    household_id: int
+    created_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+class SetupResponse(BaseModel):
+    user: UserResponse
+    household: HouseholdResponse
+
 class Token(BaseModel):
     access_token: str
     token_type: str
 
 class TokenData(BaseModel):
     username: Optional[str] = None
-    role: Optional[str] = None
+    account_type: Optional[str] = None
+    household_id: Optional[int] = None
+    household_role: Optional[str] = None
 
 # --- Pin Configuration ---
 class PinConfigCreate(BaseModel):
@@ -93,8 +129,10 @@ class DeviceResponse(DeviceBase):
     device_id: str
     room_id: Optional[int] = None
     owner_id: int
-    is_active: bool
+    auth_status: AuthStatus
+    conn_status: ConnStatus
     last_seen: Optional[datetime] = None
+    last_state: Optional[Dict[str, Any]] = None
     pin_configurations: List[PinConfigResponse] = []
 
     class Config:
@@ -138,6 +176,24 @@ class DeviceHistoryResponse(DeviceHistoryCreate):
 
     class Config:
         from_attributes = True
+
+# --- DIY Builder ---
+class PinMappingItem(BaseModel):
+    gpio_pin: int
+    mode: PinMode
+    function: Optional[str] = None
+    label: Optional[str] = None
+
+class GenerateConfigRequest(BaseModel):
+    board: str
+    pins: List[PinMappingItem]
+    wifi_ssid: Optional[str] = None
+    wifi_password: Optional[str] = None
+    mqtt_broker: Optional[str] = None
+
+class GenerateConfigResponse(BaseModel):
+    status: str
+    config: Dict[str, Any]
 
 # --- Firmware (Legacy/OTA) ---
 class FirmwareResponse(BaseModel):

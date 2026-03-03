@@ -9,6 +9,21 @@ class AccountType(str, enum.Enum):
     parent = "parent"
     child = "child"
 
+class HouseholdRole(str, enum.Enum):
+    owner = "owner"
+    admin = "admin"
+    member = "member"
+    guest = "guest"
+
+class AuthStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    rejected = "rejected"
+
+class ConnStatus(str, enum.Enum):
+    online = "online"
+    offline = "offline"
+
 class DeviceMode(str, enum.Enum):
     no_code = "no-code"
     library = "library"
@@ -25,6 +40,8 @@ class EventType(str, enum.Enum):
     online = "online"
     offline = "offline"
     error = "error"
+    command_requested = "command_requested"
+    command_failed = "command_failed"
 
 class User(Base):
     __tablename__ = "users"
@@ -41,6 +58,28 @@ class User(Base):
     devices = relationship("Device", back_populates="owner")
     automations = relationship("Automation", back_populates="creator")
     history_logs = relationship("DeviceHistory", back_populates="user")
+    memberships = relationship("HouseholdMembership", back_populates="user", cascade="all, delete-orphan")
+
+class Household(Base):
+    __tablename__ = "households"
+
+    household_id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255), nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+    memberships = relationship("HouseholdMembership", back_populates="household", cascade="all, delete-orphan")
+
+class HouseholdMembership(Base):
+    __tablename__ = "household_memberships"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    household_id = Column(Integer, ForeignKey("households.household_id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    role = Column(Enum(HouseholdRole), default=HouseholdRole.member)
+    joined_at = Column(TIMESTAMP, server_default=func.now())
+
+    household = relationship("Household", back_populates="memberships")
+    user = relationship("User", back_populates="memberships")
 
 class Room(Base):
     __tablename__ = "rooms"
@@ -60,7 +99,10 @@ class Device(Base):
     name = Column(String(255), nullable=False)
     room_id = Column(Integer, ForeignKey("rooms.room_id"))
     owner_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
-    is_active = Column(Boolean, default=False, comment='Trạng thái phê duyệt (Handshake)')
+    
+    auth_status = Column(Enum(AuthStatus), default=AuthStatus.pending, comment='Lifecycle authorization status')
+    conn_status = Column(Enum(ConnStatus), default=ConnStatus.offline, comment='Realtime MQTT heartbeat state')
+    
     mode = Column(Enum(DeviceMode), default=DeviceMode.library)
     firmware_version = Column(String(50))
     last_seen = Column(DateTime, nullable=True)

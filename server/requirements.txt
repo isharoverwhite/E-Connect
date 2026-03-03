@@ -8,3 +8,4 @@ pymysql
 python-dotenv
 passlib[bcrypt]
 python-jose
+paho-mqtt>=2.0.0
