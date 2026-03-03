@@ -3,11 +3,15 @@ from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
-from typing import List, Optional
+from typing import List, Optional, Any
+import ast
+import json
 import shutil
 import os
 import uuid
 from datetime import datetime, timedelta
+
+from .mqtt import mqtt_manager
 
 from .models import (
     UserCreate, UserResponse, Token, TokenData,
@@ -15,17 +19,53 @@ from .models import (
     AutomationCreate, AutomationResponse,
     DeviceHistoryCreate, DeviceHistoryResponse,
     FirmwareResponse, DeviceMode, AccountType, EventType,
-    RoomCreate, RoomResponse
+    RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
+    SetupResponse, HouseholdResponse
 )
 from .sql_models import (
     User, Device, PinConfiguration, Automation, DeviceHistory, 
-    Firmware, Room, BackupArchive
+    Firmware, Room, BackupArchive, Household, HouseholdMembership, HouseholdRole,
+    AuthStatus, ConnStatus
 )
 from .database import get_db
 from .auth import verify_password, get_password_hash, create_access_token, SECRET_KEY, ALGORITHM
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
+
+
+def _decode_history_payload(payload: Optional[str]) -> Optional[dict[str, Any]]:
+    if not payload:
+        return None
+
+    try:
+        decoded = json.loads(payload)
+        return decoded if isinstance(decoded, dict) else None
+    except json.JSONDecodeError:
+        try:
+            decoded = ast.literal_eval(payload)
+            return decoded if isinstance(decoded, dict) else None
+        except (ValueError, SyntaxError):
+            return None
+
+
+def _attach_runtime_state(db: Session, device: Device) -> Device:
+    latest_state = (
+        db.query(DeviceHistory)
+        .filter(
+            DeviceHistory.device_id == device.device_id,
+            DeviceHistory.event_type == EventType.state_change,
+        )
+        .order_by(DeviceHistory.timestamp.desc())
+        .first()
+    )
+
+    if latest_state:
+        setattr(device, "last_state", _decode_history_payload(latest_state.payload))
+    else:
+        setattr(device, "last_state", None)
+
+    return device
 
 # --- Dependencies ---
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -38,48 +78,141 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
-        role: str = payload.get("role")
+        account_type: str = payload.get("account_type")
+        household_id: int = payload.get("household_id")
+        household_role: str = payload.get("household_role")
         if username is None:
             raise credentials_exception
-        token_data = TokenData(username=username, role=role)
+        token_data = TokenData(
+            username=username, 
+            account_type=account_type, 
+            household_id=household_id, 
+            household_role=household_role
+        )
     except JWTError:
         raise credentials_exception
     
     user = db.query(User).filter(User.username == token_data.username).first()
     if user is None:
         raise credentials_exception
+        
+    # Attach session household context dynamically for route handlers
+    setattr(user, "current_household_id", token_data.household_id)
+    setattr(user, "current_household_role", token_data.household_role)
+    
     return user
 
 async def get_admin_user(current_user: User = Depends(get_current_user)):
-    if current_user.account_type != AccountType.admin:
-        raise HTTPException(status_code=403, detail="Admin privileges required")
+    if current_user.account_type != AccountType.admin and current_user.current_household_role != HouseholdRole.owner:
+        raise HTTPException(status_code=403, detail="Admin or Owner privileges required")
     return current_user
 
 # --- Auth Endpoints ---
 
-@router.post("/auth/register", response_model=UserResponse)
-async def register(user: UserCreate, db: Session = Depends(get_db)):
-    # Check if user exists
-    if db.query(User).filter(User.username == user.username).first():
-        raise HTTPException(status_code=400, detail="Username already registered")
-    
+@router.get("/system/status")
+async def get_system_status(db: Session = Depends(get_db)):
+    """
+    Check if the server has been initialized with at least one user (the Master Admin).
+    """
+    user_count = db.query(User).count()
+    return {"initialized": user_count > 0}
+
+@router.post("/auth/initialserver", response_model=SetupResponse)
+async def initialserver(user: UserCreate, db: Session = Depends(get_db)):
+    # Check if system is already initialized
+    if db.query(User).count() > 0:
+        raise HTTPException(status_code=403, detail={"error": "system_initialized", "message": "System already initialized"})
+        
     hashed_password = get_password_hash(user.password)
-    
-    # Auto-admin if first user (optional logic)
-    role = user.account_type
-    if db.query(User).count() == 0:
-        role = AccountType.admin
         
     new_user = User(
         fullname=user.fullname,
         username=user.username,
         authentication=hashed_password,
-        account_type=role,
-        ui_layout=user.ui_layout
+        account_type=AccountType.admin, # Force admin
+        ui_layout=user.ui_layout or {}
     )
     db.add(new_user)
+    try:
+        db.commit()
+        db.refresh(new_user)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Username already registered")
+        
+    # Optimistic concurrency check to handle race conditions
+    first_user = db.query(User).order_by(User.user_id.asc()).first()
+    if first_user and first_user.user_id != new_user.user_id:
+        db.delete(new_user)
+        db.commit()
+        raise HTTPException(status_code=403, detail={"error": "system_initialized", "message": "System already initialized"})
+
+    # Create Baseline Household
+    new_household = Household(name=f"{new_user.fullname}'s Household")
+    db.add(new_household)
     db.commit()
-    db.refresh(new_user)
+    db.refresh(new_household)
+
+    # Automatically add the setup admin as the owner of the household
+    membership = HouseholdMembership(
+        household_id=new_household.household_id,
+        user_id=new_user.user_id,
+        role=HouseholdRole.owner
+    )
+    db.add(membership)
+    db.commit()
+
+    return SetupResponse(user=new_user, household=new_household)
+
+@router.post("/users", response_model=UserResponse)
+async def create_user(user_data: UserCreate, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+    """
+    Admin-only endpoint to create additional household users.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    if db.query(User).filter(User.username == user_data.username).first():
+        raise HTTPException(status_code=400, detail="Username already registered")
+        
+    hashed_password = get_password_hash(user_data.password)
+    
+    # Extract explicitly via query to avoid SQLA caching issues
+    admin_membership = db.query(HouseholdMembership).filter(HouseholdMembership.user_id == admin.user_id).first()
+    admin_household_id = admin_membership.household_id if admin_membership else None
+    
+    print(f"DEBUG: admin.user_id = {admin.user_id}")
+    print(f"DEBUG: admin_membership = {admin_membership}")
+    print(f"DEBUG: admin_household_id = {admin_household_id}")
+    
+    new_user = User(
+        fullname=user_data.fullname,
+        username=user_data.username,
+        authentication=hashed_password,
+        account_type=user_data.account_type,
+        ui_layout=user_data.ui_layout or {}
+    )
+    db.add(new_user)
+    try:
+        db.commit()
+        db.refresh(new_user)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Database error or username collision")
+        
+    # Bind to Admin's Household
+    if admin_household_id is not None:
+        print(f"DEBUG: Creating membership for user {new_user.user_id} in household {admin_household_id}")
+        membership = HouseholdMembership(
+            household_id=admin_household_id,
+            user_id=new_user.user_id,
+            role=HouseholdRole.member
+        )
+        db.add(membership)
+        db.commit()
+    else:
+        print("DEBUG: admin_household_id was None, skipped membership creation")
+        
     return new_user
 
 @router.post("/auth/token", response_model=Token)
@@ -92,9 +225,19 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+        
+    # Find active household membership for context binding
+    membership = db.query(HouseholdMembership).filter(HouseholdMembership.user_id == user.user_id).first()
+    household_id = membership.household_id if membership else None
+    household_role = membership.role.value if membership else None
     
     access_token = create_access_token(
-        data={"sub": user.username, "role": user.account_type.value}
+        data={
+            "sub": user.username,
+            "account_type": user.account_type.value,
+            "household_id": household_id,
+            "household_role": household_role
+        }
     )
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -104,7 +247,7 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
 
 
 @router.put("/users/me/layout", response_model=UserResponse)
-async def update_layout(layout: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def update_layout(layout: Any, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
     Update User's Dashboard Grid Layout.
     """
@@ -170,7 +313,8 @@ async def register_device_handshake(
             mac_address=payload.mac_address,
             name=payload.name,
             owner_id=admin.user_id, # Assign to admin initially
-            is_active=False,
+            auth_status=AuthStatus.pending,
+            conn_status=ConnStatus.online,
             mode=payload.mode,
             firmware_version=payload.firmware_version,
             last_seen=datetime.utcnow()
@@ -213,17 +357,80 @@ async def approve_device(device_id: str, db: Session = Depends(get_db), admin: U
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
     
-    device.is_active = True
+    device.auth_status = AuthStatus.approved
+    
+    # Auto-provision widgets to admin's layout
+    layout = admin.ui_layout or []
+    if isinstance(layout, dict) and "widgets" in layout:
+        widgets = layout["widgets"]
+    elif isinstance(layout, list):
+        widgets = layout
+    else:
+        widgets = []
+        
+    for pin in device.pin_configurations:
+        widget_type = "text"
+        if pin.mode == "OUTPUT":
+            widget_type = "switch"
+        elif pin.mode == "INPUT":
+            widget_type = "status"
+            
+        widgets.append({
+            "i": str(uuid.uuid4()),
+            "x": 0, "y": 0, "w": 2, "h": 2,
+            "type": widget_type,
+            "deviceId": device_id,
+            "pin": pin.gpio_pin,
+            "label": pin.label or f"{pin.function or 'Pin'} {pin.gpio_pin}"
+        })
+        
+    admin.ui_layout = widgets
+    
     db.commit()
     return {"status": "approved", "device_id": device_id}
+
+@router.post("/device/{device_id}/reject")
+async def reject_device(device_id: str, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+    """
+    Explicitly reject a pending device handshake so it does not appear in discovery.
+    """
+    device = db.query(Device).filter(Device.device_id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+        
+    device.auth_status = AuthStatus.rejected
+    db.commit()
+    return {"status": "rejected"}
 
 @router.get("/devices", response_model=List[DeviceResponse])
 async def list_devices(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     # Users see their own devices? Admin sees all?
     if current_user.account_type == AccountType.admin:
-        return db.query(Device).all()
+        devices = db.query(Device).all()
     else:
-        return db.query(Device).filter(Device.owner_id == current_user.user_id).all()
+        devices = db.query(Device).filter(
+            Device.owner_id == current_user.user_id,
+            Device.auth_status == AuthStatus.approved
+        ).all()
+
+    return [_attach_runtime_state(db, device) for device in devices]
+
+@router.delete("/device/{device_id}")
+async def delete_device(device_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Delete a device and all its cascaded configuration/history.
+    """
+    device = db.query(Device).filter(Device.device_id == device_id).first()
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+        
+    # Permission check: Only owner or admin can delete
+    if device.owner_id != current_user.user_id and current_user.account_type != AccountType.admin:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this device")
+        
+    db.delete(device)
+    db.commit()
+    return {"status": "success", "detail": f"Device {device_id} deleted."}
 
 @router.post("/device/{device_id}/command")
 async def send_command(device_id: str, command: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -240,15 +447,27 @@ async def send_command(device_id: str, command: dict, db: Session = Depends(get_
     if device.owner_id != current_user.user_id and current_user.account_type != AccountType.admin:
         raise HTTPException(status_code=403, detail="Not authorized")
 
-    # Placeholder: Log state change
+    # Publish via MQTT
+    success = mqtt_manager.publish_command(device_id, command)
+    
+    if success:
+        event_type = EventType.command_requested
+    else:
+        event_type = EventType.command_failed
+
+    # Log command request/failure
     history = DeviceHistory(
         device_id=device_id,
-        event_type=EventType.state_change,
+        event_type=event_type,
         payload=str(command),
         changed_by=current_user.user_id
     )
     db.add(history)
     db.commit()
+    
+    if not success:
+        return {"status": "failed", "message": "Failed to publish to MQTT broker"}
+
     return {"status": "sent", "command": command}
 
 @router.get("/device/{device_id}/command/latest")
@@ -270,6 +489,33 @@ async def get_latest_command(device_id: str, db: Session = Depends(get_db)):
         "payload": cmd.payload,
         "timestamp": cmd.timestamp
     }
+
+# --- DIY Builder ---
+
+@router.post("/diy/config/generate", response_model=GenerateConfigResponse)
+async def generate_diy_config(request: GenerateConfigRequest, user: User = Depends(get_current_user)):
+    """
+    Generate device config JSON from board and pin mappings.
+    """
+    config = {
+        "board": request.board,
+        "wifi": {
+            "ssid": request.wifi_ssid or "",
+            "password": request.wifi_password or ""
+        },
+        "mqtt": {
+            "broker": request.mqtt_broker or ""
+        },
+        "pins": [
+            {
+                "gpio": p.gpio_pin,
+                "mode": p.mode.value,
+                "function": p.function,
+                "label": p.label
+            } for p in request.pins
+        ]
+    }
+    return {"status": "success", "config": config}
 
 # --- Telemetry / History ---
 
