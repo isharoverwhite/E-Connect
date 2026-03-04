@@ -1,0 +1,142 @@
+# Hướng dẫn chạy `server` và `webapp`
+
+Tài liệu này áp dụng cho 2 thư mục đang được dùng trong repo hiện tại:
+
+- `server`: FastAPI backend
+- `webapp`: Next.js frontend
+
+Lưu ý: file `docker-compose.yml` ở root hiện đang build `backend` và `frontend`, không phải `server` và `webapp`. Vì vậy phần dưới đây là cách chạy local cho đúng stack hiện tại.
+
+## 1. Yêu cầu trước khi chạy
+
+- Python 3.11+ hoặc tương đương
+- Node.js 20+ và npm
+- Một database hợp lệ cho `DATABASE_URL`
+- MQTT broker hợp lệ nếu bạn muốn test luồng thiết bị
+
+## 2. Chạy server
+
+### Bước 1: vào thư mục server
+
+```bash
+cd server
+```
+
+### Bước 2: chuẩn bị môi trường Python
+
+Nếu repo đã có sẵn `venv` thì dùng luôn:
+
+```bash
+source venv/bin/activate
+```
+
+Nếu chưa có `venv`:
+
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+Nếu đã có `venv` nhưng thiếu package:
+
+```bash
+pip install -r requirements.txt
+```
+
+### Bước 3: kiểm tra file môi trường
+
+`server/app/database.py` bắt buộc cần `DATABASE_URL`. Repo hiện đang đọc biến môi trường từ:
+
+```bash
+server/.env
+```
+
+Tối thiểu nên có:
+
+```env
+DATABASE_URL=mysql+pymysql://USER:PASSWORD@HOST:3306/DB_NAME
+MQTT_BROKER=localhost
+MQTT_PORT=1883
+MQTT_NAMESPACE=local
+```
+
+### Bước 4: chạy FastAPI
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+Sau khi chạy thành công:
+
+- API root: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+- Health check: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
+
+Kiểm tra nhanh:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+Kết quả mong đợi:
+
+```json
+{"status":"ok"}
+```
+
+## 3. Chạy webapp
+
+### Bước 1: mở terminal mới và vào thư mục webapp
+
+```bash
+cd webapp
+```
+
+### Bước 2: cài dependencies
+
+```bash
+npm install
+```
+
+### Bước 3: chạy Next.js dev server
+
+```bash
+npm run dev
+```
+
+Mở trình duyệt tại:
+
+- [http://localhost:3000](http://localhost:3000/)
+
+## 4. Thứ tự chạy khuyến nghị
+
+Chạy theo thứ tự này để webapp gọi API được ngay:
+
+1. Start `server` ở cổng `8000`
+2. Start `webapp` ở cổng `3000`
+
+## 5. Lưu ý quan trọng
+
+- `webapp` hiện đang gọi API cố định tại `http://127.0.0.1:8000/api/v1`
+- Giá trị này nằm trong file [webapp/src/lib/api.ts](/Users/kiendinhtrung/Documents/GitHub/Final-Project/webapp/src/lib/api.ts)
+- Nếu bạn đổi host hoặc port của backend, cần sửa lại file đó
+- Nếu `DATABASE_URL` sai hoặc database không truy cập được, `server` sẽ không lên
+- Nếu MQTT broker không sẵn sàng, backend vẫn có thể chạy nhưng log sẽ báo lỗi kết nối MQTT
+
+## 6. Lệnh chạy nhanh
+
+### Terminal 1
+
+```bash
+cd /Users/kiendinhtrung/Documents/GitHub/Final-Project/server
+source venv/bin/activate
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+### Terminal 2
+
+```bash
+cd /Users/kiendinhtrung/Documents/GitHub/Final-Project/webapp
+npm install
+npm run dev
+```

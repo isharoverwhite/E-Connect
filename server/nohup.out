@@ -1,0 +1,6 @@
+nohup: bin/backend.sh: No such file or directory
+INFO:     Will watch for changes in these directories: ['/Users/kiendinhtrung/Documents/GitHub/Final-Project/server']
+INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+INFO:     Started reloader process [4917] using StatReload
+ERROR:    Error loading ASGI app. Could not import module "app.main".
+INFO:     Stopping reloader process [4917]
