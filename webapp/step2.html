@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#3b86f7",
+                        "background-light": "#f5f7f8",
+                        "background-dark": "#101722",
+                    },
+                    fontFamily: {
+                        "display": ["Inter"]
+                    },
+                    borderRadius: {"DEFAULT": "0.5rem", "lg": "1rem", "xl": "1.5rem", "full": "9999px"},
+                },
+            },
+        }
+    </script>
+<style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #3b86f733;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-slate-100 min-h-screen">
+<div class="relative flex h-auto min-h-screen w-full flex-col group/design-root overflow-x-hidden">
+<div class="layout-container flex h-full grow flex-col">
+<header class="flex items-center justify-between whitespace-nowrap border-b border-solid border-slate-200 dark:border-slate-800 px-6 lg:px-40 py-4 bg-background-light dark:bg-background-dark sticky top-0 z-50">
+<div class="flex items-center gap-4">
+<div class="size-8 flex items-center justify-center bg-primary rounded-lg text-white">
+<span class="material-symbols-outlined">developer_board</span>
+</div>
+<h2 class="text-slate-900 dark:text-slate-100 text-lg font-bold leading-tight tracking-tight">GPIO Configurator</h2>
+</div>
+<div class="flex flex-1 justify-end gap-8 items-center">
+<nav class="hidden md:flex items-center gap-9">
+<a class="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary text-sm font-medium transition-colors" href="#">Step 1: Board</a>
+<a class="text-primary text-sm font-bold leading-normal border-b-2 border-primary pb-1" href="#">Step 2: Pins</a>
+<a class="text-slate-500 dark:text-slate-400 hover:text-primary dark:hover:text-primary text-sm font-medium transition-colors" href="#">Step 3: Validate</a>
+</nav>
+<div class="bg-slate-200 dark:bg-slate-800 rounded-full size-10 flex items-center justify-center overflow-hidden border border-slate-300 dark:border-slate-700">
+<span class="material-symbols-outlined text-slate-500">person</span>
+</div>
+</div>
+</header>
+<main class="flex-1 px-6 lg:px-40 py-8">
+<div class="max-w-[1100px] mx-auto flex flex-col gap-8">
+<div class="flex flex-col gap-4">
+<div class="flex items-center justify-between">
+<span class="text-primary text-sm font-bold tracking-wider uppercase">Step 2 of 3</span>
+<span class="text-slate-500 dark:text-slate-400 text-sm font-medium">66% Complete</span>
+</div>
+<div class="w-full h-2.5 rounded-full bg-slate-200 dark:bg-slate-800">
+<div class="h-full rounded-full bg-primary" style="width: 66%;"></div>
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<h1 class="text-slate-900 dark:text-slate-100 text-4xl font-extrabold tracking-tight">Configure Pins</h1>
+<p class="text-slate-600 dark:text-slate-400 text-lg">Assign specific roles and functions to the available GPIO pins for your board.</p>
+</div>
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+<div class="lg:col-span-7 flex flex-col gap-6">
+<div class="bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+<h3 class="text-slate-900 dark:text-slate-100 text-xl font-bold mb-6 flex items-center gap-2">
+<span class="material-symbols-outlined text-primary">grid_view</span>
+                                    Visual Pinout Diagram
+                                </h3>
+<div class="relative w-full aspect-[4/3] bg-slate-100 dark:bg-slate-800/50 rounded-lg flex items-center justify-center overflow-hidden group">
+<div class="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-primary/5 via-transparent to-transparent"></div>
+<img class="w-full h-full object-contain p-4 transition-transform group-hover:scale-105" data-alt="Schematic diagram of a microcontroller pinout layout" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDN639XiZIufKaVYWR5y96pBg_wSAeHygTCagoNwX9Afs9PKwyl1cpLuhqniQkhMJWTT8tMGwm8rzEZq83tZKzDBahmZgOD-QXvrWdZMPgdi4evIkoQlGcpds4EaNqAc3imHjfqtrwJfib4OWuVMqjaDamqAAJfqYYWSfK_mC5Dxz7-ryTtXVKSrBbt10NLSc8ASA3fn6d89uDoc0TOwBFFHTJkGufOA0W5Hn_E3bYVU4eqJ5kGnbMGOD9DmItkjy1F08M_6EBiY87f"/>
+<div class="absolute bottom-4 right-4 bg-background-dark/80 backdrop-blur-md border border-slate-700 px-3 py-1.5 rounded-lg text-xs text-slate-300">
+                                        Model: STM32F401RET6
+                                    </div>
+</div>
+</div>
+<div class="flex items-center justify-between bg-primary/10 border border-primary/20 p-4 rounded-xl">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary">info</span>
+<p class="text-sm text-slate-700 dark:text-slate-300">Unassigned pins will default to High-Z state.</p>
+</div>
+<button class="text-primary text-sm font-bold hover:underline">Clear All</button>
+</div>
+</div>
+<div class="lg:col-span-5 flex flex-col gap-4">
+<div class="bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+<h3 class="text-slate-900 dark:text-slate-100 text-xl font-bold mb-6">Pin Assignment</h3>
+<div class="flex flex-col gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+<div class="flex flex-col gap-2">
+<label class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest px-1">GPIO 01 (PA0)</label>
+<div class="relative">
+<select class="w-full bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-slate-900 dark:text-slate-100 py-3 pl-10 pr-4 focus:ring-2 focus:ring-primary appearance-none cursor-pointer">
+<option value="none">Disabled</option>
+<option selected="" value="led">LED (Digital Output)</option>
+<option value="button">Button (Digital Input)</option>
+<option value="sensor">Sensor (Analog Input)</option>
+<option value="pwm">PWM Output</option>
+</select>
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-primary text-xl">lightbulb</span>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">expand_more</span>
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<label class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest px-1">GPIO 02 (PA1)</label>
+<div class="relative">
+<select class="w-full bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-slate-900 dark:text-slate-100 py-3 pl-10 pr-4 focus:ring-2 focus:ring-primary appearance-none cursor-pointer">
+<option value="none">Disabled</option>
+<option value="led">LED (Digital Output)</option>
+<option selected="" value="button">Button (Digital Input)</option>
+<option value="sensor">Sensor (Analog Input)</option>
+<option value="pwm">PWM Output</option>
+</select>
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-primary text-xl">radio_button_checked</span>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">expand_more</span>
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<label class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest px-1">GPIO 03 (PA2)</label>
+<div class="relative">
+<select class="w-full bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-slate-900 dark:text-slate-100 py-3 pl-10 pr-4 focus:ring-2 focus:ring-primary appearance-none cursor-pointer">
+<option selected="" value="none">Disabled</option>
+<option value="led">LED (Digital Output)</option>
+<option value="button">Button (Digital Input)</option>
+<option value="sensor">Sensor (Analog Input)</option>
+<option value="pwm">PWM Output</option>
+</select>
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-600 text-xl">block</span>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">expand_more</span>
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<label class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest px-1">GPIO 04 (PA3)</label>
+<div class="relative">
+<select class="w-full bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-slate-900 dark:text-slate-100 py-3 pl-10 pr-4 focus:ring-2 focus:ring-primary appearance-none cursor-pointer">
+<option value="none">Disabled</option>
+<option value="led">LED (Digital Output)</option>
+<option value="button">Button (Digital Input)</option>
+<option selected="" value="sensor">Sensor (Analog Input)</option>
+<option value="pwm">PWM Output</option>
+</select>
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-primary text-xl">sensors</span>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">expand_more</span>
+</div>
+</div>
+<div class="flex flex-col gap-2">
+<label class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest px-1">GPIO 05 (PA4)</label>
+<div class="relative">
+<select class="w-full bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-slate-900 dark:text-slate-100 py-3 pl-10 pr-4 focus:ring-2 focus:ring-primary appearance-none cursor-pointer">
+<option selected="" value="none">Disabled</option>
+<option value="led">LED (Digital Output)</option>
+<option value="button">Button (Digital Input)</option>
+<option value="sensor">Sensor (Analog Input)</option>
+<option value="pwm">PWM Output</option>
+</select>
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 dark:text-slate-600 text-xl">block</span>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none">expand_more</span>
+</div>
+</div>
+</div>
+<div class="mt-8 pt-6 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-3">
+<button class="w-full bg-primary hover:bg-primary/90 text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/20 flex items-center justify-center gap-2 transition-all active:scale-[0.98]">
+                                        Next: Validate
+                                        <span class="material-symbols-outlined">arrow_forward</span>
+</button>
+<button class="w-full bg-transparent border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 font-medium py-3 rounded-xl transition-colors">
+                                        Back to Board Selection
+                                    </button>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+<footer class="px-6 lg:px-40 py-10 border-t border-slate-200 dark:border-slate-800 mt-auto bg-slate-50 dark:bg-slate-900/30">
+<div class="max-w-[1100px] mx-auto flex flex-col md:flex-row justify-between items-center gap-6">
+<div class="flex items-center gap-2 opacity-60">
+<span class="material-symbols-outlined text-sm">settings</span>
+<span class="text-sm font-medium">Build v1.04.2-stable</span>
+</div>
+<div class="flex gap-8 text-sm font-medium text-slate-500">
+<a class="hover:text-primary" href="#">Documentation</a>
+<a class="hover:text-primary" href="#">Community Support</a>
+<a class="hover:text-primary" href="#">Firmware SDK</a>
+</div>
+</div>
+</footer>
+</div>
+</div>
+</body></html>

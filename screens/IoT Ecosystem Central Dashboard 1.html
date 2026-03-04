@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>E-Connect IoT Dashboard</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500&amp;family=Inter:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#3b82f6", // Blue-500 equivalent, keeping consistent
+                        "background-light": "#f1f5f9", // Slate-100
+                        "background-dark": "#0f172a", // Slate-900
+                        "surface-light": "#ffffff",
+                        "surface-dark": "#1e293b", // Slate-800
+                        "terminal-bg": "#0d1117",
+                    },
+                    fontFamily: {
+                        sans: ["Inter", "sans-serif"],
+                        mono: ["Fira Code", "monospace"],
+                    },
+                    borderRadius: {
+                        DEFAULT: "0.5rem",
+                    },
+                },
+            },
+        };
+    </script>
+<style>.terminal-scroll::-webkit-scrollbar {
+            width: 8px;
+        }
+        .terminal-scroll::-webkit-scrollbar-track {
+            background: #1e293b; 
+        }
+        .terminal-scroll::-webkit-scrollbar-thumb {
+            background: #475569; 
+            border-radius: 4px;
+        }
+        .terminal-scroll::-webkit-scrollbar-thumb:hover {
+            background: #64748b; 
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-200 font-sans h-screen flex overflow-hidden selection:bg-primary selection:text-white">
+<aside class="w-64 bg-surface-light dark:bg-surface-dark border-r border-slate-200 dark:border-slate-700 flex flex-col justify-between hidden md:flex z-20 shadow-lg">
+<div>
+<div class="h-16 flex items-center px-6 border-b border-slate-200 dark:border-slate-700">
+<span class="material-icons-round text-primary mr-2 text-3xl">hub</span>
+<span class="text-xl font-bold tracking-tight text-slate-900 dark:text-white">E-Connect</span>
+</div>
+<nav class="p-4 space-y-1">
+<a class="flex items-center px-4 py-3 bg-primary/10 text-primary font-medium rounded-lg" href="#">
+<span class="material-icons-round mr-3">dashboard</span>
+                    Dashboard
+                </a>
+<a class="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors" href="#">
+<span class="material-icons-round mr-3">devices_other</span>
+                    Devices
+                </a>
+<a class="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors" href="#">
+<span class="material-icons-round mr-3">precision_manufacturing</span>
+                    Automation
+                </a>
+<a class="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors" href="#">
+<span class="material-icons-round mr-3">analytics</span>
+                    Logs &amp; Stats
+                </a>
+<a class="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors" href="#">
+<span class="material-icons-round mr-3">memory</span>
+                    Firmware (OTA)
+                </a>
+</nav>
+</div>
+<div class="p-4 border-t border-slate-200 dark:border-slate-700">
+<a class="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors mb-2" href="#">
+<span class="material-icons-round mr-3">settings</span>
+                Settings
+            </a>
+<div class="flex items-center px-4 py-3">
+<div class="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-purple-500 flex items-center justify-center text-white font-bold text-xs">
+                    AD
+                </div>
+<div class="ml-3">
+<p class="text-sm font-medium text-slate-900 dark:text-white">Admin User</p>
+<p class="text-xs text-slate-500 dark:text-slate-400">Master Node</p>
+</div>
+</div>
+</div>
+</aside>
+<main class="flex-1 flex flex-col min-w-0 relative">
+<header class="h-16 bg-surface-light dark:bg-surface-dark border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-6 shadow-sm z-30">
+<h1 class="text-lg font-semibold text-slate-800 dark:text-white">IoT Home Control</h1>
+<div class="flex items-center space-x-4">
+<div class="relative group">
+<button class="p-2 text-primary bg-blue-50 dark:bg-blue-500/10 rounded-full transition-colors relative outline-none ring-2 ring-blue-100 dark:ring-blue-900/30">
+<span class="material-icons-round">notifications</span>
+<span class="absolute top-1.5 right-2 flex h-2.5 w-2.5">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500 border border-white dark:border-slate-900"></span>
+</span>
+</button>
+<div class="absolute right-0 top-full mt-3 w-80 sm:w-96 bg-surface-light dark:bg-surface-dark rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+<div class="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/50 backdrop-blur-sm">
+<h3 class="font-semibold text-sm text-slate-800 dark:text-slate-100">Notifications</h3>
+<button class="text-xs font-medium text-primary hover:text-blue-600 transition-colors">Mark all read</button>
+</div>
+<div class="max-h-[32rem] overflow-y-auto">
+<div class="p-4 bg-blue-50/40 dark:bg-blue-900/10 border-b border-slate-100 dark:border-slate-700/50">
+<div class="flex gap-3">
+<div class="flex-shrink-0 mt-1">
+<div class="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-600/20 flex items-center justify-center text-blue-600 dark:text-blue-400">
+<span class="material-icons-round text-lg">sensors</span>
+</div>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-start mb-1">
+<p class="text-sm font-semibold text-slate-900 dark:text-white">New Device Found</p>
+<span class="text-[10px] font-bold tracking-wide text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-500/20 px-1.5 py-0.5 rounded uppercase">New</span>
+</div>
+<p class="text-xs text-slate-600 dark:text-slate-400 mb-3">ESP32-S3 (MAC: 24:6F:28...) detected nearby.</p>
+<div class="flex gap-2">
+<button class="flex-1 bg-primary hover:bg-blue-600 text-white text-xs font-medium py-1.5 px-3 rounded shadow-sm transition-colors flex items-center justify-center gap-1">
+<span class="material-icons-round text-sm">link</span> Pair Now
+                                    </button>
+<button class="bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600 text-xs font-medium py-1.5 px-3 rounded transition-colors">
+                                        Ignore
+                                    </button>
+</div>
+</div>
+</div>
+</div>
+<div class="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 transition-colors cursor-pointer group">
+<div class="flex gap-3">
+<div class="flex-shrink-0 mt-1">
+<div class="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900/20 flex items-center justify-center text-red-500 dark:text-red-400 group-hover:bg-red-200 dark:group-hover:bg-red-900/40 transition-colors">
+<span class="material-icons-round text-lg">wifi_off</span>
+</div>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-center mb-1">
+<p class="text-sm font-medium text-slate-900 dark:text-white">Kitchen Node Offline</p>
+<span class="text-xs text-slate-400">14m ago</span>
+</div>
+<p class="text-xs text-slate-500 dark:text-slate-400">Connection lost. Last heartbeat was 14m ago.</p>
+</div>
+</div>
+</div>
+<div class="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors cursor-pointer group">
+<div class="flex gap-3">
+<div class="flex-shrink-0 mt-1">
+<div class="w-8 h-8 rounded-full bg-orange-100 dark:bg-orange-900/20 flex items-center justify-center text-orange-500 dark:text-orange-400 group-hover:bg-orange-200 dark:group-hover:bg-orange-900/40 transition-colors">
+<span class="material-icons-round text-lg">thermostat</span>
+</div>
+</div>
+<div class="flex-1">
+<div class="flex justify-between items-center mb-1">
+<p class="text-sm font-medium text-slate-900 dark:text-white">High Temperature</p>
+<span class="text-xs text-slate-400">2h ago</span>
+</div>
+<p class="text-xs text-slate-500 dark:text-slate-400">Server Rack sensor reported 45°C.</p>
+</div>
+</div>
+</div>
+</div>
+<a class="block w-full text-center py-2 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-700 text-xs font-medium text-slate-500 hover:text-primary transition-colors" href="#">
+                    View Activity Log
+                </a>
+</div>
+</div>
+<button class="flex items-center bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-all shadow-md hover:shadow-lg">
+<span class="material-icons-round text-sm mr-2">add</span>
+            Add Device
+        </button>
+</div>
+</header>
+<div class="flex-1 overflow-y-auto p-6 scroll-smooth">
+<div class="max-w-7xl mx-auto w-full">
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+<div class="bg-surface-light dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm relative overflow-hidden group">
+<div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+<span class="material-icons-round text-6xl text-slate-500">router</span>
+</div>
+<div class="relative z-10">
+<p class="text-slate-500 dark:text-slate-400 text-sm font-medium">Total Devices</p>
+<h3 class="text-3xl font-bold text-slate-900 dark:text-white mt-2">12</h3>
+<div class="mt-2 text-xs text-green-600 dark:text-green-400 flex items-center font-medium">
+<span class="material-icons-round text-sm mr-1">trending_up</span>
+                            +2 New this week
+                        </div>
+</div>
+</div>
+<div class="bg-surface-light dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm relative overflow-hidden group">
+<div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+<span class="material-icons-round text-6xl text-green-500">wifi</span>
+</div>
+<div class="relative z-10">
+<p class="text-slate-500 dark:text-slate-400 text-sm font-medium">Online</p>
+<h3 class="text-3xl font-bold text-slate-900 dark:text-white mt-2">09</h3>
+<div class="mt-2 text-xs text-slate-500 dark:text-slate-400 flex items-center">
+                            Stable connection
+                        </div>
+</div>
+</div>
+<div class="bg-surface-light dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm relative overflow-hidden group">
+<div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+<span class="material-icons-round text-6xl text-red-500">wifi_off</span>
+</div>
+<div class="relative z-10">
+<p class="text-slate-500 dark:text-slate-400 text-sm font-medium">Offline</p>
+<h3 class="text-3xl font-bold text-slate-900 dark:text-white mt-2">03</h3>
+<div class="mt-2 text-xs text-red-500 dark:text-red-400 flex items-center font-medium">
+                            Needs attention
+                        </div>
+</div>
+</div>
+<div class="bg-surface-light dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm relative overflow-hidden group">
+<div class="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+<span class="material-icons-round text-6xl text-orange-500">warning</span>
+</div>
+<div class="relative z-10">
+<p class="text-slate-500 dark:text-slate-400 text-sm font-medium">System Alerts</p>
+<h3 class="text-3xl font-bold text-slate-900 dark:text-white mt-2">01</h3>
+<div class="mt-2 text-xs text-orange-500 dark:text-orange-400 flex items-center font-medium">
+<span class="material-icons-round text-sm mr-1">priority_high</span>
+                            High latency on Node-4
+                        </div>
+</div>
+</div>
+</div>
+<div class="mb-8">
+<div class="flex justify-between items-center mb-6">
+<h2 class="text-xl font-semibold text-slate-900 dark:text-white">Quick Controls</h2>
+<div class="flex space-x-2">
+<button class="flex items-center px-3 py-1.5 border border-slate-300 dark:border-slate-600 rounded text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700">
+<span class="material-icons-round text-sm mr-2">tune</span> Customize
+                    </button>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+<div class="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow">
+<div class="flex justify-between items-start mb-2">
+<div class="h-10 w-10 rounded-full bg-yellow-100 dark:bg-yellow-900/30 flex items-center justify-center text-yellow-600 dark:text-yellow-400">
+<span class="material-icons-round">lightbulb</span>
+</div>
+<div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+<input checked="" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer checked:right-0 checked:border-green-500 right-5 border-slate-300 transition-all duration-300" id="toggle1" name="toggle1" type="checkbox"/>
+<label class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-300 cursor-pointer checked:bg-green-500" for="toggle1"></label>
+</div>
+</div>
+<div class="mb-5">
+<h3 class="text-base font-semibold text-slate-900 dark:text-white">Work Table Lamp</h3>
+<p class="text-xs text-slate-500">ESP32-Dimmer-01</p>
+</div>
+<div class="mb-4">
+<div class="flex justify-between items-end mb-2">
+<label class="text-xs font-medium text-slate-500 dark:text-slate-400">Brightness</label>
+<span class="text-xs font-bold text-primary">75%</span>
+</div>
+<div class="relative w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full cursor-pointer group">
+<div class="absolute top-0 left-0 h-full bg-primary rounded-full w-[75%]"></div>
+<div class="absolute top-1/2 -translate-y-1/2 left-[75%] w-4 h-4 bg-white dark:bg-slate-200 rounded-full shadow-md border-2 border-primary transform -translate-x-1/2 group-hover:scale-110 transition-transform cursor-grab active:cursor-grabbing"></div>
+</div>
+</div>
+<div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
+<span class="flex items-center"><span class="w-2 h-2 rounded-full bg-green-500 mr-2"></span>Online</span>
+<span class="text-xs text-slate-400">12W</span>
+</div>
+</div>
+<div class="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow opacity-90">
+<div class="flex justify-between items-start mb-4">
+<div class="h-10 w-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400">
+<span class="material-icons-round">wb_incandescent</span>
+</div>
+<div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+<input class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer checked:right-0 checked:border-green-500 right-5 border-slate-300 transition-all duration-300" id="toggle2" name="toggle2" type="checkbox"/>
+<label class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-300 cursor-pointer" for="toggle2"></label>
+</div>
+</div>
+<h3 class="text-base font-semibold text-slate-900 dark:text-white">Living Room Spots</h3>
+<p class="text-xs text-slate-500 mb-4">Zigbee Dimmer</p>
+<div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
+<span class="flex items-center"><span class="w-2 h-2 rounded-full bg-green-500 mr-2"></span>Online</span>
+<span>Off</span>
+</div>
+</div>
+<div class="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow">
+<div class="flex justify-between items-start mb-2">
+<div class="h-10 w-10 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center text-orange-600 dark:text-orange-400">
+<span class="material-icons-round">thermostat</span>
+</div>
+<span class="text-xs font-mono text-slate-400">Updated 1m ago</span>
+</div>
+<h3 class="text-base font-semibold text-slate-900 dark:text-white mt-2">Kitchen Temp</h3>
+<p class="text-xs text-slate-500 mb-3">Multi-sensor Node 1</p>
+<div class="flex items-baseline space-x-1">
+<span class="text-3xl font-bold text-slate-800 dark:text-white">24</span>
+<span class="text-lg font-medium text-slate-500">°C</span>
+</div>
+<div class="mt-3 text-xs text-green-600 dark:text-green-400 flex items-center">
+<span class="material-icons-round text-sm mr-1">arrow_drop_up</span>
+                        Rising (+0.5°C)
+                    </div>
+</div>
+<div class="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow">
+<div class="flex justify-between items-start mb-2">
+<div class="h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400">
+<span class="material-icons-round">water_drop</span>
+</div>
+<span class="text-xs font-mono text-slate-400">Updated 5m ago</span>
+</div>
+<h3 class="text-base font-semibold text-slate-900 dark:text-white mt-2">Garage Humidity</h3>
+<p class="text-xs text-slate-500 mb-3">Multi-sensor Node 2</p>
+<div class="flex items-baseline space-x-1">
+<span class="text-3xl font-bold text-slate-800 dark:text-white">45</span>
+<span class="text-lg font-medium text-slate-500">%</span>
+</div>
+<div class="mt-3 text-xs text-slate-500 dark:text-slate-400 flex items-center">
+<span class="material-icons-round text-sm mr-1">remove</span>
+                        Stable
+                    </div>
+</div>
+<div class="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow border-l-4 border-l-red-500">
+<div class="flex justify-between items-start mb-4">
+<div class="h-10 w-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400">
+<span class="material-icons-round">garage</span>
+</div>
+<button class="text-slate-400 hover:text-primary"><span class="material-icons-round">refresh</span></button>
+</div>
+<h3 class="text-base font-semibold text-slate-900 dark:text-white">Garage Controller</h3>
+<p class="text-xs text-slate-500 mb-4">ESP8266</p>
+<div class="flex items-center justify-between text-xs text-red-500 dark:text-red-400 border-t border-slate-100 dark:border-slate-800 pt-3 font-medium">
+<span class="flex items-center"><span class="w-2 h-2 rounded-full bg-red-500 mr-2"></span>Offline</span>
+<span>Check Power</span>
+</div>
+</div>
+<div class="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow">
+<div class="flex justify-between items-start mb-4">
+<div class="h-10 w-10 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center text-purple-600 dark:text-purple-400">
+<span class="material-icons-round">lock</span>
+</div>
+<div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+<input checked="" class="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer checked:right-0 checked:border-green-500 right-5 border-slate-300 transition-all duration-300" id="toggle3" name="toggle3" type="checkbox"/>
+<label class="toggle-label block overflow-hidden h-5 rounded-full bg-slate-300 cursor-pointer checked:bg-green-500" for="toggle3"></label>
+</div>
+</div>
+<h3 class="text-base font-semibold text-slate-900 dark:text-white">Front Door Lock</h3>
+<p class="text-xs text-slate-500 mb-4">Smart Lock V2</p>
+<div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
+<span class="flex items-center"><span class="w-2 h-2 rounded-full bg-green-500 mr-2"></span>Online</span>
+<span>Locked</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div></main>
+</body></html>

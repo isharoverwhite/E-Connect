@@ -1,21 +1,45 @@
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
+import logging
 from app.api import router as device_router
-from app.database import engine, Base
+from sqlalchemy.exc import OperationalError
+
+from app.database import check_database_connection, get_db, initialize_database
 from app.mqtt import mqtt_manager
 
-# Create tables
-Base.metadata.create_all(bind=engine)
+logger = logging.getLogger(__name__)
+
+def _using_overridden_database(app: FastAPI) -> bool:
+    return get_db in app.dependency_overrides
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
+    app.state.database_ready = False
+    app.state.database_error = None
+    app.state.mqtt_started = False
+
+    if _using_overridden_database(app):
+        logger.info("Skipping startup database initialization because get_db is overridden")
+        app.state.database_ready = True
+        yield
+        return
+
+    database_ready, database_error = initialize_database()
+    app.state.database_ready = database_ready
+    app.state.database_error = database_error
+
     mqtt_manager.start()
-    yield
-    # Shutdown
-    mqtt_manager.stop()
+    app.state.mqtt_started = True
+
+    try:
+        yield
+    finally:
+        if app.state.mqtt_started:
+            mqtt_manager.stop()
 
 app = FastAPI(title="E-Connect Server", lifespan=lifespan)
 
@@ -32,10 +56,44 @@ app.include_router(device_router, prefix="/api/v1")
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
+@app.exception_handler(OperationalError)
+async def database_error_handler(request: Request, exc: OperationalError):
+    request.app.state.database_ready = False
+    request.app.state.database_error = str(getattr(exc, "orig", exc))
+    return JSONResponse(
+        status_code=503,
+        content={
+            "detail": "Database is unavailable",
+            "status": "degraded",
+        },
+    )
+
 @app.get("/")
 def read_root():
     return {"message": "Welcome to E-Connect Server"}
 
 @app.get("/health")
-def health_check():
-    return {"status": "ok"}
+def health_check(request: Request):
+    if _using_overridden_database(request.app):
+        return {"status": "ok", "database": "overridden", "mqtt": "skipped"}
+
+    database_ready, database_error = check_database_connection()
+    request.app.state.database_ready = database_ready
+    request.app.state.database_error = database_error
+
+    if database_ready:
+        return {
+            "status": "ok",
+            "database": "ok",
+            "mqtt": "connected" if mqtt_manager.connected else "disconnected",
+        }
+
+    return JSONResponse(
+        status_code=503,
+        content={
+            "status": "degraded",
+            "database": "unavailable",
+            "mqtt": "connected" if mqtt_manager.connected else "disconnected",
+            "error": database_error,
+        },
+    )

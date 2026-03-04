@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>E-Connect Automation Editor</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,typography"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons+Round" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script>
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        primary: "#3b82f6", // Bright Blue
+                        secondary: "#8b5cf6", // Violet
+                        // Dark Navy Palette definition
+                        navy: {
+                            950: "#020617",
+                            900: "#0f172a", // Main background
+                            800: "#1e293b", // Panels / Secondary bg
+                            700: "#334155", // Borders
+                            600: "#475569", // Subtext
+                            500: "#64748b",
+                        },
+                        "background-light": "#f1f5f9",
+                        "background-dark": "#0f172a", // Navy 900
+                        "panel-light": "#ffffff",
+                        "panel-dark": "#1e293b", // Navy 800
+                        "border-light": "#cbd5e1",
+                        "border-dark": "#334155", // Navy 700
+                    },
+                    fontFamily: {
+                        sans: ["Inter", "sans-serif"],
+                        mono: ["JetBrains Mono", "monospace"],
+                    },
+                    borderRadius: {
+                        DEFAULT: "0.5rem",
+                    },
+                },
+            },
+        };
+    </script>
+<style>
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        .dark ::-webkit-scrollbar-thumb {
+            background: #334155;
+        }
+        .bg-grid-pattern {
+            background-size: 20px 20px;
+            background-image: radial-gradient(circle, #94a3b8 1px, transparent 1px);
+        }
+        .dark .bg-grid-pattern {
+            background-image: radial-gradient(circle, #334155 1px, transparent 1px);
+        }.terminal-scroll::-webkit-scrollbar-thumb {
+            background: #475569;
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-200 font-sans h-screen flex flex-col overflow-hidden transition-colors duration-300 selection:bg-primary/30">
+<header class="h-16 bg-panel-light dark:bg-panel-dark border-b border-border-light dark:border-border-dark flex items-center justify-between px-6 shrink-0 z-20 shadow-sm dark:shadow-none">
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2 text-primary font-bold text-xl tracking-tight">
+<span class="material-icons-round text-3xl">smart_toy</span>
+<span>E-Connect</span>
+</div>
+<div class="h-6 w-px bg-slate-300 dark:bg-navy-700 mx-2"></div>
+<nav class="flex gap-1">
+<a class="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-navy-700 hover:text-primary transition" href="#">Dashboard</a>
+<a class="px-3 py-1.5 rounded-md text-sm font-medium bg-primary/10 text-primary border border-primary/20" href="#">Automation</a>
+<a class="px-3 py-1.5 rounded-md text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-navy-700 hover:text-primary transition" href="#">Devices</a>
+</nav>
+</div>
+<div class="flex items-center gap-3">
+<div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-emerald-100 dark:bg-emerald-950/30 text-emerald-600 dark:text-emerald-400 text-xs font-semibold border border-emerald-200 dark:border-emerald-900/50 shadow-sm">
+<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                System Online
+            </div>
+<button class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-navy-700 text-slate-500 dark:text-slate-400 transition" onclick="document.documentElement.classList.toggle('dark')">
+<span class="material-icons-round dark:hidden">dark_mode</span>
+<span class="material-icons-round hidden dark:block">light_mode</span>
+</button>
+<button class="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition shadow-lg shadow-blue-500/20 border border-transparent">
+<span class="material-icons-round text-sm">save</span>
+                Deploy Changes
+            </button>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden">
+<aside class="w-72 bg-panel-light dark:bg-navy-900 border-r border-border-light dark:border-border-dark flex flex-col shrink-0 z-10">
+<div class="p-4 border-b border-border-light dark:border-border-dark flex items-center justify-between bg-inherit">
+<h2 class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-navy-500">Active Scripts</h2>
+<button class="text-primary hover:bg-primary/10 p-1 rounded transition">
+<span class="material-icons-round text-lg">add</span>
+</button>
+</div>
+<div class="flex-1 overflow-y-auto p-3 space-y-2">
+<div class="group p-3 rounded-lg bg-white dark:bg-navy-800 border border-slate-100 dark:border-navy-700 hover:border-primary/50 dark:hover:border-primary/50 cursor-pointer transition shadow-sm hover:shadow-md">
+<div class="flex justify-between items-start mb-2">
+<div class="flex items-center gap-2.5">
+<div class="p-1.5 rounded bg-orange-100 dark:bg-orange-900/30 text-orange-500">
+<span class="material-icons-round text-sm block">wb_sunny</span>
+</div>
+<span class="font-medium text-sm text-slate-700 dark:text-slate-200">Morning Routine</span>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox" value=""/>
+<div class="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-navy-950 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[0px] after:left-[0px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:shadow-sm after:transition-all dark:border-navy-600 peer-checked:bg-emerald-500"></div>
+</label>
+</div>
+<div class="text-xs text-slate-500 dark:text-slate-400 line-clamp-1 ml-9">Triggers lights &amp; coffee at 7AM.</div>
+</div>
+<div class="group p-3 rounded-lg bg-blue-50/50 dark:bg-navy-800 border border-primary/60 cursor-pointer transition shadow-sm relative overflow-hidden">
+<div class="absolute left-0 top-0 bottom-0 w-1 bg-primary"></div>
+<div class="flex justify-between items-start mb-2">
+<div class="flex items-center gap-2.5">
+<div class="p-1.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-500">
+<span class="material-icons-round text-sm block">thermostat</span>
+</div>
+<span class="font-medium text-sm text-primary dark:text-blue-300">Climate Control</span>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox" value=""/>
+<div class="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-navy-950 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[0px] after:left-[0px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:shadow-sm after:transition-all dark:border-navy-600 peer-checked:bg-emerald-500"></div>
+</label>
+</div>
+<div class="text-xs text-slate-600 dark:text-slate-400 line-clamp-1 ml-9">Maintains 24°C in living room.</div>
+</div>
+<div class="group p-3 rounded-lg bg-white dark:bg-navy-800 border border-slate-100 dark:border-navy-700 hover:border-primary/50 dark:hover:border-primary/50 cursor-pointer transition shadow-sm opacity-60 hover:opacity-100">
+<div class="flex justify-between items-start mb-2">
+<div class="flex items-center gap-2.5">
+<div class="p-1.5 rounded bg-purple-100 dark:bg-purple-900/30 text-purple-500">
+<span class="material-icons-round text-sm block">flight</span>
+</div>
+<span class="font-medium text-sm text-slate-700 dark:text-slate-200">Vacation Mode</span>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input class="sr-only peer" type="checkbox" value=""/>
+<div class="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-navy-950 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[0px] after:left-[0px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:shadow-sm after:transition-all dark:border-navy-600 peer-checked:bg-emerald-500"></div>
+</label>
+</div>
+<div class="text-xs text-slate-500 dark:text-slate-400 line-clamp-1 ml-9">Simulate presence, arm security.</div>
+</div>
+<div class="group p-3 rounded-lg bg-white dark:bg-navy-800 border border-slate-100 dark:border-navy-700 hover:border-primary/50 dark:hover:border-primary/50 cursor-pointer transition shadow-sm hover:shadow-md">
+<div class="flex justify-between items-start mb-2">
+<div class="flex items-center gap-2.5">
+<div class="p-1.5 rounded bg-red-100 dark:bg-red-900/30 text-red-500">
+<span class="material-icons-round text-sm block">security</span>
+</div>
+<span class="font-medium text-sm text-slate-700 dark:text-slate-200">Night Sentry</span>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input checked="" class="sr-only peer" type="checkbox" value=""/>
+<div class="w-8 h-4 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-navy-950 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[0px] after:left-[0px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:shadow-sm after:transition-all dark:border-navy-600 peer-checked:bg-emerald-500"></div>
+</label>
+</div>
+<div class="text-xs text-slate-500 dark:text-slate-400 line-clamp-1 ml-9">Motion detect -&gt; Alert.</div>
+</div>
+</div>
+<div class="p-3 border-t border-border-light dark:border-border-dark bg-slate-50 dark:bg-navy-950/50">
+<div class="flex justify-between items-center">
+<div class="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+<span class="material-icons-round text-sm">info</span>
+<span>3 scripts running</span>
+</div>
+<div class="text-[10px] text-navy-500 dark:text-navy-600 font-mono">v2.4.0</div>
+</div>
+</div>
+</aside>
+<section class="flex-1 flex flex-col border-r border-border-light dark:border-border-dark min-w-[400px] relative">
+<div class="h-10 bg-panel-light dark:bg-panel-dark border-b border-border-light dark:border-border-dark flex items-center justify-between px-4">
+<div class="flex items-center gap-3">
+<div class="flex items-center gap-1.5 text-xs font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-navy-700 px-2 py-1 rounded border border-slate-200 dark:border-navy-600">
+<span class="w-2 h-2 rounded-full bg-yellow-400 shadow-sm shadow-yellow-400/50"></span> 
+                        Python 3.10
+                    </div>
+<span class="text-xs text-slate-400 dark:text-slate-500 font-mono">/scripts/climate_control.py</span>
+</div>
+<div class="flex items-center gap-2">
+<button class="p-1 hover:bg-slate-100 dark:hover:bg-navy-700 rounded text-slate-500 transition"><span class="material-icons-round text-sm">content_copy</span></button>
+<button class="p-1 hover:bg-slate-100 dark:hover:bg-navy-700 rounded text-slate-500 transition"><span class="material-icons-round text-sm">undo</span></button>
+<button class="p-1 hover:bg-slate-100 dark:hover:bg-navy-700 rounded text-slate-500 transition"><span class="material-icons-round text-sm">redo</span></button>
+</div>
+</div>
+<div class="flex-1 bg-white dark:bg-[#0d1117] overflow-auto font-mono text-sm leading-6 relative group">
+<div class="absolute top-0 left-0 bottom-0 w-12 bg-slate-50 dark:bg-[#0d1117] border-r border-slate-100 dark:border-navy-800 text-right pr-3 py-4 select-none text-slate-300 dark:text-navy-600 text-xs">
+                    1<br/>2<br/>3<br/>4<br/>5<br/>6<br/>7<br/>8<br/>9<br/>10<br/>11<br/>12<br/>13<br/>14<br/>15<br/>16<br/>17<br/>18
+                </div>
+<div class="pl-16 pr-4 py-4 text-slate-800 dark:text-slate-300">
+<div class="whitespace-pre"><span class="text-secondary dark:text-violet-400">import</span> <span class="text-slate-900 dark:text-white">econnect_sdk</span> <span class="text-secondary dark:text-violet-400">as</span> <span class="text-slate-900 dark:text-white">sdk</span>
+<span class="text-secondary dark:text-violet-400">from</span> <span class="text-slate-900 dark:text-white">datetime</span> <span class="text-secondary dark:text-violet-400">import</span> <span class="text-slate-900 dark:text-white">time</span>
+<span class="text-slate-400 italic"># Initialize the climate controller</span>
+<span class="text-blue-600 dark:text-blue-400">def</span> <span class="text-yellow-600 dark:text-yellow-300">main</span>():
+    <span class="text-slate-400 italic"># Fetch current sensor readings</span>
+<span class="text-slate-900 dark:text-white">living_room</span> = <span class="text-slate-900 dark:text-white">sdk.get_device(</span><span class="text-emerald-600 dark:text-emerald-400">"sensor_living_room"</span><span class="text-slate-900 dark:text-white">)</span>
+<span class="text-slate-900 dark:text-white">current_temp</span> = <span class="text-slate-900 dark:text-white">living_room.state.temperature</span>
+<span class="text-slate-900 dark:text-white">humidity</span> = <span class="text-slate-900 dark:text-white">living_room.state.humidity</span>
+<span class="text-secondary dark:text-violet-400">print</span>(<span class="text-emerald-600 dark:text-emerald-400">f"Current Temp: {current_temp}°C"</span>)
+    <span class="text-slate-400 italic"># Logic Block: Keep it cool</span>
+<span class="text-secondary dark:text-violet-400">if</span> <span class="text-slate-900 dark:text-white">current_temp</span> &gt; <span class="text-orange-600 dark:text-orange-400">25.0</span>:
+        <span class="text-secondary dark:text-violet-400">if</span> <span class="text-slate-900 dark:text-white">sdk.get_state(</span><span class="text-emerald-600 dark:text-emerald-400">"ac_unit_1"</span><span class="text-slate-900 dark:text-white">)</span> == <span class="text-emerald-600 dark:text-emerald-400">"OFF"</span>:
+            <span class="text-slate-900 dark:text-white">sdk.action(</span><span class="text-emerald-600 dark:text-emerald-400">"ac_unit_1"</span>, <span class="text-emerald-600 dark:text-emerald-400">"turn_on"</span>, <span class="text-slate-900 dark:text-white">{</span>
+<span class="text-emerald-600 dark:text-emerald-400">"mode"</span>: <span class="text-emerald-600 dark:text-emerald-400">"cool"</span>,
+                <span class="text-emerald-600 dark:text-emerald-400">"target"</span>: <span class="text-orange-600 dark:text-orange-400">22</span>
+<span class="text-slate-900 dark:text-white">})</span>
+<span class="text-secondary dark:text-violet-400">print</span>(<span class="text-emerald-600 dark:text-emerald-400">"AC activated via Script"</span>)
+    <span class="text-slate-400 italic"># Safety check for humidity</span>
+<span class="text-secondary dark:text-violet-400">elif</span> <span class="text-slate-900 dark:text-white">humidity</span> &gt; <span class="text-orange-600 dark:text-orange-400">60</span>:
+        <span class="text-slate-900 dark:text-white">sdk.notify(</span><span class="text-emerald-600 dark:text-emerald-400">"admin"</span>, <span class="text-emerald-600 dark:text-emerald-400">"High Humidity Alert"</span><span class="text-slate-900 dark:text-white">)</span>
+<span class="text-slate-900 dark:text-white">sdk.action(</span><span class="text-emerald-600 dark:text-emerald-400">"dehumidifier"</span>, <span class="text-emerald-600 dark:text-emerald-400">"turn_on"</span><span class="text-slate-900 dark:text-white">)</span>
+<span class="text-secondary dark:text-violet-400">else</span>:
+        <span class="text-secondary dark:text-violet-400">pass</span></div>
+</div>
+</div>
+<div class="h-40 bg-navy-950 dark:bg-navy-950 border-t border-border-light dark:border-border-dark flex flex-col shadow-[inset_0_2px_4px_rgba(0,0,0,0.3)]">
+<div class="h-8 flex items-center px-4 border-b border-navy-800 bg-navy-900 justify-between">
+<span class="text-xs font-bold uppercase text-navy-500 tracking-wider">Terminal Output</span>
+<div class="flex gap-1.5 opacity-60 hover:opacity-100 transition-opacity">
+<span class="w-2.5 h-2.5 bg-red-500/80 rounded-full cursor-pointer hover:bg-red-400"></span>
+<span class="w-2.5 h-2.5 bg-yellow-500/80 rounded-full cursor-pointer hover:bg-yellow-400"></span>
+<span class="w-2.5 h-2.5 bg-emerald-500/80 rounded-full cursor-pointer hover:bg-emerald-400"></span>
+</div>
+</div>
+<div class="flex-1 p-3 font-mono text-xs overflow-y-auto terminal-scroll space-y-1">
+<div class="text-slate-500">[10:45:01] System: Script 'Climate Control' started.</div>
+<div class="text-emerald-400">[10:45:02] Log: Current Temp: 26.5°C</div>
+<div class="text-blue-400">[10:45:02] Action: Sending command 'turn_on' to device 'ac_unit_1'</div>
+<div class="text-slate-500">[10:45:03] System: Script execution finished in 1.2s.</div>
+<div class="flex items-center gap-1 mt-2 text-slate-300">
+<span class="text-primary font-bold">➜</span>
+<span class="text-blue-200">~</span>
+<span class="animate-pulse bg-slate-500 w-2 h-4 block ml-1"></span>
+</div>
+</div>
+</div>
+</section>
+<section class="flex-1 bg-slate-100 dark:bg-navy-950 relative flex flex-col">
+<div class="absolute top-4 left-4 right-4 z-10 flex justify-between items-start pointer-events-none">
+<div class="bg-white dark:bg-navy-800 p-1.5 rounded-lg shadow-lg border border-slate-200 dark:border-navy-700 pointer-events-auto flex gap-1">
+<button class="p-2 hover:bg-slate-100 dark:hover:bg-navy-700 rounded text-slate-500 dark:text-slate-400 transition" title="Add Trigger"><span class="material-icons-round">bolt</span></button>
+<button class="p-2 hover:bg-slate-100 dark:hover:bg-navy-700 rounded text-slate-500 dark:text-slate-400 transition" title="Add Condition"><span class="material-icons-round">call_split</span></button>
+<button class="p-2 hover:bg-slate-100 dark:hover:bg-navy-700 rounded text-slate-500 dark:text-slate-400 transition" title="Add Action"><span class="material-icons-round">touch_app</span></button>
+<div class="w-px h-8 bg-slate-200 dark:bg-navy-700 mx-1"></div>
+<button class="p-2 hover:bg-slate-100 dark:hover:bg-navy-700 rounded text-slate-500 dark:text-slate-400 transition"><span class="material-icons-round">zoom_in</span></button>
+<button class="p-2 hover:bg-slate-100 dark:hover:bg-navy-700 rounded text-slate-500 dark:text-slate-400 transition"><span class="material-icons-round">zoom_out</span></button>
+</div>
+<div class="bg-white dark:bg-navy-800 px-3 py-1.5 rounded-lg shadow-lg border border-slate-200 dark:border-navy-700 pointer-events-auto">
+<span class="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Visual Logic</span>
+</div>
+</div>
+<div class="flex-1 relative overflow-hidden bg-grid-pattern cursor-grab active:cursor-grabbing">
+<svg class="absolute inset-0 w-full h-full pointer-events-none z-0">
+<defs>
+<marker id="arrowhead" markerHeight="7" markerWidth="10" orient="auto" refX="9" refY="3.5">
+<polygon fill="#64748b" points="0 0, 10 3.5, 0 7"></polygon>
+</marker>
+</defs>
+<path class="dark:stroke-navy-500" d="M 300 180 C 300 230, 300 230, 300 280" fill="none" marker-end="url(#arrowhead)" stroke="#94a3b8" stroke-width="2"></path>
+<path class="opacity-80" d="M 300 380 C 300 420, 200 420, 200 480" fill="none" stroke="#10b981" stroke-dasharray="4" stroke-width="2"></path>
+<path class="opacity-80" d="M 300 380 C 300 420, 450 420, 450 480" fill="none" stroke="#6366f1" stroke-dasharray="4" stroke-width="2"></path>
+</svg>
+<div class="absolute top-[80px] left-[200px] w-52 bg-white dark:bg-navy-800 rounded-xl shadow-xl border-t-4 border-amber-400 dark:border-amber-400 p-0 z-10 hover:shadow-2xl hover:scale-105 transition-all cursor-pointer ring-1 ring-black/5 dark:ring-white/5">
+<div class="p-3 border-b border-slate-100 dark:border-navy-700 flex justify-between items-center bg-amber-50 dark:bg-amber-400/10 rounded-t-lg">
+<div class="flex items-center gap-2">
+<span class="material-icons-round text-amber-500 dark:text-amber-400 text-sm">schedule</span>
+<span class="text-sm font-bold text-slate-800 dark:text-slate-100">Cron Trigger</span>
+</div>
+<span class="material-icons-round text-slate-400 text-sm">more_horiz</span>
+</div>
+<div class="p-3">
+<div class="text-xs text-slate-500 dark:text-slate-400 mb-2">Executes every 5 minutes</div>
+<div class="bg-slate-100 dark:bg-navy-900 px-2 py-1 rounded text-xs font-mono text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-navy-700">*/5 * * * *</div>
+</div>
+<div class="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-200 dark:bg-navy-600 rounded-full border-2 border-white dark:border-navy-900 hover:bg-primary transition-colors z-20"></div>
+</div>
+<div class="absolute top-[280px] left-[180px] w-60 bg-white dark:bg-navy-800 rounded-xl shadow-xl border-t-4 border-primary p-0 z-10 hover:shadow-2xl hover:scale-105 transition-all cursor-pointer ring-1 ring-black/5 dark:ring-white/5">
+<div class="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-200 dark:bg-navy-600 rounded-full border-2 border-white dark:border-navy-900 hover:bg-primary transition-colors z-20"></div>
+<div class="p-3 border-b border-slate-100 dark:border-navy-700 flex justify-between items-center bg-blue-50 dark:bg-primary/10 rounded-t-lg">
+<div class="flex items-center gap-2">
+<span class="material-icons-round text-primary dark:text-blue-400 text-sm">thermostat</span>
+<span class="text-sm font-bold text-slate-800 dark:text-slate-100">Sensor Check</span>
+</div>
+<span class="material-icons-round text-slate-400 text-sm">settings</span>
+</div>
+<div class="p-3 space-y-2">
+<div class="flex justify-between text-xs">
+<span class="text-slate-500 dark:text-slate-400">Device</span>
+<span class="font-medium text-slate-700 dark:text-slate-200">Living Room</span>
+</div>
+<div class="flex justify-between text-xs">
+<span class="text-slate-500 dark:text-slate-400">Condition</span>
+<span class="font-medium text-slate-700 dark:text-slate-200">Temp &gt; 25°C</span>
+</div>
+</div>
+<div class="flex justify-around pb-1 absolute -bottom-2 w-full z-20">
+<div class="relative group">
+<div class="w-4 h-4 bg-emerald-500 rounded-full border-2 border-white dark:border-navy-900 hover:scale-125 transition-transform cursor-pointer shadow-lg shadow-emerald-500/50"></div>
+<span class="absolute top-5 left-1/2 -translate-x-1/2 text-[10px] font-bold text-emerald-600 dark:text-emerald-400 opacity-0 group-hover:opacity-100 bg-white dark:bg-navy-800 px-1.5 py-0.5 rounded shadow-sm">True</span>
+</div>
+<div class="relative group">
+<div class="w-4 h-4 bg-secondary rounded-full border-2 border-white dark:border-navy-900 hover:scale-125 transition-transform cursor-pointer shadow-lg shadow-indigo-500/50"></div>
+<span class="absolute top-5 left-1/2 -translate-x-1/2 text-[10px] font-bold text-indigo-600 dark:text-indigo-400 opacity-0 group-hover:opacity-100 bg-white dark:bg-navy-800 px-1.5 py-0.5 rounded shadow-sm">False</span>
+</div>
+</div>
+</div>
+<div class="absolute top-[480px] left-[100px] w-52 bg-white dark:bg-navy-800 rounded-xl shadow-xl border-t-4 border-emerald-500 p-0 z-10 hover:shadow-2xl hover:scale-105 transition-all cursor-pointer ring-1 ring-emerald-500/30">
+<div class="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-200 dark:bg-navy-600 rounded-full border-2 border-white dark:border-navy-900 hover:bg-primary transition-colors z-20"></div>
+<div class="p-3 border-b border-slate-100 dark:border-navy-700 flex justify-between items-center bg-emerald-50 dark:bg-emerald-500/10 rounded-t-lg">
+<div class="flex items-center gap-2">
+<span class="material-icons-round text-emerald-600 dark:text-emerald-400 text-sm">power_settings_new</span>
+<span class="text-sm font-bold text-slate-800 dark:text-slate-100">Turn On AC</span>
+</div>
+</div>
+<div class="p-3">
+<div class="text-xs text-slate-500 dark:text-slate-400">Action: <span class="text-slate-800 dark:text-slate-200 font-medium">Set Cool 22°C</span></div>
+</div>
+</div>
+<div class="absolute top-[480px] left-[350px] w-52 bg-white dark:bg-navy-800 rounded-xl shadow-xl border-t-4 border-secondary p-0 z-10 hover:shadow-2xl hover:scale-105 transition-all cursor-pointer opacity-80 hover:opacity-100">
+<div class="absolute -top-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-slate-200 dark:bg-navy-600 rounded-full border-2 border-white dark:border-navy-900 hover:bg-primary transition-colors z-20"></div>
+<div class="p-3 border-b border-slate-100 dark:border-navy-700 flex justify-between items-center bg-indigo-50 dark:bg-secondary/10 rounded-t-lg">
+<div class="flex items-center gap-2">
+<span class="material-icons-round text-secondary dark:text-violet-400 text-sm">notifications</span>
+<span class="text-sm font-bold text-slate-800 dark:text-slate-100">Log Status</span>
+</div>
+</div>
+<div class="p-3">
+<div class="text-xs text-slate-500 dark:text-slate-400">Action: <span class="text-slate-800 dark:text-slate-200 font-medium">Info "Temp OK"</span></div>
+</div>
+</div>
+<div class="absolute bottom-6 right-6 flex flex-col gap-2">
+<div class="w-12 h-12 bg-white dark:bg-navy-800 rounded-full shadow-lg flex items-center justify-center cursor-pointer hover:bg-slate-50 dark:hover:bg-navy-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-navy-700 transition-colors" title="Help">
+<span class="material-icons-round">question_mark</span>
+</div>
+</div>
+</div>
+</section>
+</div>
+
+</body></html>
