@@ -758,3 +758,77 @@ export function getBoardFamily(id: Esp32ChipFamily): BoardFamilyInfo | undefined
 export function getBoardProfile(id: string): BoardProfile | undefined {
   return BOARD_PROFILES.find((profile) => profile.id === id);
 }
+
+const BOARD_PROFILE_ALIASES: Record<string, string> = {
+  "esp32": "esp32-devkit-v1",
+  "esp32-devkit-v1": "esp32-devkit-v1",
+  "esp32-wrover-kit": "esp32-wrover-devkit",
+  "esp32-wrover-devkit": "esp32-wrover-devkit",
+  "esp32-cam": "esp32-cam",
+  "esp32-s2": "esp32-s2-saola-1",
+  "esp32-s2-saola-1": "esp32-s2-saola-1",
+  "esp32-s3": "esp32-s3-devkitc-1",
+  "esp32-s3-devkitc-1": "esp32-s3-devkitc-1",
+  "esp32-c2": "esp32-c2-reference",
+  "esp32-c2-reference": "esp32-c2-reference",
+  "esp32-c3": "esp32-c3-devkitm-1",
+  "esp32-c3-devkitm-1": "esp32-c3-devkitm-1",
+  "dfrobot-beetle-esp32-c3": "dfrobot-beetle-esp32-c3",
+  "esp32-c5": "esp32-c5-reference",
+  "esp32-c5-reference": "esp32-c5-reference",
+  "esp32-c6": "esp32-c6-devkitc-1",
+  "esp32-c6-devkitc-1": "esp32-c6-devkitc-1",
+  "esp32-c61": "esp32-c61-reference",
+  "esp32-c61-reference": "esp32-c61-reference",
+  "esp32-h2": "esp32-h2-devkitm-1",
+  "esp32-h2-devkitm-1": "esp32-h2-devkitm-1",
+  "esp32-p4": "esp32-p4-reference",
+  "esp32-p4-reference": "esp32-p4-reference",
+};
+
+function normalizeBoardProfileId(value: string) {
+  return value.trim().toLowerCase().replace(/_/g, "-");
+}
+
+export function resolveBoardProfileId(id: string): string | undefined {
+  const normalized = normalizeBoardProfileId(id);
+  const directMatch = getBoardProfile(normalized);
+
+  if (directMatch) {
+    return directMatch.id;
+  }
+
+  if (BOARD_PROFILE_ALIASES[normalized]) {
+    return BOARD_PROFILE_ALIASES[normalized];
+  }
+
+  if (normalized.includes("c3")) {
+    return "esp32-c3-devkitm-1";
+  }
+  if (normalized.includes("s3")) {
+    return "esp32-s3-devkitc-1";
+  }
+  if (normalized.includes("s2")) {
+    return "esp32-s2-saola-1";
+  }
+  if (normalized.includes("c2")) {
+    return "esp32-c2-reference";
+  }
+  if (normalized.includes("c5")) {
+    return "esp32-c5-reference";
+  }
+  if (normalized.includes("c6")) {
+    return "esp32-c6-devkitc-1";
+  }
+  if (normalized.includes("h2")) {
+    return "esp32-h2-devkitm-1";
+  }
+  if (normalized.includes("p4")) {
+    return "esp32-p4-reference";
+  }
+  if (normalized.includes("esp32")) {
+    return "esp32-devkit-v1";
+  }
+
+  return undefined;
+}

@@ -1,6 +1,5 @@
 import sys
 import os
-os.environ["DATABASE_URL"] = "mysql+pymysql://root:root_password@100.82.44.52:3306/e_connect_db"
 
 from app.database import SessionLocal
 from app.sql_models import User

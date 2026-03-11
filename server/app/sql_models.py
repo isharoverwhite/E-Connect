@@ -43,6 +43,18 @@ class EventType(str, enum.Enum):
     command_requested = "command_requested"
     command_failed = "command_failed"
 
+class JobStatus(str, enum.Enum):
+    draft_config = "draft_config"
+    validated = "validated"
+    queued = "queued"
+    building = "building"
+    artifact_ready = "artifact_ready"
+    flashing = "flashing"
+    flashed = "flashed"
+    build_failed = "build_failed"
+    flash_failed = "flash_failed"
+    cancelled = "cancelled"
+
 class User(Base):
     __tablename__ = "users"
 
@@ -140,6 +152,23 @@ class Automation(Base):
     last_triggered = Column(DateTime, nullable=True)
 
     creator = relationship("User", back_populates="automations")
+    logs = relationship("AutomationExecutionLog", back_populates="automation", cascade="all, delete-orphan")
+
+class ExecutionStatus(str, enum.Enum):
+    success = "success"
+    failed = "failed"
+
+class AutomationExecutionLog(Base):
+    __tablename__ = "automation_execution_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    automation_id = Column(Integer, ForeignKey("automations.id"), nullable=False)
+    triggered_at = Column(TIMESTAMP, server_default=func.now())
+    status = Column(Enum(ExecutionStatus), nullable=False)
+    log_output = Column(Text, nullable=True, comment='Console output if any')
+    error_message = Column(Text, nullable=True, comment='Exception details if failed')
+
+    automation = relationship("Automation", back_populates="logs")
 
 class BackupArchive(Base):
     __tablename__ = "backup_archives"
@@ -174,3 +203,51 @@ class Firmware(Base):
     board = Column(String(100))
     filename = Column(String(255))
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class DiyProject(Base):
+    __tablename__ = "diy_projects"
+
+    id = Column(String(36), primary_key=True, comment='UUID cho project')
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    name = Column(String(255), nullable=False)
+    board_profile = Column(String(100), nullable=False)
+    config = Column(JSON, nullable=True, comment='Lưu trữ toàn bộ JSON map cấu hình pins, wifi, mqtt')
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    owner = relationship("User")
+    build_jobs = relationship("BuildJob", back_populates="project", cascade="all, delete-orphan")
+
+class BuildJob(Base):
+    __tablename__ = "build_jobs"
+
+    id = Column(String(36), primary_key=True, comment='UUID cho job')
+    project_id = Column(String(36), ForeignKey("diy_projects.id"), nullable=False)
+    status = Column(Enum(JobStatus), default=JobStatus.queued)
+    artifact_path = Column(String(255), nullable=True, comment='Đường dẫn tới file .bin sau khi build thành công')
+    log_path = Column(String(255), nullable=True, comment='Đường dẫn tới file log build')
+    error_message = Column(Text, nullable=True, comment='Last error captured when build_failed')
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    finished_at = Column(DateTime, nullable=True, comment='UTC timestamp when build reached a terminal state')
+
+    project = relationship("DiyProject", back_populates="build_jobs")
+
+class SerialSessionStatus(str, enum.Enum):
+    locked = "locked"
+    released = "released"
+
+class SerialSession(Base):
+    __tablename__ = "serial_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    port = Column(String(255), nullable=False, default="default")
+    device_id = Column(String(255), nullable=True)
+    build_job_id = Column(String(36), ForeignKey("build_jobs.id"), nullable=True)
+    locked_by_user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    status = Column(Enum(SerialSessionStatus), nullable=False, default=SerialSessionStatus.locked)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    released_at = Column(DateTime, nullable=True)
+
+    locked_by = relationship("User")
+    build_job = relationship("BuildJob")

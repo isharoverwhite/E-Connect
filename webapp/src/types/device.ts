@@ -35,6 +35,8 @@ export interface DeviceConfig {
         pin?: number;
         value?: number;
         applied?: boolean;
+        brightness?: number;
+        trend?: string;
     } | null;
     pin_configurations: PinConfig[];
 }

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
@@ -14,21 +14,24 @@ from datetime import datetime, timedelta
 from .mqtt import mqtt_manager
 
 from .models import (
-    UserCreate, UserResponse, Token, TokenData,
+    UserCreate, UserResponse, Token, TokenData, InitialServerRequest,
     DeviceRegister, DeviceResponse, PinConfigCreate,
     AutomationCreate, AutomationResponse,
     DeviceHistoryCreate, DeviceHistoryResponse,
     FirmwareResponse, DeviceMode, AccountType, EventType,
     RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
-    SetupResponse, HouseholdResponse
+    SetupResponse, HouseholdResponse, TriggerResponse, ExecutionStatus, AutomationLogResponse,
+    DiyProjectCreate, DiyProjectResponse, BuildJobResponse, JobStatus, SerialSessionResponse
 )
 from .sql_models import (
     User, Device, PinConfiguration, Automation, DeviceHistory, 
     Firmware, Room, BackupArchive, Household, HouseholdMembership, HouseholdRole,
-    AuthStatus, ConnStatus
+    AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, BuildJob, SerialSession, SerialSessionStatus
 )
 from .database import get_db
 from .auth import verify_password, get_password_hash, create_access_token, SECRET_KEY, ALGORITHM
+from .services.builder import build_firmware_task
+from .services.diy_validation import validate_diy_config
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
@@ -118,19 +121,19 @@ async def get_system_status(db: Session = Depends(get_db)):
     return {"initialized": user_count > 0}
 
 @router.post("/auth/initialserver", response_model=SetupResponse)
-async def initialserver(user: UserCreate, db: Session = Depends(get_db)):
+async def initialserver(payload: InitialServerRequest, db: Session = Depends(get_db)):
     # Check if system is already initialized
     if db.query(User).count() > 0:
         raise HTTPException(status_code=403, detail={"error": "system_initialized", "message": "System already initialized"})
         
-    hashed_password = get_password_hash(user.password)
+    hashed_password = get_password_hash(payload.password)
         
     new_user = User(
-        fullname=user.fullname,
-        username=user.username,
+        fullname=payload.fullname,
+        username=payload.username,
         authentication=hashed_password,
         account_type=AccountType.admin, # Force admin
-        ui_layout=user.ui_layout or {}
+        ui_layout=payload.ui_layout or {}
     )
     db.add(new_user)
     try:
@@ -148,7 +151,8 @@ async def initialserver(user: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail={"error": "system_initialized", "message": "System already initialized"})
 
     # Create Baseline Household
-    new_household = Household(name=f"{new_user.fullname}'s Household")
+    household_name = payload.householdName.strip() if payload.householdName and payload.householdName.strip() else f"{new_user.fullname}'s Household"
+    new_household = Household(name=household_name)
     db.add(new_household)
     db.commit()
     db.refresh(new_household)
@@ -517,6 +521,190 @@ async def generate_diy_config(request: GenerateConfigRequest, user: User = Depen
     }
     return {"status": "success", "config": config}
 
+@router.post("/diy/projects", response_model=DiyProjectResponse)
+async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    new_project = DiyProject(
+        id=str(uuid.uuid4()),
+        user_id=current_user.user_id,
+        name=project.name,
+        board_profile=project.board_profile,
+        config=project.config
+    )
+    db.add(new_project)
+    db.commit()
+    db.refresh(new_project)
+    return new_project
+
+@router.get("/diy/projects", response_model=List[DiyProjectResponse])
+async def list_diy_projects(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    return db.query(DiyProject).filter(DiyProject.user_id == current_user.user_id).all()
+
+@router.get("/diy/projects/{project_id}", response_model=DiyProjectResponse)
+async def get_diy_project(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    project = db.query(DiyProject).filter(DiyProject.id == project_id, DiyProject.user_id == current_user.user_id).first()
+    if not project:
+         raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+@router.put("/diy/projects/{project_id}", response_model=DiyProjectResponse)
+async def update_diy_project(project_id: str, project_update: DiyProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    project = db.query(DiyProject).filter(DiyProject.id == project_id, DiyProject.user_id == current_user.user_id).first()
+    if not project:
+         raise HTTPException(status_code=404, detail="Project not found")
+    project.name = project_update.name
+    project.board_profile = project_update.board_profile
+    project.config = project_update.config
+    db.commit()
+    db.refresh(project)
+    return project
+
+@router.post("/diy/build", response_model=BuildJobResponse)
+async def trigger_diy_build(project_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    project = db.query(DiyProject).filter(DiyProject.id == project_id, DiyProject.user_id == current_user.user_id).first()
+    if not project:
+         raise HTTPException(status_code=404, detail="Project not found")
+
+    _, validation_errors, validation_warnings = validate_diy_config(project.board_profile, project.config)
+    if validation_errors:
+         raise HTTPException(status_code=400, detail={"error": "validation", "messages": validation_errors})
+         
+    job_id = str(uuid.uuid4())
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.queued
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    background_tasks.add_task(build_firmware_task, job_id, validation_warnings)
+    return job
+
+@router.get("/diy/build/{job_id}", response_model=BuildJobResponse)
+async def get_build_job(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    job = db.query(BuildJob).join(DiyProject).filter(BuildJob.id == job_id, DiyProject.user_id == current_user.user_id).first()
+    if not job:
+         raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+@router.get("/diy/build/{job_id}/artifact")
+async def get_build_artifact(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    job = db.query(BuildJob).join(DiyProject).filter(BuildJob.id == job_id, DiyProject.user_id == current_user.user_id).first()
+    if not job:
+         raise HTTPException(status_code=404, detail="Job not found")
+         
+    if job.status != JobStatus.artifact_ready or not job.artifact_path or not os.path.exists(job.artifact_path):
+         raise HTTPException(status_code=400, detail="Artifact not ready or missing")
+         
+    return FileResponse(job.artifact_path, media_type='application/octet-stream', filename=f"firmware_{job_id}.bin")
+
+@router.get("/diy/build/{job_id}/logs")
+async def get_build_logs(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    job = db.query(BuildJob).join(DiyProject).filter(BuildJob.id == job_id, DiyProject.user_id == current_user.user_id).first()
+    if not job:
+         raise HTTPException(status_code=404, detail="Job not found")
+         
+    if not job.log_path or not os.path.exists(job.log_path):
+         raise HTTPException(status_code=404, detail="Log missing")
+         
+    with open(job.log_path, "r") as f:
+         return {"logs": f.read()}
+
+@router.post("/serial/lock", response_model=SerialSessionResponse)
+async def acquire_serial_lock(
+    device_id: str = "generic",
+    port: str = "default",
+    job_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    active_lock = (
+        db.query(SerialSession)
+        .filter(SerialSession.port == port, SerialSession.status == SerialSessionStatus.locked)
+        .order_by(SerialSession.created_at.desc())
+        .first()
+    )
+    if active_lock and active_lock.locked_by_user_id != current_user.user_id:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "conflict", "message": f"Serial port {port} is currently locked"},
+        )
+
+    build_job = None
+    if job_id:
+        build_job = (
+            db.query(BuildJob)
+            .join(DiyProject)
+            .filter(BuildJob.id == job_id, DiyProject.user_id == current_user.user_id)
+            .first()
+        )
+        if not build_job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if build_job.status != JobStatus.artifact_ready:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "conflict", "message": "Artifact is not ready for flashing"},
+            )
+
+    if active_lock and active_lock.locked_by_user_id == current_user.user_id:
+        active_lock.device_id = device_id
+        active_lock.build_job_id = build_job.id if build_job else None
+        db.commit()
+        db.refresh(active_lock)
+        return active_lock
+
+    serial_session = SerialSession(
+        port=port,
+        device_id=device_id,
+        build_job_id=build_job.id if build_job else None,
+        locked_by_user_id=current_user.user_id,
+        status=SerialSessionStatus.locked,
+    )
+    db.add(serial_session)
+    db.commit()
+    db.refresh(serial_session)
+    return serial_session
+
+@router.post("/serial/unlock")
+async def release_serial_lock(
+    port: str = "default",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    active_lock = (
+        db.query(SerialSession)
+        .filter(SerialSession.port == port, SerialSession.status == SerialSessionStatus.locked)
+        .order_by(SerialSession.created_at.desc())
+        .first()
+    )
+    if not active_lock:
+        return {"status": "unlocked", "port": port}
+
+    if active_lock.locked_by_user_id != current_user.user_id and current_user.account_type != AccountType.admin:
+        raise HTTPException(status_code=403, detail="Not authorized to unlock this port")
+
+    active_lock.status = SerialSessionStatus.released
+    active_lock.released_at = datetime.utcnow()
+    db.commit()
+    return {"status": "unlocked", "port": port}
+
+@router.get("/serial/status")
+async def get_serial_status(port: str = "default", db: Session = Depends(get_db)):
+    active_lock = (
+        db.query(SerialSession)
+        .filter(SerialSession.port == port, SerialSession.status == SerialSessionStatus.locked)
+        .order_by(SerialSession.created_at.desc())
+        .first()
+    )
+    return {
+        "locked": active_lock is not None,
+        "port": port,
+        "device_id": active_lock.device_id if active_lock else None,
+        "user_id": active_lock.locked_by_user_id if active_lock else None,
+        "job_id": active_lock.build_job_id if active_lock else None,
+    }
+
 # --- Telemetry / History ---
 
 @router.post("/device/{device_id}/history", response_model=DeviceHistoryResponse)
@@ -592,7 +780,11 @@ async def create_automation(auto: AutomationCreate, db: Session = Depends(get_db
 async def list_automations(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return db.query(Automation).filter(Automation.creator_id == user.user_id).all()
 
-@router.post("/automation/{automation_id}/trigger")
+import io
+import sys
+import traceback
+
+@router.post("/automation/{automation_id}/trigger", response_model=TriggerResponse)
 async def trigger_automation(automation_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """
     Manually trigger an automation script.
@@ -602,11 +794,57 @@ async def trigger_automation(automation_id: int, db: Session = Depends(get_db), 
     if not auto:
         raise HTTPException(status_code=404, detail="Automation not found")
     
-    # Placeholder execution logic
+    # Execution logic
     auto.last_triggered = datetime.utcnow()
-    db.commit()
     
-    return {"status": "triggered", "message": f"Automation '{auto.name}' queued for execution."}
+    # Capture output
+    output_buffer = io.StringIO()
+    old_stdout = sys.stdout
+    sys.stdout = output_buffer
+    
+    status = ExecutionStatus.success
+    error_msg = None
+    
+    try:
+        # Minimal environment for the script
+        local_env = {
+            "device_id": None, # Provided if triggered via event
+            "print": print,
+        }
+        exec(auto.script_code, {"__builtins__": {}}, local_env)
+    except Exception as e:
+        status = ExecutionStatus.failed
+        error_msg = traceback.format_exc()
+        # Fallback if too long
+        if len(error_msg) > 1000:
+            error_msg = error_msg[-1000:]
+    finally:
+        sys.stdout = old_stdout
+        
+    log_output = output_buffer.getvalue()
+    if len(log_output) > 2000:
+        log_output = log_output[:2000] + "...(truncated)"
+    if not log_output:
+        log_output = None
+        
+    execution_log = AutomationExecutionLog(
+        automation_id=auto.id,
+        triggered_at=auto.last_triggered,
+        status=status,
+        log_output=log_output,
+        error_message=error_msg
+    )
+    
+    db.add(execution_log)
+    db.commit()
+    db.refresh(execution_log)
+    
+    msg = f"Automation '{auto.name}' executed with status: {status.value}"
+    return TriggerResponse(
+        status=status,
+        message=msg,
+        log=AutomationLogResponse.model_validate(execution_log)
+    )
 
 # --- OTA (Simplified from previous) ---
 

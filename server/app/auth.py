@@ -1,9 +1,10 @@
 import bcrypt
+import os
 from datetime import datetime, timedelta
 from typing import Optional
 from jose import JWTError, jwt
 
-SECRET_KEY = "YOUR_SUPER_SECRET_KEY" # In prod, load from .env
+SECRET_KEY = os.getenv("SECRET_KEY", "econnect-dev-secret-change-me")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 300
 

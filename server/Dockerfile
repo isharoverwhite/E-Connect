@@ -8,9 +8,14 @@ WORKDIR /app
 # Prevent Python from writing pyc files and buffering stdout
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+ENV BUILD_BASE_DIR=/data/builds
+ENV LOCAL_DATABASE_PATH=/data/db.sqlite3
+ENV PLATFORMIO_CORE_DIR=/data/.platformio
 
-# Install system dependencies (if any are needed later, e.g., for mysqlclient)
-# RUN apt-get update && apt-get install -y --no-install-recommends gcc libmariadb-dev && rm -rf /var/lib/apt/lists/*
+# Install system dependencies
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
@@ -20,6 +25,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application
 COPY . .
+
+# Create durable runtime directories for SQLite, PlatformIO cache, logs, and build artifacts
+RUN mkdir -p /data/builds /data/.platformio /app/static /app/firmwares
+
+VOLUME ["/data"]
 
 # Expose the port
 EXPOSE 8000
