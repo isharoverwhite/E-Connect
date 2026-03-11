@@ -611,6 +611,107 @@ async def get_build_logs(job_id: str, db: Session = Depends(get_db), current_use
     with open(job.log_path, "r") as f:
          return {"logs": f.read()}
 
+
+import asyncio
+
+TERMINAL_JOB_STATUSES = {
+    JobStatus.artifact_ready,
+    JobStatus.flashed,
+    JobStatus.build_failed,
+    JobStatus.flash_failed,
+    JobStatus.cancelled,
+}
+
+@router.get("/diy/build/{job_id}/logs/stream")
+async def stream_build_logs(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Server-Sent Events endpoint that streams build log lines as they are written.
+    Sends events of type 'log' with the new log text, and a final 'done' event
+    when the job reaches a terminal state.
+    """
+    from fastapi.responses import StreamingResponse as _StreamingResponse
+
+    job = db.query(BuildJob).join(DiyProject).filter(
+        BuildJob.id == job_id,
+        DiyProject.user_id == current_user.user_id,
+    ).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # For already-terminal jobs with a log, stream the full log and close immediately.
+    job_id_str = str(job.id)
+    log_path_snapshot = job.log_path
+    initial_status = job.status
+    db.close()  # Release the session before entering the generator
+
+    async def event_generator():
+        poll_interval = 0.5  # seconds between log file tails
+
+        # Wait up to 30 s for the log file to appear (queued -> building transition)
+        waited = 0.0
+        while not (log_path_snapshot and os.path.exists(log_path_snapshot)):
+            if waited > 30.0:
+                yield "event: done\ndata: timeout waiting for log file\n\n"
+                return
+            await asyncio.sleep(poll_interval)
+            waited += poll_interval
+
+            # Re-read job status to detect if it moved to a terminal state without log
+            with SessionLocal() as _db:
+                _job = _db.query(BuildJob).filter(BuildJob.id == job_id_str).first()
+                if _job and _job.status in TERMINAL_JOB_STATUSES and not (
+                    _job.log_path and os.path.exists(_job.log_path)
+                ):
+                    yield f"event: status\ndata: {_job.status.value}\n\n"
+                    yield "event: done\ndata: terminal\n\n"
+                    return
+
+        position = 0
+        try:
+            with open(log_path_snapshot, "r", errors="replace") as log_file:
+                while True:
+                    log_file.seek(position)
+                    chunk = log_file.read(8192)
+                    if chunk:
+                        position = log_file.tell()
+                        # Escape SSE data: replace newlines within the chunk with \ndata: continuations
+                        lines = chunk.splitlines()
+                        for line in lines:
+                            yield f"data: {line}\n"
+                        yield "\n"
+
+                    # Check terminal state
+                    with SessionLocal() as _db:
+                        _job = _db.query(BuildJob).filter(BuildJob.id == job_id_str).first()
+                        current_status = _job.status if _job else None
+
+                    if current_status in TERMINAL_JOB_STATUSES:
+                        # Flush any remaining content
+                        log_file.seek(position)
+                        tail = log_file.read()
+                        if tail:
+                            for line in tail.splitlines():
+                                yield f"data: {line}\n"
+                            yield "\n"
+                        yield f"event: status\ndata: {current_status.value}\n\n"
+                        yield "event: done\ndata: terminal\n\n"
+                        return
+
+                    await asyncio.sleep(poll_interval)
+        except Exception as exc:
+            yield f"event: error\ndata: {str(exc)}\n\n"
+            yield "event: done\ndata: error\n\n"
+
+    return _StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 @router.post("/serial/lock", response_model=SerialSessionResponse)
 async def acquire_serial_lock(
     device_id: str = "generic",

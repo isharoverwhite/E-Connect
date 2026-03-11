@@ -7,10 +7,10 @@ Self-hosted, local-first smart home platform focused on dashboard control, DIY E
 - [PRD.md](PRD.md): current product and delivery baseline
 - [AGENTS.md](AGENTS.md): execution rules for implementation agents
 - [run.md](run.md): local run guide for the active `server` and `webapp` stack
+- [esp32-wifi-flash-pairing-workflow.md](esp32-wifi-flash-pairing-workflow.md): workflow yêu cầu cho cấu hình Wi-Fi lần đầu, flash ESP32, và pair với server
 
 ## Reports kept in repo
 
 - [phase1_report.md](phase1_report.md)
 - [phase2_mqtt_transport_report.md](phase2_mqtt_transport_report.md)
 - [webapp/esp32-ui-test-cases.md](webapp/esp32-ui-test-cases.md)
-

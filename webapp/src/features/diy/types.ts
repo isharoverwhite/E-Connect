@@ -56,6 +56,8 @@ export interface ServerBuildState {
     artifactName: string | null;
     configKey: string | null;
     updatedAt: string | null;
+    finishedAt: string | null;
+    errorMessage: string | null;
 }
 
 export const MODE_ORDER: PinMode[] = ["OUTPUT", "PWM", "INPUT", "ADC", "I2C"];

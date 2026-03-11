@@ -39,14 +39,23 @@ def generate_main_cpp(config_json: dict, project_dir: str):
     has_i2c = any((pin.get("mode") or "").upper() == "I2C" for pin in pins)
     i2c_pins = [pin.get("gpio", pin.get("gpio_pin")) for pin in pins if (pin.get("mode") or "").upper() == "I2C"]
 
+    wifi_ssid = config_json.get("wifi_ssid") if isinstance(config_json, dict) else None
+    wifi_password = config_json.get("wifi_password") if isinstance(config_json, dict) else None
+
     includes = "#include <Arduino.h>\n"
     if has_i2c:
         includes += "#include <Wire.h>\n"
+    if wifi_ssid:
+        includes += "#include <WiFi.h>\n"
 
     setup_lines = [
         "Serial.begin(115200);",
         'Serial.println("E-Connect DIY Firmware Booting...");',
     ]
+
+    if wifi_ssid:
+        setup_lines.append(f'WiFi.begin("{wifi_ssid}", "{wifi_password or ""}");')
+        setup_lines.append(f'Serial.print("Connecting to Wi-Fi: {wifi_ssid}");')
 
     if len(i2c_pins) >= 2:
         setup_lines.append(f"Wire.begin({i2c_pins[0]}, {i2c_pins[1]});")

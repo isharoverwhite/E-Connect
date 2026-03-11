@@ -60,12 +60,41 @@ def check_database_connection():
         logger.warning("Database connectivity check failed: %s", error_message)
         return False, error_message
 
+def _ensure_build_job_columns():
+    """Additive column guard: adds finished_at and error_message to build_jobs if absent."""
+    try:
+        with engine.connect() as conn:
+            if DATABASE_URL.startswith("sqlite"):
+                conn.execute(text(
+                    "ALTER TABLE build_jobs ADD COLUMN IF NOT EXISTS finished_at DATETIME"
+                ))
+                conn.execute(text(
+                    "ALTER TABLE build_jobs ADD COLUMN IF NOT EXISTS error_message TEXT"
+                ))
+            else:
+                # MariaDB / MySQL – check information_schema first
+                for col, col_type in [("finished_at", "DATETIME"), ("error_message", "TEXT")]:
+                    result = conn.execute(text(
+                        "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                        "WHERE TABLE_NAME='build_jobs' AND COLUMN_NAME=:col"
+                    ), {"col": col})
+                    if result.scalar() == 0:
+                        conn.execute(text(
+                            f"ALTER TABLE build_jobs ADD COLUMN {col} {col_type} NULL"
+                        ))
+            conn.commit()
+            logger.info("build_jobs column guard: finished_at / error_message ensured")
+    except Exception as exc:
+        logger.warning("build_jobs column guard failed (non-fatal): %s", exc)
+
+
 def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
     last_error = None
 
     for attempt in range(1, max_attempts + 1):
         try:
             Base.metadata.create_all(bind=engine)
+            _ensure_build_job_columns()
             logger.info("Database schema is ready")
             return True, None
         except SQLAlchemyError as exc:
