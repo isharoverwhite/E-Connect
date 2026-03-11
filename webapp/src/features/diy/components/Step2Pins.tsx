@@ -1,7 +1,6 @@
-import { useState } from "react";
 import type { PinMode } from "@/types/device";
 import { type BoardPin, type BoardProfile } from "../board-profiles";
-import { type PinMapping, PIN_FILL } from "../types";
+import { type PinMapping, PIN_FILL, type ProjectSyncState } from "../types";
 
 export interface Step2PinsProps {
     pins: PinMapping[];
@@ -11,6 +10,11 @@ export interface Step2PinsProps {
     selectedPinId: string | null;
     setSelectedPinId: React.Dispatch<React.SetStateAction<string | null>>;
     projectName: string;
+    draftConfig: Record<string, unknown>;
+    configBusy: boolean;
+    projectSyncState: ProjectSyncState;
+    projectSyncMessage: string;
+    onExportConfig: () => Promise<void>;
     onNext: () => void;
     onBack: () => void;
 }
@@ -23,6 +27,11 @@ export function Step2Pins({
     selectedPinId,
     setSelectedPinId,
     projectName,
+    draftConfig,
+    configBusy,
+    projectSyncState,
+    projectSyncMessage,
+    onExportConfig,
     onNext,
     onBack,
 }: Step2PinsProps) {
@@ -74,6 +83,7 @@ export function Step2Pins({
     const top = 110;
     const bottom = boardHeight - 70;
     const gap = totalRows === 1 ? 0 : (bottom - top) / (totalRows - 1);
+    const previewLines = JSON.stringify(draftConfig, null, 2).split("\n");
 
     return (
         <div className="flex flex-col gap-8">
@@ -263,7 +273,17 @@ export function Step2Pins({
                 {/* Right pane - Pin Assignments */}
                 <div className="xl:col-span-5 flex flex-col gap-4">
                     <div className="bg-white dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
-                        <h3 className="text-slate-900 dark:text-slate-100 text-xl font-bold mb-6">Pin Assignment</h3>
+                        <div className="mb-6 flex items-center justify-between gap-4">
+                            <div>
+                                <h3 className="text-slate-900 dark:text-slate-100 text-xl font-bold">Pin Assignment</h3>
+                                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                                    Click a pad on the SVG board, then assign its role and label here.
+                                </p>
+                            </div>
+                            <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${getSyncStyles(projectSyncState)}`}>
+                                {formatSyncState(projectSyncState)}
+                            </span>
+                        </div>
                         <div className="flex flex-col gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
                             {boardPins.filter(pin => pin.capabilities.length > 0 && !pin.reserved).map(pin => {
                                 const assignment = pins.find(p => p.gpio_pin === pin.gpio);
@@ -283,6 +303,9 @@ export function Step2Pins({
                                         <div className="flex gap-2">
                                             <div className="relative flex-1">
                                                 <select
+                                                    id={`pin-mode-${pin.gpio}`}
+                                                    name={`pin-mode-${pin.gpio}`}
+                                                    aria-label={`${pin.label} mode`}
                                                     value={assignment?.mode || "none"}
                                                     onChange={(e) => {
                                                         if (e.target.value === "none") {
@@ -307,6 +330,9 @@ export function Step2Pins({
                                             {assignment && (
                                                 <div className="relative flex-1">
                                                     <input
+                                                        id={`pin-function-${pin.gpio}`}
+                                                        name={`pin-function-${pin.gpio}`}
+                                                        aria-label={`${pin.label} function`}
                                                         value={assignment.function || ""}
                                                         onChange={(e) => handleFunctionChange(pin, e.target.value)}
                                                         placeholder="Function (e.g. relay)"
@@ -319,21 +345,91 @@ export function Step2Pins({
                                 );
                             })}
                         </div>
+                    </div>
 
-                        <div className="mt-8 pt-6 border-t border-slate-200 dark:border-slate-800 flex flex-col gap-3">
-                            <button onClick={onNext} className="w-full bg-primary hover:bg-primary/90 text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/20 flex items-center justify-center gap-2 transition-all active:scale-[0.98]">
-                                Next: Validate
-                                <span className="material-symbols-outlined">arrow_forward</span>
+                    <div className="bg-[#1e1e1e] rounded-xl shadow-lg border border-slate-200 dark:border-slate-800 overflow-hidden flex flex-col min-h-[360px]">
+                        <div className="flex items-center justify-between px-4 py-2 bg-[#252526] border-b border-[#333]">
+                            <span className="text-xs font-mono text-gray-400 flex items-center gap-2">
+                                <span className="material-symbols-rounded text-sm text-yellow-500">description</span>
+                                device_config.json
+                            </span>
+                            <span className="text-[10px] text-gray-500 uppercase font-semibold">Read Only</span>
+                        </div>
+                        <div className="flex-1 relative font-mono text-xs overflow-auto code-scroll p-4 leading-6">
+                            <div className="absolute left-0 top-4 bottom-0 w-8 text-right pr-2 text-gray-600 select-none">
+                                {previewLines.map((_, index) => (
+                                    <div key={index}>{index + 1}</div>
+                                ))}
+                            </div>
+                            <pre className="pl-8 whitespace-pre-wrap text-slate-200">{previewLines.join("\n")}</pre>
+                        </div>
+                    </div>
+
+                    <div className="bg-white dark:bg-slate-900/50 rounded-xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm">
+                        <h3 className="text-sm font-semibold text-slate-900 dark:text-white mb-4">Deployment</h3>
+                        <div className="space-y-3">
+                            <button
+                                onClick={onNext}
+                                className="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white py-3 rounded-lg font-medium transition-all shadow-md shadow-blue-500/20"
+                            >
+                                <span className="material-symbols-rounded">checklist</span>
+                                Validate Wiring
                             </button>
-                            <button onClick={onBack} className="w-full bg-transparent border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-600 dark:text-slate-400 font-medium py-3 rounded-xl transition-colors">
-                                Back to Board Selection
-                            </button>
+                            <div className="grid grid-cols-2 gap-3">
+                                <button
+                                    onClick={() => void onExportConfig()}
+                                    disabled={configBusy}
+                                    className="flex items-center justify-center gap-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                    <span className="material-symbols-rounded text-sm">save</span>
+                                    {configBusy ? "Exporting..." : "Save JSON"}
+                                </button>
+                                <button
+                                    onClick={onBack}
+                                    className="flex items-center justify-center gap-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
+                                >
+                                    <span className="material-symbols-rounded text-sm">arrow_back</span>
+                                    Back
+                                </button>
+                            </div>
+                        </div>
+                        <div className="mt-6 pt-4 border-t border-slate-200 dark:border-slate-800">
+                            <div className="flex items-center gap-3 mb-2">
+                                <div className={`w-2 h-2 rounded-full ${projectSyncState === "saved" ? "bg-green-500" : projectSyncState === "saving" ? "bg-amber-500" : "bg-slate-300 dark:bg-slate-600"}`}></div>
+                                <span className="text-xs text-slate-600 dark:text-slate-400 flex-1">{projectSyncMessage}</span>
+                                {projectSyncState === "saved" && (
+                                    <span className="material-symbols-rounded text-green-500 text-sm">check</span>
+                                )}
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <div className={`w-2 h-2 rounded-full ${pins.length > 0 ? "bg-primary" : "bg-slate-300 dark:bg-slate-600"}`}></div>
+                                <span className="text-xs text-slate-400 dark:text-slate-500 flex-1">
+                                    {pins.length > 0 ? `${pins.length} pin mappings ready for validation` : "Waiting for at least one SVG pin assignment"}
+                                </span>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
     );
+}
+
+function formatSyncState(value: ProjectSyncState) {
+    return value.replace(/_/g, " ");
+}
+
+function getSyncStyles(value: ProjectSyncState) {
+    switch (value) {
+        case "saved":
+            return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300";
+        case "saving":
+            return "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300";
+        case "error":
+            return "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-300";
+        default:
+            return "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300";
+    }
 }
 
 function LegendItem({ color, label }: { color: string; label: string }) {

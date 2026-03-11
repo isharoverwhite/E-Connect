@@ -32,14 +32,14 @@ services:
 
   backend:
     build:
-      context: ./backend
+      context: ./server
       dockerfile: Dockerfile
     container_name: smart-home-backend
     restart: always
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=mysql+aiomysql://${DB_USER:-user}:${DB_PASSWORD:-password}@${DB_HOST:-db}:3306/${DB_NAME:-smart_home}
+      - DATABASE_URL=mysql+pymysql://${DB_USER:-user}:${DB_PASSWORD:-password}@${DB_HOST:-db}:3306/${DB_NAME:-smart_home}
       - SECRET_KEY=${SECRET_KEY:-supersecretkey}
     depends_on:
       db:

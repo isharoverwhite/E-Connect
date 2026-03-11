@@ -24,18 +24,18 @@ def override_get_db():
     finally:
         db.close()
 
-app.dependency_overrides[get_db] = override_get_db
-
 client = TestClient(app)
 
 @pytest.fixture(autouse=True)
 def run_before_and_after_tests(tmpdir):
     """Fixture to execute asserts before and after a test is run"""
+    app.dependency_overrides[get_db] = override_get_db
     # Setup: create clean tables
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     yield # this is where the testing happens
     # Teardown
+    app.dependency_overrides.clear()
     Base.metadata.drop_all(bind=engine)
 
 def test_system_status_uninitialized():

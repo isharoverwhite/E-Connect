@@ -7,6 +7,22 @@ export interface PinMapping {
     label?: string;
 }
 
+export type FlashSource = "server" | "demo" | "upload";
+
+export type ProjectSyncState = "idle" | "loading" | "saving" | "saved" | "error";
+
+export type BuildJobStatus =
+    | "draft_config"
+    | "validated"
+    | "queued"
+    | "building"
+    | "artifact_ready"
+    | "flashing"
+    | "flashed"
+    | "build_failed"
+    | "flash_failed"
+    | "cancelled";
+
 export interface FirmwareUploadState {
     bootloader: File | null;
     partitions: File | null;
@@ -30,6 +46,18 @@ export interface FlashManifest {
     }>;
 }
 
+export interface ServerBuildState {
+    jobId: string | null;
+    status: BuildJobStatus | "idle";
+    logs: string;
+    error: string | null;
+    warnings: string[];
+    artifactUrl: string | null;
+    artifactName: string | null;
+    configKey: string | null;
+    updatedAt: string | null;
+}
+
 export const MODE_ORDER: PinMode[] = ["OUTPUT", "PWM", "INPUT", "ADC", "I2C"];
 export const MODE_BADGE_STYLES: Record<PinMode, string> = {
     INPUT:
@@ -48,19 +76,32 @@ export const PIN_FILL: Record<"idle" | "selected" | "assigned" | "reserved", str
     reserved: "#94a3b8",
 };
 
-export function sanitizePins(input: PinMapping[], modeMetadata: Record<string, unknown>): PinMapping[] {
+export function sanitizePins(input: unknown[], modeMetadata: Record<string, unknown>): PinMapping[] {
     return input
-        .filter(
-            (item): item is PinMapping =>
-                typeof item.gpio_pin === "number" &&
-                typeof item.mode === "string" &&
-                item.mode in modeMetadata,
-        )
-        .map((item) => ({
-            gpio_pin: item.gpio_pin,
-            mode: item.mode,
-            function: item.function,
-            label: item.label,
-        }))
+        .map((item) => {
+            if (!item || typeof item !== "object") {
+                return null;
+            }
+
+            const candidate = item as PinMapping & { gpio?: unknown };
+            const gpio =
+                typeof candidate.gpio_pin === "number"
+                    ? candidate.gpio_pin
+                    : typeof candidate.gpio === "number"
+                        ? candidate.gpio
+                        : null;
+
+            if (gpio === null || typeof candidate.mode !== "string" || !(candidate.mode in modeMetadata)) {
+                return null;
+            }
+
+            return {
+                gpio_pin: gpio,
+                mode: candidate.mode,
+                function: candidate.function,
+                label: candidate.label,
+            } satisfies PinMapping;
+        })
+        .filter((item): item is PinMapping => item !== null)
         .sort((left, right) => left.gpio_pin - right.gpio_pin);
 }

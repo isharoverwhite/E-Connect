@@ -43,6 +43,22 @@ class EventType(str, Enum):
     command_requested = "command_requested"
     command_failed = "command_failed"
 
+class JobStatus(str, Enum):
+    draft_config = "draft_config"
+    validated = "validated"
+    queued = "queued"
+    building = "building"
+    artifact_ready = "artifact_ready"
+    flashing = "flashing"
+    flashed = "flashed"
+    build_failed = "build_failed"
+    flash_failed = "flash_failed"
+    cancelled = "cancelled"
+
+class SerialSessionStatus(str, Enum):
+    locked = "locked"
+    released = "released"
+
 # --- User & Auth ---
 class UserBase(BaseModel):
     fullname: str
@@ -76,6 +92,10 @@ class HouseholdResponse(HouseholdBase):
 class SetupResponse(BaseModel):
     user: UserResponse
     household: HouseholdResponse
+
+class InitialServerRequest(UserCreate):
+    householdName: Optional[str] = None
+
 
 class Token(BaseModel):
     access_token: str
@@ -163,6 +183,26 @@ class AutomationResponse(AutomationCreate):
     class Config:
         from_attributes = True
 
+class ExecutionStatus(str, Enum):
+    success = "success"
+    failed = "failed"
+
+class AutomationLogResponse(BaseModel):
+    id: int
+    automation_id: int
+    triggered_at: datetime
+    status: ExecutionStatus
+    log_output: Optional[str] = None
+    error_message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class TriggerResponse(BaseModel):
+    status: ExecutionStatus
+    message: str
+    log: Optional[AutomationLogResponse] = None
+
 # --- History / Sensor Data ---
 class DeviceHistoryCreate(BaseModel):
     event_type: EventType
@@ -194,6 +234,50 @@ class GenerateConfigRequest(BaseModel):
 class GenerateConfigResponse(BaseModel):
     status: str
     config: Dict[str, Any]
+
+class DiyProjectBase(BaseModel):
+    name: str
+    board_profile: str
+    config: Optional[Dict[str, Any]] = None
+
+class DiyProjectCreate(DiyProjectBase):
+    pass
+
+class DiyProjectResponse(DiyProjectBase):
+    id: str
+    user_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class BuildJobResponse(BaseModel):
+    id: str
+    project_id: str
+    status: JobStatus
+    artifact_path: Optional[str] = None
+    log_path: Optional[str] = None
+    finished_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class SerialSessionResponse(BaseModel):
+    id: int
+    port: str
+    device_id: Optional[str] = None
+    build_job_id: Optional[str] = None
+    locked_by_user_id: int
+    status: SerialSessionStatus
+    created_at: datetime
+    released_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
 
 # --- Firmware (Legacy/OTA) ---
 class FirmwareResponse(BaseModel):

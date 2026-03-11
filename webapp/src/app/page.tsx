@@ -281,10 +281,12 @@ export default function Dashboard() {
 function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
   const [pending, setPending] = useState(false);
   const [toggleState, setToggleState] = useState(Boolean(config.last_state?.value));
+  const [sliderValue, setSliderValue] = useState(Number(config.last_state?.brightness || 0));
 
   useEffect(() => {
     setToggleState(Boolean(config.last_state?.value));
-  }, [config.last_state?.value]);
+    setSliderValue(Number(config.last_state?.brightness || 0));
+  }, [config.last_state?.value, config.last_state?.brightness]);
 
   const pwmPin = config.pin_configurations?.find((p) => p.mode === 'PWM');
   const outputPin = config.pin_configurations?.find((p) => p.mode === 'OUTPUT');
@@ -306,6 +308,22 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
       }
     } catch {
       setToggleState(!isChecked);
+    } finally {
+      setPending(false);
+    }
+  };
+
+  const handleSliderCommit = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = parseInt(e.target.value);
+    const targetPin = outputPin || pwmPin;
+    if (!targetPin && !config.provider) return; // If extension, still allow
+
+    setPending(true);
+    try {
+      const payload = { kind: "action", pin: targetPin?.gpio_pin || 0, brightness: val };
+      await sendDeviceCommand(config.device_id, payload);
+    } catch {
+      // ignore
     } finally {
       setPending(false);
     }
@@ -338,12 +356,19 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
         <div className="mb-4">
           <div className="flex justify-between items-end mb-2">
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Brightness</label>
-            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">45%</span>
+            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">{sliderValue}%</span>
           </div>
-          <div className="relative w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full cursor-pointer group">
-            <div className="absolute top-0 left-0 h-full bg-primary rounded-full w-[45%]"></div>
-            <div className="absolute top-1/2 -translate-y-1/2 left-[45%] w-4 h-4 bg-white dark:bg-slate-200 rounded-full shadow-md border-2 border-primary transform -translate-x-1/2 group-hover:scale-110 transition-transform cursor-grab active:cursor-grabbing"></div>
-          </div>
+          <input
+            type="range"
+            className="w-full accent-primary h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
+            min="0"
+            max="100"
+            value={sliderValue}
+            disabled={pending || !isOnline}
+            onChange={(e) => setSliderValue(parseInt(e.target.value))}
+            onMouseUp={handleSliderCommit as any}
+            onTouchEnd={handleSliderCommit as any}
+          />
         </div>
         <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
           <span className="flex items-center text-indigo-600 dark:text-indigo-400 font-medium">Source: {config.provider}</span>
@@ -366,12 +391,12 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
         <h3 className="text-base font-semibold text-slate-900 dark:text-white mt-2 truncate" title={config.name}>{config.name}</h3>
         <p className="text-xs text-slate-500 mb-3 truncate" title={config.board || 'Multi-sensor Node'}>{config.board || 'Multi-sensor Node'}</p>
         <div className="flex items-baseline space-x-1">
-          <span className="text-3xl font-bold text-slate-800 dark:text-white">{isTemp ? '24' : '45'}</span>
+          <span className="text-3xl font-bold text-slate-800 dark:text-white">{config.last_state?.value ?? '--'}</span>
           <span className="text-lg font-medium text-slate-500">{isTemp ? '°C' : '%'}</span>
         </div>
         <div className={`mt-3 text-xs flex items-center ${isTemp ? 'text-green-600 dark:text-green-400' : 'text-slate-500 dark:text-slate-400'}`}>
           <span className="material-icons-round text-sm mr-1">{isTemp ? 'arrow_drop_up' : 'remove'}</span>
-          {isTemp ? 'Rising (+0.5°C)' : 'Stable'}
+          {config.last_state?.trend || 'Stable'}
         </div>
       </div>
     );
@@ -417,12 +442,19 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
         <div className="mb-4">
           <div className="flex justify-between items-end mb-2">
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Brightness</label>
-            <span className="text-xs font-bold text-primary">75%</span>
+            <span className="text-xs font-bold text-primary">{sliderValue}%</span>
           </div>
-          <div className="relative w-full h-2 bg-slate-200 dark:bg-slate-700 rounded-full cursor-pointer group">
-            <div className="absolute top-0 left-0 h-full bg-primary rounded-full w-[75%]"></div>
-            <div className="absolute top-1/2 -translate-y-1/2 left-[75%] w-4 h-4 bg-white dark:bg-slate-200 rounded-full shadow-md border-2 border-primary transform -translate-x-1/2 group-hover:scale-110 transition-transform cursor-grab active:cursor-grabbing"></div>
-          </div>
+          <input
+            type="range"
+            className="w-full accent-primary h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
+            min="0"
+            max="100"
+            value={sliderValue}
+            disabled={pending || !isOnline}
+            onChange={(e) => setSliderValue(parseInt(e.target.value))}
+            onMouseUp={handleSliderCommit as any}
+            onTouchEnd={handleSliderCommit as any}
+          />
         </div>
         <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
           <span className="flex items-center">

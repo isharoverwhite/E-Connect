@@ -1,4 +1,5 @@
 import { BOARD_PROFILES, BOARD_FAMILIES, type Esp32ChipFamily, type BoardProfile } from "../board-profiles";
+import type { ProjectSyncState } from "../types";
 
 interface Step1BoardProps {
     projectName: string;
@@ -9,6 +10,9 @@ interface Step1BoardProps {
     onNext: () => void;
     familyOptions: typeof BOARD_PROFILES;
     board: BoardProfile;
+    onSaveDraft: () => Promise<void>;
+    projectSyncState: ProjectSyncState;
+    projectSyncMessage: string;
 }
 
 export function Step1Board({
@@ -20,16 +24,24 @@ export function Step1Board({
     onNext,
     familyOptions,
     board,
+    onSaveDraft,
+    projectSyncState,
+    projectSyncMessage,
 }: Step1BoardProps) {
     // Use the HTML from step1.html for the board grid.
     // We'll map the family options to the board selection cards.
     return (
         <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-4 mb-10">
-                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                <label
+                    htmlFor="diy-project-name"
+                    className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider"
+                >
                     Project Name
                 </label>
                 <input
+                    id="diy-project-name"
+                    name="projectName"
                     value={projectName}
                     onChange={(event) => setProjectName(event.target.value)}
                     className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-lg text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
@@ -44,7 +56,7 @@ export function Step1Board({
                         <div
                             key={item.id}
                             onClick={() => setFamily(item.id)}
-                            className={`group flex flex-col gap-4 p-5 rounded-xl border-2 transition-all cursor-pointer ${isSelected
+                            className={`group relative flex flex-col gap-4 p-5 rounded-xl border-2 transition-all cursor-pointer ${isSelected
                                 ? "border-primary bg-primary/5 dark:bg-primary/10"
                                 : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 hover:border-primary/50"
                                 }`}
@@ -125,11 +137,18 @@ export function Step1Board({
                     <div>
                         <p className="text-slate-900 dark:text-white font-bold">Selected: {board.name}</p>
                         <p className="text-slate-500 dark:text-slate-400 text-xs">{board.layoutLabel} · {board.serialBridge}</p>
+                        <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+                            {projectSyncMessage}
+                        </p>
                     </div>
                 </div>
                 <div className="flex gap-4 w-full md:w-auto">
-                    <button className="flex-1 md:flex-none px-6 py-3 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-800 transition-all">
-                        Save Draft
+                    <button
+                        onClick={() => void onSaveDraft()}
+                        disabled={projectSyncState === "saving"}
+                        className="flex-1 md:flex-none px-6 py-3 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-800 transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        {projectSyncState === "saving" ? "Saving..." : "Save Draft"}
                     </button>
                     <button
                         onClick={onNext}
