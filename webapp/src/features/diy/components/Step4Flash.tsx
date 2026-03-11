@@ -40,6 +40,7 @@ export interface Step4FlashProps {
     onAcquireSerialLock: () => Promise<void>;
     onReleaseSerialLock: () => Promise<void>;
     onRefreshSerialStatus: () => Promise<void>;
+    onLogPanelRef?: (element: HTMLDivElement | null) => void;
 }
 
 function toHex(value: number) {
@@ -163,6 +164,7 @@ export function Step4Flash({
     onAcquireSerialLock,
     onReleaseSerialLock,
     onRefreshSerialStatus,
+    onLogPanelRef,
 }: Step4FlashProps) {
     const previewLines = JSON.stringify(draftConfig, null, 2).split("\n");
     const readiness = getReadinessModel({
@@ -563,7 +565,36 @@ export function Step4Flash({
                                 </button>
                             </div>
                         </div>
-                        <div className="h-[520px] overflow-y-auto p-4 font-mono text-sm bg-black/40">
+
+                        {/* Status banner strip */}
+                        {serverBuild.status === "artifact_ready" && (
+                            <div className="flex items-center gap-2 border-b border-emerald-800/40 bg-emerald-950/60 px-4 py-2 text-xs font-semibold text-emerald-300">
+                                <span className="material-symbols-outlined text-base text-emerald-400">check_circle</span>
+                                Build succeeded — .bin artifact is ready for download.
+                            </div>
+                        )}
+                        {serverBuild.status === "build_failed" && (
+                            <div className="flex items-start gap-2 border-b border-rose-800/40 bg-rose-950/60 px-4 py-2 text-xs font-semibold text-rose-300">
+                                <span className="material-symbols-outlined text-base text-rose-400">error</span>
+                                <span>
+                                    Build failed.
+                                    {serverBuild.errorMessage
+                                        ? ` ${serverBuild.errorMessage}`
+                                        : " Inspect the log below for details."}
+                                </span>
+                            </div>
+                        )}
+                        {(serverBuild.status === "building" || serverBuild.status === "queued") && (
+                            <div className="flex items-center gap-2 border-b border-amber-800/40 bg-amber-950/40 px-4 py-2 text-xs font-semibold text-amber-300">
+                                <span className="material-symbols-outlined animate-spin text-base text-amber-400">progress_activity</span>
+                                {serverBuild.status === "queued" ? "Build queued on server…" : "Build in progress — logs are streaming live…"}
+                            </div>
+                        )}
+
+                        <div
+                            ref={onLogPanelRef}
+                            className="h-[520px] overflow-y-auto p-4 font-mono text-sm bg-black/40"
+                        >
                             <pre className="whitespace-pre-wrap text-slate-300">
                                 {serverBuild.logs ||
                                     "Build logs will stream here after the server build starts.\n\nUse this console to inspect PlatformIO output, warnings, and generated artifact status."}

@@ -4,6 +4,10 @@ import type { ProjectSyncState } from "../types";
 interface Step1BoardProps {
     projectName: string;
     setProjectName: (val: string) => void;
+    wifiSsid: string;
+    setWifiSsid: (val: string) => void;
+    wifiPassword: string;
+    setWifiPassword: (val: string) => void;
     family: Esp32ChipFamily;
     setFamily: (val: Esp32ChipFamily) => void;
     setBoardId: (val: string) => void;
@@ -18,6 +22,10 @@ interface Step1BoardProps {
 export function Step1Board({
     projectName,
     setProjectName,
+    wifiSsid,
+    setWifiSsid,
+    wifiPassword,
+    setWifiPassword,
     family,
     setFamily,
     setBoardId,
@@ -47,6 +55,30 @@ export function Step1Board({
                     className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-lg text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
                     placeholder="e.g. Kitchen Relay Node"
                 />
+            </div>
+
+            <div className="flex flex-col gap-4 mb-10">
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                    Wi-Fi Configuration (Required for initial boot)
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <input
+                        type="text"
+                        name="wifiSsid"
+                        value={wifiSsid}
+                        onChange={(event) => setWifiSsid(event.target.value)}
+                        className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-lg text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                        placeholder="Wi-Fi SSID"
+                    />
+                    <input
+                        type="password"
+                        name="wifiPassword"
+                        value={wifiPassword}
+                        onChange={(event) => setWifiPassword(event.target.value)}
+                        className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-lg text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                        placeholder="Wi-Fi Password"
+                    />
+                </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">

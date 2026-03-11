@@ -67,6 +67,8 @@ interface SerializedDraft {
   pins?: PinMapping[];
   flashSource?: FlashSource;
   serialPort?: string;
+  wifiSsid?: string;
+  wifiPassword?: string;
 }
 
 interface DiyProjectRecord {
@@ -85,6 +87,8 @@ interface BuildJobRecord {
   status: BuildJobStatus;
   artifact_path?: string | null;
   log_path?: string | null;
+  finished_at?: string | null;
+  error_message?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -123,6 +127,8 @@ function createEmptyBuildState(): ServerBuildState {
     artifactName: null,
     configKey: null,
     updatedAt: null,
+    finishedAt: null,
+    errorMessage: null,
   };
 }
 
@@ -185,6 +191,8 @@ function createProjectPayload({
   serialPort,
   buildJobId,
   buildKey,
+  wifiSsid,
+  wifiPassword,
 }: {
   board: BoardProfile;
   projectName: string;
@@ -193,6 +201,8 @@ function createProjectPayload({
   serialPort: string;
   buildJobId: string | null;
   buildKey: string | null;
+  wifiSsid: string;
+  wifiPassword: string;
 }) {
   const config: Record<string, unknown> = {
     schema_version: 1,
@@ -207,6 +217,8 @@ function createProjectPayload({
       function: mapping.function ?? MODE_METADATA[mapping.mode].defaultFunction,
       label: mapping.label ?? `GPIO ${mapping.gpio_pin}`,
     })),
+    wifi_ssid: wifiSsid,
+    wifi_password: wifiPassword,
   };
 
   if (buildJobId && buildKey) {
@@ -253,6 +265,8 @@ export default function DIYBuilderPage() {
   const [currentStep, setCurrentStep] = useState(1);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState("Living Room Relay Node");
+  const [wifiSsid, setWifiSsid] = useState("");
+  const [wifiPassword, setWifiPassword] = useState("");
   const [family, setFamily] = useState<Esp32ChipFamily>("ESP32-C3");
   const [boardId, setBoardId] = useState(DEFAULT_BOARD_ID);
   const [pins, setPins] = useState<PinMapping[]>([]);
@@ -302,8 +316,10 @@ export default function DIYBuilderPage() {
         serialPort,
         buildJobId: activeBuildJobId,
         buildKey: activeBuildKey,
+        wifiSsid,
+        wifiPassword,
       }),
-    [activeBuildJobId, activeBuildKey, board, flashSource, pins, projectName, serialPort],
+    [activeBuildJobId, activeBuildKey, board, flashSource, pins, projectName, serialPort, wifiSsid, wifiPassword],
   );
   const projectPayloadJson = useMemo(() => JSON.stringify(projectPayload), [projectPayload]);
   const draftConfig = projectPayload.config as Record<string, unknown>;
@@ -315,6 +331,8 @@ export default function DIYBuilderPage() {
 
   const lastSavedPayloadRef = useRef<string | null>(null);
   const latestBuildUrlRef = useRef<string | null>(null);
+  const logPanelRef = useRef<HTMLDivElement | null>(null);
+  const sseJobIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (serverBuild.artifactUrl === latestBuildUrlRef.current) {
@@ -437,6 +455,7 @@ export default function DIYBuilderPage() {
       }
 
       const job = (await jobResponse.json()) as BuildJobRecord;
+      // Always fetch logs so Refresh works regardless of terminal state
       const [logs, artifact] = await Promise.all([
         fetchBuildLogs(job.id, token).catch(() => null),
         job.status === "artifact_ready"
@@ -454,10 +473,12 @@ export default function DIYBuilderPage() {
             job.status === "build_failed"
               ? previous.error || "Server build failed. Inspect the build log below."
               : previous.error,
-          artifactUrl: artifact?.url ?? null,
-          artifactName: artifact?.name ?? null,
+          artifactUrl: artifact?.url ?? previous.artifactUrl,
+          artifactName: artifact?.name ?? previous.artifactName,
           configKey: buildKey,
           updatedAt: job.updated_at,
+          finishedAt: job.finished_at ?? previous.finishedAt,
+          errorMessage: job.error_message ?? previous.errorMessage,
         }));
       });
     } catch (error) {
@@ -550,6 +571,8 @@ export default function DIYBuilderPage() {
         ? config.serial_port
         : DEFAULT_SERIAL_PORT,
     );
+    setWifiSsid(typeof config.wifi_ssid === "string" ? config.wifi_ssid : "");
+    setWifiPassword(typeof config.wifi_password === "string" ? config.wifi_password : "");
     setServerBuild({
       ...createEmptyBuildState(),
       jobId: savedBuildJobId,
@@ -571,6 +594,8 @@ export default function DIYBuilderPage() {
             : DEFAULT_SERIAL_PORT,
         buildJobId: savedBuildJobId,
         buildKey: savedBuildJobId ? savedBuildKey : null,
+        wifiSsid: typeof config.wifi_ssid === "string" ? config.wifi_ssid : "",
+        wifiPassword: typeof config.wifi_password === "string" ? config.wifi_password : "",
       }),
     );
     setProjectSyncState("saved");
@@ -634,6 +659,8 @@ export default function DIYBuilderPage() {
             : savedDraft.flashSource ?? "server",
         );
         setSerialPort(savedDraft.serialPort || DEFAULT_SERIAL_PORT);
+        setWifiSsid(savedDraft.wifiSsid || "");
+        setWifiPassword(savedDraft.wifiPassword || "");
       }
 
       const token = getToken();
@@ -728,9 +755,11 @@ export default function DIYBuilderPage() {
         pins,
         flashSource,
         serialPort,
+        wifiSsid,
+        wifiPassword,
       } satisfies SerializedDraft),
     );
-  }, [boardId, draftLoaded, family, flashSource, pins, projectId, projectName, serialPort]);
+  }, [boardId, draftLoaded, family, flashSource, pins, projectId, projectName, serialPort, wifiSsid, wifiPassword]);
 
   useEffect(() => {
     if (!draftLoaded || !projectHydrated) {
@@ -818,6 +847,92 @@ export default function DIYBuilderPage() {
       window.clearInterval(intervalId);
     };
   }, [currentBuildConfigKey, refreshBuildJob, serverBuild.configKey, serverBuild.jobId, serverBuild.status]);
+
+  // SSE log-streaming: open an EventSource during active builds for live log updates.
+  // The existing status-poll remains the authority for status, finishedAt, errorMessage.
+  useEffect(() => {
+    const jobId = serverBuild.jobId;
+    const buildStatus = serverBuild.status;
+
+    if (
+      !jobId ||
+      buildStatus === "idle" ||
+      TERMINAL_BUILD_STATES.has(buildStatus as BuildJobStatus) ||
+      !POLLING_BUILD_STATES.has(buildStatus as BuildJobStatus)
+    ) {
+      return;
+    }
+
+    // Avoid reopening the same stream if jobId hasn't changed
+    if (sseJobIdRef.current === jobId) {
+      return;
+    }
+
+    const token = getToken();
+    if (!token) {
+      return;
+    }
+
+    sseJobIdRef.current = jobId;
+    const url = `${API_URL}/diy/build/${jobId}/logs/stream?token=${encodeURIComponent(token)}`;
+    // EventSource doesn't support custom headers; pass token as query param.
+    // The backend currently validates via Depends(get_current_user) which reads the
+    // Authorization header — so we fall back to polling for logs in that case.
+    // We use fetch-based streaming via ReadableStream instead:
+    let cancelled = false;
+
+    const streamLogs = async () => {
+      try {
+        const response = await fetch(`${API_URL}/diy/build/${jobId}/logs/stream`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        });
+
+        if (!response.ok || !response.body) {
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (!cancelled) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const text = line.slice(6);
+              startTransition(() => {
+                setServerBuild((prev) => ({ ...prev, logs: prev.logs + text + "\n" }));
+              });
+              // Auto-scroll to bottom
+              if (logPanelRef.current) {
+                logPanelRef.current.scrollTop = logPanelRef.current.scrollHeight;
+              }
+            } else if (line.startsWith("event: done")) {
+              cancelled = true;
+              break;
+            }
+          }
+        }
+        reader.cancel();
+      } catch {
+        // Network/SSE failure — status polling already handles recovery
+      }
+    };
+
+    void streamLogs();
+
+    return () => {
+      cancelled = true;
+      sseJobIdRef.current = null;
+    };
+  }, [serverBuild.jobId, serverBuild.status]);
 
   useEffect(() => {
     if (!draftLoaded || !projectHydrated || !serialPort.trim()) {
@@ -924,6 +1039,8 @@ export default function DIYBuilderPage() {
             serialPort,
             buildJobId: job.id,
             buildKey: currentBuildConfigKey,
+            wifiSsid,
+            wifiPassword,
           }),
         ),
       );
@@ -1169,6 +1286,10 @@ export default function DIYBuilderPage() {
           <Step1Board
             projectName={projectName}
             setProjectName={setProjectName}
+            wifiSsid={wifiSsid}
+            setWifiSsid={setWifiSsid}
+            wifiPassword={wifiPassword}
+            setWifiPassword={setWifiPassword}
             family={family}
             setFamily={setFamily}
             board={board}
@@ -1244,6 +1365,7 @@ export default function DIYBuilderPage() {
             onAcquireSerialLock={acquireSerialLock}
             onReleaseSerialLock={releaseSerialLock}
             onRefreshSerialStatus={() => refreshSerialStatus()}
+            onLogPanelRef={(el) => { logPanelRef.current = el; }}
             onBack={() => setCurrentStep(3)}
           />
         )}
