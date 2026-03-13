@@ -4,6 +4,10 @@ import { useState, useEffect } from "react";
 import { initializeServer, fetchSystemStatus } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 
+function getErrorMessage(error: unknown, fallback: string) {
+    return error instanceof Error ? error.message : fallback;
+}
+
 export default function SetupPage() {
     const [username, setUsername] = useState("");
     const [fullname, setFullname] = useState("");
@@ -29,9 +33,9 @@ export default function SetupPage() {
                         setIsCheckingStatus(false);
                     }
                 }
-            } catch (err: any) {
+            } catch (error: unknown) {
                 if (mounted) {
-                    setStatusError(err.message || "Failed to connect to the backend server.");
+                    setStatusError(getErrorMessage(error, "Failed to connect to the backend server."));
                     setIsCheckingStatus(false);
                 }
             }
@@ -55,8 +59,8 @@ export default function SetupPage() {
             });
             // Success, send them to login
             router.push("/login");
-        } catch (err: any) {
-            setError(err.message || "Failed to initialize server");
+        } catch (error: unknown) {
+            setError(getErrorMessage(error, "Failed to initialize server"));
         } finally {
             setIsLoading(false);
         }

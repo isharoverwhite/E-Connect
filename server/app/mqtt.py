@@ -65,14 +65,38 @@ class MQTTClientManager:
             if len(topic_parts) >= 5 and topic_parts[4] == "state":
                 device_id = topic_parts[3]
                 payload_str = msg.payload.decode("utf-8")
+                payload_json = None
+                try:
+                    payload_json = json.loads(payload_str)
+                except json.JSONDecodeError:
+                    payload_json = None
                 
                 # Insert state change into DeviceHistory
                 db = SessionLocal()
                 try:
                     device = db.query(Device).filter(Device.device_id == device_id).first()
                     if device:
+                        observed_at = datetime.utcnow()
+                        was_offline = device.conn_status != ConnStatus.online
                         device.conn_status = ConnStatus.online
-                        device.last_seen = datetime.utcnow()
+                        device.last_seen = observed_at
+                        if isinstance(payload_json, dict):
+                            reported_ip = payload_json.get("ip_address")
+                            if isinstance(reported_ip, str) and reported_ip.strip():
+                                device.ip_address = reported_ip.strip()
+                        if was_offline:
+                            db.add(
+                                DeviceHistory(
+                                    device_id=device_id,
+                                    event_type=EventType.online,
+                                    payload=json.dumps(
+                                        {
+                                            "reason": "mqtt_state",
+                                            "reported_at": observed_at.isoformat(),
+                                        }
+                                    ),
+                                )
+                            )
 
                     history = DeviceHistory(
                         device_id=device_id,

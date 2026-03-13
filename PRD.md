@@ -42,6 +42,15 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 4. **No fake interactivity:** UI chỉ hiển thị trạng thái có backend/persistence thật.
 5. **Traceable lifecycle:** device/automation/build/flash phải có state transition rõ ràng.
 
+## 2.2 Temporary QA Exception (Hiệu lực từ 2026-03-13)
+
+- Để phục vụ kiểm thử ngắn hạn cho FR-08, hệ thống tạm thời seed một tài khoản admin cố định:
+  - `username`: `ryzen30xx`
+  - `password`: `[REDACTED_PASSWORD]`
+- Tài khoản này phải ở trạng thái `approved`, xuất hiện trong cùng household đang hoạt động, và dùng được để kiểm thử menu quản lý người dùng trong `Settings`.
+- `Settings` phải cung cấp menu quản lý user cho admin, bao gồm `create`, `approve`, và `revoke` user với trạng thái bền vững ở backend.
+- Đây là ngoại lệ tạm thời so với tinh thần của `NFR-05` về hardcoded production secrets, chỉ chấp nhận cho môi trường local/dev hiện tại và phải được gỡ trước release production.
+
 ---
 
 ## 3. Scope Baseline

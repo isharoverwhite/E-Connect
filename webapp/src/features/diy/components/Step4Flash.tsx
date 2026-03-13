@@ -27,6 +27,7 @@ export interface Step4FlashProps {
     projectSyncMessage: string;
     serverBuild: ServerBuildState;
     buildBusy: boolean;
+    hasActiveBuild: boolean;
     onTriggerServerBuild: () => Promise<void>;
     onRefreshBuild: () => Promise<void>;
     onDownloadArtifact: () => void;
@@ -151,6 +152,7 @@ export function Step4Flash({
     projectSyncMessage,
     serverBuild,
     buildBusy,
+    hasActiveBuild,
     onTriggerServerBuild,
     onRefreshBuild,
     onDownloadArtifact,
@@ -174,6 +176,11 @@ export function Step4Flash({
         serverBuildStatus: serverBuild.status,
         serialLocked,
     });
+    const buildActionLabel = buildBusy
+        ? "Queueing..."
+        : hasActiveBuild
+            ? "Build in Progress"
+            : "Build on Server";
 
     return (
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-8">
@@ -295,13 +302,13 @@ export function Step4Flash({
                                     <div className="flex flex-wrap gap-2">
                                         <button
                                             onClick={onTriggerServerBuild}
-                                            disabled={buildBusy || pinsLength === 0 || projectSyncState === "saving"}
+                                            disabled={buildBusy || hasActiveBuild || pinsLength === 0 || projectSyncState === "saving"}
                                             className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                                         >
                                             <span className="material-symbols-outlined text-base">
-                                                {buildBusy ? "autorenew" : "construction"}
+                                                {buildBusy || hasActiveBuild ? "autorenew" : "construction"}
                                             </span>
-                                            {buildBusy ? "Queueing..." : "Build on Server"}
+                                            {buildActionLabel}
                                         </button>
                                         <button
                                             onClick={onRefreshBuild}

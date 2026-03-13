@@ -1,84 +1,118 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <HTTPClient.h>
-#include <Preferences.h>
 #include <PubSubClient.h>
-#include <WiFi.h>
+#include <Wire.h>
 
+#if defined(ESP8266)
+#include <ESP8266HTTPClient.h>
+#include <ESP8266WiFi.h>
+#else
+#include <HTTPClient.h>
+#include <WiFi.h>
+#endif
+
+#if __has_include("generated_firmware_config.h")
+#include "generated_firmware_config.h"
+#endif
 #include "secrets.h"
 
-// Hardware configuration
-#ifndef ECONNECT_BUILTIN_LED_PIN
-#ifdef LED_BUILTIN
-#define ECONNECT_BUILTIN_LED_PIN LED_BUILTIN
-#else
-#define ECONNECT_BUILTIN_LED_PIN 2
-#endif
-#endif
+#ifndef ECONNECT_HAS_PIN_CONFIGS
+struct EConnectPinConfig {
+  int gpio;
+  const char *mode;
+  const char *function_name;
+  const char *label;
+  int active_level;
+};
 
-#ifndef ECONNECT_LED_ACTIVE_HIGH
-#define ECONNECT_LED_ACTIVE_HIGH 1
+static const EConnectPinConfig ECONNECT_PIN_CONFIGS[] = {
+    {ECONNECT_BUILTIN_LED_PIN, "OUTPUT", "builtin_led", "Built-in LED", 1},
+};
 #endif
 
 constexpr unsigned long HEARTBEAT_INTERVAL_MS = 30000;
+constexpr unsigned long HANDSHAKE_RETRY_DELAY_MS = 5000;
+constexpr int WIFI_RETRY_LIMIT = 40;
 
-// Global objects
-Preferences preferences;
+struct PinRuntimeState {
+  int gpio;
+  const char *mode;
+  const char *functionName;
+  const char *label;
+  int activeLevel;
+  int value;
+  int brightness;
+};
+
+constexpr size_t PIN_CONFIG_COUNT =
+    sizeof(ECONNECT_PIN_CONFIGS) / sizeof(ECONNECT_PIN_CONFIGS[0]);
+constexpr size_t PIN_STATE_CAPACITY = PIN_CONFIG_COUNT > 0 ? PIN_CONFIG_COUNT : 1;
+
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
+PinRuntimeState pinStates[PIN_STATE_CAPACITY];
 
-// Device state
-String deviceId = "";
-
-// State variables
-bool pinState = false;
+String deviceId = ECONNECT_DEVICE_ID;
 unsigned long lastHeartbeatAt = 0;
+bool securePairingVerified = false;
 
-// Function prototypes
-void setupWiFi();
-void apiHandshake();
+bool connectToWiFi();
+bool performSecureHandshake();
 void setupMQTT();
-void mqttCallback(char *topic, byte *payload, unsigned int length);
 void reconnectMQTT();
+void mqttCallback(char *topic, byte *payload, unsigned int length);
 void publishState(bool applied);
-void setupBuiltinLed();
-void applyBuiltinLed(bool nextState);
-bool isBuiltinLedCommand(int pin);
+void initializePinStates();
+void initializeI2CBus();
+int findPinIndex(int gpio);
+bool modeEquals(const char *left, const char *right);
+bool isOutputMode(const char *mode);
+bool isPwmMode(const char *mode);
+bool isReadableMode(const char *mode);
+int readRuntimeValue(PinRuntimeState &pinState);
+int readRuntimeBrightness(PinRuntimeState &pinState);
+bool applyCommandToPin(PinRuntimeState &pinState, int value, int brightness);
+int resolvePhysicalLevel(const PinRuntimeState &pinState, int logicalValue);
 
 void setup() {
   Serial.begin(115200);
-  delay(2000); // Give serial monitor time to connect
+  delay(1500);
+  Serial.println("\n--- Starting E-Connect Server-Built Firmware ---");
 
-  Serial.println("\n--- Starting EConnect ESP32-C3 Firmware ---");
+  initializePinStates();
+  initializeI2CBus();
 
-  // Setup hardware pin
-  setupBuiltinLed();
-  applyBuiltinLed(pinState);
-
-  // Setup Wi-Fi
-  setupWiFi();
-
-  // Load preferences
-  preferences.begin("econnect", false);
-  deviceId = preferences.getString("device_id", "");
-
-  if (deviceId == "") {
-    Serial.println("No device_id found in NVS. Handshaking for a new one...");
-  } else {
-    Serial.printf("Found existing device_id in NVS: %s\n", deviceId.c_str());
+  while (!connectToWiFi()) {
+    Serial.println("Wi-Fi provisioning failed. Retrying...");
+    delay(HANDSHAKE_RETRY_DELAY_MS);
   }
 
-  // Perform HTTP handshake
-  apiHandshake();
+  while (!performSecureHandshake()) {
+    Serial.println("Secure handshake failed. Retrying...");
+    delay(HANDSHAKE_RETRY_DELAY_MS);
+  }
 
-  // Setup MQTT
   setupMQTT();
 }
 
 void loop() {
+  if (!securePairingVerified) {
+    securePairingVerified = performSecureHandshake();
+    delay(HANDSHAKE_RETRY_DELAY_MS);
+    return;
+  }
+
+  if (WiFi.status() != WL_CONNECTED) {
+    if (!connectToWiFi()) {
+      delay(HANDSHAKE_RETRY_DELAY_MS);
+      return;
+    }
+  }
+
   if (!mqttClient.connected()) {
     reconnectMQTT();
   }
+
   mqttClient.loop();
 
   if (millis() - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MS) {
@@ -86,177 +120,155 @@ void loop() {
     lastHeartbeatAt = millis();
   }
 
-  // Small delay to prevent tight looping
   delay(10);
 }
 
-void setupBuiltinLed() {
-#if defined(RGB_BUILTIN)
-  neopixelWrite(RGB_BUILTIN, 0, 0, 0);
-#else
-  pinMode(ECONNECT_BUILTIN_LED_PIN, OUTPUT);
-#endif
-}
-
-void applyBuiltinLed(bool nextState) {
-#if defined(RGB_BUILTIN)
-  if (nextState) {
-    neopixelWrite(RGB_BUILTIN, 0, 32, 0);
-  } else {
-    neopixelWrite(RGB_BUILTIN, 0, 0, 0);
+bool connectToWiFi() {
+  if (strlen(WIFI_SSID) == 0) {
+    Serial.println("BLOCKER: WIFI_SSID is empty. Build firmware from the server before flashing.");
+    return false;
   }
-#else
-  const int activeLevel = ECONNECT_LED_ACTIVE_HIGH ? HIGH : LOW;
-  const int inactiveLevel = ECONNECT_LED_ACTIVE_HIGH ? LOW : HIGH;
-  digitalWrite(ECONNECT_BUILTIN_LED_PIN, nextState ? activeLevel : inactiveLevel);
-#endif
-}
 
-bool isBuiltinLedCommand(int pin) {
-  return pin == ECONNECT_BUILTIN_LED_PIN;
-}
-
-void setupWiFi() {
   Serial.printf("Connecting to Wi-Fi SSID: %s ", WIFI_SSID);
-
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
   int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+  while (WiFi.status() != WL_CONNECTED && attempts < WIFI_RETRY_LIMIT) {
     delay(500);
     Serial.print(".");
     attempts++;
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println(" SUCCEEDED!");
+    Serial.println(" connected");
     Serial.printf("IP Address: %s\n", WiFi.localIP().toString().c_str());
-  } else {
-    Serial.println(" FAILED!");
-    Serial.println("BLOCKER: Could not connect to Wi-Fi. Halting.");
-    while (true) {
-      delay(1000);
-    }
+    return true;
   }
+
+  Serial.println(" failed");
+  return false;
 }
 
-void apiHandshake() {
-  if (WiFi.status() != WL_CONNECTED)
-    return;
+bool performSecureHandshake() {
+  if (WiFi.status() != WL_CONNECTED) {
+    return false;
+  }
+
+  if (strlen(API_BASE_URL) == 0 || strlen(ECONNECT_PROJECT_ID) == 0 ||
+      strlen(ECONNECT_SECRET_KEY) == 0) {
+    Serial.println("BLOCKER: Missing secure pairing metadata in firmware.");
+    return false;
+  }
 
   HTTPClient http;
   String url = String(API_BASE_URL) + "/config";
+  WiFiClient httpTransport;
 
-  Serial.printf("Starting API handshake at: %s\n", url.c_str());
+  Serial.printf("Starting secure handshake at: %s\n", url.c_str());
 
-  // Ensure server is reachable first
+#if defined(ESP8266)
+  http.begin(httpTransport, url);
+#else
   http.begin(url);
-  http.setTimeout(5000); // 5 seconds timeout
+#endif
+  http.setTimeout(5000);
+  http.addHeader("Content-Type", "application/json");
 
-  // Prepare JSON payload
-  StaticJsonDocument<512> doc;
-  if (deviceId != "") {
-    doc["device_id"] = deviceId;
-  }
+  StaticJsonDocument<3072> doc;
+  doc["device_id"] = deviceId;
+  doc["project_id"] = ECONNECT_PROJECT_ID;
+  doc["secret_key"] = ECONNECT_SECRET_KEY;
   doc["mac_address"] = WiFi.macAddress();
-  doc["name"] = "ESP32 Built-in LED";
+  doc["ip_address"] = WiFi.localIP().toString();
+  doc["name"] = ECONNECT_DEVICE_NAME;
   doc["mode"] = "library";
-  doc["firmware_version"] = "1.0.0";
+  doc["firmware_version"] = ECONNECT_FIRMWARE_VERSION;
 
-  // Capability advertisement for dashboard auto-provisioning
   JsonArray pins = doc.createNestedArray("pins");
-  JsonObject pinObj = pins.createNestedObject();
-  pinObj["gpio_pin"] = ECONNECT_BUILTIN_LED_PIN;
-  pinObj["mode"] = "OUTPUT";
-  pinObj["function"] = "builtin_led";
-  pinObj["label"] = "Built-in LED";
+  for (size_t index = 0; index < PIN_CONFIG_COUNT; index++) {
+    JsonObject pin = pins.createNestedObject();
+    pin["gpio_pin"] = ECONNECT_PIN_CONFIGS[index].gpio;
+    pin["mode"] = ECONNECT_PIN_CONFIGS[index].mode;
+    pin["function"] = ECONNECT_PIN_CONFIGS[index].function_name;
+    pin["label"] = ECONNECT_PIN_CONFIGS[index].label;
+    if (modeEquals(ECONNECT_PIN_CONFIGS[index].mode, "OUTPUT")) {
+      JsonObject extraParams = pin.createNestedObject("extra_params");
+      extraParams["active_level"] = ECONNECT_PIN_CONFIGS[index].active_level;
+    }
+  }
 
   String requestBody;
   serializeJson(doc, requestBody);
 
-  http.addHeader("Content-Type", "application/json");
-
-  int httpCode = http.POST(requestBody);
-
-  if (httpCode > 0) {
-    Serial.printf("API Handshake HTTP Code: %d\n", httpCode);
-
-    if (httpCode == 200) {
-      String responseBody = http.getString();
-      Serial.println("Response: " + responseBody);
-
-      DynamicJsonDocument responseDoc(1024);
-      DeserializationError error = deserializeJson(responseDoc, responseBody);
-
-      if (!error) {
-        String newDeviceId = responseDoc["device_id"].as<String>();
-        if (newDeviceId != "" && newDeviceId != deviceId) {
-          deviceId = newDeviceId;
-          preferences.putString("device_id", deviceId);
-          Serial.printf("Saved new device_id to NVS: %s\n", deviceId.c_str());
-        }
-        Serial.println("API Handshake completed successfully.");
-      } else {
-        Serial.println("Failed to parse JSON response");
-      }
-    } else {
-      String responseBody = http.getString();
-      Serial.printf("API Error Response: %s\n", responseBody.c_str());
-      Serial.println(
-          "BLOCKER: API Handshake failed due to HTTP status. Halting.");
-      while (true) {
-        delay(1000);
-      }
-    }
-  } else {
-    Serial.printf("API Handshake Failed, error: %s\n",
-                  http.errorToString(httpCode).c_str());
-    Serial.println(
-        "BLOCKER: API host unreachable. Check API_BASE_URL. Halting.");
-    while (true) {
-      delay(1000);
-    }
+  const int httpCode = http.POST(requestBody);
+  if (httpCode <= 0) {
+    Serial.printf("Secure handshake failed: %s\n", http.errorToString(httpCode).c_str());
+    http.end();
+    return false;
   }
 
+  Serial.printf("Secure handshake HTTP code: %d\n", httpCode);
+  if (httpCode != 200) {
+    Serial.println(http.getString());
+    http.end();
+    return false;
+  }
+
+  DynamicJsonDocument responseDoc(2048);
+  const String responseBody = http.getString();
+  const DeserializationError error = deserializeJson(responseDoc, responseBody);
   http.end();
+
+  if (error) {
+    Serial.println("Failed to parse secure handshake response.");
+    return false;
+  }
+
+  const bool verified = responseDoc["secret_verified"] | false;
+  if (!verified) {
+    Serial.println("Server rejected secure handshake: secret mismatch.");
+    return false;
+  }
+
+  const String assignedDeviceId = responseDoc["device_id"] | deviceId;
+  if (assignedDeviceId.length() > 0) {
+    deviceId = assignedDeviceId;
+  }
+
+  securePairingVerified = true;
+  Serial.printf("Secure handshake complete. Device id: %s\n", deviceId.c_str());
+  return true;
 }
 
 void setupMQTT() {
   mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
   mqttClient.setCallback(mqttCallback);
+  mqttClient.setBufferSize(1024);
 }
 
 void reconnectMQTT() {
-  // Loop until we're reconnected
   while (!mqttClient.connected()) {
-    Serial.print("Attempting MQTT connection...");
-
-    // Create a random client ID
-    String clientId = "ESP32C3Client-";
+    String clientId = "econnect-";
+    clientId += deviceId;
+    clientId += "-";
     clientId += String(random(0xffff), HEX);
 
-    // Attempt to connect
+    Serial.print("Attempting MQTT connection...");
     if (mqttClient.connect(clientId.c_str())) {
-      Serial.println("connected");
-
-      // Subscribe to command topic
-      String commandTopic = String("econnect/") + MQTT_NAMESPACE + "/device/" +
-                            deviceId + "/command";
+      Serial.println(" connected");
+      const String commandTopic = String("econnect/") + MQTT_NAMESPACE + "/device/" +
+                                  deviceId + "/command";
       mqttClient.subscribe(commandTopic.c_str());
       Serial.printf("Subscribed to: %s\n", commandTopic.c_str());
-
-      // Publish initial state
       publishState(true);
       lastHeartbeatAt = millis();
-
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(mqttClient.state());
-      Serial.println(" try again in 5 seconds");
-
-      delay(5000);
+      return;
     }
+
+    Serial.print(" failed, rc=");
+    Serial.println(mqttClient.state());
+    delay(HANDSHAKE_RETRY_DELAY_MS);
   }
 }
 
@@ -264,61 +276,219 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
   Serial.print("MQTT message received on topic: ");
   Serial.println(topic);
 
-  // Convert payload to String
   String message = "";
-  for (int i = 0; i < length; i++) {
-    message += (char)payload[i];
+  for (unsigned int index = 0; index < length; index++) {
+    message += static_cast<char>(payload[index]);
   }
 
-  Serial.print("Payload: ");
-  Serial.println(message);
-
-  // Parse command JSON
-  StaticJsonDocument<256> doc;
-  DeserializationError error = deserializeJson(doc, message);
-
+  StaticJsonDocument<512> doc;
+  const DeserializationError error = deserializeJson(doc, message);
   if (error) {
-    Serial.println("Failed to parse command JSON");
+    Serial.println("Failed to parse command JSON.");
     return;
   }
 
-  String kind = doc["kind"] | "";
+  if (String(doc["kind"] | "") != "action") {
+    return;
+  }
 
-  if (kind == "action") {
-    int pin = doc["pin"] | -1;
-    int value = doc["value"] | -1;
+  const int targetPin = doc["pin"] | -1;
+  const int value = doc["value"] | -1;
+  const int brightness = doc["brightness"] | -1;
 
-    if (isBuiltinLedCommand(pin) && value != -1) {
-      Serial.printf("Applying command to GPIO %d: value %d\n", pin, value);
+  const int pinIndex = findPinIndex(targetPin);
+  if (pinIndex < 0) {
+    Serial.printf("Ignoring command for unmapped GPIO %d\n", targetPin);
+    publishState(false);
+    return;
+  }
 
-      pinState = (value == 1);
-      applyBuiltinLed(pinState);
+  const bool applied = applyCommandToPin(pinStates[pinIndex], value, brightness);
+  publishState(applied);
+}
 
-      // Publish state back
-      publishState(true);
-    } else {
-      Serial.println("Command pin does not match the built-in LED pin, ignoring hardware change.");
+void initializePinStates() {
+  for (size_t index = 0; index < PIN_CONFIG_COUNT; index++) {
+    pinStates[index].gpio = ECONNECT_PIN_CONFIGS[index].gpio;
+    pinStates[index].mode = ECONNECT_PIN_CONFIGS[index].mode;
+    pinStates[index].functionName = ECONNECT_PIN_CONFIGS[index].function_name;
+    pinStates[index].label = ECONNECT_PIN_CONFIGS[index].label;
+    pinStates[index].activeLevel = ECONNECT_PIN_CONFIGS[index].active_level == 0 ? 0 : 1;
+    pinStates[index].value = 0;
+    pinStates[index].brightness = 0;
+
+    if (isOutputMode(pinStates[index].mode) || isPwmMode(pinStates[index].mode)) {
+      pinMode(pinStates[index].gpio, OUTPUT);
+      digitalWrite(
+          pinStates[index].gpio,
+          resolvePhysicalLevel(pinStates[index], 0) == 1 ? HIGH : LOW);
+    } else if (isReadableMode(pinStates[index].mode)) {
+      pinMode(pinStates[index].gpio, INPUT);
     }
   }
 }
 
+void initializeI2CBus() {
+  int sdaPin = -1;
+  int sclPin = -1;
+
+  for (size_t index = 0; index < PIN_CONFIG_COUNT; index++) {
+    if (!modeEquals(pinStates[index].mode, "I2C")) {
+      continue;
+    }
+
+    if (sdaPin < 0) {
+      sdaPin = pinStates[index].gpio;
+    } else if (sclPin < 0) {
+      sclPin = pinStates[index].gpio;
+      break;
+    }
+  }
+
+  if (sdaPin >= 0 && sclPin >= 0) {
+    Wire.begin(sdaPin, sclPin);
+    Serial.printf("Initialized I2C bus on SDA=%d SCL=%d\n", sdaPin, sclPin);
+  }
+}
+
+int findPinIndex(int gpio) {
+  for (size_t index = 0; index < PIN_CONFIG_COUNT; index++) {
+    if (pinStates[index].gpio == gpio) {
+      return static_cast<int>(index);
+    }
+  }
+
+  return -1;
+}
+
+bool modeEquals(const char *left, const char *right) {
+  return strcmp(left, right) == 0;
+}
+
+bool isOutputMode(const char *mode) {
+  return modeEquals(mode, "OUTPUT");
+}
+
+bool isPwmMode(const char *mode) {
+  return modeEquals(mode, "PWM");
+}
+
+bool isReadableMode(const char *mode) {
+  return modeEquals(mode, "INPUT") || modeEquals(mode, "ADC") ||
+         modeEquals(mode, "I2C");
+}
+
+int readRuntimeValue(PinRuntimeState &pinState) {
+  if (isPwmMode(pinState.mode)) {
+    pinState.value = pinState.brightness > 0 ? 1 : 0;
+    return pinState.value;
+  }
+
+  if (isOutputMode(pinState.mode)) {
+    return pinState.value;
+  }
+
+  if (modeEquals(pinState.mode, "ADC")) {
+    pinState.value = analogRead(pinState.gpio);
+    return pinState.value;
+  }
+
+  if (modeEquals(pinState.mode, "INPUT") || modeEquals(pinState.mode, "I2C")) {
+    pinState.value = digitalRead(pinState.gpio);
+    return pinState.value;
+  }
+
+  return pinState.value;
+}
+
+int readRuntimeBrightness(PinRuntimeState &pinState) {
+  return isPwmMode(pinState.mode) ? pinState.brightness : 0;
+}
+
+bool applyCommandToPin(PinRuntimeState &pinState, int value, int brightness) {
+  if (isOutputMode(pinState.mode) && value != -1) {
+    pinState.value = value == 0 ? 0 : 1;
+    digitalWrite(
+        pinState.gpio,
+        resolvePhysicalLevel(pinState, pinState.value) == 1 ? HIGH : LOW);
+    return true;
+  }
+
+  if (isPwmMode(pinState.mode)) {
+    int nextBrightness = brightness;
+    if (nextBrightness < 0 && value != -1) {
+      nextBrightness = value == 0 ? 0 : 100;
+    }
+
+    if (nextBrightness < 0) {
+      return false;
+    }
+
+    nextBrightness = constrain(nextBrightness, 0, 100);
+    pinState.brightness = nextBrightness;
+    pinState.value = nextBrightness > 0 ? 1 : 0;
+    analogWrite(pinState.gpio, map(nextBrightness, 0, 100, 0, 255));
+    return true;
+  }
+
+  return false;
+}
+
+int resolvePhysicalLevel(const PinRuntimeState &pinState, int logicalValue) {
+  const int normalizedLogical = logicalValue == 0 ? 0 : 1;
+  const int activeLevel = pinState.activeLevel == 0 ? 0 : 1;
+  return normalizedLogical == 1 ? activeLevel : (activeLevel == 1 ? 0 : 1);
+}
+
 void publishState(bool applied) {
-  String stateTopic =
+  if (!mqttClient.connected()) {
+    return;
+  }
+
+  const String stateTopic =
       String("econnect/") + MQTT_NAMESPACE + "/device/" + deviceId + "/state";
 
-  StaticJsonDocument<128> doc;
+  StaticJsonDocument<3072> doc;
   doc["kind"] = "state";
-  doc["pin"] = ECONNECT_BUILTIN_LED_PIN;
-  doc["value"] = pinState ? 1 : 0;
+  doc["device_id"] = deviceId;
   doc["applied"] = applied;
+  doc["firmware_version"] = ECONNECT_FIRMWARE_VERSION;
+  doc["ip_address"] = WiFi.localIP().toString();
+
+  JsonArray pins = doc.createNestedArray("pins");
+  for (size_t index = 0; index < PIN_CONFIG_COUNT; index++) {
+    PinRuntimeState &pinState = pinStates[index];
+    JsonObject pin = pins.createNestedObject();
+    pin["pin"] = pinState.gpio;
+    pin["mode"] = pinState.mode;
+    pin["label"] = pinState.label;
+    pin["value"] = readRuntimeValue(pinState);
+    if (isOutputMode(pinState.mode)) {
+      pin["active_level"] = pinState.activeLevel;
+    }
+
+    const int brightness = readRuntimeBrightness(pinState);
+    if (brightness > 0 || isPwmMode(pinState.mode)) {
+      pin["brightness"] = brightness;
+    }
+  }
+
+  if (PIN_CONFIG_COUNT == 1) {
+    PinRuntimeState &pinState = pinStates[0];
+    doc["pin"] = pinState.gpio;
+    doc["value"] = readRuntimeValue(pinState);
+    if (isPwmMode(pinState.mode)) {
+      doc["brightness"] = readRuntimeBrightness(pinState);
+    }
+  }
 
   String payload;
   serializeJson(doc, payload);
 
   if (mqttClient.publish(stateTopic.c_str(), payload.c_str())) {
-    Serial.println("Successfully published state: " + payload);
-    Serial.println("Topic: " + stateTopic);
+    Serial.println("Published state payload:");
+    Serial.println(payload);
   } else {
-    Serial.println("Failed to publish state");
+    Serial.println("Failed to publish state payload.");
   }
 }

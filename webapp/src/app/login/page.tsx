@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { loginUser, setToken } from "@/lib/auth";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
@@ -29,8 +28,8 @@ export default function LoginPage() {
             setToken(data.access_token);
             await refreshProfile();
             router.push("/");
-        } catch (err: any) {
-            setError(err.message || "Failed to login");
+        } catch (error: unknown) {
+            setError(error instanceof Error ? error.message : "Failed to login");
         } finally {
             setIsLoading(false);
         }
