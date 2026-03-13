@@ -49,6 +49,10 @@ export function Step2Pins({
             mode,
             function: existing?.function || "",
             label: newLabel,
+            extra_params:
+                mode === "OUTPUT"
+                    ? { active_level: existing?.extra_params?.active_level ?? 1 }
+                    : null,
         };
 
         setPins((previous) =>
@@ -64,6 +68,27 @@ export function Step2Pins({
             if (!existing) return previous;
             const newMapping = { ...existing, function: functionName };
             return [...previous.filter((mapping) => mapping.gpio_pin !== pin.gpio), newMapping].sort(
+                (left, right) => left.gpio_pin - right.gpio_pin,
+            );
+        });
+    };
+
+    const handleActiveLevelChange = (pin: BoardPin, activeLevel: 0 | 1) => {
+        setPins((previous) => {
+            const existing = previous.find((mapping) => mapping.gpio_pin === pin.gpio);
+            if (!existing) {
+                return previous;
+            }
+
+            const nextMapping: PinMapping = {
+                ...existing,
+                extra_params: {
+                    ...(existing.extra_params ?? {}),
+                    active_level: activeLevel,
+                },
+            };
+
+            return [...previous.filter((mapping) => mapping.gpio_pin !== pin.gpio), nextMapping].sort(
                 (left, right) => left.gpio_pin - right.gpio_pin,
             );
         });
@@ -341,6 +366,45 @@ export function Step2Pins({
                                                 </div>
                                             )}
                                         </div>
+
+                                        {assignment?.mode === "OUTPUT" && (
+                                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-800 dark:bg-slate-900/60">
+                                                <div className="flex items-center justify-between gap-3">
+                                                    <div>
+                                                        <p className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                                                            ON level
+                                                        </p>
+                                                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                                            Choose whether logical ON drives the GPIO to 1 or 0 for reverse relays.
+                                                        </p>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        {[1, 0].map((level) => {
+                                                            const activeLevel = assignment.extra_params?.active_level ?? 1;
+                                                            const isActive = activeLevel === level;
+                                                            const label = level === 1 ? "ON = 1" : "ON = 0";
+                                                            return (
+                                                                <button
+                                                                    key={level}
+                                                                    type="button"
+                                                                    onClick={(event) => {
+                                                                        event.stopPropagation();
+                                                                        handleActiveLevelChange(pin, level as 0 | 1);
+                                                                    }}
+                                                                    className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${
+                                                                        isActive
+                                                                            ? "bg-primary text-white shadow-sm"
+                                                                            : "bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                                                                    }`}
+                                                                >
+                                                                    {label}
+                                                                </button>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 );
                             })}

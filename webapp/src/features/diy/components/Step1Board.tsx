@@ -1,5 +1,6 @@
 import { BOARD_PROFILES, BOARD_FAMILIES, type Esp32ChipFamily, type BoardProfile } from "../board-profiles";
 import type { ProjectSyncState } from "../types";
+import type { RoomRecord } from "@/lib/rooms";
 
 interface Step1BoardProps {
     projectName: string;
@@ -17,6 +18,15 @@ interface Step1BoardProps {
     onSaveDraft: () => Promise<void>;
     projectSyncState: ProjectSyncState;
     projectSyncMessage: string;
+    rooms: RoomRecord[];
+    selectedRoomId: number | null;
+    setSelectedRoomId: (value: number | null) => void;
+    newRoomName: string;
+    setNewRoomName: (value: string) => void;
+    roomsLoading: boolean;
+    roomError: string;
+    creatingRoom: boolean;
+    onCreateRoom: () => Promise<void>;
 }
 
 export function Step1Board({
@@ -35,6 +45,15 @@ export function Step1Board({
     onSaveDraft,
     projectSyncState,
     projectSyncMessage,
+    rooms,
+    selectedRoomId,
+    setSelectedRoomId,
+    newRoomName,
+    setNewRoomName,
+    roomsLoading,
+    roomError,
+    creatingRoom,
+    onCreateRoom,
 }: Step1BoardProps) {
     // Use the HTML from step1.html for the board grid.
     // We'll map the family options to the board selection cards.
@@ -79,6 +98,57 @@ export function Step1Board({
                         placeholder="Wi-Fi Password"
                     />
                 </div>
+            </div>
+
+            <div className="flex flex-col gap-4 mb-10 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/50">
+                <div>
+                    <label
+                        htmlFor="diy-room-id"
+                        className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider"
+                    >
+                        Device Room
+                    </label>
+                    <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                        New devices must be assigned to a room before the server build can be approved and paired.
+                    </p>
+                </div>
+
+                <select
+                    id="diy-room-id"
+                    value={selectedRoomId ?? ""}
+                    onChange={(event) => setSelectedRoomId(event.target.value ? Number(event.target.value) : null)}
+                    className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-lg text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                    disabled={roomsLoading}
+                >
+                    <option value="">{roomsLoading ? "Loading rooms..." : "Select a room"}</option>
+                    {rooms.map((room) => (
+                        <option key={room.room_id} value={room.room_id}>
+                            {room.name}
+                        </option>
+                    ))}
+                </select>
+
+                <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                    <input
+                        type="text"
+                        value={newRoomName}
+                        onChange={(event) => setNewRoomName(event.target.value)}
+                        className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                        placeholder="Create a new room here"
+                    />
+                    <button
+                        type="button"
+                        onClick={() => void onCreateRoom()}
+                        disabled={creatingRoom || !newRoomName.trim()}
+                        className="rounded-xl bg-primary px-5 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                        {creatingRoom ? "Creating..." : "Create room"}
+                    </button>
+                </div>
+
+                {roomError ? (
+                    <p className="text-sm text-rose-600 dark:text-rose-300">{roomError}</p>
+                ) : null}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
@@ -184,7 +254,8 @@ export function Step1Board({
                     </button>
                     <button
                         onClick={onNext}
-                        className="flex-1 md:flex-none px-8 py-3 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2"
+                        disabled={!selectedRoomId}
+                        className="flex-1 md:flex-none px-8 py-3 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         <span>Next: Configure Pins</span>
                         <span className="material-symbols-outlined text-sm">arrow_forward</span>

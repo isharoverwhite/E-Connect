@@ -2,12 +2,37 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/AuthProvider";
 
 export default function DevicePinConfigurator() {
     const router = useRouter();
+    const { user } = useAuth();
+    const isAdmin = user?.account_type === "admin";
 
     // Mock State for the visual editor
     const [selectedNode, setSelectedNode] = useState<{ id: string, name: string, type: 'trigger' | 'action' } | null>(null);
+
+    if (!isAdmin) {
+        return (
+            <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6 dark:bg-slate-950">
+                <div className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
+                    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300">
+                        <span className="material-icons-round text-4xl">admin_panel_settings</span>
+                    </div>
+                    <h1 className="mt-5 text-2xl font-semibold text-slate-900 dark:text-white">Admin access required</h1>
+                    <p className="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                        Device configuration details are only available to administrators. Non-admin accounts can only monitor online and offline status from the devices overview and control rooms assigned by an administrator.
+                    </p>
+                    <button
+                        onClick={() => router.push("/devices")}
+                        className="mt-6 rounded-2xl bg-primary px-5 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-blue-600"
+                    >
+                        Back to devices
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="flex flex-col h-screen bg-slate-50 dark:bg-slate-950 font-sans text-slate-900 dark:text-slate-100 selection:bg-blue-200">

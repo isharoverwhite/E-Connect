@@ -36,9 +36,9 @@ if DATABASE_URL.startswith("sqlite"):
 else:
     engine_options["pool_recycle"] = int(os.getenv("DATABASE_POOL_RECYCLE", "300"))
     engine_options["connect_args"] = {
-        "connect_timeout": int(os.getenv("DATABASE_CONNECT_TIMEOUT", "5")),
-        "read_timeout": int(os.getenv("DATABASE_READ_TIMEOUT", "5")),
-        "write_timeout": int(os.getenv("DATABASE_WRITE_TIMEOUT", "5")),
+        "connect_timeout": int(os.getenv("DATABASE_CONNECT_TIMEOUT", "15")),
+        "read_timeout": int(os.getenv("DATABASE_READ_TIMEOUT", "120")),
+        "write_timeout": int(os.getenv("DATABASE_WRITE_TIMEOUT", "120")),
     }
 
 engine = create_engine(DATABASE_URL, **engine_options)
@@ -60,32 +60,104 @@ def check_database_connection():
         logger.warning("Database connectivity check failed: %s", error_message)
         return False, error_message
 
-def _ensure_build_job_columns():
-    """Additive column guard: adds finished_at and error_message to build_jobs if absent."""
-    try:
-        with engine.connect() as conn:
+def _ensure_column(table_name: str, column_name: str, sqlite_definition: str, maria_definition: str):
+    with engine.connect() as conn:
+        if DATABASE_URL.startswith("sqlite"):
+            existing_columns = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+            if not any(column[1] == column_name for column in existing_columns):
+                conn.execute(text(
+                    f"ALTER TABLE {table_name} ADD COLUMN {column_name} {sqlite_definition}"
+                ))
+                conn.commit()
+            return
+
+        result = conn.execute(text(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name AND COLUMN_NAME = :column_name"
+        ), {"table_name": table_name, "column_name": column_name})
+        if result.scalar() == 0:
+            conn.execute(text(
+                f"ALTER TABLE {table_name} ADD COLUMN {column_name} {maria_definition}"
+            ))
+            conn.commit()
+
+
+def _ensure_additive_columns():
+    """Additive column guard for backwards-compatible schema changes."""
+    column_guards = [
+        ("users", "approval_status", "VARCHAR(8) NOT NULL DEFAULT 'approved'", "VARCHAR(8) NOT NULL DEFAULT 'approved'"),
+        ("build_jobs", "finished_at", "DATETIME", "DATETIME NULL"),
+        ("build_jobs", "error_message", "TEXT", "TEXT NULL"),
+        (
+            "devices",
+            "provisioning_project_id",
+            "VARCHAR(36)",
+            "VARCHAR(36) NULL COMMENT 'DIY project id used to derive secure firmware credentials'",
+        ),
+        (
+            "devices",
+            "ip_address",
+            "VARCHAR(64)",
+            "VARCHAR(64) NULL COMMENT 'Current LAN IP reported by the device'",
+        ),
+        (
+            "rooms",
+            "household_id",
+            "INTEGER",
+            "INT NULL",
+        ),
+        (
+            "diy_projects",
+            "room_id",
+            "INTEGER",
+            "INT NULL",
+        ),
+    ]
+
+    for table_name, column_name, sqlite_definition, maria_definition in column_guards:
+        try:
+            _ensure_column(table_name, column_name, sqlite_definition, maria_definition)
+        except Exception as exc:
+            logger.warning(
+                "Schema additive guard failed for %s.%s (non-fatal): %s",
+                table_name,
+                column_name,
+                exc,
+            )
+
+    logger.info("Schema additive guards completed")
+
+
+def _backfill_room_household_ids():
+    with engine.connect() as conn:
+        try:
             if DATABASE_URL.startswith("sqlite"):
                 conn.execute(text(
-                    "ALTER TABLE build_jobs ADD COLUMN IF NOT EXISTS finished_at DATETIME"
-                ))
-                conn.execute(text(
-                    "ALTER TABLE build_jobs ADD COLUMN IF NOT EXISTS error_message TEXT"
+                    """
+                    UPDATE rooms
+                    SET household_id = (
+                        SELECT hm.household_id
+                        FROM household_memberships hm
+                        WHERE hm.user_id = rooms.user_id
+                        ORDER BY hm.id ASC
+                        LIMIT 1
+                    )
+                    WHERE household_id IS NULL
+                    """
                 ))
             else:
-                # MariaDB / MySQL – check information_schema first
-                for col, col_type in [("finished_at", "DATETIME"), ("error_message", "TEXT")]:
-                    result = conn.execute(text(
-                        "SELECT COUNT(*) FROM information_schema.COLUMNS "
-                        "WHERE TABLE_NAME='build_jobs' AND COLUMN_NAME=:col"
-                    ), {"col": col})
-                    if result.scalar() == 0:
-                        conn.execute(text(
-                            f"ALTER TABLE build_jobs ADD COLUMN {col} {col_type} NULL"
-                        ))
+                conn.execute(text(
+                    """
+                    UPDATE rooms r
+                    JOIN household_memberships hm
+                      ON hm.user_id = r.user_id
+                    SET r.household_id = hm.household_id
+                    WHERE r.household_id IS NULL
+                    """
+                ))
             conn.commit()
-            logger.info("build_jobs column guard: finished_at / error_message ensured")
-    except Exception as exc:
-        logger.warning("build_jobs column guard failed (non-fatal): %s", exc)
+        except Exception as exc:
+            logger.warning("Room household backfill failed (non-fatal): %s", exc)
 
 
 def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
@@ -94,7 +166,8 @@ def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
     for attempt in range(1, max_attempts + 1):
         try:
             Base.metadata.create_all(bind=engine)
-            _ensure_build_job_columns()
+            _ensure_additive_columns()
+            _backfill_room_household_ids()
             logger.info("Database schema is ready")
             return True, None
         except SQLAlchemyError as exc:

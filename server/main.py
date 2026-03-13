@@ -8,8 +8,9 @@ import logging
 from app.api import router as device_router
 from sqlalchemy.exc import OperationalError
 
-from app.database import check_database_connection, get_db, initialize_database
+from app.database import SessionLocal, check_database_connection, get_db, initialize_database
 from app.mqtt import mqtt_manager
+from app.services.user_management import ensure_temp_support_account
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,13 @@ async def lifespan(app: FastAPI):
     database_ready, database_error = initialize_database()
     app.state.database_ready = database_ready
     app.state.database_error = database_error
+
+    if database_ready:
+        db = SessionLocal()
+        try:
+            ensure_temp_support_account(db)
+        finally:
+            db.close()
 
     mqtt_manager.start()
     app.state.mqtt_started = True

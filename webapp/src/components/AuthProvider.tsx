@@ -1,14 +1,16 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { getToken, removeToken, fetchMyProfile, fetchSystemStatus } from "@/lib/auth";
 
 interface User {
+    user_id: number;
     username: string;
     fullname: string;
     account_type: string;
-    ui_layout?: any;
+    approval_status?: "pending" | "approved" | "revoked";
+    ui_layout?: unknown;
 }
 
 interface AuthContextType {
@@ -33,7 +35,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     const router = useRouter();
     const pathname = usePathname();
 
-    const fetchUser = async () => {
+    const fetchUser = useCallback(async () => {
         try {
             // Check system status first for new setups
             try {
@@ -47,8 +49,8 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
                     setLoading(false);
                     return; // Stop auth flow, system needs initialization
                 }
-            } catch (err) {
-                console.warn("Failed to check system initialized state:", err);
+            } catch {
+                console.warn("Failed to check system initialized state.");
             }
 
             const token = getToken();
@@ -56,13 +58,13 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
             const profile = await fetchMyProfile();
             setUser(profile);
-        } catch (error) {
+        } catch {
             setUser(null);
             removeToken();
         } finally {
             setLoading(false);
         }
-    };
+    }, [pathname, router]);
 
     const logout = () => {
         removeToken();
@@ -71,8 +73,8 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     };
 
     useEffect(() => {
-        fetchUser();
-    }, []);
+        void fetchUser();
+    }, [fetchUser]);
 
     useEffect(() => {
         // Route protection

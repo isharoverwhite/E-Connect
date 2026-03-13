@@ -2,10 +2,13 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/AuthProvider";
 
 export default function ProCodePairing() {
     const [copied, setCopied] = useState(false);
     const router = useRouter();
+    const { user } = useAuth();
+    const isAdmin = user?.account_type === "admin";
 
     const deviceToken = "ec_node_9f8b7a6c5d4e3f2a1b0c";
     const authCode = `#include <EConnect.h>
@@ -43,6 +46,28 @@ void loop() {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
     };
+
+    if (!isAdmin) {
+        return (
+            <div className="flex min-h-screen items-center justify-center bg-background-light px-6 text-slate-800 dark:bg-background-dark dark:text-slate-100">
+                <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                    <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-300">
+                        <span className="material-icons-round text-3xl">admin_panel_settings</span>
+                    </div>
+                    <h1 className="text-2xl font-semibold text-slate-900 dark:text-white">Admin access required</h1>
+                    <p className="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                        Only administrators can provision or pair new devices from the pro-code flow.
+                    </p>
+                    <button
+                        onClick={() => router.push("/devices")}
+                        className="mt-6 inline-flex items-center justify-center rounded-xl bg-primary px-5 py-3 text-sm font-medium text-white shadow-lg transition hover:bg-blue-600"
+                    >
+                        Back to devices
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="flex bg-background-dark text-slate-200 min-h-screen font-sans selection:bg-blue-500/30 selection:text-white">
