@@ -1,5 +1,19 @@
 import { API_URL } from "./api";
 
+export type UserApprovalStatus = "pending" | "approved" | "revoked";
+export type ManagedHouseholdRole = "owner" | "admin" | "member" | "guest";
+
+export interface ManagedUser {
+    user_id: number;
+    fullname: string;
+    username: string;
+    account_type: "admin" | "parent" | "child";
+    approval_status: UserApprovalStatus;
+    household_role?: ManagedHouseholdRole | null;
+    created_at?: string | null;
+    ui_layout?: unknown;
+}
+
 // --- Token Management ---
 
 export const setToken = (token: string) => {
@@ -32,7 +46,14 @@ export async function loginUser(credentials: FormData) {
 
     if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.detail || "Incorrect username or password");
+        const detail = errorData.detail;
+        if (detail?.message) {
+            throw new Error(detail.message);
+        }
+        if (typeof detail === "string") {
+            throw new Error(detail);
+        }
+        throw new Error("Incorrect username or password");
     }
 
     return res.json();
@@ -65,7 +86,7 @@ export async function initializeServer(data: object) {
     return res.json();
 }
 
-export async function adminCreateUser(data: object, token: string) {
+export async function adminCreateUser(data: object, token: string): Promise<ManagedUser> {
     const res = await fetch(`${API_URL}/users`, {
         method: "POST",
         headers: {
@@ -78,6 +99,54 @@ export async function adminCreateUser(data: object, token: string) {
     if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.detail?.message || errorData.detail || "Failed to create user");
+    }
+
+    return res.json();
+}
+
+export async function fetchManagedUsers(token: string): Promise<ManagedUser[]> {
+    const res = await fetch(`${API_URL}/users`, {
+        headers: {
+            "Authorization": `Bearer ${token}`,
+        },
+        cache: "no-store",
+    });
+
+    if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail?.message || errorData.detail || "Failed to load users");
+    }
+
+    return res.json();
+}
+
+export async function approveManagedUser(userId: number, token: string): Promise<ManagedUser> {
+    const res = await fetch(`${API_URL}/users/${userId}/approve`, {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+        },
+    });
+
+    if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail?.message || errorData.detail || "Failed to approve user");
+    }
+
+    return res.json();
+}
+
+export async function revokeManagedUser(userId: number, token: string): Promise<ManagedUser> {
+    const res = await fetch(`${API_URL}/users/${userId}/revoke`, {
+        method: "POST",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+        },
+    });
+
+    if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail?.message || errorData.detail || "Failed to revoke user");
     }
 
     return res.json();

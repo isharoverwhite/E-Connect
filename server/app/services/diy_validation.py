@@ -247,6 +247,13 @@ def validate_diy_config(board_profile: str, config: dict[str, Any] | None) -> tu
     used_pins: set[int] = set()
     i2c_pins = 0
 
+    wifi_ssid = config.get("wifi_ssid")
+    wifi_password = config.get("wifi_password")
+    if not isinstance(wifi_ssid, str) or not wifi_ssid.strip():
+        errors.append("Invalid config: wifi_ssid is required before building firmware")
+    if not isinstance(wifi_password, str) or not wifi_password.strip():
+        errors.append("Invalid config: wifi_password is required before building firmware")
+
     for index, pin in enumerate(pins, start=1):
         if not isinstance(pin, dict):
             errors.append(f"Invalid config: pin entry #{index} must be an object")
@@ -286,6 +293,17 @@ def validate_diy_config(board_profile: str, config: dict[str, Any] | None) -> tu
 
         if rule.boot_sensitive:
             warnings.append(f"Warning: GPIO {raw_gpio} is boot-sensitive on {board.canonical_id}")
+
+        raw_extra_params = pin.get("extra_params")
+        if raw_extra_params is not None and not isinstance(raw_extra_params, dict):
+            errors.append(f"Invalid config: GPIO {raw_gpio} extra_params must be an object")
+            continue
+
+        if mode == "OUTPUT" and isinstance(raw_extra_params, dict):
+            active_level = raw_extra_params.get("active_level")
+            if active_level is not None and active_level not in (0, 1):
+                errors.append(f"Invalid config: GPIO {raw_gpio} active_level must be 0 or 1")
+                continue
 
         if mode == "I2C":
             i2c_pins += 1

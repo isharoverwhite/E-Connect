@@ -15,6 +15,11 @@ class HouseholdRole(str, Enum):
     member = "member"
     guest = "guest"
 
+class UserApprovalStatus(str, Enum):
+    pending = "pending"
+    approved = "approved"
+    revoked = "revoked"
+
 class AuthStatus(str, Enum):
     pending = "pending"
     approved = "approved"
@@ -64,6 +69,7 @@ class UserBase(BaseModel):
     fullname: str
     username: str = Field(..., min_length=3)
     account_type: AccountType = AccountType.parent
+    approval_status: UserApprovalStatus = UserApprovalStatus.pending
     ui_layout: Optional[Any] = None
 
 class UserCreate(UserBase):
@@ -75,6 +81,10 @@ class UserResponse(UserBase):
 
     class Config:
         from_attributes = True
+
+
+class ManagedUserResponse(UserResponse):
+    household_role: Optional[HouseholdRole] = None
 
 class HouseholdBase(BaseModel):
     name: str
@@ -129,6 +139,7 @@ class DeviceBase(BaseModel):
     name: str
     mode: DeviceMode = DeviceMode.library
     firmware_version: Optional[str] = None
+    ip_address: Optional[str] = None
     topic_pub: Optional[str] = None
     topic_sub: Optional[str] = None
 
@@ -139,15 +150,19 @@ class DeviceCreate(DeviceBase):
 class DeviceRegister(BaseModel):
     # Payload from device during handshake
     device_id: Optional[str] = None
+    project_id: Optional[str] = None
+    secret_key: Optional[str] = None
     mac_address: str
     name: str
     mode: DeviceMode = DeviceMode.library
     firmware_version: Optional[str] = None
+    ip_address: Optional[str] = None
     pins: List[PinConfigCreate] = []
 
 class DeviceResponse(DeviceBase):
     device_id: str
     room_id: Optional[int] = None
+    room_name: Optional[str] = None
     owner_id: int
     auth_status: AuthStatus
     conn_status: ConnStatus
@@ -158,16 +173,40 @@ class DeviceResponse(DeviceBase):
     class Config:
         from_attributes = True
 
+
+class DeviceAvailabilityResponse(BaseModel):
+    device_id: str
+    room_id: Optional[int] = None
+    room_name: Optional[str] = None
+    auth_status: AuthStatus
+    conn_status: ConnStatus
+
+
+class DeviceHandshakeResponse(DeviceResponse):
+    secret_verified: bool = False
+    project_id: Optional[str] = None
+
 # --- Room ---
 class RoomCreate(BaseModel):
     name: str
+    allowed_user_ids: List[int] = Field(default_factory=list)
+
+
+class RoomAccessUpdate(BaseModel):
+    allowed_user_ids: List[int] = Field(default_factory=list)
 
 class RoomResponse(RoomCreate):
     room_id: int
     user_id: int
+    household_id: Optional[int] = None
+    assigned_user_ids: List[int] = Field(default_factory=list)
     
     class Config:
         from_attributes = True
+
+
+class DeviceApprovalRequest(BaseModel):
+    room_id: int
 
 # --- Automation ---
 class AutomationCreate(BaseModel):
@@ -238,6 +277,7 @@ class GenerateConfigResponse(BaseModel):
 class DiyProjectBase(BaseModel):
     name: str
     board_profile: str
+    room_id: Optional[int] = None
     config: Optional[Dict[str, Any]] = None
 
 class DiyProjectCreate(DiyProjectBase):

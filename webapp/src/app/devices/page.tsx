@@ -1,16 +1,18 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { fetchDevices, deleteDevice } from "@/lib/api";
-import { DeviceConfig } from "@/types/device";
-import { useAuth } from "@/components/AuthProvider";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+
+import { useAuth } from "@/components/AuthProvider";
+import { deleteDevice, fetchDevices } from "@/lib/api";
+import { DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
 
 export default function DevicesPage() {
     const { user, logout } = useAuth();
-    const [devices, setDevices] = useState<DeviceConfig[]>([]);
+    const [devices, setDevices] = useState<DeviceDirectoryEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
+    const isAdmin = user?.account_type === "admin";
 
     async function loadDevices() {
         const data = await fetchDevices();
@@ -40,7 +42,7 @@ export default function DevicesPage() {
     }, []);
 
     const handleDelete = async (deviceId: string, deviceName: string) => {
-        if (!window.confirm(`Are you sure you want to delete "${deviceName}"? This action cannot be undone.`)) {
+        if (!window.confirm(`Unpair "${deviceName}" from the dashboard? You can pair it again later from Discovery.`)) {
             return;
         }
 
@@ -48,65 +50,64 @@ export default function DevicesPage() {
         const success = await deleteDevice(deviceId);
 
         if (success) {
-            setDevices(prev => prev.filter(d => d.device_id !== deviceId));
+            setDevices((previous) => previous.filter((device) => device.device_id !== deviceId));
         } else {
-            alert("Failed to delete device. You might not have permission.");
+            alert("Failed to unpair device. You might not have permission.");
         }
         setIsDeleting(null);
     };
 
     return (
-        <div className="flex h-screen w-full bg-background-light dark:bg-background-dark overflow-hidden font-sans text-slate-800 dark:text-slate-200 selection:bg-primary selection:text-white transition-colors duration-300">
-            {/* Sidebar - Reused from Dashboard */}
-            <aside className="w-64 bg-surface-light dark:bg-surface-dark border-r border-slate-200 dark:border-slate-700 flex flex-col justify-between hidden md:flex z-20 shadow-lg">
+        <div className="flex h-screen w-full overflow-hidden bg-background-light font-sans text-slate-800 transition-colors duration-300 selection:bg-primary selection:text-white dark:bg-background-dark dark:text-slate-200">
+            <aside className="z-20 hidden w-64 flex-col justify-between border-r border-slate-200 bg-surface-light shadow-lg dark:border-slate-700 dark:bg-surface-dark md:flex">
                 <div>
-                    <div className="h-16 flex items-center px-6 border-b border-slate-200 dark:border-slate-700">
-                        <span className="material-icons-round text-primary mr-2 text-3xl">hub</span>
+                    <div className="flex h-16 items-center border-b border-slate-200 px-6 dark:border-slate-700">
+                        <span className="material-icons-round mr-2 text-3xl text-primary">hub</span>
                         <span className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">E-Connect</span>
                     </div>
 
-                    <nav className="p-4 space-y-1">
-                        <Link href="/" className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors">
+                    <nav className="space-y-1 p-4">
+                        <Link href="/" className="flex items-center rounded-lg px-4 py-3 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white">
                             <span className="material-icons-round mr-3">dashboard</span>
                             Dashboard
                         </Link>
-                        <Link href="/devices" className="flex items-center px-4 py-3 bg-primary/10 text-primary font-medium rounded-lg transition-colors">
+                        <Link href="/devices" className="flex items-center rounded-lg bg-primary/10 px-4 py-3 font-medium text-primary transition-colors">
                             <span className="material-icons-round mr-3">devices_other</span>
                             Devices
                         </Link>
-                        <Link href="/automation" className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors">
+                        <Link href="/automation" className="flex items-center rounded-lg px-4 py-3 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white">
                             <span className="material-icons-round mr-3">precision_manufacturing</span>
                             Automation
                         </Link>
-                        <Link href="/logs" className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors">
+                        <Link href="/logs" className="flex items-center rounded-lg px-4 py-3 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white">
                             <span className="material-icons-round mr-3">analytics</span>
                             Logs & Stats
                         </Link>
-                        <Link href="/extensions" className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors">
+                        <Link href="/extensions" className="flex items-center rounded-lg px-4 py-3 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white">
                             <span className="material-icons-round mr-3">extension</span>
                             Extensions
                         </Link>
                     </nav>
                 </div>
 
-                <div className="p-4 border-t border-slate-200 dark:border-slate-700">
-                    <Link href="/settings" className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors mb-2">
+                <div className="border-t border-slate-200 p-4 dark:border-slate-700">
+                    <Link href="/settings" className="mb-2 flex items-center rounded-lg px-4 py-3 text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-700">
                         <span className="material-icons-round mr-3">settings</span>
                         Settings
                     </Link>
-                    <div className="flex items-center px-4 py-3 justify-between group">
+                    <div className="group flex items-center justify-between px-4 py-3">
                         <div className="flex items-center">
-                            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-purple-500 flex items-center justify-center text-white font-bold text-xs uppercase">
-                                {user?.fullname?.substring(0, 2) || 'EC'}
+                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-tr from-primary to-purple-500 text-xs font-bold uppercase text-white">
+                                {user?.fullname?.substring(0, 2) || "EC"}
                             </div>
                             <div className="ml-3">
-                                <p className="text-sm font-medium text-slate-900 dark:text-white">{user?.fullname || 'Admin User'}</p>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 capitalize">{user?.account_type || 'Master Node'}</p>
+                                <p className="text-sm font-medium text-slate-900 dark:text-white">{user?.fullname || "E-Connect User"}</p>
+                                <p className="text-xs capitalize text-slate-500 dark:text-slate-400">{user?.account_type || "member"}</p>
                             </div>
                         </div>
                         <button
                             onClick={logout}
-                            className="text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all p-2 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10"
+                            className="rounded-md p-2 text-slate-400 opacity-0 transition-all hover:bg-red-50 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-red-500/10"
                             title="Logout"
                         >
                             <span className="material-icons-round text-[18px]">logout</span>
@@ -115,125 +116,185 @@ export default function DevicesPage() {
                 </div>
             </aside>
 
-            {/* Main Content */}
-            <main className="flex-1 flex flex-col min-w-0 relative">
-                <header className="h-16 bg-surface-light dark:bg-surface-dark border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-6 shadow-sm z-30">
-                    <h1 className="text-lg font-semibold text-slate-800 dark:text-white">Device Management</h1>
+            <main className="relative flex min-w-0 flex-1 flex-col">
+                <header className="z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-surface-light px-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                    <div>
+                        <h1 className="text-lg font-semibold text-slate-800 dark:text-white">
+                            {isAdmin ? "Device Management" : "Device Availability"}
+                        </h1>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                            {isAdmin
+                                ? "Pair, assign rooms, and manage the lifecycle of household devices."
+                                : "Your account can only monitor whether assigned-room devices are online."}
+                        </p>
+                    </div>
 
                     <div className="flex gap-3">
-                        <Link href="/devices/diy" className="flex items-center bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-all shadow-md hover:shadow-lg">
-                            <span className="material-icons-round text-sm mr-2">hardware</span>
-                            SVG Builder
-                        </Link>
-                        <Link href="/devices/discovery" className="flex items-center bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm">
-                            <span className="material-icons-round text-sm mr-2">wifi_tethering</span>
-                            Discover New
-                        </Link>
-                        <button onClick={handleRefresh} className="flex items-center bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-all shadow-md hover:shadow-lg">
-                            <span className="material-icons-round text-sm mr-2">refresh</span>
+                        {isAdmin ? (
+                            <>
+                                <Link href="/devices/diy" className="flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:bg-blue-600 hover:shadow-lg">
+                                    <span className="material-icons-round mr-2 text-sm">hardware</span>
+                                    SVG Builder
+                                </Link>
+                                <Link href="/devices/discovery" className="flex items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+                                    <span className="material-icons-round mr-2 text-sm">wifi_tethering</span>
+                                    Discover New
+                                </Link>
+                            </>
+                        ) : null}
+                        <button onClick={handleRefresh} className="flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:bg-blue-600 hover:shadow-lg">
+                            <span className="material-icons-round mr-2 text-sm">refresh</span>
                             Refresh
                         </button>
                     </div>
                 </header>
 
-                <div className="flex-1 overflow-y-auto p-6 scroll-smooth bg-slate-50/50 dark:bg-background-dark">
-                    <div className="max-w-7xl mx-auto w-full">
-
-                        {/* Page Header Info */}
-                        <div className="mb-6 flex flex-col sm:flex-row justify-between items-start sm:items-center">
+                <div className="flex-1 overflow-y-auto bg-slate-50/50 p-6 dark:bg-background-dark">
+                    <div className="mx-auto w-full max-w-7xl">
+                        <div className="mb-6 flex flex-col items-start justify-between sm:flex-row sm:items-center">
                             <div>
-                                <h2 className="text-xl font-bold text-slate-900 dark:text-white">Your Ecosystem</h2>
-                                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Manage and configure all connected nodes within your network.</p>
+                                <h2 className="text-xl font-bold text-slate-900 dark:text-white">
+                                    {isAdmin ? "Your Ecosystem" : "Assigned Room Status"}
+                                </h2>
+                                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                                    {isAdmin
+                                        ? "Manage and configure all connected nodes within your network."
+                                        : "Only online and offline status is visible on this page for non-admin accounts."}
+                                </p>
                             </div>
-                            <div className="mt-4 sm:mt-0 text-sm font-medium text-slate-600 dark:text-slate-300">
+                            <div className="mt-4 text-sm font-medium text-slate-600 dark:text-slate-300 sm:mt-0">
                                 Total: {loading ? "..." : devices.length} Devices
                             </div>
                         </div>
 
+                        {!isAdmin ? (
+                            <div className="mb-6 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300">
+                                Pairing, creating, deleting, and opening device configuration are disabled for non-admin accounts. Room control remains available from the dashboard for rooms assigned by an administrator.
+                            </div>
+                        ) : null}
+
                         {loading ? (
-                            <div className="w-full flex justify-center py-20">
-                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                            <div className="flex w-full justify-center py-20">
+                                <div className="h-8 w-8 animate-spin rounded-full border-b-2 border-primary"></div>
                             </div>
                         ) : devices.length === 0 ? (
-                            <div className="text-center py-20 bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm border-dashed">
-                                <div className="w-16 h-16 bg-blue-50 dark:bg-blue-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                                    <span className="material-icons-round text-primary text-3xl">router</span>
+                            <div className="rounded-xl border border-dashed border-slate-200 bg-surface-light py-20 text-center shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-blue-50 dark:bg-blue-500/10">
+                                    <span className="material-icons-round text-3xl text-primary">router</span>
                                 </div>
-                                <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">No devices found</h3>
-                                <p className="text-slate-500 dark:text-slate-400 text-sm max-w-sm mx-auto mb-6">Start with the SVG builder for ESP32-family boards or use discovery for already provisioned nodes.</p>
-                                <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-                                    <Link href="/devices/diy" className="flex items-center justify-center bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-all shadow-md hover:shadow-lg min-w-44">
-                                        <span className="material-icons-round text-sm mr-2">hardware</span>
-                                        Configure via SVG
-                                    </Link>
-                                    <Link href="/devices/discovery" className="flex items-center justify-center bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-50 dark:hover:bg-slate-700 transition-all shadow-sm min-w-44">
-                                        <span className="material-icons-round text-sm mr-2">wifi_tethering</span>
-                                        Discover Existing Device
-                                    </Link>
-                                </div>
+                                <h3 className="mb-2 text-lg font-semibold text-slate-900 dark:text-white">No devices found</h3>
+                                <p className="mx-auto mb-6 max-w-sm text-sm text-slate-500 dark:text-slate-400">
+                                    {isAdmin
+                                        ? "Start with the SVG builder for ESP32-family boards or use discovery for already provisioned nodes."
+                                        : "An administrator has not yet assigned any rooms with devices to your account."}
+                                </p>
+                                {isAdmin ? (
+                                    <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
+                                        <Link href="/devices/diy" className="flex min-w-44 items-center justify-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:bg-blue-600 hover:shadow-lg">
+                                            <span className="material-icons-round mr-2 text-sm">hardware</span>
+                                            Configure via SVG
+                                        </Link>
+                                        <Link href="/devices/discovery" className="flex min-w-44 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+                                            <span className="material-icons-round mr-2 text-sm">wifi_tethering</span>
+                                            Discover Existing Device
+                                        </Link>
+                                    </div>
+                                ) : null}
                             </div>
-                        ) : (
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                {devices.map((dev) => {
-                                    const isOnline = dev.conn_status === "online";
-                                    const modeColor = dev.mode === 'no-code' ? 'text-purple-500 bg-purple-50 dark:bg-purple-500/10 border-purple-200 dark:border-purple-500/20' : 'text-blue-500 bg-blue-50 dark:bg-blue-500/10 border-blue-200 dark:border-blue-500/20';
+                        ) : isAdmin ? (
+                            <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+                                {(devices as DeviceConfig[]).map((device) => {
+                                    const isOnline = device.conn_status === "online";
+                                    const modeColor = device.mode === "no-code"
+                                        ? "border-purple-200 bg-purple-50 text-purple-500 dark:border-purple-500/20 dark:bg-purple-500/10"
+                                        : "border-blue-200 bg-blue-50 text-blue-500 dark:border-blue-500/20 dark:bg-blue-500/10";
+                                    const deviceIp = device.ip_address || device.last_state?.ip_address;
 
                                     return (
-                                        <div key={dev.device_id} className="bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden hover:shadow-md transition-shadow group flex flex-col">
-                                            {/* Card Header */}
-                                            <div className="p-5 flex items-start justify-between border-b border-slate-100 dark:border-slate-700/50">
-                                                <div className="flex items-center gap-3 w-full">
-                                                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${isOnline ? 'bg-primary/10 text-primary' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
-                                                        <span className="material-icons-round">{dev.mode === 'no-code' ? 'extension' : 'developer_board'}</span>
+                                        <div key={device.device_id} className="group flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-surface-light transition-shadow hover:shadow-md dark:border-slate-700 dark:bg-surface-dark">
+                                            <div className="flex items-start justify-between border-b border-slate-100 p-5 dark:border-slate-700/50">
+                                                <div className="flex w-full items-center gap-3">
+                                                    <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${isOnline ? "bg-primary/10 text-primary" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>
+                                                        <span className="material-icons-round">{device.mode === "no-code" ? "extension" : "developer_board"}</span>
                                                     </div>
-                                                    <div className="flex-1 min-w-0">
-                                                        <h3 className="font-semibold text-slate-900 dark:text-white truncate" title={dev.name}>{dev.name}</h3>
-                                                        <div className="flex items-center mt-1">
-                                                            <span className={`w-2 h-2 rounded-full mr-1.5 ${isOnline ? 'bg-green-500' : 'bg-red-400'}`}></span>
-                                                            <span className="text-xs text-slate-500 dark:text-slate-400 truncate">{isOnline ? 'Online' : 'Offline'}</span>
+                                                    <div className="min-w-0 flex-1">
+                                                        <h3 className="truncate font-semibold text-slate-900 dark:text-white" title={device.name}>{device.name}</h3>
+                                                        <div className="mt-1 flex items-center">
+                                                            <span className={`mr-1.5 h-2 w-2 rounded-full ${isOnline ? "bg-green-500" : "bg-red-400"}`}></span>
+                                                            <span className="truncate text-xs text-slate-500 dark:text-slate-400">{isOnline ? "Online" : "Offline"}</span>
                                                         </div>
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            {/* Card Body Specs */}
-                                            <div className="p-5 flex-1 text-sm space-y-3">
-                                                <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-700/50 pb-2 border-dashed">
-                                                    <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round text-xs align-text-bottom mr-1">fingerprint</span> MAC</span>
-                                                    <span className="font-mono text-xs text-slate-700 dark:text-slate-300">{dev.mac_address || "N/A"}</span>
+                                            <div className="flex-1 space-y-3 p-5 text-sm">
+                                                <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
+                                                    <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">meeting_room</span> Room</span>
+                                                    <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{device.room_name || "Unassigned"}</span>
                                                 </div>
-                                                <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-700/50 pb-2 border-dashed">
-                                                    <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round text-xs align-text-bottom mr-1">settings_ethernet</span> Mode</span>
-                                                    <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded border ${modeColor} tracking-wide`}>
-                                                        {dev.mode}
+                                                <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
+                                                    <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">fingerprint</span> MAC</span>
+                                                    <span className="font-mono text-xs text-slate-700 dark:text-slate-300">{device.mac_address || "N/A"}</span>
+                                                </div>
+                                                <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
+                                                    <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">settings_ethernet</span> Mode</span>
+                                                    <span className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${modeColor}`}>
+                                                        {device.mode}
                                                     </span>
                                                 </div>
-                                                <div className="flex justify-between items-center">
-                                                    <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round text-xs align-text-bottom mr-1">memory</span> Pins Used</span>
-                                                    <span className="text-slate-700 dark:text-slate-300 font-medium">{dev.pin_configurations?.length || 0} Maps</span>
+                                                <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
+                                                    <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">lan</span> IP</span>
+                                                    <span className="font-mono text-xs text-slate-700 dark:text-slate-300">{deviceIp || "N/A"}</span>
+                                                </div>
+                                                <div className="flex items-center justify-between">
+                                                    <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">memory</span> Pins Used</span>
+                                                    <span className="font-medium text-slate-700 dark:text-slate-300">{device.pin_configurations?.length || 0} Maps</span>
                                                 </div>
                                             </div>
 
-                                            {/* Action Buttons */}
-                                            <div className="bg-slate-50 dark:bg-slate-800/50 p-3 grid grid-cols-2 gap-2 border-t border-slate-100 dark:border-slate-700">
+                                            <div className="grid grid-cols-2 gap-2 border-t border-slate-100 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
                                                 <Link
-                                                    href={`/devices/${dev.device_id}/config`}
-                                                    className="flex items-center justify-center py-2 px-3 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded text-xs font-medium text-slate-700 dark:text-slate-200 hover:bg-blue-50 dark:hover:bg-slate-600 transition-colors shadow-sm"
+                                                    href={`/devices/${device.device_id}/config`}
+                                                    className="flex items-center justify-center rounded border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-blue-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
                                                 >
-                                                    <span className="material-icons-round text-sm mr-1.5 text-blue-500">app_registration</span> Configure
+                                                    <span className="material-icons-round mr-1.5 text-sm text-blue-500">app_registration</span>
+                                                    Configure
                                                 </Link>
 
                                                 <button
-                                                    onClick={() => handleDelete(dev.device_id, dev.name)}
-                                                    disabled={isDeleting === dev.device_id}
-                                                    className="flex items-center justify-center py-2 px-3 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-500/10 hover:border-red-200 dark:hover:border-red-500/30 transition-colors shadow-sm disabled:opacity-50"
+                                                    onClick={() => handleDelete(device.device_id, device.name)}
+                                                    disabled={isDeleting === device.device_id}
+                                                    className="flex items-center justify-center rounded border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-red-600 shadow-sm transition-colors hover:border-red-200 hover:bg-red-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-red-400 dark:hover:border-red-500/30 dark:hover:bg-red-500/10"
                                                 >
-                                                    {isDeleting === dev.device_id ? (
-                                                        <span className="material-icons-round text-sm animate-spin">refresh</span>
+                                                    {isDeleting === device.device_id ? (
+                                                        <span className="material-icons-round animate-spin text-sm">refresh</span>
                                                     ) : (
-                                                        <><span className="material-icons-round text-sm mr-1.5">delete_outline</span> Remove</>
+                                                        <>
+                                                            <span className="material-icons-round mr-1.5 text-sm">link_off</span>
+                                                            Unpair
+                                                        </>
                                                     )}
                                                 </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+                                {devices.map((device) => {
+                                    const isOnline = device.conn_status === "online";
+
+                                    return (
+                                        <div key={device.device_id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                            <div className="flex items-center justify-between gap-4">
+                                                <div>
+                                                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{device.room_name || "Assigned room"}</h3>
+                                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Availability only</p>
+                                                </div>
+                                                <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${isOnline ? "border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300" : "border border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-300"}`}>
+                                                    {isOnline ? "online" : "offline"}
+                                                </span>
                                             </div>
                                         </div>
                                     );

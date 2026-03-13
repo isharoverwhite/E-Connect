@@ -41,6 +41,7 @@ services:
     environment:
       - DATABASE_URL=mysql+pymysql://${DB_USER:-user}:${DB_PASSWORD:-password}@${DB_HOST:-db}:3306/${DB_NAME:-smart_home}
       - SECRET_KEY=${SECRET_KEY:-supersecretkey}
+      - ACCESS_TOKEN_EXPIRE_MINUTES=${ACCESS_TOKEN_EXPIRE_MINUTES:-43200}
     depends_on:
       db:
         condition: service_healthy

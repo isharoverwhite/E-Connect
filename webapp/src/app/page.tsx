@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { fetchDevices, sendDeviceCommand } from "@/lib/api";
+import { fetchDashboardDevices, sendDeviceCommand } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { DeviceConfig } from "@/types/device";
 
@@ -12,12 +12,13 @@ export default function Dashboard() {
   const [devices, setDevices] = useState<DeviceConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNotifications, setShowNotifications] = useState(false);
+  const isAdmin = user?.account_type === "admin";
 
   useEffect(() => {
     let active = true;
 
     async function load() {
-      const data = await fetchDevices();
+      const data = await fetchDashboardDevices();
       if (!active) return;
       setDevices(data);
       setLoading(false);
@@ -34,12 +35,7 @@ export default function Dashboard() {
   }, []);
 
   const isDeviceOnline = (d: DeviceConfig) => {
-    if (d.auth_status !== "approved") return false;
-    if (d.conn_status === "online") return true;
-    if (!d.last_seen) return false;
-    const lastSeenDate = new Date(d.last_seen);
-    const now = new Date();
-    return (now.getTime() - lastSeenDate.getTime()) < 5 * 60 * 1000;
+    return d.auth_status === "approved" && d.conn_status === "online";
   };
 
   const approvedDevices = devices.filter((device) => device.auth_status === "approved");
@@ -133,33 +129,35 @@ export default function Dashboard() {
                     <button className="text-xs font-medium text-primary hover:text-blue-600 transition-colors">Mark all read</button>
                   </div>
                   <div className="max-h-[32rem] overflow-y-auto">
-                    <div className="p-4 bg-blue-50/40 dark:bg-blue-900/10 border-b border-slate-100 dark:border-slate-700/50">
-                      <div className="flex gap-3">
-                        <div className="flex-shrink-0 mt-1">
-                          <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-600/20 flex items-center justify-center text-blue-600 dark:text-blue-400">
-                            <span className="material-icons-round text-lg">sensors</span>
+                    {isAdmin ? (
+                      <div className="p-4 bg-blue-50/40 dark:bg-blue-900/10 border-b border-slate-100 dark:border-slate-700/50">
+                        <div className="flex gap-3">
+                          <div className="flex-shrink-0 mt-1">
+                            <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-600/20 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                              <span className="material-icons-round text-lg">sensors</span>
+                            </div>
                           </div>
-                        </div>
-                        <div className="flex-1">
-                          <div className="flex justify-between items-start mb-1">
-                            <p className="text-sm font-semibold text-slate-900 dark:text-white">New Device Found</p>
-                            <span className="text-[10px] font-bold tracking-wide text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-500/20 px-1.5 py-0.5 rounded uppercase">New</span>
-                          </div>
-                          <p className="text-xs text-slate-600 dark:text-slate-400 mb-3">Pending devices are available in discovery when a node handshakes with this instance.</p>
-                          <div className="flex gap-2">
-                            <button
-                              onClick={() => router.push("/devices/discovery")}
-                              className="flex-1 bg-primary hover:bg-blue-600 text-white text-xs font-medium py-1.5 px-3 rounded shadow-sm transition-colors flex items-center justify-center gap-1"
-                            >
-                              <span className="material-icons-round text-sm">link</span> Pair Now
-                            </button>
-                            <button className="bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600 text-xs font-medium py-1.5 px-3 rounded transition-colors">
-                              Ignore
-                            </button>
+                          <div className="flex-1">
+                            <div className="flex justify-between items-start mb-1">
+                              <p className="text-sm font-semibold text-slate-900 dark:text-white">New Device Found</p>
+                              <span className="text-[10px] font-bold tracking-wide text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-500/20 px-1.5 py-0.5 rounded uppercase">New</span>
+                            </div>
+                            <p className="text-xs text-slate-600 dark:text-slate-400 mb-3">Pending devices are available in discovery when a node handshakes with this instance.</p>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => router.push("/devices/discovery")}
+                                className="flex-1 bg-primary hover:bg-blue-600 text-white text-xs font-medium py-1.5 px-3 rounded shadow-sm transition-colors flex items-center justify-center gap-1"
+                              >
+                                <span className="material-icons-round text-sm">link</span> Pair Now
+                              </button>
+                              <button className="bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600 text-xs font-medium py-1.5 px-3 rounded transition-colors">
+                                Ignore
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
-                    </div>
+                    ) : null}
                     {offlineDevices.slice(0, 3).map(dev => (
                       <div key={dev.device_id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 transition-colors cursor-pointer group">
                         <div className="flex gap-3">
@@ -185,18 +183,25 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
-            <button
-              onClick={() => router.push("/devices/discovery")}
-              className="flex items-center bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-all shadow-md hover:shadow-lg"
-            >
-              <span className="material-icons-round text-sm mr-2">add</span>
-              Add Device
-            </button>
+            {isAdmin ? (
+              <button
+                onClick={() => router.push("/devices/discovery")}
+                className="flex items-center bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-all shadow-md hover:shadow-lg"
+              >
+                <span className="material-icons-round text-sm mr-2">add</span>
+                Add Device
+              </button>
+            ) : null}
           </div>
         </header>
 
         <div className="flex-1 overflow-y-auto p-6 scroll-smooth">
           <div className="max-w-7xl mx-auto w-full">
+            {!isAdmin ? (
+              <div className="mb-6 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300">
+                Only devices in rooms assigned by an administrator appear here. Pairing and device-management actions stay hidden for non-admin accounts.
+              </div>
+            ) : null}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
               <div className="bg-surface-light dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm relative overflow-hidden group">
                 <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
@@ -313,14 +318,13 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
     }
   };
 
-  const handleSliderCommit = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseInt(e.target.value);
+  const handleSliderCommit = async (nextValue: number) => {
     const targetPin = outputPin || pwmPin;
     if (!targetPin && !config.provider) return; // If extension, still allow
 
     setPending(true);
     try {
-      const payload = { kind: "action", pin: targetPin?.gpio_pin || 0, brightness: val };
+      const payload = { kind: "action", pin: targetPin?.gpio_pin || 0, brightness: nextValue };
       await sendDeviceCommand(config.device_id, payload);
     } catch {
       // ignore
@@ -366,8 +370,8 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
             value={sliderValue}
             disabled={pending || !isOnline}
             onChange={(e) => setSliderValue(parseInt(e.target.value))}
-            onMouseUp={handleSliderCommit as any}
-            onTouchEnd={handleSliderCommit as any}
+            onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
+            onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
           />
         </div>
         <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
@@ -452,8 +456,8 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
             value={sliderValue}
             disabled={pending || !isOnline}
             onChange={(e) => setSliderValue(parseInt(e.target.value))}
-            onMouseUp={handleSliderCommit as any}
-            onTouchEnd={handleSliderCommit as any}
+            onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
+            onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
           />
         </div>
         <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">

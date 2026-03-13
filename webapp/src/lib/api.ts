@@ -1,4 +1,4 @@
-import { DeviceConfig } from "@/types/device";
+import { AuthStatus, DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
 import { getToken } from "./auth";
 
 export const API_URL = "http://127.0.0.1:8000/api/v1";
@@ -9,12 +9,38 @@ export interface DeviceCommandResponse {
     command?: unknown;
 }
 
-export async function fetchDevices(): Promise<DeviceConfig[]> {
+export async function approveDiscoveredDevice(uuid: string, roomId: number): Promise<boolean> {
+    try {
+        const token = getToken();
+        if (!token) return false;
+
+        const res = await fetch(`${API_URL}/device/${uuid}/approve`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ room_id: roomId })
+        });
+
+        return res.ok;
+    } catch (error) {
+        console.error("Failed to approve device:", error);
+        return false;
+    }
+}
+
+export async function fetchDevices(options?: { authStatus?: AuthStatus }): Promise<DeviceDirectoryEntry[]> {
     try {
         const token = getToken();
         if (!token) return [];
+        const query = new URLSearchParams();
+        if (options?.authStatus) {
+            query.set("auth_status", options.authStatus);
+        }
+        const suffix = query.toString() ? `?${query.toString()}` : "";
 
-        const res = await fetch(`${API_URL}/devices`, {
+        const res = await fetch(`${API_URL}/devices${suffix}`, {
             cache: "no-store",
             headers: {
                 "Authorization": `Bearer ${token}`
@@ -25,6 +51,26 @@ export async function fetchDevices(): Promise<DeviceConfig[]> {
         return res.json();
     } catch (error) {
         console.error("Failed to fetch devices:", error);
+        return [];
+    }
+}
+
+export async function fetchDashboardDevices(): Promise<DeviceConfig[]> {
+    try {
+        const token = getToken();
+        if (!token) return [];
+
+        const res = await fetch(`${API_URL}/dashboard/devices`, {
+            cache: "no-store",
+            headers: {
+                Authorization: `Bearer ${token}`,
+            },
+        });
+
+        if (!res.ok) return [];
+        return res.json();
+    } catch (error) {
+        console.error("Failed to fetch dashboard devices:", error);
         return [];
     }
 }

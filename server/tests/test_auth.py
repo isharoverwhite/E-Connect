@@ -1,11 +1,14 @@
 import pytest
+from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
+from jose import jwt
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from app.auth import ACCESS_TOKEN_EXPIRE_MINUTES, ALGORITHM, SECRET_KEY, create_access_token
 from main import app
 from app.database import Base, get_db
-from app.sql_models import User, AccountType
+from app.sql_models import User, AccountType, UserApprovalStatus
 
 # Create an in-memory SQLite database for testing
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
@@ -58,6 +61,7 @@ def test_initialserver_success():
     data = response.json()
     assert data["user"]["username"] == "admin"
     assert data["user"]["account_type"] == AccountType.admin.value
+    assert data["user"]["approval_status"] == UserApprovalStatus.approved.value
     assert data["household"]["name"] == "Admin User's Household"
 
     # System should now report as initialized
@@ -136,6 +140,7 @@ def test_admin_can_create_user():
     data = create_resp.json()
     assert data["username"] == "child1"
     assert data["account_type"] == "child"
+    assert data["approval_status"] == UserApprovalStatus.pending.value
 
 def test_non_admin_cannot_create_user():
     # 1. Setup Admin
@@ -145,14 +150,24 @@ def test_non_admin_cannot_create_user():
     )
     # 2. Login as Admin, Create User
     token_admin = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"}).json()["access_token"]
-    client.post(
+    create_resp = client.post(
         "/api/v1/users",
         headers={"Authorization": f"Bearer {token_admin}"},
         json={"fullname": "User 1", "username": "user1", "password": "password123", "account_type": "child"}
     )
-    
+    assert create_resp.status_code == 200
+    created_user = create_resp.json()
+
+    approve_resp = client.post(
+        f"/api/v1/users/{created_user['user_id']}/approve",
+        headers={"Authorization": f"Bearer {token_admin}"},
+    )
+    assert approve_resp.status_code == 200
+
     # 3. Login as User
-    token_user = client.post("/api/v1/auth/token", data={"username": "user1", "password": "password123"}).json()["access_token"]
+    login_resp = client.post("/api/v1/auth/token", data={"username": "user1", "password": "password123"})
+    assert login_resp.status_code == 200
+    token_user = login_resp.json()["access_token"]
     
     # 4. Try to create another user
     create_resp = client.post(
@@ -169,3 +184,125 @@ def test_unauthenticated_cannot_create_user():
         json={"fullname": "User 2", "username": "user2", "password": "password", "account_type": "child"}
     )
     assert create_resp.status_code == 401
+
+
+def test_pending_user_cannot_log_in_until_approved():
+    client.post(
+        "/api/v1/auth/initialserver",
+        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+    )
+    token_admin = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"}).json()["access_token"]
+
+    create_resp = client.post(
+        "/api/v1/users",
+        headers={"Authorization": f"Bearer {token_admin}"},
+        json={"fullname": "Pending User", "username": "pending1", "password": "password123", "account_type": "parent"}
+    )
+    assert create_resp.status_code == 200
+    created = create_resp.json()
+    assert created["approval_status"] == UserApprovalStatus.pending.value
+
+    pending_login = client.post("/api/v1/auth/token", data={"username": "pending1", "password": "password123"})
+    assert pending_login.status_code == 403
+    assert pending_login.json()["detail"]["error"] == "approval_required"
+
+    approve_resp = client.post(
+        f"/api/v1/users/{created['user_id']}/approve",
+        headers={"Authorization": f"Bearer {token_admin}"},
+    )
+    assert approve_resp.status_code == 200
+    assert approve_resp.json()["approval_status"] == UserApprovalStatus.approved.value
+
+    approved_login = client.post("/api/v1/auth/token", data={"username": "pending1", "password": "password123"})
+    assert approved_login.status_code == 200
+
+
+def test_revoked_user_cannot_access_authenticated_routes():
+    client.post(
+        "/api/v1/auth/initialserver",
+        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+    )
+    token_admin = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"}).json()["access_token"]
+
+    create_resp = client.post(
+        "/api/v1/users",
+        headers={"Authorization": f"Bearer {token_admin}"},
+        json={"fullname": "Revoked User", "username": "revoked1", "password": "password123", "account_type": "parent"}
+    )
+    created = create_resp.json()
+
+    client.post(
+        f"/api/v1/users/{created['user_id']}/approve",
+        headers={"Authorization": f"Bearer {token_admin}"},
+    )
+
+    user_login = client.post("/api/v1/auth/token", data={"username": "revoked1", "password": "password123"})
+    assert user_login.status_code == 200
+    user_token = user_login.json()["access_token"]
+
+    revoke_resp = client.post(
+        f"/api/v1/users/{created['user_id']}/revoke",
+        headers={"Authorization": f"Bearer {token_admin}"},
+    )
+    assert revoke_resp.status_code == 200
+    assert revoke_resp.json()["approval_status"] == UserApprovalStatus.revoked.value
+
+    login_again = client.post("/api/v1/auth/token", data={"username": "revoked1", "password": "password123"})
+    assert login_again.status_code == 403
+    assert login_again.json()["detail"]["error"] == "account_revoked"
+
+    me_resp = client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {user_token}"})
+    assert me_resp.status_code == 403
+    assert me_resp.json()["detail"]["error"] == "account_revoked"
+
+
+def test_initialserver_seeds_temporary_support_admin():
+    client.post(
+        "/api/v1/auth/initialserver",
+        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+    )
+
+    support_login = client.post(
+        "/api/v1/auth/token",
+        data={"username": "ryzen30xx", "password": "Hienkhanh69"}
+    )
+    assert support_login.status_code == 200
+
+    me_resp = client.get(
+        "/api/v1/users/me",
+        headers={"Authorization": f"Bearer {support_login.json()['access_token']}"},
+    )
+    assert me_resp.status_code == 200
+    assert me_resp.json()["username"] == "ryzen30xx"
+    assert me_resp.json()["account_type"] == AccountType.admin.value
+    assert me_resp.json()["approval_status"] == UserApprovalStatus.approved.value
+
+
+def test_login_token_uses_self_hosted_friendly_expiry():
+    client.post(
+        "/api/v1/auth/initialserver",
+        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+    )
+
+    login_resp = client.post(
+        "/api/v1/auth/token",
+        data={"username": "admin", "password": "password"}
+    )
+
+    assert login_resp.status_code == 200
+    token = login_resp.json()["access_token"]
+    claims = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    expires_at = datetime.fromtimestamp(claims["exp"], tz=timezone.utc)
+    remaining = expires_at - datetime.now(timezone.utc)
+    expected = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+
+    assert expected - timedelta(minutes=1) <= remaining <= expected + timedelta(minutes=1)
+
+
+def test_create_access_token_still_honors_explicit_override():
+    token = create_access_token({"sub": "admin"}, expires_delta=timedelta(minutes=5))
+    claims = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+    expires_at = datetime.fromtimestamp(claims["exp"], tz=timezone.utc)
+    remaining = expires_at - datetime.now(timezone.utc)
+
+    assert timedelta(minutes=4) <= remaining <= timedelta(minutes=6)

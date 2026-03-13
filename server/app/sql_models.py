@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime, Text, ForeignKey, Enum, TIMESTAMP
+from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime, Text, ForeignKey, Enum, TIMESTAMP, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
@@ -14,6 +14,11 @@ class HouseholdRole(str, enum.Enum):
     admin = "admin"
     member = "member"
     guest = "guest"
+
+class UserApprovalStatus(str, enum.Enum):
+    pending = "pending"
+    approved = "approved"
+    revoked = "revoked"
 
 class AuthStatus(str, enum.Enum):
     pending = "pending"
@@ -63,6 +68,7 @@ class User(Base):
     username = Column(String(100), nullable=False, unique=True)
     authentication = Column(String(255), nullable=False) # hashed_password
     account_type = Column(Enum(AccountType), default=AccountType.parent)
+    approval_status = Column(Enum(UserApprovalStatus), default=UserApprovalStatus.approved, nullable=False)
     ui_layout = Column(JSON, comment='Lưu cấu hình Grid Layout cá nhân của từng user')
     created_at = Column(TIMESTAMP, server_default=func.now())
 
@@ -80,6 +86,7 @@ class Household(Base):
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     memberships = relationship("HouseholdMembership", back_populates="household", cascade="all, delete-orphan")
+    rooms = relationship("Room", back_populates="household")
 
 class HouseholdMembership(Base):
     __tablename__ = "household_memberships"
@@ -98,10 +105,27 @@ class Room(Base):
 
     room_id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    household_id = Column(Integer, ForeignKey("households.household_id"), nullable=True)
     name = Column(String(255), nullable=False)
 
     user = relationship("User", back_populates="rooms")
+    household = relationship("Household", back_populates="rooms")
     devices = relationship("Device", back_populates="room")
+    permissions = relationship("RoomPermission", back_populates="room", cascade="all, delete-orphan")
+
+
+class RoomPermission(Base):
+    __tablename__ = "room_permissions"
+    __table_args__ = (UniqueConstraint("room_id", "user_id", name="uq_room_permissions_room_user"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    room_id = Column(Integer, ForeignKey("rooms.room_id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    can_control = Column(Boolean, nullable=False, default=True)
+    granted_at = Column(TIMESTAMP, server_default=func.now())
+
+    room = relationship("Room", back_populates="permissions")
+    user = relationship("User")
 
 class Device(Base):
     __tablename__ = "devices"
@@ -117,9 +141,11 @@ class Device(Base):
     
     mode = Column(Enum(DeviceMode), default=DeviceMode.library)
     firmware_version = Column(String(50))
+    ip_address = Column(String(64), nullable=True, comment='Current LAN IP reported by the device')
     last_seen = Column(DateTime, nullable=True)
     topic_pub = Column(String(255), comment='MQTT Publish Topic')
     topic_sub = Column(String(255), comment='MQTT Subscribe Topic')
+    provisioning_project_id = Column(String(36), nullable=True, comment='DIY project id used to derive secure firmware credentials')
 
     room = relationship("Room", back_populates="devices")
     owner = relationship("User", back_populates="devices")
@@ -209,6 +235,7 @@ class DiyProject(Base):
 
     id = Column(String(36), primary_key=True, comment='UUID cho project')
     user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    room_id = Column(Integer, ForeignKey("rooms.room_id"), nullable=True)
     name = Column(String(255), nullable=False)
     board_profile = Column(String(100), nullable=False)
     config = Column(JSON, nullable=True, comment='Lưu trữ toàn bộ JSON map cấu hình pins, wifi, mqtt')
@@ -216,6 +243,7 @@ class DiyProject(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     owner = relationship("User")
+    room = relationship("Room")
     build_jobs = relationship("BuildJob", back_populates="project", cascade="all, delete-orphan")
 
 class BuildJob(Base):

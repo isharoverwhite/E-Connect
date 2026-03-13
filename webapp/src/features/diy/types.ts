@@ -5,6 +5,9 @@ export interface PinMapping {
     mode: PinMode;
     function?: string;
     label?: string;
+    extra_params?: {
+        active_level?: 0 | 1;
+    } | null;
 }
 
 export type FlashSource = "server" | "demo" | "upload";
@@ -54,6 +57,8 @@ export interface ServerBuildState {
     warnings: string[];
     artifactUrl: string | null;
     artifactName: string | null;
+    bootloaderUrl: string | null;
+    partitionsUrl: string | null;
     configKey: string | null;
     updatedAt: string | null;
     finishedAt: string | null;
@@ -79,31 +84,51 @@ export const PIN_FILL: Record<"idle" | "selected" | "assigned" | "reserved", str
 };
 
 export function sanitizePins(input: unknown[], modeMetadata: Record<string, unknown>): PinMapping[] {
-    return input
-        .map((item) => {
-            if (!item || typeof item !== "object") {
-                return null;
-            }
+    const sanitizedPins: PinMapping[] = [];
 
-            const candidate = item as PinMapping & { gpio?: unknown };
-            const gpio =
-                typeof candidate.gpio_pin === "number"
-                    ? candidate.gpio_pin
-                    : typeof candidate.gpio === "number"
-                        ? candidate.gpio
-                        : null;
+    for (const item of input) {
+        if (!item || typeof item !== "object") {
+            continue;
+        }
 
-            if (gpio === null || typeof candidate.mode !== "string" || !(candidate.mode in modeMetadata)) {
-                return null;
-            }
+        const candidate = item as PinMapping & { gpio?: unknown };
+        const gpio =
+            typeof candidate.gpio_pin === "number"
+                ? candidate.gpio_pin
+                : typeof candidate.gpio === "number"
+                    ? candidate.gpio
+                    : null;
 
-            return {
-                gpio_pin: gpio,
-                mode: candidate.mode,
-                function: candidate.function,
-                label: candidate.label,
-            } satisfies PinMapping;
-        })
-        .filter((item): item is PinMapping => item !== null)
-        .sort((left, right) => left.gpio_pin - right.gpio_pin);
+        if (gpio === null || typeof candidate.mode !== "string" || !(candidate.mode in modeMetadata)) {
+            continue;
+        }
+
+        const nextPin: PinMapping = {
+            gpio_pin: gpio,
+            mode: candidate.mode as PinMode,
+        };
+
+        if (typeof candidate.function === "string" && candidate.function.length > 0) {
+            nextPin.function = candidate.function;
+        }
+
+        if (typeof candidate.label === "string" && candidate.label.length > 0) {
+            nextPin.label = candidate.label;
+        }
+
+        if (
+            candidate.extra_params &&
+            typeof candidate.extra_params === "object" &&
+            "active_level" in candidate.extra_params &&
+            (candidate.extra_params.active_level === 0 || candidate.extra_params.active_level === 1)
+        ) {
+            nextPin.extra_params = {
+                active_level: candidate.extra_params.active_level,
+            };
+        }
+
+        sanitizedPins.push(nextPin);
+    }
+
+    return sanitizedPins.sort((left, right) => left.gpio_pin - right.gpio_pin);
 }

@@ -3,8 +3,9 @@
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
-import { getToken } from "@/lib/auth";
+import { getToken, removeToken } from "@/lib/auth";
 import { API_URL } from "@/lib/api";
+import { createRoom, fetchRooms, type RoomRecord } from "@/lib/rooms";
 import {
   BOARD_PROFILES,
   MODE_METADATA,
@@ -58,10 +59,16 @@ const POLLING_BUILD_STATES = new Set<BuildJobStatus>([
   "building",
   "flashing",
 ]);
+const ACTIVE_BUILD_STATES = new Set<BuildJobStatus>([
+  "queued",
+  "building",
+  "flashing",
+]);
 
 interface SerializedDraft {
   projectId?: string;
   projectName?: string;
+  roomId?: number | null;
   family?: Esp32ChipFamily;
   boardId?: string;
   pins?: PinMapping[];
@@ -74,6 +81,7 @@ interface SerializedDraft {
 interface DiyProjectRecord {
   id: string;
   user_id: number;
+  room_id?: number | null;
   name: string;
   board_profile: string;
   config?: Record<string, unknown> | null;
@@ -96,6 +104,8 @@ interface BuildJobRecord {
 interface BuildLogsRecord {
   logs: string;
 }
+
+type ServerArtifactKind = "firmware" | "bootloader" | "partitions";
 
 interface SerialStatusRecord {
   locked: boolean;
@@ -125,6 +135,8 @@ function createEmptyBuildState(): ServerBuildState {
     warnings: [],
     artifactUrl: null,
     artifactName: null,
+    bootloaderUrl: null,
+    partitionsUrl: null,
     configKey: null,
     updatedAt: null,
     finishedAt: null,
@@ -134,6 +146,16 @@ function createEmptyBuildState(): ServerBuildState {
 
 function getErrorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Unexpected request failure.";
+}
+
+class ApiRequestError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+  }
 }
 
 async function parseApiError(response: Response) {
@@ -171,14 +193,41 @@ async function parseApiError(response: Response) {
   return fallback;
 }
 
-function buildConfigKey(boardId: string, pins: PinMapping[]) {
+async function createApiRequestError(response: Response) {
+  return new ApiRequestError(response.status, await parseApiError(response));
+}
+
+function isAuthApiRequestError(error: unknown): error is ApiRequestError {
+  return error instanceof ApiRequestError && (error.status === 401 || error.status === 403);
+}
+
+function buildConfigKey({
+  boardId,
+  projectName,
+  roomId,
+  pins,
+  wifiSsid,
+  wifiPassword,
+}: {
+  boardId: string;
+  projectName: string;
+  roomId: number | null;
+  pins: PinMapping[];
+  wifiSsid: string;
+  wifiPassword: string;
+}) {
   return JSON.stringify({
     boardId,
+    projectName: projectName.trim(),
+    roomId,
+    wifiSsid: wifiSsid.trim(),
+    wifiPassword: wifiPassword.trim(),
     pins: pins.map((mapping) => ({
       gpio_pin: mapping.gpio_pin,
       mode: mapping.mode,
       function: mapping.function ?? "",
       label: mapping.label ?? "",
+      active_level: mapping.extra_params?.active_level ?? 1,
     })),
   });
 }
@@ -186,6 +235,7 @@ function buildConfigKey(boardId: string, pins: PinMapping[]) {
 function createProjectPayload({
   board,
   projectName,
+  roomId,
   flashSource,
   pins,
   serialPort,
@@ -196,6 +246,7 @@ function createProjectPayload({
 }: {
   board: BoardProfile;
   projectName: string;
+  roomId: number | null;
   flashSource: FlashSource;
   pins: PinMapping[];
   serialPort: string;
@@ -207,6 +258,7 @@ function createProjectPayload({
   const config: Record<string, unknown> = {
     schema_version: 1,
     project_name: projectName,
+    room_id: roomId,
     family: board.family,
     board_id: board.id,
     flash_source: flashSource,
@@ -216,6 +268,10 @@ function createProjectPayload({
       mode: mapping.mode,
       function: mapping.function ?? MODE_METADATA[mapping.mode].defaultFunction,
       label: mapping.label ?? `GPIO ${mapping.gpio_pin}`,
+      extra_params:
+        mapping.mode === "OUTPUT"
+          ? { active_level: mapping.extra_params?.active_level ?? 1 }
+          : undefined,
     })),
     wifi_ssid: wifiSsid,
     wifi_password: wifiPassword,
@@ -229,6 +285,7 @@ function createProjectPayload({
   return {
     name: projectName.trim() || board.name,
     board_profile: board.id,
+    room_id: roomId,
     config,
   };
 }
@@ -260,11 +317,18 @@ function restoreDraftSnapshot(rawDraft: string | null) {
 
 export default function DIYBuilderPage() {
   const router = useRouter();
-  useAuth();
+  const { user, logout } = useAuth();
+  const isAdmin = user?.account_type === "admin";
 
   const [currentStep, setCurrentStep] = useState(1);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState("Living Room Relay Node");
+  const [roomId, setRoomId] = useState<number | null>(null);
+  const [rooms, setRooms] = useState<RoomRecord[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(true);
+  const [roomError, setRoomError] = useState("");
+  const [newRoomName, setNewRoomName] = useState("");
+  const [creatingRoom, setCreatingRoom] = useState(false);
   const [wifiSsid, setWifiSsid] = useState("");
   const [wifiPassword, setWifiPassword] = useState("");
   const [family, setFamily] = useState<Esp32ChipFamily>("ESP32-C3");
@@ -300,17 +364,31 @@ export default function DIYBuilderPage() {
   );
   const board = getBoardProfile(boardId) ?? familyOptions[0] ?? BOARD_PROFILES[0];
   const boardPins = useMemo(() => [...board.leftPins, ...board.rightPins], [board]);
-  const validation = validateMappings(board, pins);
-  const currentBuildConfigKey = useMemo(() => buildConfigKey(board.id, pins), [board.id, pins]);
+  const validation = validateMappings(board, pins, wifiSsid, wifiPassword);
+  const currentBuildConfigKey = useMemo(
+    () =>
+      buildConfigKey({
+        boardId: board.id,
+        projectName,
+        roomId,
+        pins,
+        wifiSsid,
+        wifiPassword,
+      }),
+    [board.id, pins, projectName, roomId, wifiPassword, wifiSsid],
+  );
   const activeBuildJobId =
     serverBuild.configKey === currentBuildConfigKey ? serverBuild.jobId : null;
   const activeBuildKey =
     serverBuild.configKey === currentBuildConfigKey ? serverBuild.configKey : null;
+  const hasActiveServerBuild =
+    Boolean(serverBuild.jobId) && ACTIVE_BUILD_STATES.has(serverBuild.status as BuildJobStatus);
   const projectPayload = useMemo(
     () =>
       createProjectPayload({
         board,
         projectName,
+        roomId,
         flashSource,
         pins,
         serialPort,
@@ -319,7 +397,7 @@ export default function DIYBuilderPage() {
         wifiSsid,
         wifiPassword,
       }),
-    [activeBuildJobId, activeBuildKey, board, flashSource, pins, projectName, serialPort, wifiSsid, wifiPassword],
+    [activeBuildJobId, activeBuildKey, board, flashSource, pins, projectName, roomId, serialPort, wifiSsid, wifiPassword],
   );
   const projectPayloadJson = useMemo(() => JSON.stringify(projectPayload), [projectPayload]);
   const draftConfig = projectPayload.config as Record<string, unknown>;
@@ -328,37 +406,99 @@ export default function DIYBuilderPage() {
     Boolean(serverBuild.jobId) &&
     serverBuild.configKey !== null &&
     serverBuild.configKey !== currentBuildConfigKey;
+  const serverBuildHasFullBundle = Boolean(
+    serverBuild.artifactUrl && serverBuild.bootloaderUrl && serverBuild.partitionsUrl,
+  );
 
   const lastSavedPayloadRef = useRef<string | null>(null);
-  const latestBuildUrlRef = useRef<string | null>(null);
+  const latestBuildUrlsRef = useRef<{
+    artifact: string | null;
+    bootloader: string | null;
+    partitions: string | null;
+  }>({
+    artifact: null,
+    bootloader: null,
+    partitions: null,
+  });
   const logPanelRef = useRef<HTMLDivElement | null>(null);
   const sseJobIdRef = useRef<string | null>(null);
+  const authRedirectTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (serverBuild.artifactUrl === latestBuildUrlRef.current) {
+    const nextUrls = {
+      artifact: serverBuild.artifactUrl,
+      bootloader: serverBuild.bootloaderUrl,
+      partitions: serverBuild.partitionsUrl,
+    };
+    const previousUrls = latestBuildUrlsRef.current;
+
+    if (
+      previousUrls.artifact === nextUrls.artifact &&
+      previousUrls.bootloader === nextUrls.bootloader &&
+      previousUrls.partitions === nextUrls.partitions
+    ) {
       return;
     }
 
-    if (latestBuildUrlRef.current) {
-      URL.revokeObjectURL(latestBuildUrlRef.current);
-    }
+    [previousUrls.artifact, previousUrls.bootloader, previousUrls.partitions].forEach((url) => {
+      if (url && !Object.values(nextUrls).includes(url)) {
+        URL.revokeObjectURL(url);
+      }
+    });
 
-    latestBuildUrlRef.current = serverBuild.artifactUrl ?? null;
-  }, [serverBuild.artifactUrl]);
+    latestBuildUrlsRef.current = nextUrls;
+  }, [serverBuild.artifactUrl, serverBuild.bootloaderUrl, serverBuild.partitionsUrl]);
 
   useEffect(() => {
     return () => {
-      if (latestBuildUrlRef.current) {
-        URL.revokeObjectURL(latestBuildUrlRef.current);
+      const previousUrls = latestBuildUrlsRef.current;
+      [previousUrls.artifact, previousUrls.bootloader, previousUrls.partitions].forEach((url) => {
+        if (url) {
+          URL.revokeObjectURL(url);
+        }
+      });
+      if (authRedirectTimeoutRef.current !== null) {
+        window.clearTimeout(authRedirectTimeoutRef.current);
       }
-    };
+    }
   }, []);
 
+  const handleBuildAuthFailure = useCallback((error: ApiRequestError) => {
+    const message =
+      error.status === 401
+        ? "Session expired. Sign in again before starting another server build."
+        : "Your account is not authorized to use the server build flow.";
+
+    setProjectSyncState("error");
+    setProjectSyncMessage(message);
+    setServerBuild((previous) => ({
+      ...previous,
+      error: message,
+    }));
+
+    if (error.status === 401) {
+      removeToken();
+      if (authRedirectTimeoutRef.current === null && typeof window !== "undefined") {
+        authRedirectTimeoutRef.current = window.setTimeout(() => {
+          authRedirectTimeoutRef.current = null;
+          logout();
+        }, 1200);
+      }
+    }
+  }, [logout]);
+
   const persistProject = useCallback(async (payloadJson: string) => {
+    if (!roomId) {
+      setProjectSyncState("idle");
+      setProjectSyncMessage("Select a room before syncing this device project to the server.");
+      return null;
+    }
+
     const token = getToken();
     if (!token) {
-      setProjectSyncState("error");
-      setProjectSyncMessage("Missing auth token. Sign in again before syncing DIY projects.");
+      handleBuildAuthFailure(
+        new ApiRequestError(401, "Missing auth token. Sign in again before syncing DIY projects."),
+      );
       return null;
     }
 
@@ -383,7 +523,7 @@ export default function DIYBuilderPage() {
       );
 
       if (!response.ok) {
-        throw new Error(await parseApiError(response));
+        throw await createApiRequestError(response);
       }
 
       const savedProject = (await response.json()) as DiyProjectRecord;
@@ -394,10 +534,63 @@ export default function DIYBuilderPage() {
       return savedProject.id;
     } catch (error) {
       setProjectSyncState("error");
-      setProjectSyncMessage(getErrorMessage(error));
+      if (isAuthApiRequestError(error)) {
+        handleBuildAuthFailure(error);
+      } else {
+        setProjectSyncMessage(getErrorMessage(error));
+      }
       return null;
     }
-  }, [projectId]);
+  }, [handleBuildAuthFailure, projectId, roomId]);
+
+  const loadRooms = useCallback(async (token: string) => {
+    setRoomsLoading(true);
+    setRoomError("");
+
+    try {
+      const nextRooms = await fetchRooms(token);
+      setRooms(nextRooms);
+      setRoomId((currentRoomId) => {
+        if (currentRoomId && nextRooms.some((room) => room.room_id === currentRoomId)) {
+          return currentRoomId;
+        }
+        return nextRooms[0]?.room_id ?? null;
+      });
+    } catch (error) {
+      setRoomError(getErrorMessage(error));
+    } finally {
+      setRoomsLoading(false);
+    }
+  }, []);
+
+  const handleCreateRoom = useCallback(async () => {
+    const token = getToken();
+    if (!token) {
+      handleBuildAuthFailure(
+        new ApiRequestError(401, "Missing auth token. Sign in again before creating a room."),
+      );
+      return;
+    }
+
+    if (!newRoomName.trim()) {
+      setRoomError("Enter a room name before creating it.");
+      return;
+    }
+
+    setCreatingRoom(true);
+    setRoomError("");
+
+    try {
+      const createdRoom = await createRoom({ name: newRoomName.trim() }, token);
+      setRooms((currentRooms) => [...currentRooms, createdRoom].sort((left, right) => left.name.localeCompare(right.name)));
+      setRoomId(createdRoom.room_id);
+      setNewRoomName("");
+    } catch (error) {
+      setRoomError(getErrorMessage(error));
+    } finally {
+      setCreatingRoom(false);
+    }
+  }, [handleBuildAuthFailure, newRoomName]);
 
   async function fetchBuildLogs(jobId: string, token: string) {
     const response = await fetch(`${API_URL}/diy/build/${jobId}/logs`, {
@@ -410,15 +603,19 @@ export default function DIYBuilderPage() {
     }
 
     if (!response.ok) {
-      throw new Error(await parseApiError(response));
+      throw await createApiRequestError(response);
     }
 
     const payload = (await response.json()) as BuildLogsRecord;
     return payload.logs;
   }
 
-  async function fetchBuildArtifact(jobId: string, token: string) {
-    const response = await fetch(`${API_URL}/diy/build/${jobId}/artifact`, {
+  async function fetchBuildArtifact(jobId: string, token: string, artifactKind: ServerArtifactKind) {
+    const artifactPath =
+      artifactKind === "firmware"
+        ? `${API_URL}/diy/build/${jobId}/artifact`
+        : `${API_URL}/diy/build/${jobId}/artifact/${artifactKind}`;
+    const response = await fetch(artifactPath, {
       headers: { Authorization: `Bearer ${token}` },
       cache: "no-store",
     });
@@ -428,13 +625,13 @@ export default function DIYBuilderPage() {
     }
 
     if (!response.ok) {
-      throw new Error(await parseApiError(response));
+      throw await createApiRequestError(response);
     }
 
     const artifactBlob = await response.blob();
     return {
       url: URL.createObjectURL(artifactBlob),
-      name: `firmware-${jobId}.bin`,
+      name: `${artifactKind}-${jobId}.bin`,
     };
   }
 
@@ -451,15 +648,21 @@ export default function DIYBuilderPage() {
       });
 
       if (!jobResponse.ok) {
-        throw new Error(await parseApiError(jobResponse));
+        throw await createApiRequestError(jobResponse);
       }
 
       const job = (await jobResponse.json()) as BuildJobRecord;
       // Always fetch logs so Refresh works regardless of terminal state
-      const [logs, artifact] = await Promise.all([
+      const [logs, artifact, bootloader, partitions] = await Promise.all([
         fetchBuildLogs(job.id, token).catch(() => null),
         job.status === "artifact_ready"
-          ? fetchBuildArtifact(job.id, token).catch(() => null)
+          ? fetchBuildArtifact(job.id, token, "firmware").catch(() => null)
+          : Promise.resolve(null),
+        job.status === "artifact_ready"
+          ? fetchBuildArtifact(job.id, token, "bootloader").catch(() => null)
+          : Promise.resolve(null),
+        job.status === "artifact_ready"
+          ? fetchBuildArtifact(job.id, token, "partitions").catch(() => null)
           : Promise.resolve(null),
       ]);
 
@@ -475,6 +678,8 @@ export default function DIYBuilderPage() {
               : previous.error,
           artifactUrl: artifact?.url ?? previous.artifactUrl,
           artifactName: artifact?.name ?? previous.artifactName,
+          bootloaderUrl: bootloader?.url ?? previous.bootloaderUrl,
+          partitionsUrl: partitions?.url ?? previous.partitionsUrl,
           configKey: buildKey,
           updatedAt: job.updated_at,
           finishedAt: job.finished_at ?? previous.finishedAt,
@@ -482,14 +687,22 @@ export default function DIYBuilderPage() {
         }));
       });
     } catch (error) {
+      if (isAuthApiRequestError(error)) {
+        handleBuildAuthFailure(error);
+        return;
+      }
       setServerBuild((previous) => ({
         ...previous,
         error: getErrorMessage(error),
       }));
     }
-  }, []);
+  }, [handleBuildAuthFailure]);
 
   const refreshSerialStatus = useCallback(async (options?: { silent?: boolean }) => {
+    if (!isAdmin) {
+      return;
+    }
+
     const token = getToken();
     if (!token || !serialPort.trim()) {
       return;
@@ -528,7 +741,7 @@ export default function DIYBuilderPage() {
         setSerialBusy(false);
       }
     }
-  }, [serialPort]);
+  }, [isAdmin, serialPort]);
 
   const loadServerProject = useCallback(async (project: DiyProjectRecord) => {
     const config = (project.config ?? {}) as Record<string, unknown>;
@@ -542,7 +755,25 @@ export default function DIYBuilderPage() {
       Array.isArray(config.pins) ? (config.pins as PinMapping[]) : [],
       MODE_METADATA,
     );
-    const nextBuildKey = buildConfigKey(nextBoard.id, nextPins);
+    const nextWifiSsid = typeof config.wifi_ssid === "string" ? config.wifi_ssid : "";
+    const nextWifiPassword = typeof config.wifi_password === "string" ? config.wifi_password : "";
+    const nextProjectName =
+      typeof config.project_name === "string" && config.project_name.trim()
+        ? config.project_name
+        : project.name;
+    const nextBuildKey = buildConfigKey({
+      boardId: nextBoard.id,
+      projectName: nextProjectName,
+      roomId:
+        typeof project.room_id === "number"
+          ? project.room_id
+          : typeof config.room_id === "number"
+            ? config.room_id
+            : null,
+      pins: nextPins,
+      wifiSsid: nextWifiSsid,
+      wifiPassword: nextWifiPassword,
+    });
     const savedBuildKey =
       typeof config.latest_build_config_key === "string" ? config.latest_build_config_key : null;
     const savedBuildJobId =
@@ -557,10 +788,13 @@ export default function DIYBuilderPage() {
       savedFlashSource === "demo" && !nextBoard.demoFirmware ? "server" : savedFlashSource;
 
     setProjectId(project.id);
-    setProjectName(
-      typeof config.project_name === "string" && config.project_name.trim()
-        ? config.project_name
-        : project.name,
+    setProjectName(nextProjectName);
+    setRoomId(
+      typeof project.room_id === "number"
+        ? project.room_id
+        : typeof config.room_id === "number"
+          ? config.room_id
+          : null,
     );
     setFamily(nextBoard.family);
     setBoardId(nextBoard.id);
@@ -571,8 +805,8 @@ export default function DIYBuilderPage() {
         ? config.serial_port
         : DEFAULT_SERIAL_PORT,
     );
-    setWifiSsid(typeof config.wifi_ssid === "string" ? config.wifi_ssid : "");
-    setWifiPassword(typeof config.wifi_password === "string" ? config.wifi_password : "");
+    setWifiSsid(nextWifiSsid);
+    setWifiPassword(nextWifiPassword);
     setServerBuild({
       ...createEmptyBuildState(),
       jobId: savedBuildJobId,
@@ -582,10 +816,13 @@ export default function DIYBuilderPage() {
     lastSavedPayloadRef.current = JSON.stringify(
       createProjectPayload({
         board: nextBoard,
-        projectName:
-          typeof config.project_name === "string" && config.project_name.trim()
-            ? config.project_name
-            : project.name,
+        projectName: nextProjectName,
+        roomId:
+          typeof project.room_id === "number"
+            ? project.room_id
+            : typeof config.room_id === "number"
+              ? config.room_id
+              : null,
         flashSource: nextFlashSource,
         pins: nextPins,
         serialPort:
@@ -594,8 +831,8 @@ export default function DIYBuilderPage() {
             : DEFAULT_SERIAL_PORT,
         buildJobId: savedBuildJobId,
         buildKey: savedBuildJobId ? savedBuildKey : null,
-        wifiSsid: typeof config.wifi_ssid === "string" ? config.wifi_ssid : "",
-        wifiPassword: typeof config.wifi_password === "string" ? config.wifi_password : "",
+        wifiSsid: nextWifiSsid,
+        wifiPassword: nextWifiPassword,
       }),
     );
     setProjectSyncState("saved");
@@ -630,6 +867,13 @@ export default function DIYBuilderPage() {
     let cancelled = false;
 
     async function hydrateDraft() {
+      if (!isAdmin) {
+        setRoomsLoading(false);
+        setDraftLoaded(true);
+        setProjectHydrated(true);
+        return;
+      }
+
       if (typeof window === "undefined") {
         return;
       }
@@ -646,6 +890,7 @@ export default function DIYBuilderPage() {
 
         setProjectId(preferredProjectId);
         setProjectName(savedDraft.projectName || "Living Room Relay Node");
+        setRoomId(typeof savedDraft.roomId === "number" ? savedDraft.roomId : null);
         setFamily(
           savedDraft.family && getBoardFamily(savedDraft.family)
             ? savedDraft.family
@@ -668,11 +913,14 @@ export default function DIYBuilderPage() {
         if (!cancelled) {
           setProjectSyncState("error");
           setProjectSyncMessage("Missing auth token. Sign in again before syncing DIY projects.");
+          setRoomsLoading(false);
           setDraftLoaded(true);
           setProjectHydrated(true);
         }
         return;
       }
+
+      await loadRooms(token);
 
       setProjectSyncState("loading");
       setProjectSyncMessage("Loading DIY draft from server...");
@@ -718,7 +966,7 @@ export default function DIYBuilderPage() {
     return () => {
       cancelled = true;
     };
-  }, [loadServerProject]);
+  }, [isAdmin, loadRooms, loadServerProject]);
 
   useEffect(() => {
     const nextOptions = BOARD_PROFILES.filter((profile) => profile.family === family);
@@ -747,19 +995,20 @@ export default function DIYBuilderPage() {
 
     window.localStorage.setItem(
       DRAFT_STORAGE_KEY,
-      JSON.stringify({
-        projectId: projectId ?? undefined,
-        projectName,
-        family,
-        boardId,
-        pins,
+        JSON.stringify({
+          projectId: projectId ?? undefined,
+          projectName,
+          roomId,
+          family,
+          boardId,
+          pins,
         flashSource,
         serialPort,
         wifiSsid,
         wifiPassword,
       } satisfies SerializedDraft),
     );
-  }, [boardId, draftLoaded, family, flashSource, pins, projectId, projectName, serialPort, wifiSsid, wifiPassword]);
+  }, [boardId, draftLoaded, family, flashSource, pins, projectId, projectName, roomId, serialPort, wifiSsid, wifiPassword]);
 
   useEffect(() => {
     if (!draftLoaded || !projectHydrated) {
@@ -793,7 +1042,13 @@ export default function DIYBuilderPage() {
       projectName,
       flashSource,
       uploadState,
-      serverArtifactUrl: serverBuildIsStale ? null : serverBuild.artifactUrl,
+      serverArtifactUrls: serverBuildIsStale
+        ? null
+        : {
+            firmware: serverBuild.artifactUrl,
+            bootloader: serverBuild.bootloaderUrl,
+            partitions: serverBuild.partitionsUrl,
+          },
       createFileUrl: (file) => {
         const url = URL.createObjectURL(file);
         uploadObjectUrls.push(url);
@@ -821,6 +1076,8 @@ export default function DIYBuilderPage() {
     flashSource,
     projectName,
     serverBuild.artifactUrl,
+    serverBuild.bootloaderUrl,
+    serverBuild.partitionsUrl,
     serverBuildIsStale,
     uploadState,
   ]);
@@ -874,18 +1131,19 @@ export default function DIYBuilderPage() {
     }
 
     sseJobIdRef.current = jobId;
-    const url = `${API_URL}/diy/build/${jobId}/logs/stream?token=${encodeURIComponent(token)}`;
     // EventSource doesn't support custom headers; pass token as query param.
     // The backend currently validates via Depends(get_current_user) which reads the
     // Authorization header — so we fall back to polling for logs in that case.
     // We use fetch-based streaming via ReadableStream instead:
     let cancelled = false;
+    const controller = new AbortController();
 
     const streamLogs = async () => {
       try {
         const response = await fetch(`${API_URL}/diy/build/${jobId}/logs/stream`, {
           headers: { Authorization: `Bearer ${token}` },
           cache: "no-store",
+          signal: controller.signal,
         });
 
         if (!response.ok || !response.body) {
@@ -895,6 +1153,7 @@ export default function DIYBuilderPage() {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let sawDoneEvent = false;
 
         while (!cancelled) {
           const { done, value } = await reader.read();
@@ -915,13 +1174,20 @@ export default function DIYBuilderPage() {
                 logPanelRef.current.scrollTop = logPanelRef.current.scrollHeight;
               }
             } else if (line.startsWith("event: done")) {
+              sawDoneEvent = true;
               cancelled = true;
               break;
             }
           }
         }
-        reader.cancel();
-      } catch {
+
+        if (!sawDoneEvent && cancelled) {
+          await reader.cancel().catch(() => undefined);
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
         // Network/SSE failure — status polling already handles recovery
       }
     };
@@ -930,6 +1196,7 @@ export default function DIYBuilderPage() {
 
     return () => {
       cancelled = true;
+      controller.abort();
       sseJobIdRef.current = null;
     };
   }, [serverBuild.jobId, serverBuild.status]);
@@ -971,6 +1238,17 @@ export default function DIYBuilderPage() {
   }, [persistProject, projectPayloadJson]);
 
   const triggerServerBuild = async () => {
+    if (hasActiveServerBuild && serverBuild.jobId) {
+      setFlashSource("server");
+      setServerBuild((previous) => ({
+        ...previous,
+        error: null,
+      }));
+      setProjectSyncMessage(`Build ${shortId(serverBuild.jobId)} is already in progress.`);
+      await refreshBuildJob(serverBuild.jobId, serverBuild.configKey ?? currentBuildConfigKey);
+      return;
+    }
+
     if (validation.errors.length > 0) {
       setFlashSource("server");
       setServerBuild((previous) => ({
@@ -982,27 +1260,24 @@ export default function DIYBuilderPage() {
 
     const ensuredProjectId = await persistProject(projectPayloadJson);
     if (!ensuredProjectId) {
-      setFlashSource("server");
-      setServerBuild((previous) => ({
-        ...previous,
-        error: "Unable to save the DIY project before starting the server build.",
-      }));
       return;
     }
 
     const token = getToken();
     if (!token) {
+      handleBuildAuthFailure(
+        new ApiRequestError(401, "Session expired. Sign in again before starting another server build."),
+      );
       return;
     }
 
     setBuildBusy(true);
     setFlashSource("server");
-    setServerBuild({
-      ...createEmptyBuildState(),
-      status: "queued",
+    setServerBuild((previous) => ({
+      ...previous,
+      error: null,
       warnings: validation.warnings,
-      configKey: currentBuildConfigKey,
-    });
+    }));
 
     try {
       const response = await fetch(
@@ -1014,7 +1289,7 @@ export default function DIYBuilderPage() {
       );
 
       if (!response.ok) {
-        throw new Error(await parseApiError(response));
+        throw await createApiRequestError(response);
       }
 
       const job = (await response.json()) as BuildJobRecord;
@@ -1034,6 +1309,7 @@ export default function DIYBuilderPage() {
           createProjectPayload({
             board,
             projectName,
+            roomId,
             flashSource: "server",
             pins,
             serialPort,
@@ -1045,10 +1321,14 @@ export default function DIYBuilderPage() {
         ),
       );
     } catch (error) {
+      if (isAuthApiRequestError(error)) {
+        handleBuildAuthFailure(error);
+        return;
+      }
       setServerBuild((previous) => ({
         ...previous,
-        status: "build_failed",
         error: getErrorMessage(error),
+        warnings: validation.warnings,
       }));
     } finally {
       setBuildBusy(false);
@@ -1152,6 +1432,9 @@ export default function DIYBuilderPage() {
     }
 
     setProjectName("Living Room Relay Node");
+    setRoomId(rooms[0]?.room_id ?? null);
+    setNewRoomName("");
+    setRoomError("");
     setFamily("ESP32-C3");
     setBoardId(DEFAULT_BOARD_ID);
     setPins([]);
@@ -1184,7 +1467,30 @@ export default function DIYBuilderPage() {
     serverBuildStatus: serverBuild.status,
     serverBuildError: serverBuild.error,
     serverBuildIsStale,
+    serverBuildHasFullBundle,
   });
+
+  if (!isAdmin) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6 dark:bg-slate-950">
+        <div className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300">
+            <span className="material-symbols-outlined text-4xl">admin_panel_settings</span>
+          </div>
+          <h1 className="mt-5 text-2xl font-bold text-slate-900 dark:text-white">Admin access required</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">
+            Pairing, creating, and flashing new devices are reserved for administrators. You can still return to the dashboard to control rooms that were explicitly assigned to your account.
+          </p>
+          <button
+            onClick={() => router.push("/devices")}
+            className="mt-6 rounded-2xl bg-primary px-5 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-blue-600"
+          >
+            Back to devices
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!draftLoaded) {
     return (
@@ -1286,6 +1592,15 @@ export default function DIYBuilderPage() {
           <Step1Board
             projectName={projectName}
             setProjectName={setProjectName}
+            rooms={rooms}
+            selectedRoomId={roomId}
+            setSelectedRoomId={setRoomId}
+            newRoomName={newRoomName}
+            setNewRoomName={setNewRoomName}
+            roomsLoading={roomsLoading}
+            roomError={roomError}
+            creatingRoom={creatingRoom}
+            onCreateRoom={handleCreateRoom}
             wifiSsid={wifiSsid}
             setWifiSsid={setWifiSsid}
             wifiPassword={wifiPassword}
@@ -1352,6 +1667,7 @@ export default function DIYBuilderPage() {
             projectSyncMessage={projectSyncMessage}
             serverBuild={serverBuild}
             buildBusy={buildBusy}
+            hasActiveBuild={hasActiveServerBuild}
             onTriggerServerBuild={triggerServerBuild}
             onRefreshBuild={() => serverBuild.jobId ? refreshBuildJob(serverBuild.jobId, serverBuild.configKey ?? currentBuildConfigKey) : Promise.resolve()}
             onDownloadArtifact={downloadServerArtifact}
@@ -1374,7 +1690,12 @@ export default function DIYBuilderPage() {
   );
 }
 
-function validateMappings(board: BoardProfile, pins: PinMapping[]): ValidationResult {
+function validateMappings(
+  board: BoardProfile,
+  pins: PinMapping[],
+  wifiSsid: string,
+  wifiPassword: string,
+): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const knownPins = new Map<number, BoardPin>(
@@ -1382,6 +1703,14 @@ function validateMappings(board: BoardProfile, pins: PinMapping[]): ValidationRe
   );
   const usedLabels = new Map<string, number>();
   let i2cPins = 0;
+
+  if (!wifiSsid.trim()) {
+    errors.push("Enter the Wi-Fi SSID before building or flashing firmware.");
+  }
+
+  if (!wifiPassword.trim()) {
+    errors.push("Enter the Wi-Fi password before building or flashing firmware.");
+  }
 
   if (pins.length === 0) {
     errors.push("Map at least one GPIO before generating config or flashing firmware.");
@@ -1443,20 +1772,33 @@ function buildFlashManifest({
   projectName,
   flashSource,
   uploadState,
-  serverArtifactUrl,
+  serverArtifactUrls,
   createFileUrl,
 }: {
   board: BoardProfile;
   projectName: string;
   flashSource: FlashSource;
   uploadState: FirmwareUploadState;
-  serverArtifactUrl: string | null;
+  serverArtifactUrls: {
+    firmware: string | null;
+    bootloader: string | null;
+    partitions: string | null;
+  } | null;
   createFileUrl: (file: File) => string;
 }): FlashManifest | null {
   if (flashSource === "server") {
-    if (!serverArtifactUrl) {
+    if (!serverArtifactUrls?.firmware) {
       return null;
     }
+
+    const serverParts =
+      serverArtifactUrls.bootloader && serverArtifactUrls.partitions
+        ? [
+            { path: serverArtifactUrls.bootloader, offset: 0 },
+            { path: serverArtifactUrls.partitions, offset: 32768 },
+            { path: serverArtifactUrls.firmware, offset: APPLICATION_OFFSET },
+          ]
+        : [{ path: serverArtifactUrls.firmware, offset: APPLICATION_OFFSET }];
 
     return {
       name: `${projectName || board.name} (${board.name})`,
@@ -1464,7 +1806,7 @@ function buildFlashManifest({
       builds: [
         {
           chipFamily: board.family,
-          parts: [{ path: serverArtifactUrl, offset: APPLICATION_OFFSET }],
+          parts: serverParts,
         },
       ],
     };
@@ -1522,6 +1864,7 @@ function getFlashLockedReason({
   serverBuildStatus,
   serverBuildError,
   serverBuildIsStale,
+  serverBuildHasFullBundle,
 }: {
   validation: ValidationResult;
   browserSupportsSerial: boolean;
@@ -1534,6 +1877,7 @@ function getFlashLockedReason({
   serverBuildStatus: ServerBuildState["status"];
   serverBuildError: string | null;
   serverBuildIsStale: boolean;
+  serverBuildHasFullBundle: boolean;
 }) {
   if (validation.errors.length > 0) {
     return "Fix the blocking GPIO validation errors before the web flasher becomes available.";
@@ -1556,7 +1900,7 @@ function getFlashLockedReason({
       return "The GPIO mapping changed after the last server build. Rebuild before flashing.";
     }
 
-    if (eraseFirst) {
+    if (eraseFirst && !serverBuildHasFullBundle) {
       return "Server builds currently expose the application binary only. Turn off 'erase all flash' or switch to a full bundled/upload bundle.";
     }
 
