@@ -188,11 +188,19 @@ export function Step1Board({
                             </div>
                             <div>
                                 <h3 className="text-slate-900 dark:text-white text-lg font-bold mb-1">{item.title}</h3>
-                                <p className="text-slate-500 dark:text-slate-400 text-sm mb-4">{item.subtitle}</p>
-                                <div className="space-y-2">
+                                <p className="text-slate-500 dark:text-slate-400 text-sm mb-4 h-10">{item.subtitle}</p>
+                                <div className="space-y-2 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
                                     <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
-                                        <span className="material-symbols-outlined text-sm">memory</span>
-                                        <span>{item.id === "ESP32" ? "Dual-core Xtensa® LX6" : item.id === "ESP32-C3" ? "Single-core RISC-V" : "AI Vector Instructions"}</span>
+                                        <span className="material-symbols-outlined text-sm text-slate-400">memory</span>
+                                        <span className="font-medium">{item.specs.core}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                                        <span className="material-symbols-outlined text-sm text-slate-400">speed</span>
+                                        <span className="font-medium">{item.specs.clock}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                                        <span className="material-symbols-outlined text-sm text-slate-400">wifi</span>
+                                        <span className="font-medium truncate" title={item.specs.wireless}>{item.specs.wireless}</span>
                                     </div>
                                 </div>
                             </div>
@@ -257,7 +265,7 @@ export function Step1Board({
                         disabled={!selectedRoomId}
                         className="flex-1 md:flex-none px-8 py-3 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                        <span>Next: Configure Pins</span>
+                        <span>Next: Choose Config</span>
                         <span className="material-symbols-outlined text-sm">arrow_forward</span>
                     </button>
                 </div>

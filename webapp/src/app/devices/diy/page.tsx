@@ -28,6 +28,7 @@ import {
   sanitizePins,
 } from "@/features/diy/types";
 import { Step1Board } from "@/features/diy/components/Step1Board";
+import { Step2Configs, type SavedBoardConfigOption } from "@/features/diy/components/Step2Configs";
 import { Step2Pins } from "@/features/diy/components/Step2Pins";
 import { Step3Validate } from "@/features/diy/components/Step3Validate";
 import { Step4Flash } from "@/features/diy/components/Step4Flash";
@@ -41,9 +42,10 @@ const APPLICATION_OFFSET = 65536;
 const BUILD_POLL_INTERVAL_MS = 2000;
 const WIZARD_STEPS = [
   { id: 1, label: "Boards" },
-  { id: 2, label: "Pins" },
-  { id: 3, label: "Review" },
-  { id: 4, label: "Flash" },
+  { id: 2, label: "Configs" },
+  { id: 3, label: "Pins" },
+  { id: 4, label: "Review" },
+  { id: 5, label: "Flash" },
 ] as const;
 const TERMINAL_BUILD_STATES = new Set<BuildJobStatus>([
   "artifact_ready",
@@ -302,6 +304,15 @@ function sortProjects(projects: DiyProjectRecord[]) {
   });
 }
 
+function getProjectBoardId(project: DiyProjectRecord) {
+  const config = (project.config ?? {}) as Record<string, unknown>;
+  const rawBoardId =
+    typeof config.board_id === "string"
+      ? config.board_id
+      : project.board_profile;
+  return resolveBoardProfileId(rawBoardId) ?? project.board_profile;
+}
+
 function restoreDraftSnapshot(rawDraft: string | null) {
   if (!rawDraft) {
     return null;
@@ -322,6 +333,9 @@ export default function DIYBuilderPage() {
 
   const [currentStep, setCurrentStep] = useState(1);
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [boardConfigs, setBoardConfigs] = useState<DiyProjectRecord[]>([]);
+  const [boardConfigsLoading, setBoardConfigsLoading] = useState(false);
+  const [boardConfigsError, setBoardConfigsError] = useState("");
   const [projectName, setProjectName] = useState("Living Room Relay Node");
   const [roomId, setRoomId] = useState<number | null>(null);
   const [rooms, setRooms] = useState<RoomRecord[]>([]);
@@ -409,8 +423,27 @@ export default function DIYBuilderPage() {
   const serverBuildHasFullBundle = Boolean(
     serverBuild.artifactUrl && serverBuild.bootloaderUrl && serverBuild.partitionsUrl,
   );
+  const boardConfigOptions = useMemo<SavedBoardConfigOption[]>(
+    () =>
+      boardConfigs.map((project) => {
+        const config = (project.config ?? {}) as Record<string, unknown>;
+        return {
+          id: project.id,
+          name: project.name,
+          pinCount: Array.isArray(config.pins) ? config.pins.length : 0,
+          createdAt: project.created_at,
+          updatedAt: project.updated_at,
+        };
+      }),
+    [boardConfigs],
+  );
+  const activeBoardConfigId = useMemo(
+    () => (boardConfigs.some((project) => project.id === projectId) ? projectId : null),
+    [boardConfigs, projectId],
+  );
 
   const lastSavedPayloadRef = useRef<string | null>(null);
+  const latestBoardConfigRequestRef = useRef(0);
   const latestBuildUrlsRef = useRef<{
     artifact: string | null;
     bootloader: string | null;
@@ -487,7 +520,59 @@ export default function DIYBuilderPage() {
     }
   }, [logout]);
 
-  const persistProject = useCallback(async (payloadJson: string) => {
+  const refreshBoardConfigs = useCallback(async (targetBoardId: string = board.id) => {
+    if (!isAdmin) {
+      return;
+    }
+
+    const requestId = latestBoardConfigRequestRef.current + 1;
+    latestBoardConfigRequestRef.current = requestId;
+
+    const token = getToken();
+    if (!token) {
+      return;
+    }
+
+    setBoardConfigsLoading(true);
+    setBoardConfigsError("");
+
+    try {
+      const response = await fetch(
+        `${API_URL}/diy/projects?board_profile=${encodeURIComponent(targetBoardId)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        },
+      );
+
+      if (!response.ok) {
+        throw await createApiRequestError(response);
+      }
+
+      const nextConfigs = sortProjects((await response.json()) as DiyProjectRecord[]);
+      if (latestBoardConfigRequestRef.current === requestId) {
+        setBoardConfigs(nextConfigs);
+      }
+    } catch (error) {
+      if (isAuthApiRequestError(error)) {
+        handleBuildAuthFailure(error);
+        return;
+      }
+
+      if (latestBoardConfigRequestRef.current === requestId) {
+        setBoardConfigsError(getErrorMessage(error));
+      }
+    } finally {
+      if (latestBoardConfigRequestRef.current === requestId) {
+        setBoardConfigsLoading(false);
+      }
+    }
+  }, [board.id, handleBuildAuthFailure, isAdmin]);
+
+  const persistProject = useCallback(async (
+    payloadJson: string,
+    options?: { forceCreate?: boolean },
+  ) => {
     if (!roomId) {
       setProjectSyncState("idle");
       setProjectSyncMessage("Select a room before syncing this device project to the server.");
@@ -502,18 +587,26 @@ export default function DIYBuilderPage() {
       return null;
     }
 
-    if (projectId && payloadJson === lastSavedPayloadRef.current) {
-      return projectId;
+    const targetProjectId = options?.forceCreate ? null : projectId;
+
+    if (targetProjectId && payloadJson === lastSavedPayloadRef.current && !options?.forceCreate) {
+      return targetProjectId;
     }
 
     setProjectSyncState("saving");
-    setProjectSyncMessage(projectId ? "Saving server draft..." : "Creating server draft...");
+    setProjectSyncMessage(
+      targetProjectId
+        ? "Saving server draft..."
+        : options?.forceCreate
+          ? "Creating a new saved config..."
+          : "Creating server draft...",
+    );
 
     try {
       const response = await fetch(
-        projectId ? `${API_URL}/diy/projects/${projectId}` : `${API_URL}/diy/projects`,
+        targetProjectId ? `${API_URL}/diy/projects/${targetProjectId}` : `${API_URL}/diy/projects`,
         {
-          method: projectId ? "PUT" : "POST",
+          method: targetProjectId ? "PUT" : "POST",
           headers: {
             Authorization: `Bearer ${token}`,
             "Content-Type": "application/json",
@@ -529,8 +622,20 @@ export default function DIYBuilderPage() {
       const savedProject = (await response.json()) as DiyProjectRecord;
       lastSavedPayloadRef.current = payloadJson;
       setProjectId(savedProject.id);
+      setBoardConfigs((currentConfigs) =>
+        getProjectBoardId(savedProject) === board.id
+          ? sortProjects([
+              savedProject,
+              ...currentConfigs.filter((project) => project.id !== savedProject.id),
+            ])
+          : currentConfigs.filter((project) => project.id !== savedProject.id),
+      );
       setProjectSyncState("saved");
-      setProjectSyncMessage(`Server draft saved as ${savedProject.name}.`);
+      setProjectSyncMessage(
+        options?.forceCreate
+          ? `Saved new config ${savedProject.name}.`
+          : `Server draft saved as ${savedProject.name}.`,
+      );
       return savedProject.id;
     } catch (error) {
       setProjectSyncState("error");
@@ -541,7 +646,7 @@ export default function DIYBuilderPage() {
       }
       return null;
     }
-  }, [handleBuildAuthFailure, projectId, roomId]);
+  }, [board.id, handleBuildAuthFailure, projectId, roomId]);
 
   const loadRooms = useCallback(async (token: string) => {
     setRoomsLoading(true);
@@ -799,6 +904,7 @@ export default function DIYBuilderPage() {
     setFamily(nextBoard.family);
     setBoardId(nextBoard.id);
     setPins(nextPins);
+    setSelectedPinId(null);
     setFlashSource(nextFlashSource);
     setSerialPort(
       typeof config.serial_port === "string" && config.serial_port.trim()
@@ -836,7 +942,8 @@ export default function DIYBuilderPage() {
       }),
     );
     setProjectSyncState("saved");
-    setProjectSyncMessage(`Loaded server draft ${project.name}.`);
+    setProjectSyncMessage(`Loaded saved config ${project.name}.`);
+    setBoardConfigsError("");
 
     if (savedBuildJobId) {
       void refreshBuildJob(savedBuildJobId, savedBuildKey);
@@ -926,26 +1033,35 @@ export default function DIYBuilderPage() {
       setProjectSyncMessage("Loading DIY draft from server...");
 
       try {
-        const response = await fetch(`${API_URL}/diy/projects`, {
-          headers: { Authorization: `Bearer ${token}` },
-          cache: "no-store",
-        });
+        if (preferredProjectId) {
+          const response = await fetch(`${API_URL}/diy/projects/${preferredProjectId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+            cache: "no-store",
+          });
 
-        if (!response.ok) {
-          throw new Error(await parseApiError(response));
-        }
+          if (response.status === 404) {
+            if (!cancelled) {
+              setProjectId(null);
+              lastSavedPayloadRef.current = null;
+              setProjectSyncState("idle");
+              setProjectSyncMessage("Saved local draft loaded. Choose or create a board config to continue.");
+            }
+          } else {
+            if (!response.ok) {
+              throw new Error(await parseApiError(response));
+            }
 
-        const projects = sortProjects((await response.json()) as DiyProjectRecord[]);
-        const preferredProject = projects.find((project) => project.id === preferredProjectId) ?? projects[0];
-
-        if (!cancelled && preferredProject) {
-          await loadServerProject(preferredProject);
+            const preferredProject = (await response.json()) as DiyProjectRecord;
+            if (!cancelled) {
+              await loadServerProject(preferredProject);
+            }
+          }
         } else if (!cancelled) {
           setProjectSyncState("idle");
           setProjectSyncMessage(
             savedDraft
-              ? "Loaded local draft. It will sync to the server automatically."
-              : "No server draft yet. Your first change will create one.",
+              ? "Saved local draft loaded. Choose or create a board config to continue."
+              : "Choose a board, then load or create a saved config for it.",
           );
         }
       } catch (error) {
@@ -967,6 +1083,14 @@ export default function DIYBuilderPage() {
       cancelled = true;
     };
   }, [isAdmin, loadRooms, loadServerProject]);
+
+  useEffect(() => {
+    if (!draftLoaded || !projectHydrated || !isAdmin) {
+      return;
+    }
+
+    void refreshBoardConfigs();
+  }, [board.id, draftLoaded, isAdmin, projectHydrated, refreshBoardConfigs]);
 
   useEffect(() => {
     const nextOptions = BOARD_PROFILES.filter((profile) => profile.family === family);
@@ -1012,6 +1136,10 @@ export default function DIYBuilderPage() {
 
   useEffect(() => {
     if (!draftLoaded || !projectHydrated) {
+      return;
+    }
+
+    if (!projectId) {
       return;
     }
 
@@ -1237,6 +1365,19 @@ export default function DIYBuilderPage() {
     await persistProject(projectPayloadJson);
   }, [persistProject, projectPayloadJson]);
 
+  const saveProjectAsNewConfig = useCallback(async () => {
+    await persistProject(projectPayloadJson, { forceCreate: true });
+  }, [persistProject, projectPayloadJson]);
+
+  const loadBoardConfig = useCallback(async (configId: string) => {
+    const selectedConfig = boardConfigs.find((project) => project.id === configId);
+    if (!selectedConfig) {
+      return;
+    }
+
+    await loadServerProject(selectedConfig);
+  }, [boardConfigs, loadServerProject]);
+
   const triggerServerBuild = async () => {
     if (hasActiveServerBuild && serverBuild.jobId) {
       setFlashSource("server");
@@ -1431,6 +1572,7 @@ export default function DIYBuilderPage() {
       return;
     }
 
+    setProjectId(null);
     setProjectName("Living Room Relay Node");
     setRoomId(rooms[0]?.room_id ?? null);
     setNewRoomName("");
@@ -1453,6 +1595,9 @@ export default function DIYBuilderPage() {
     setSerialError(null);
     setEraseFirst(false);
     setCurrentStep(1);
+    lastSavedPayloadRef.current = null;
+    setProjectSyncState("idle");
+    setProjectSyncMessage("Choose a board, then load or create a saved config for it.");
   };
 
   const flashLockedReason = getFlashLockedReason({
@@ -1582,7 +1727,7 @@ export default function DIYBuilderPage() {
         <div className="h-1 w-full bg-slate-200 dark:bg-slate-800">
           <div
             className="h-full bg-primary transition-all duration-300 ease-in-out"
-            style={{ width: `${(currentStep / 4) * 100}%` }}
+            style={{ width: `${(currentStep / WIZARD_STEPS.length) * 100}%` }}
           />
         </div>
       </header>
@@ -1618,6 +1763,26 @@ export default function DIYBuilderPage() {
         )}
 
         {currentStep === 2 && (
+          <Step2Configs
+            board={board}
+            projectName={projectName}
+            setProjectName={setProjectName}
+            configs={boardConfigOptions}
+            configsLoading={boardConfigsLoading}
+            configListError={boardConfigsError}
+            hasSelectedConfig={Boolean(activeBoardConfigId)}
+            selectedConfigId={activeBoardConfigId}
+            projectSyncState={projectSyncState}
+            projectSyncMessage={projectSyncMessage}
+            onSelectConfig={loadBoardConfig}
+            onSaveConfig={saveProjectNow}
+            onSaveAsNewConfig={saveProjectAsNewConfig}
+            onBack={() => setCurrentStep(1)}
+            onNext={() => setCurrentStep(3)}
+          />
+        )}
+
+        {currentStep === 3 && (
           <Step2Pins
             board={board}
             boardPins={boardPins}
@@ -1631,22 +1796,22 @@ export default function DIYBuilderPage() {
             projectSyncState={projectSyncState}
             projectSyncMessage={projectSyncMessage}
             onExportConfig={generateConfig}
-            onBack={() => setCurrentStep(1)}
-            onNext={() => setCurrentStep(3)}
-          />
-        )}
-
-        {currentStep === 3 && (
-          <Step3Validate
-            validation={validation}
-            pins={pins}
-            isReady={validation.errors.length === 0}
             onBack={() => setCurrentStep(2)}
             onNext={() => setCurrentStep(4)}
           />
         )}
 
         {currentStep === 4 && (
+          <Step3Validate
+            validation={validation}
+            pins={pins}
+            isReady={validation.errors.length === 0}
+            onBack={() => setCurrentStep(3)}
+            onNext={() => setCurrentStep(5)}
+          />
+        )}
+
+        {currentStep === 5 && (
           <Step4Flash
             board={board}
             projectId={projectId}
@@ -1682,7 +1847,7 @@ export default function DIYBuilderPage() {
             onReleaseSerialLock={releaseSerialLock}
             onRefreshSerialStatus={() => refreshSerialStatus()}
             onLogPanelRef={(el) => { logPanelRef.current = el; }}
-            onBack={() => setCurrentStep(3)}
+            onBack={() => setCurrentStep(4)}
           />
         )}
       </main>

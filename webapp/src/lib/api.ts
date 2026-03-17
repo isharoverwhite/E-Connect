@@ -1,7 +1,11 @@
 import { AuthStatus, DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
 import { getToken } from "./auth";
 
-export const API_URL = "http://127.0.0.1:8000/api/v1";
+const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+
+export const API_URL = configuredApiUrl && configuredApiUrl.length > 0
+    ? configuredApiUrl.replace(/\/$/, "")
+    : "/api/v1";
 
 export interface DeviceCommandResponse {
     status: string;

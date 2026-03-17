@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, BackgroundTasks, Query
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import or_
@@ -11,6 +11,7 @@ import shutil
 import os
 import uuid
 from datetime import datetime, timedelta
+import anyio
 
 from .mqtt import mqtt_manager
 
@@ -26,7 +27,7 @@ from .models import (
     ManagedUserResponse, UserApprovalStatus
 )
 from .sql_models import (
-    User, Device, PinConfiguration, Automation, DeviceHistory, 
+    User, Device, Automation, DeviceHistory, 
     Firmware, Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
     AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, BuildJob, SerialSession, SerialSessionStatus,
     UserApprovalStatus as SqlUserApprovalStatus
@@ -34,8 +35,12 @@ from .sql_models import (
 from .database import get_db
 from .auth import verify_password, get_password_hash, create_access_token, SECRET_KEY, ALGORITHM
 from .services.builder import build_firmware_task, get_durable_artifact_path
+from .services.device_registration import (
+    is_mqtt_managed_device,
+    mqtt_only_error,
+    register_device_payload,
+)
 from .services.diy_validation import validate_diy_config
-from .services.provisioning import build_project_firmware_identity, verify_project_secret
 from .services.user_management import ensure_temp_support_account, resolve_household_id_for_user
 
 router = APIRouter()
@@ -739,111 +744,26 @@ async def register_device_handshake(
     db: Session = Depends(get_db)
 ):
     """
-    Device handshake for both legacy discovery and server-built secure firmware.
+    HTTP handshake remains available only for legacy discovery paths.
+    MQTT-managed ESP32 firmware must register over MQTT.
     """
-    device = None
-    secure_project = None
-    secret_verified = False
-
-    if payload.device_id:
-        device = db.query(Device).filter(Device.device_id == payload.device_id).first()
-
-    if device and device.provisioning_project_id:
-        if not verify_project_secret(device.provisioning_project_id, device.device_id, payload.secret_key):
-            _raise_secure_pairing_error("Secret key mismatch for provisioned device.")
-        secret_verified = True
-        secure_project = db.query(DiyProject).filter(DiyProject.id == device.provisioning_project_id).first()
-    elif payload.project_id:
-        secure_project = db.query(DiyProject).filter(DiyProject.id == payload.project_id).first()
-        if not secure_project:
-            _raise_secure_pairing_error("Provisioning project was not found on the server.")
-        if secure_project.room_id is None:
-            _raise_secure_pairing_error("Provisioning project is missing a room assignment.")
-
-        expected_device_id, _ = build_project_firmware_identity(secure_project.id)
-        if payload.device_id != expected_device_id:
-            _raise_secure_pairing_error("Provisioned device id does not match the server record.")
-        if not verify_project_secret(secure_project.id, expected_device_id, payload.secret_key):
-            _raise_secure_pairing_error("Secret key mismatch for provisioned project.")
-
-        secret_verified = True
-        if not device:
-            device = db.query(Device).filter(Device.device_id == expected_device_id).first()
-
-    if not device and not secret_verified:
-        device = db.query(Device).filter(Device.mac_address == payload.mac_address).first()
-
-    admin = db.query(User).filter(User.account_type == AccountType.admin).first()
-    if not admin:
-        raise HTTPException(status_code=400, detail="System not initialized. No admin found.")
-
-    resolved_device_id = payload.device_id or (device.device_id if device else str(uuid.uuid4()))
-    topic_pub, topic_sub = _build_device_topics(resolved_device_id)
-
-    if not device:
-        secure_owner_id = secure_project.user_id if secure_project else admin.user_id
-        device = Device(
-            device_id=resolved_device_id,
-            mac_address=payload.mac_address,
-            name=payload.name,
-            room_id=secure_project.room_id if secure_project else None,
-            owner_id=secure_owner_id,
-            auth_status=AuthStatus.approved if secret_verified else AuthStatus.pending,
-            conn_status=ConnStatus.online,
-            mode=payload.mode,
-            firmware_version=payload.firmware_version,
-            ip_address=payload.ip_address,
-            last_seen=datetime.utcnow(),
-            topic_pub=topic_pub,
-            topic_sub=topic_sub,
-            provisioning_project_id=secure_project.id if secure_project else None,
+    if (
+        payload.mode == DeviceMode.library
+        or payload.project_id is not None
+        or payload.secret_key is not None
+    ):
+        raise mqtt_only_error(
+            "ESP32 registration must be published to the MQTT register topic."
         )
-        db.add(device)
-        db.flush()
-    else:
-        device.mac_address = payload.mac_address
-        device.name = payload.name
-        device.firmware_version = payload.firmware_version
-        device.ip_address = payload.ip_address or device.ip_address
-        device.mode = payload.mode
-        device.last_seen = datetime.utcnow()
-        device.conn_status = ConnStatus.online
-        device.topic_pub = topic_pub
-        device.topic_sub = topic_sub
-        if secret_verified:
-            device.owner_id = secure_project.user_id if secure_project else device.owner_id
-            device.room_id = secure_project.room_id if secure_project and secure_project.room_id else device.room_id
-            device.auth_status = AuthStatus.approved
-            device.provisioning_project_id = secure_project.id if secure_project else device.provisioning_project_id
 
-    db.query(PinConfiguration).filter(PinConfiguration.device_id == device.device_id).delete()
-
-    for pin in payload.pins:
-        db.add(PinConfiguration(
-            device_id=device.device_id,
-            gpio_pin=pin.gpio_pin,
-            mode=pin.mode,
-            function=pin.function,
-            label=pin.label,
-            v_pin=pin.v_pin,
-            extra_params=pin.extra_params,
-        ))
-
-    db.flush()
-    db.refresh(device)
-
-    if secret_verified:
-        owner = db.query(User).filter(User.user_id == device.owner_id).first()
-        if owner:
-            _sync_user_dashboard_widgets(owner, device)
-
+    result = register_device_payload(db, payload)
     db.commit()
-    db.refresh(device)
+    db.refresh(result.device)
 
-    _attach_room_name(device)
-    response = DeviceHandshakeResponse.model_validate(device)
-    response.secret_verified = secret_verified
-    response.project_id = secure_project.id if secure_project else device.provisioning_project_id
+    _attach_room_name(result.device)
+    response = DeviceHandshakeResponse.model_validate(result.device)
+    response.secret_verified = result.secret_verified
+    response.project_id = result.project_id
     return response
 
 @router.post("/device/{device_id}/approve")
@@ -947,9 +867,7 @@ async def delete_device(device_id: str, db: Session = Depends(get_db), current_u
 @router.post("/device/{device_id}/command")
 async def send_command(device_id: str, command: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
-    Send a command to the device (Real-time).
-    For now, this just logs the command as a History event 'state_change'
-    In production, this would publish to MQTT or WebSocket.
+    Send a command to the device via MQTT and record the publish result.
     """
     device = _get_device_or_404(db, device_id)
     _ensure_device_control_access(db, current_user, device)
@@ -980,12 +898,25 @@ async def send_command(device_id: str, command: dict, db: Session = Depends(get_
 @router.get("/device/{device_id}/command/latest")
 async def get_latest_command(device_id: str, db: Session = Depends(get_db)):
     """
-    Get the most recent command sent to the device (Polling fallback).
+    Get the most recent command sent to the device.
     """
-    cmd = db.query(DeviceHistory).filter(
-        DeviceHistory.device_id == device_id, 
-        DeviceHistory.event_type == EventType.state_change
-    ).order_by(DeviceHistory.timestamp.desc()).first()
+    device = _get_device_or_404(db, device_id)
+    if is_mqtt_managed_device(device):
+        raise mqtt_only_error(
+            "MQTT-managed ESP32 devices do not support HTTP command polling."
+        )
+
+    cmd = (
+        db.query(DeviceHistory)
+        .filter(
+            DeviceHistory.device_id == device_id,
+            DeviceHistory.event_type.in_(
+                [EventType.command_requested, EventType.command_failed]
+            ),
+        )
+        .order_by(DeviceHistory.timestamp.desc())
+        .first()
+    )
     
     if not cmd:
         return {"status": "none"}
@@ -1047,8 +978,15 @@ async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(ge
     return new_project
 
 @router.get("/diy/projects", response_model=List[DiyProjectResponse])
-async def list_diy_projects(db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
-    return db.query(DiyProject).filter(DiyProject.user_id == current_user.user_id).all()
+async def list_diy_projects(
+    board_profile: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    query = db.query(DiyProject).filter(DiyProject.user_id == current_user.user_id)
+    if board_profile:
+        query = query.filter(DiyProject.board_profile == board_profile)
+    return query.order_by(DiyProject.updated_at.desc(), DiyProject.created_at.desc()).all()
 
 @router.get("/diy/projects/{project_id}", response_model=DiyProjectResponse)
 async def get_diy_project(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
@@ -1102,6 +1040,7 @@ async def trigger_diy_build(project_id: str, background_tasks: BackgroundTasks, 
             BuildJob.project_id == project.id,
             BuildJob.status.in_(ACTIVE_BUILD_JOB_STATUSES),
         )
+        .with_for_update()
         .order_by(BuildJob.created_at.desc())
         .first()
     )
@@ -1379,6 +1318,10 @@ async def push_history(device_id: str, entry: DeviceHistoryCreate, db: Session =
     device = db.query(Device).filter(Device.device_id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
+    if is_mqtt_managed_device(device):
+        raise mqtt_only_error(
+            "MQTT-managed ESP32 devices must publish telemetry to the MQTT state topic."
+        )
     
     # Update last seen
     device.last_seen = datetime.utcnow()
@@ -1461,29 +1404,41 @@ async def trigger_automation(automation_id: int, db: Session = Depends(get_db), 
     # Execution logic
     auto.last_triggered = datetime.utcnow()
     
-    # Capture output
+    # Capture output via custom print instead of global stdout hijacking
     output_buffer = io.StringIO()
-    old_stdout = sys.stdout
-    sys.stdout = output_buffer
+    def custom_print(*args, **kwargs):
+        kwargs['file'] = output_buffer
+        print(*args, **kwargs)
     
     status = ExecutionStatus.success
     error_msg = None
     
+    def run_script(code, env):
+        exec(code, {}, env)
+
     try:
-        # Minimal environment for the script
         local_env = {
             "device_id": None, # Provided if triggered via event
-            "print": print,
+            "print": custom_print,
         }
-        exec(auto.script_code, {"__builtins__": {}}, local_env)
+        
+        # Run in a separate thread to avoid blocking the event loop
+        print(f"DEBUG: Starting automation script {auto.id} in thread")
+        try:
+            with anyio.fail_after(30):
+                await anyio.to_thread.run_sync(run_script, auto.script_code, local_env)
+            print(f"DEBUG: Automation script {auto.id} finished successfully")
+        except (TimeoutError, anyio.get_cancelled_exc_class()):
+            status = ExecutionStatus.failed
+            error_msg = "Execution timed out after 30 seconds"
+        except Exception:
+            status = ExecutionStatus.failed
+            error_msg = traceback.format_exc()
     except Exception as e:
         status = ExecutionStatus.failed
-        error_msg = traceback.format_exc()
-        # Fallback if too long
-        if len(error_msg) > 1000:
-            error_msg = error_msg[-1000:]
+        error_msg = f"Setup error: {traceback.format_exc()}"
     finally:
-        sys.stdout = old_stdout
+        pass
         
     log_output = output_buffer.getvalue()
     if len(log_output) > 2000:

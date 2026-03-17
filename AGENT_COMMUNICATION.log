@@ -1,0 +1,27 @@
+[2026-03-15 01:18:52] Main -> Planner | Rewrite AGENTS.md workflow for E-Connect
+[2026-03-15 01:18:52] Planner -> Coder | Handoff phased playbook and artifact requirements
+[2026-03-15 01:18:52] Coder -> Tester | Validate AGENTS.md rewrite and bootstrap artifacts
+[2026-03-15 01:18:52] Tester -> Main | Report PASS for AGENTS.md bootstrap task
+[2026-03-15 16:07:25] TESTER -> MAIN | SSE stream validation passed. MariaDB completed_at/finished_at recorded properly. Gate G4 ready.
+[2026-03-15 16:13:32] Main -> Tester | SB-RETRY-001: Tested duplicate build prevention; pre-fix race spotted, with_for_update() added, 3-concurrent POST proof collected
+[2026-03-15 17:01:39] Tester -> Main | SB-AUTH-TS-001: Verified auth isolation and clean tsc; gate G4 PASS reported.
+[2026-03-15 17:01:47] Main -> Planner | SB-DB-001: Start analysis of terminal failure metadata and DB verification alignment.
+[2026-03-15 17:15:00] Main -> Planner | DEV-MGMT-001: Start requirement analysis for device unpairing and toast system.
+[2026-03-15 17:22:00] Planner -> Coder | DEV-MGMT-001: Handoff design for toast system and device unpairing.
+[2026-03-15 17:35:00] Coder -> Tester | DEV-MGMT-001: Implementation complete, ready for verification.
+[2026-03-15 17:36:00] Tester -> Main | DEV-MGMT-001: Verification passed via browser automation. Success toast confirmed.
+[2026-03-15 17:37:00] Main -> User | DEV-MGMT-001: Task complete. Toast system and custom unpair modal implemented.
+[2026-03-15 18:02:20] Main -> Planner | Assign investigation of ESP32-Server communication delay (10 mins)
+[2026-03-15 18:05:35] Planner -> Main | Task Packet created. G1 Requirement approved.
+[2026-03-15 20:03:26] Planner -> Coder | Design approved. Moving to Implementation.
+[2026-03-15 20:04:39] Coder -> Tester | Implementation complete. G3 Implementation complete.
+[2026-03-16 22:11:07] Tester -> Main | Concurrency tests passed, logging verified. Ready for Final Gate
+[2026-03-16 22:53:04] USER -> MAIN | G0 Task intake: show configuration of each board at board picker
+[2026-03-16 22:53:05] MAIN -> PLANNER | Analyze requirement and create Task Packet for UI-DIY-BOARD-SPECS-001
+[2026-03-16 22:54:05] PLANNER -> MAIN | Design approved, proceed to implementation
+[2026-03-16 22:54:05] MAIN -> CODER | Implement UI-DIY-BOARD-SPECS-001
+[2026-03-16 22:55:40] CODER -> TESTER | Hand off UI-DIY-BOARD-SPECS-001 for verification
+[2026-03-16 22:58:35] TESTER -> MAIN | Testing done, UI-DIY-BOARD-SPECS-001 PASS
+[2026-03-17 02:47:48] MAIN -> PLANNER | G0 approved for WP-07-AUTOMATION-001: connect /automation page to real backend
+[2026-03-17 02:47:48] PLANNER -> CODER | Approved design: rewrite automation/page.tsx with GET /automations, POST /automation, POST /trigger
+[2026-03-17 03:15:00] Main -> Tester | G4 browser verification PASS — automation page loads real API data and trigger returns correct execution output
