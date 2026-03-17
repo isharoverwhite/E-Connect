@@ -276,13 +276,20 @@ export default function DevicesPage() {
                                             </div>
 
                                             <div className="grid grid-cols-2 gap-2 border-t border-slate-100 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
-                                                <Link
-                                                    href={`/devices/${device.device_id}/config`}
-                                                    className="flex items-center justify-center rounded border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-blue-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
-                                                >
-                                                    <span className="material-icons-round mr-1.5 text-sm text-blue-500">app_registration</span>
-                                                    Configure
-                                                </Link>
+                                                {device.provisioning_project_id ? (
+                                                    <Link
+                                                        href={`/devices/${device.device_id}/config`}
+                                                        className="flex items-center justify-center rounded border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-blue-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
+                                                    >
+                                                        <span className="material-icons-round mr-1.5 text-sm text-blue-500">app_registration</span>
+                                                        Configure
+                                                    </Link>
+                                                ) : (
+                                                    <div className="flex items-center justify-center rounded border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-medium text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500 cursor-not-allowed" title="Not a DIY configure device">
+                                                        <span className="material-icons-round mr-1.5 text-sm text-slate-400">app_registration</span>
+                                                        Configure
+                                                    </div>
+                                                )}
 
                                                 <button
                                                     onClick={() => handleDeleteClick(device.device_id, device.name)}

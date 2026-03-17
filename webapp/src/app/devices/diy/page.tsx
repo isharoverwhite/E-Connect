@@ -241,7 +241,7 @@ function buildConfigKey({
       mode: mapping.mode,
       function: mapping.function ?? "",
       label: mapping.label ?? "",
-      active_level: mapping.extra_params?.active_level ?? 1,
+      extra_params: mapping.extra_params ?? undefined,
     })),
   });
 }
@@ -291,10 +291,7 @@ function createProjectPayload({
       mode: mapping.mode,
       function: mapping.function ?? MODE_METADATA[mapping.mode].defaultFunction,
       label: mapping.label ?? `GPIO ${mapping.gpio_pin}`,
-      extra_params:
-        mapping.mode === "OUTPUT"
-          ? { active_level: mapping.extra_params?.active_level ?? 1 }
-          : undefined,
+      extra_params: mapping.extra_params ?? undefined,
     })),
     wifi_ssid: wifiSsid,
     wifi_password: wifiPassword,
@@ -1499,8 +1496,8 @@ export default function DIYBuilderPage() {
             flashSource: "server",
             pins,
             serialPort: DEFAULT_SERIAL_PORT,
-            buildJobId: serverBuild.jobId,
-            buildKey: serverBuild.configKey ?? currentBuildConfigKey,
+            buildJobId: job.id,
+            buildKey: currentBuildConfigKey,
             wifiSsid,
             wifiPassword,
             cpuMhz,
