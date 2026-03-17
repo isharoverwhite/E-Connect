@@ -4,10 +4,8 @@
 #include <Wire.h>
 
 #if defined(ESP8266)
-#include <ESP8266HTTPClient.h>
 #include <ESP8266WiFi.h>
 #else
-#include <HTTPClient.h>
 #include <WiFi.h>
 #endif
 
@@ -32,6 +30,7 @@ static const EConnectPinConfig ECONNECT_PIN_CONFIGS[] = {
 
 constexpr unsigned long HEARTBEAT_INTERVAL_MS = 30000;
 constexpr unsigned long HANDSHAKE_RETRY_DELAY_MS = 5000;
+constexpr unsigned long HANDSHAKE_ACK_TIMEOUT_MS = 5000;
 constexpr int WIFI_RETRY_LIMIT = 40;
 
 struct PinRuntimeState {
@@ -42,6 +41,14 @@ struct PinRuntimeState {
   int activeLevel;
   int value;
   int brightness;
+};
+
+struct WifiTarget {
+  bool found;
+  int32_t channel;
+  int32_t rssi;
+  wifi_auth_mode_t authMode;
+  uint8_t bssid[6];
 };
 
 constexpr size_t PIN_CONFIG_COUNT =
@@ -55,6 +62,7 @@ PinRuntimeState pinStates[PIN_STATE_CAPACITY];
 String deviceId = ECONNECT_DEVICE_ID;
 unsigned long lastHeartbeatAt = 0;
 bool securePairingVerified = false;
+unsigned long lastReconnectAttemptAt = 0;
 
 bool connectToWiFi();
 bool performSecureHandshake();
@@ -62,6 +70,10 @@ void setupMQTT();
 void reconnectMQTT();
 void mqttCallback(char *topic, byte *payload, unsigned int length);
 void publishState(bool applied);
+String commandTopic();
+String registerTopic();
+String registerAckTopic();
+void subscribeCommandTopic();
 void initializePinStates();
 void initializeI2CBus();
 int findPinIndex(int gpio);
@@ -73,11 +85,19 @@ int readRuntimeValue(PinRuntimeState &pinState);
 int readRuntimeBrightness(PinRuntimeState &pinState);
 bool applyCommandToPin(PinRuntimeState &pinState, int value, int brightness);
 int resolvePhysicalLevel(const PinRuntimeState &pinState, int logicalValue);
+const char *authModeName(wifi_auth_mode_t authMode);
+WifiTarget scanWifiTarget();
+void logVisibleWifiTargets(const WifiTarget &target);
+void formatBssid(const uint8_t *bssid, char *buffer, size_t bufferSize);
+void handleWiFiEvent(arduino_event_id_t event, arduino_event_info_t info);
 
 void setup() {
   Serial.begin(115200);
   delay(1500);
   Serial.println("\n--- Starting E-Connect Server-Built Firmware ---");
+  WiFi.onEvent(handleWiFiEvent);
+  WiFi.setAutoReconnect(true);
+  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
 
   initializePinStates();
   initializeI2CBus();
@@ -87,12 +107,12 @@ void setup() {
     delay(HANDSHAKE_RETRY_DELAY_MS);
   }
 
+  setupMQTT();
+
   while (!performSecureHandshake()) {
     Serial.println("Secure handshake failed. Retrying...");
     delay(HANDSHAKE_RETRY_DELAY_MS);
   }
-
-  setupMQTT();
 }
 
 void loop() {
@@ -129,9 +149,31 @@ bool connectToWiFi() {
     return false;
   }
 
-  Serial.printf("Connecting to Wi-Fi SSID: %s ", WIFI_SSID);
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
+  WiFi.persistent(false);
+  WiFi.setSleep(false);
+  WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
+  WiFi.disconnect(false, true);
+  delay(250);
+
+  const WifiTarget target = scanWifiTarget();
+  logVisibleWifiTargets(target);
+
+  Serial.printf("Connecting to Wi-Fi SSID: %s ", WIFI_SSID);
+  if (target.found) {
+    char bssidBuffer[18];
+    formatBssid(target.bssid, bssidBuffer, sizeof(bssidBuffer));
+    Serial.printf(
+        "(locked channel=%d bssid=%s auth=%s rssi=%d) ",
+        target.channel,
+        bssidBuffer,
+        authModeName(target.authMode),
+        target.rssi);
+    WiFi.begin(WIFI_SSID, WIFI_PASS, target.channel, target.bssid, true);
+  } else {
+    Serial.print("(broadcast lookup) ");
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+  }
 
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < WIFI_RETRY_LIMIT) {
@@ -147,7 +189,122 @@ bool connectToWiFi() {
   }
 
   Serial.println(" failed");
+  Serial.printf("Wi-Fi status code: %d\n", static_cast<int>(WiFi.status()));
   return false;
+}
+
+const char *authModeName(wifi_auth_mode_t authMode) {
+  switch (authMode) {
+    case WIFI_AUTH_OPEN:
+      return "OPEN";
+    case WIFI_AUTH_WEP:
+      return "WEP";
+    case WIFI_AUTH_WPA_PSK:
+      return "WPA_PSK";
+    case WIFI_AUTH_WPA2_PSK:
+      return "WPA2_PSK";
+    case WIFI_AUTH_WPA_WPA2_PSK:
+      return "WPA_WPA2_PSK";
+    case WIFI_AUTH_WPA3_PSK:
+      return "WPA3_PSK";
+    case WIFI_AUTH_WPA2_WPA3_PSK:
+      return "WPA2_WPA3_PSK";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+WifiTarget scanWifiTarget() {
+  WifiTarget target = {
+      false,
+      0,
+      -127,
+      WIFI_AUTH_OPEN,
+      {0, 0, 0, 0, 0, 0},
+  };
+  const int networkCount = WiFi.scanNetworks(false, true);
+  if (networkCount <= 0) {
+    Serial.printf("Visible Wi-Fi networks: %d\n", networkCount);
+    return target;
+  }
+
+  for (int index = 0; index < networkCount; index++) {
+    const String ssid = WiFi.SSID(index);
+    if (!ssid.equals(WIFI_SSID)) {
+      continue;
+    }
+
+    const int32_t rssi = WiFi.RSSI(index);
+    if (target.found && rssi <= target.rssi) {
+      continue;
+    }
+
+    target.found = true;
+    target.channel = WiFi.channel(index);
+    target.rssi = rssi;
+    target.authMode = WiFi.encryptionType(index);
+    memcpy(target.bssid, WiFi.BSSID(index), sizeof(target.bssid));
+  }
+
+  return target;
+}
+
+void logVisibleWifiTargets(const WifiTarget &target) {
+  const int networkCount = WiFi.scanComplete();
+  Serial.printf("Visible Wi-Fi networks: %d\n", networkCount);
+  if (networkCount <= 0) {
+    return;
+  }
+
+  if (!target.found) {
+    return;
+  }
+
+  char bssidBuffer[18];
+  formatBssid(target.bssid, bssidBuffer, sizeof(bssidBuffer));
+  Serial.printf(
+      "Matched AP: ssid=%s channel=%d rssi=%d auth=%s bssid=%s\n",
+      WIFI_SSID,
+      target.channel,
+      target.rssi,
+      authModeName(target.authMode),
+      bssidBuffer);
+}
+
+void formatBssid(const uint8_t *bssid, char *buffer, size_t bufferSize) {
+  snprintf(
+      buffer,
+      bufferSize,
+      "%02X:%02X:%02X:%02X:%02X:%02X",
+      bssid[0],
+      bssid[1],
+      bssid[2],
+      bssid[3],
+      bssid[4],
+      bssid[5]);
+}
+
+void handleWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
+  if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
+    Serial.println("Wi-Fi event: STA connected");
+    return;
+  }
+
+  if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
+    Serial.printf(
+        "Wi-Fi event: got IP %s\n",
+        IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
+    return;
+  }
+
+  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
+    const wifi_err_reason_t reason =
+        static_cast<wifi_err_reason_t>(info.wifi_sta_disconnected.reason);
+    Serial.printf(
+        "Wi-Fi disconnect reason: %u (%s)\n",
+        info.wifi_sta_disconnected.reason,
+        WiFi.disconnectReasonName(reason));
+  }
 }
 
 bool performSecureHandshake() {
@@ -155,25 +312,19 @@ bool performSecureHandshake() {
     return false;
   }
 
-  if (strlen(API_BASE_URL) == 0 || strlen(ECONNECT_PROJECT_ID) == 0 ||
+  if (strlen(MQTT_BROKER) == 0 || strlen(ECONNECT_PROJECT_ID) == 0 ||
       strlen(ECONNECT_SECRET_KEY) == 0) {
     Serial.println("BLOCKER: Missing secure pairing metadata in firmware.");
     return false;
   }
 
-  HTTPClient http;
-  String url = String(API_BASE_URL) + "/config";
-  WiFiClient httpTransport;
+  if (!mqttClient.connected()) {
+    reconnectMQTT();
+  }
 
-  Serial.printf("Starting secure handshake at: %s\n", url.c_str());
-
-#if defined(ESP8266)
-  http.begin(httpTransport, url);
-#else
-  http.begin(url);
-#endif
-  http.setTimeout(5000);
-  http.addHeader("Content-Type", "application/json");
+  if (!mqttClient.connected()) {
+    return false;
+  }
 
   StaticJsonDocument<3072> doc;
   doc["device_id"] = deviceId;
@@ -200,45 +351,26 @@ bool performSecureHandshake() {
 
   String requestBody;
   serializeJson(doc, requestBody);
+  const String topic = registerTopic();
+  Serial.printf("Publishing secure handshake to MQTT topic: %s\n", topic.c_str());
 
-  const int httpCode = http.POST(requestBody);
-  if (httpCode <= 0) {
-    Serial.printf("Secure handshake failed: %s\n", http.errorToString(httpCode).c_str());
-    http.end();
+  if (!mqttClient.publish(topic.c_str(), requestBody.c_str())) {
+    Serial.println("Failed to publish secure handshake over MQTT.");
     return false;
   }
 
-  Serial.printf("Secure handshake HTTP code: %d\n", httpCode);
-  if (httpCode != 200) {
-    Serial.println(http.getString());
-    http.end();
-    return false;
+  const unsigned long startedAt = millis();
+  while (!securePairingVerified &&
+         millis() - startedAt < HANDSHAKE_ACK_TIMEOUT_MS) {
+    mqttClient.loop();
+    delay(10);
   }
 
-  DynamicJsonDocument responseDoc(2048);
-  const String responseBody = http.getString();
-  const DeserializationError error = deserializeJson(responseDoc, responseBody);
-  http.end();
-
-  if (error) {
-    Serial.println("Failed to parse secure handshake response.");
-    return false;
+  if (!securePairingVerified) {
+    Serial.println("Timed out waiting for MQTT pairing acknowledgement.");
   }
 
-  const bool verified = responseDoc["secret_verified"] | false;
-  if (!verified) {
-    Serial.println("Server rejected secure handshake: secret mismatch.");
-    return false;
-  }
-
-  const String assignedDeviceId = responseDoc["device_id"] | deviceId;
-  if (assignedDeviceId.length() > 0) {
-    deviceId = assignedDeviceId;
-  }
-
-  securePairingVerified = true;
-  Serial.printf("Secure handshake complete. Device id: %s\n", deviceId.c_str());
-  return true;
+  return securePairingVerified;
 }
 
 void setupMQTT() {
@@ -247,28 +379,52 @@ void setupMQTT() {
   mqttClient.setBufferSize(1024);
 }
 
-void reconnectMQTT() {
-  while (!mqttClient.connected()) {
-    String clientId = "econnect-";
-    clientId += deviceId;
-    clientId += "-";
-    clientId += String(random(0xffff), HEX);
+String commandTopic() {
+  return String("econnect/") + MQTT_NAMESPACE + "/device/" + deviceId + "/command";
+}
 
-    Serial.print("Attempting MQTT connection...");
-    if (mqttClient.connect(clientId.c_str())) {
-      Serial.println(" connected");
-      const String commandTopic = String("econnect/") + MQTT_NAMESPACE + "/device/" +
-                                  deviceId + "/command";
-      mqttClient.subscribe(commandTopic.c_str());
-      Serial.printf("Subscribed to: %s\n", commandTopic.c_str());
+String registerTopic() {
+  return String("econnect/") + MQTT_NAMESPACE + "/device/" + deviceId + "/register";
+}
+
+String registerAckTopic() {
+  return String("econnect/") + MQTT_NAMESPACE + "/device/" + deviceId +
+         "/register/ack";
+}
+
+void subscribeCommandTopic() {
+  const String topic = commandTopic();
+  mqttClient.subscribe(topic.c_str());
+  Serial.printf("Subscribed to command topic: %s\n", topic.c_str());
+}
+
+void reconnectMQTT() {
+  if (mqttClient.connected()) return;
+  
+  unsigned long now = millis();
+  if (now - lastReconnectAttemptAt < HANDSHAKE_RETRY_DELAY_MS) return;
+  
+  lastReconnectAttemptAt = now;
+
+  String clientId = "econnect-";
+  clientId += deviceId;
+  clientId += "-";
+  clientId += String(random(0xffff), HEX);
+
+  Serial.print("Attempting MQTT connection...");
+  if (mqttClient.connect(clientId.c_str())) {
+    Serial.println(" connected");
+    const String ackTopic = registerAckTopic();
+    mqttClient.subscribe(ackTopic.c_str());
+    Serial.printf("Subscribed to pairing ack topic: %s\n", ackTopic.c_str());
+    if (securePairingVerified) {
+      subscribeCommandTopic();
       publishState(true);
       lastHeartbeatAt = millis();
-      return;
     }
-
+  } else {
     Serial.print(" failed, rc=");
     Serial.println(mqttClient.state());
-    delay(HANDSHAKE_RETRY_DELAY_MS);
   }
 }
 
@@ -284,7 +440,35 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
   StaticJsonDocument<512> doc;
   const DeserializationError error = deserializeJson(doc, message);
   if (error) {
-    Serial.println("Failed to parse command JSON.");
+    Serial.println("Failed to parse MQTT JSON.");
+    return;
+  }
+
+  const String incomingTopic = String(topic);
+  if (incomingTopic == registerAckTopic()) {
+    const bool verified = doc["secret_verified"] | false;
+    if (!verified || String(doc["status"] | "") != "ok") {
+      Serial.printf(
+          "Secure MQTT handshake rejected: %s\n",
+          String(doc["message"] | "Unknown error").c_str());
+      return;
+    }
+
+    const String assignedDeviceId = doc["device_id"] | deviceId;
+    if (assignedDeviceId.length() > 0) {
+      deviceId = assignedDeviceId;
+    }
+
+    securePairingVerified = true;
+    subscribeCommandTopic();
+    publishState(true);
+    lastHeartbeatAt = millis();
+    Serial.printf("Secure MQTT handshake complete. Device id: %s\n", deviceId.c_str());
+    return;
+  }
+
+  if (!securePairingVerified) {
+    Serial.println("Ignoring MQTT command before secure pairing completes.");
     return;
   }
 

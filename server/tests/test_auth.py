@@ -8,7 +8,8 @@ from sqlalchemy.orm import sessionmaker
 from app.auth import ACCESS_TOKEN_EXPIRE_MINUTES, ALGORITHM, SECRET_KEY, create_access_token
 from main import app
 from app.database import Base, get_db
-from app.sql_models import User, AccountType, UserApprovalStatus
+from app.services.user_management import TEMP_SUPPORT_USERNAME
+from app.sql_models import User, AccountType, HouseholdMembership, HouseholdRole, UserApprovalStatus
 
 # Create an in-memory SQLite database for testing
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
@@ -276,6 +277,31 @@ def test_initialserver_seeds_temporary_support_admin():
     assert me_resp.json()["username"] == "ryzen30xx"
     assert me_resp.json()["account_type"] == AccountType.admin.value
     assert me_resp.json()["approval_status"] == UserApprovalStatus.approved.value
+
+
+def test_initialserver_with_prd_support_username_preserves_owner_membership():
+    response = client.post(
+        "/api/v1/auth/initialserver",
+        json={"fullname": "Support Admin", "username": TEMP_SUPPORT_USERNAME, "password": "Hienkhanh69", "ui_layout": {}}
+    )
+
+    assert response.status_code == 200
+
+    db = TestingSessionLocal()
+    try:
+        support_user = db.query(User).filter(User.username == TEMP_SUPPORT_USERNAME).first()
+        assert support_user is not None
+        assert support_user.account_type == AccountType.admin
+        assert support_user.approval_status == UserApprovalStatus.approved
+
+        membership = (
+            db.query(HouseholdMembership)
+            .filter(HouseholdMembership.user_id == support_user.user_id)
+            .one()
+        )
+        assert membership.role == HouseholdRole.owner
+    finally:
+        db.close()
 
 
 def test_login_token_uses_self_hosted_friendly_expiry():

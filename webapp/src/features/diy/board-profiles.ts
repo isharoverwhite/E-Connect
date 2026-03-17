@@ -55,6 +55,11 @@ export interface BoardFamilyInfo {
   title: string;
   subtitle: string;
   accent: string;
+  specs: {
+    core: string;
+    clock: string;
+    wireless: string;
+  };
 }
 
 const pin = (
@@ -84,60 +89,110 @@ export const BOARD_FAMILIES: BoardFamilyInfo[] = [
     title: "ESP32",
     subtitle: "Classic dual-core boards and camera-ready modules.",
     accent: "from-sky-500 to-blue-600",
+    specs: {
+      core: "Dual-core Xtensa® LX6",
+      clock: "240 MHz",
+      wireless: "Wi-Fi 4, BLE 4.2",
+    },
   },
   {
     id: "ESP32-S2",
     title: "ESP32-S2",
     subtitle: "USB-native single-core boards for compact local-first nodes.",
     accent: "from-cyan-500 to-sky-500",
+    specs: {
+      core: "Single-core Xtensa® LX7",
+      clock: "240 MHz",
+      wireless: "Wi-Fi 4",
+    },
   },
   {
     id: "ESP32-S3",
     title: "ESP32-S3",
     subtitle: "AI-ready and USB-native boards for richer peripherals.",
     accent: "from-blue-500 to-indigo-500",
+    specs: {
+      core: "Dual-core Xtensa® LX7",
+      clock: "240 MHz",
+      wireless: "Wi-Fi 4, BLE 5.0",
+    },
   },
   {
     id: "ESP32-C2",
     title: "ESP32-C2",
     subtitle: "Entry-class compact Wi-Fi/BLE footprint.",
     accent: "from-emerald-500 to-green-500",
+    specs: {
+      core: "Single-core RISC-V",
+      clock: "120 MHz",
+      wireless: "Wi-Fi 4, BLE 5.0",
+    },
   },
   {
     id: "ESP32-C3",
     title: "ESP32-C3",
     subtitle: "RISC-V boards with strong DIY and web-flash support.",
     accent: "from-lime-500 to-emerald-500",
+    specs: {
+      core: "Single-core RISC-V",
+      clock: "160 MHz",
+      wireless: "Wi-Fi 4, BLE 5.0",
+    },
   },
   {
     id: "ESP32-C5",
     title: "ESP32-C5",
     subtitle: "Next-wave dual-band profile with generic reference layout.",
     accent: "from-teal-500 to-emerald-600",
+    specs: {
+      core: "RISC-V Architecture",
+      clock: "240 MHz",
+      wireless: "Dual-band Wi-Fi 6, BLE 5.0",
+    },
   },
   {
     id: "ESP32-C6",
     title: "ESP32-C6",
     subtitle: "Wi-Fi 6 and Thread-ready reference boards.",
     accent: "from-orange-500 to-amber-500",
+    specs: {
+      core: "Single-core RISC-V",
+      clock: "160 MHz",
+      wireless: "Wi-Fi 6, BLE 5.3, Thread",
+    },
   },
   {
     id: "ESP32-C61",
     title: "ESP32-C61",
     subtitle: "New reference-series profile with compact GPIO bank.",
     accent: "from-amber-500 to-yellow-500",
+    specs: {
+      core: "Single-core RISC-V",
+      clock: "160 MHz",
+      wireless: "Wi-Fi 6, BLE 5.0",
+    },
   },
   {
     id: "ESP32-H2",
     title: "ESP32-H2",
     subtitle: "Matter and Thread-focused low-power boards.",
     accent: "from-fuchsia-500 to-pink-500",
+    specs: {
+      core: "Single-core RISC-V",
+      clock: "96 MHz",
+      wireless: "BLE 5.2, Thread, Zigbee",
+    },
   },
   {
     id: "ESP32-P4",
     title: "ESP32-P4",
     subtitle: "High-end reference board for richer I/O surfaces.",
     accent: "from-violet-500 to-purple-500",
+    specs: {
+      core: "Dual-core RISC-V",
+      clock: "400 MHz",
+      wireless: "None (External)",
+    },
   },
 ];
 
