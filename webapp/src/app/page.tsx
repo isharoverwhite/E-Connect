@@ -285,17 +285,24 @@ export default function Dashboard() {
 
 function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
   const [pending, setPending] = useState(false);
-  const [toggleState, setToggleState] = useState(Boolean(config.last_state?.value));
-  const [sliderValue, setSliderValue] = useState(Number(config.last_state?.brightness || 0));
-
-  useEffect(() => {
-    setToggleState(Boolean(config.last_state?.value));
-    setSliderValue(Number(config.last_state?.brightness || 0));
-  }, [config.last_state?.value, config.last_state?.brightness]);
-
+  
   const pwmPin = config.pin_configurations?.find((p) => p.mode === 'PWM');
   const outputPin = config.pin_configurations?.find((p) => p.mode === 'OUTPUT');
   const analogPin = config.pin_configurations?.find((p) => p.mode === 'ADC');
+  const i2cPin = config.pin_configurations?.find((p) => p.mode === 'I2C');
+
+  const pwmMin = pwmPin?.extra_params?.min_value ?? 0;
+  const pwmMax = pwmPin?.extra_params?.max_value ?? 255;
+
+  const [toggleState, setToggleState] = useState(Boolean(config.last_state?.value));
+  const [sliderValue, setSliderValue] = useState(() => {
+    return Number(config.last_state?.brightness ?? pwmMin);
+  });
+
+  useEffect(() => {
+    setToggleState(Boolean(config.last_state?.value));
+    setSliderValue(Number(config.last_state?.brightness ?? pwmMin));
+  }, [config.last_state?.value, config.last_state?.brightness, pwmMin]);
 
   const handleToggle = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const isChecked = e.target.checked;
@@ -318,13 +325,13 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
     }
   };
 
-  const handleSliderCommit = async (nextValue: number) => {
-    const targetPin = outputPin || pwmPin;
-    if (!targetPin && !config.provider) return; // If extension, still allow
+  const handleSliderCommit = async (rawValue: number) => {
+    const targetPin = pwmPin || outputPin;
+    if (!targetPin && !config.provider) return;
 
     setPending(true);
     try {
-      const payload = { kind: "action", pin: targetPin?.gpio_pin || 0, brightness: nextValue };
+      const payload = { kind: "action", pin: targetPin?.gpio_pin || 0, brightness: rawValue };
       await sendDeviceCommand(config.device_id, payload);
     } catch {
       // ignore
@@ -335,6 +342,43 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
 
   const nameLower = config.name.toLowerCase();
 
+  // I2C SENSOR CARD
+  if (i2cPin) {
+    const libName = i2cPin.extra_params?.i2c_library || "I2C Device";
+    const isSensor = !i2cPin.extra_params?.i2c_library?.includes("SSD1306") && !i2cPin.extra_params?.i2c_library?.includes("MCP23017");
+    
+    return (
+      <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-orange-100 dark:border-orange-900/30 p-5 shadow-sm hover:shadow-md transition-shadow">
+        <div className="flex justify-between items-start mb-2">
+          <div className="h-10 w-10 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 flex items-center justify-center">
+            <span className="material-icons-round">{isSensor ? 'Settings_input_component' : 'view_quilt'}</span>
+          </div>
+          <div className="flex flex-col items-end">
+            <span className="text-[10px] font-bold text-orange-500 uppercase tracking-tight">I2C · {i2cPin.extra_params?.i2c_address}</span>
+            <span className="text-[9px] text-slate-400">ID: {config.device_id.split('-')[0]}</span>
+          </div>
+        </div>
+        <h3 className="text-base font-semibold text-slate-900 dark:text-white mt-2 truncate" title={config.name}>{config.name}</h3>
+        <p className="text-xs text-slate-500 mb-3 truncate" title={libName}>{libName}</p>
+        
+        <div className="flex items-center gap-4">
+          <div className="flex-1">
+             <span className="text-2xl font-bold text-slate-800 dark:text-white">{config.last_state?.value ?? '--'}</span>
+             <span className="text-sm text-slate-500 ml-1">{config.last_state?.unit || ''}</span>
+          </div>
+          {isOnline && <span className="text-[10px] text-green-500 font-medium bg-green-500/10 px-2 py-0.5 rounded-full">Live</span>}
+        </div>
+
+        <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-[10px] text-slate-400">
+           <span className="flex items-center gap-1">
+             <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'}`}></span>
+             {isOnline ? 'Connected' : 'Offline'}
+           </span>
+           <span>Bus: SDA={config.pin_configurations?.find(p => p.extra_params?.i2c_role === 'SDA')?.gpio_pin} SCL={config.pin_configurations?.find(p => p.extra_params?.i2c_role === 'SCL')?.gpio_pin}</span>
+        </div>
+      </div>
+    );
+  }
   // EXTENSION CARD
   if (config.provider) {
     return (
@@ -360,13 +404,13 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
         <div className="mb-4">
           <div className="flex justify-between items-end mb-2">
             <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Brightness</label>
-            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">{sliderValue}%</span>
+            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">{sliderValue}</span>
           </div>
           <input
             type="range"
             className="w-full accent-primary h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
-            min="0"
-            max="100"
+            min={pwmMin}
+            max={pwmMax}
             value={sliderValue}
             disabled={pending || !isOnline}
             onChange={(e) => setSliderValue(parseInt(e.target.value))}
@@ -445,14 +489,14 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
         </div>
         <div className="mb-4">
           <div className="flex justify-between items-end mb-2">
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Brightness</label>
-            <span className="text-xs font-bold text-primary">{sliderValue}%</span>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Brightness ({pwmMin}-{pwmMax})</label>
+            <span className="text-xs font-bold text-primary">{sliderValue}</span>
           </div>
           <input
             type="range"
             className="w-full accent-primary h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
-            min="0"
-            max="100"
+            min={pwmMin}
+            max={pwmMax}
             value={sliderValue}
             disabled={pending || !isOnline}
             onChange={(e) => setSliderValue(parseInt(e.target.value))}

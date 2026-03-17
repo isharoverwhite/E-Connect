@@ -245,7 +245,7 @@ def validate_diy_config(board_profile: str, config: dict[str, Any] | None) -> tu
     errors: list[str] = []
     warnings: list[str] = []
     used_pins: set[int] = set()
-    i2c_pins = 0
+    i2c_role_counts = {"SDA": 0, "SCL": 0}
 
     wifi_ssid = config.get("wifi_ssid")
     wifi_password = config.get("wifi_password")
@@ -299,16 +299,51 @@ def validate_diy_config(board_profile: str, config: dict[str, Any] | None) -> tu
             errors.append(f"Invalid config: GPIO {raw_gpio} extra_params must be an object")
             continue
 
+        extra_params = raw_extra_params or {}
+
         if mode == "OUTPUT" and isinstance(raw_extra_params, dict):
-            active_level = raw_extra_params.get("active_level")
+            active_level = extra_params.get("active_level")
             if active_level is not None and active_level not in (0, 1):
                 errors.append(f"Invalid config: GPIO {raw_gpio} active_level must be 0 or 1")
                 continue
 
-        if mode == "I2C":
-            i2c_pins += 1
+        if mode == "PWM":
+            min_val = extra_params.get("min_value")
+            max_val = extra_params.get("max_value")
+            
+            # Default to 0 and 255 if not provided, for validation purposes
+            if min_val is None:
+                min_val = 0
+            if max_val is None:
+                max_val = 255
+                
+            if not isinstance(min_val, int) or not (0 <= min_val <= 255):
+                errors.append(f"Invalid config: GPIO {raw_gpio} PWM min_value must be 0-255, got {min_val}")
+            
+            if not isinstance(max_val, int) or not (0 <= max_val <= 255):
+                errors.append(f"Invalid config: GPIO {raw_gpio} PWM max_value must be 0-255, got {max_val}")
+                
+            if isinstance(min_val, int) and isinstance(max_val, int) and min_val >= max_val:
+                errors.append(f"Invalid config: GPIO {raw_gpio} PWM min_value ({min_val}) must be less than max_value ({max_val})")
 
-    if i2c_pins not in (0, 2):
-        errors.append("Invalid config: I2C mode requires exactly 2 pins")
+        if mode == "I2C":
+            role = extra_params.get("i2c_role")
+            if role == "SDA":
+                i2c_role_counts["SDA"] += 1
+            elif role == "SCL":
+                i2c_role_counts["SCL"] += 1
+            else:
+                errors.append(f"Invalid config: GPIO {raw_gpio} I2C role must be SDA or SCL")
+            
+            address = extra_params.get("i2c_address")
+            if address:
+                try:
+                    int(address, 16)
+                except (ValueError, TypeError):
+                    errors.append(f"Invalid config: GPIO {raw_gpio} I2C address must be a valid hex string (e.g. 0x3C)")
+
+    if any(count > 0 for count in i2c_role_counts.values()):
+        if i2c_role_counts["SDA"] != 1 or i2c_role_counts["SCL"] != 1:
+            errors.append("Invalid config: I2C mode requires exactly one SDA pin and one SCL pin")
 
     return board, errors, warnings

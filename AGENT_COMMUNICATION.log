@@ -25,3 +25,25 @@
 [2026-03-17 02:47:48] MAIN -> PLANNER | G0 approved for WP-07-AUTOMATION-001: connect /automation page to real backend
 [2026-03-17 02:47:48] PLANNER -> CODER | Approved design: rewrite automation/page.tsx with GET /automations, POST /automation, POST /trigger
 [2026-03-17 03:15:00] Main -> Tester | G4 browser verification PASS — automation page loads real API data and trigger returns correct execution output
+[2026-03-17 11:40:34] MAIN -> PLANNER | Create Task Packet for database migration from remote MariaDB to local
+[2026-03-17 12:00:00] Main -> Main | Starting new task: AGENT-EXPLORE-01 - Explore project; previous task WP-MIGRATE-01 moved to pending.
+[2026-03-17 12:05:00] Main -> Planner | Creating Task Packet for AGENT-EXPLORE-01 - Explore project codebase.
+[2026-03-17 12:02:36] PLANNER -> MAIN | Analyze WP-MIGRATE-01: SQLite conflicts with mariadb_nas rule. CR required.
+[2026-03-17 12:02:36] MAIN -> USER | Request G1/G2 approval with CR-MIGRATE-01 (SQLite vs mariadb_nas process conflict)
+[2026-03-17 12:40:00] Main -> Planner | Task Intake: UI-DIY-DETAILED-CONFIG-001 - Expand DIY flow with detailed board config.
+[2026-03-17 14:07:40] TESTER -> MAIN | PASS with residual risk due to browser timeout
+[2026-03-17 14:08:44] MAIN -> SYSTEM | Task UI-DIY-DETAILED-CONFIG-001 Complete. Requesting G4 Approval.
+[2026-03-17 14:14:58] Main -> Planner | REQUEST_REQUIREMENT_ANALYSIS_FOR_TEST_PLAN
+[2026-03-17 14:15:54] Main -> Planner | ASSIGN_DESIGN_PHASE_FOR_TEST_PLAN
+[2026-03-17 14:17:00] Coder -> Tester | HANDOFF_TESTING_PLAN_FOR_VERIFICATION
+[2026-03-17 14:56:51] MAIN -> PLANNER | Identify next missing MVP feature and scope Antigravity prompt
+[2026-03-17 14:56:51] PLANNER -> MAIN | Select WP-04 dashboard builder persisted layout as next slice
+[2026-03-17 14:56:51] MAIN -> CODER | Write Antigravity prompt file for WP-04 dashboard builder
+[2026-03-17 14:56:51] CODER -> TESTER | Validate prompt scope against PRD and current code paths
+[2026-03-17 14:56:51] TESTER -> MAIN | Prompt verified for WP-04 gap, evidence needs, and env risks
+[2026-03-17 15:00:00] Main -> Planner | G0 intake for WP04-PIN-CONFIG-PWM-I2C-001: Refine DIY pin configuration and hardware-aware dashboard.
+[2026-03-17 15:15:00] Planner -> Main | Task Packet for WP04-PIN-CONFIG-PWM-I2C-001 created. Seeking G2 approval.
+[2026-03-17 15:20:00] Planner -> Coder | Design approved. Handoff for WP04-PIN-CONFIG-PWM-I2C-001 implementation.
+[2026-03-17 18:13:12] Planner -> Main | Drafted implementation plan for WP04-PIN-CONFIG-PWM-I2C-001 (Gate G2)
+[2026-03-17 18:23:45] Main -> Coder | Proceed with Implementation phase for WP04-PIN-CONFIG-PWM-I2C-001
+[2026-03-17 18:33:46] Tester -> Main | REPORT_READY

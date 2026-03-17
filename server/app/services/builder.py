@@ -11,6 +11,7 @@ from app.database import SessionLocal
 from app.services.diy_validation import resolve_board_definition
 from app.services.provisioning import build_project_firmware_identity
 from app.sql_models import BuildJob, JobStatus
+from app.services.i2c_registry import find_library_by_name
 
 BUILD_BASE_DIR = os.getenv("BUILD_BASE_DIR", "/tmp/econnect_builds")
 JOBS_DIR = os.path.join(BUILD_BASE_DIR, "jobs")
@@ -28,8 +29,14 @@ for path in (BUILD_BASE_DIR, JOBS_DIR, ARTIFACTS_DIR, LOGS_DIR, PLATFORMIO_CORE_
     os.makedirs(path, exist_ok=True)
 
 
-def generate_platformio_ini(board_profile: str, project_dir: str):
-    board_definition = resolve_board_definition(board_profile)
+def generate_platformio_ini(project, project_dir: str):
+    board_definition = resolve_board_definition(project.board_profile)
+    config_json = project.config if isinstance(project.config, dict) else {}
+    
+    cpu_mhz = config_json.get("cpu_mhz")
+    flash_size = config_json.get("flash_size")
+    psram_size = config_json.get("psram_size")
+
     build_flags: list[str] = []
     if board_definition.canonical_id in {"esp32-c2", "esp32-c3", "esp32-s2", "esp32-s3"}:
         build_flags.extend([
@@ -37,17 +44,51 @@ def generate_platformio_ini(board_profile: str, project_dir: str):
             "-D ARDUINO_USB_CDC_ON_BOOT=1",
         ])
 
-    build_flags_block = "\n".join(f"    {flag}" for flag in build_flags) if build_flags else ""
+    board_config_lines = []
+    if isinstance(cpu_mhz, int) and cpu_mhz > 0:
+        board_config_lines.append(f"board_build.f_cpu = {cpu_mhz}000000L")
+        
+    if isinstance(flash_size, str) and flash_size.upper().endswith("MB"):
+        board_config_lines.append(f"board_upload.flash_size = {flash_size.upper()}")
+        
+    if isinstance(psram_size, str):
+        if psram_size.upper() != "NONE" and psram_size.upper() != "":
+            build_flags.append("-D BOARD_HAS_PSRAM")
+            if board_definition.canonical_id == "esp32":
+                build_flags.append("-mfix-esp32-psram-cache-issue")
+
+    lib_deps = [
+        "knolleary/PubSubClient@^2.8",
+        "bblanchon/ArduinoJson@^6.21.3",
+    ]
+
+    # Add dynamic I2C library dependencies
+    raw_pins = config_json.get("pins", [])
+    seen_libs = set()
+    for pin in raw_pins if isinstance(raw_pins, list) else []:
+        if str(pin.get("mode")).upper() == "I2C":
+            extra = pin.get("extra_params")
+            if isinstance(extra, dict):
+                lib_name = extra.get("i2c_library")
+                if lib_name and lib_name not in seen_libs:
+                    lib_info = find_library_by_name(lib_name)
+                    if lib_info:
+                        lib_deps.extend(lib_info.pio_lib_deps)
+                        seen_libs.add(lib_name)
+
+    build_flags_block = "\\n".join(f"    {flag}" for flag in build_flags) if build_flags else ""
+    board_configs_block = "\\n".join(board_config_lines) + "\\n" if board_config_lines else ""
+    lib_deps_block = "\\n".join(f"    {lib}" for lib in lib_deps)
+    
     ini_content = f"""[env:{board_definition.platformio_board}]
 platform = {board_definition.platform}
 board = {board_definition.platformio_board}
 framework = arduino
 monitor_speed = 115200
-build_flags =
+{board_configs_block}build_flags =
 {build_flags_block}
 lib_deps =
-    knolleary/PubSubClient@^2.8
-    bblanchon/ArduinoJson@^6.21.3
+{lib_deps_block}
 """
     with open(os.path.join(project_dir, "platformio.ini"), "w") as file:
         file.write(ini_content)
@@ -122,13 +163,36 @@ def write_generated_firmware_config(project, job_id: str, project_dir: str):
         function_name = str(pin.get("function") or mode.lower())
         label = str(pin.get("label") or f"GPIO {gpio}")
         raw_extra_params = pin.get("extra_params")
+        
+        # Default values
         active_level = 1
+        pwm_min = 0
+        pwm_max = 255
+        i2c_role = ""
+        i2c_address = ""
+        i2c_library = ""
+
         if isinstance(raw_extra_params, dict):
+            # Output / PWM
             candidate_level = raw_extra_params.get("active_level")
             if candidate_level in (0, 1):
                 active_level = int(candidate_level)
+            
+            p_min = raw_extra_params.get("min_value")
+            if isinstance(p_min, int):
+                pwm_min = p_min
+            
+            p_max = raw_extra_params.get("max_value")
+            if isinstance(p_max, int):
+                pwm_max = p_max
+            
+            # I2C
+            i2c_role = str(raw_extra_params.get("i2c_role") or "")
+            i2c_address = str(raw_extra_params.get("i2c_address") or "")
+            i2c_library = str(raw_extra_params.get("i2c_library") or "")
+
         pin_rows.append(
-            f'    {{ {gpio}, "{_escape_c_string(mode)}", "{_escape_c_string(function_name)}", "{_escape_c_string(label)}", {active_level} }}'
+            f'    {{ {gpio}, "{_escape_c_string(mode)}", "{_escape_c_string(function_name)}", "{_escape_c_string(label)}", {active_level}, {pwm_min}, {pwm_max}, "{_escape_c_string(i2c_role)}", "{_escape_c_string(i2c_address)}", "{_escape_c_string(i2c_library)}" }}'
         )
 
     api_base_url_block = ""
@@ -145,6 +209,11 @@ struct EConnectPinConfig {{
   const char *function_name;
   const char *label;
   int active_level;
+  int pwm_min;
+  int pwm_max;
+  const char *i2c_role;
+  const char *i2c_address;
+  const char *i2c_library;
 }};
 
 #define ECONNECT_HAS_PIN_CONFIGS 1
@@ -243,7 +312,7 @@ def build_firmware_task(job_id: str, warnings: list[str] | None = None):
 
         project = job.project
         copy_firmware_template(project_dir)
-        generate_platformio_ini(project.board_profile, project_dir)
+        generate_platformio_ini(project, project_dir)
         write_generated_firmware_config(project, job_id, project_dir)
 
         with open(log_path, "w") as log_file:
