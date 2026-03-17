@@ -78,6 +78,9 @@ interface SerializedDraft {
   serialPort?: string;
   wifiSsid?: string;
   wifiPassword?: string;
+  cpuMhz?: number | null;
+  flashSize?: string | null;
+  psramSize?: string | null;
 }
 
 interface DiyProjectRecord {
@@ -210,6 +213,9 @@ function buildConfigKey({
   pins,
   wifiSsid,
   wifiPassword,
+  cpuMhz,
+  flashSize,
+  psramSize,
 }: {
   boardId: string;
   projectName: string;
@@ -217,9 +223,15 @@ function buildConfigKey({
   pins: PinMapping[];
   wifiSsid: string;
   wifiPassword: string;
+  cpuMhz: number | null;
+  flashSize: string | null;
+  psramSize: string | null;
 }) {
   return JSON.stringify({
     boardId,
+    cpuMhz,
+    flashSize,
+    psramSize,
     projectName: projectName.trim(),
     roomId,
     wifiSsid: wifiSsid.trim(),
@@ -245,6 +257,9 @@ function createProjectPayload({
   buildKey,
   wifiSsid,
   wifiPassword,
+  cpuMhz,
+  flashSize,
+  psramSize,
 }: {
   board: BoardProfile;
   projectName: string;
@@ -256,6 +271,9 @@ function createProjectPayload({
   buildKey: string | null;
   wifiSsid: string;
   wifiPassword: string;
+  cpuMhz: number | null;
+  flashSize: string | null;
+  psramSize: string | null;
 }) {
   const config: Record<string, unknown> = {
     schema_version: 1,
@@ -265,6 +283,9 @@ function createProjectPayload({
     board_id: board.id,
     flash_source: flashSource,
     serial_port: serialPort,
+    cpu_mhz: cpuMhz,
+    flash_size: flashSize,
+    psram_size: psramSize,
     pins: pins.map((mapping) => ({
       gpio_pin: mapping.gpio_pin,
       mode: mapping.mode,
@@ -347,6 +368,9 @@ export default function DIYBuilderPage() {
   const [wifiPassword, setWifiPassword] = useState("");
   const [family, setFamily] = useState<Esp32ChipFamily>("ESP32-C3");
   const [boardId, setBoardId] = useState(DEFAULT_BOARD_ID);
+  const [cpuMhz, setCpuMhz] = useState<number | null>(null);
+  const [flashSize, setFlashSize] = useState<string | null>(null);
+  const [psramSize, setPsramSize] = useState<string | null>(null);
   const [pins, setPins] = useState<PinMapping[]>([]);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [flashSource, setFlashSource] = useState<FlashSource>("server");
@@ -388,8 +412,11 @@ export default function DIYBuilderPage() {
         pins,
         wifiSsid,
         wifiPassword,
+        cpuMhz,
+        flashSize,
+        psramSize,
       }),
-    [board.id, pins, projectName, roomId, wifiPassword, wifiSsid],
+    [board.id, pins, projectName, roomId, wifiPassword, wifiSsid, cpuMhz, flashSize, psramSize],
   );
   const activeBuildJobId =
     serverBuild.configKey === currentBuildConfigKey ? serverBuild.jobId : null;
@@ -410,8 +437,11 @@ export default function DIYBuilderPage() {
         buildKey: activeBuildKey,
         wifiSsid,
         wifiPassword,
+        cpuMhz,
+        flashSize,
+        psramSize,
       }),
-    [activeBuildJobId, activeBuildKey, board, flashSource, pins, projectName, roomId, serialPort, wifiSsid, wifiPassword],
+    [activeBuildJobId, activeBuildKey, board, flashSource, pins, projectName, roomId, serialPort, wifiSsid, wifiPassword, cpuMhz, flashSize, psramSize],
   );
   const projectPayloadJson = useMemo(() => JSON.stringify(projectPayload), [projectPayload]);
   const draftConfig = projectPayload.config as Record<string, unknown>;
@@ -862,6 +892,9 @@ export default function DIYBuilderPage() {
     );
     const nextWifiSsid = typeof config.wifi_ssid === "string" ? config.wifi_ssid : "";
     const nextWifiPassword = typeof config.wifi_password === "string" ? config.wifi_password : "";
+    const nextCpuMhz = typeof config.cpu_mhz === "number" ? config.cpu_mhz : null;
+    const nextFlashSize = typeof config.flash_size === "string" ? config.flash_size : null;
+    const nextPsramSize = typeof config.psram_size === "string" ? config.psram_size : null;
     const nextProjectName =
       typeof config.project_name === "string" && config.project_name.trim()
         ? config.project_name
@@ -878,6 +911,9 @@ export default function DIYBuilderPage() {
       pins: nextPins,
       wifiSsid: nextWifiSsid,
       wifiPassword: nextWifiPassword,
+      cpuMhz: nextCpuMhz,
+      flashSize: nextFlashSize,
+      psramSize: nextPsramSize,
     });
     const savedBuildKey =
       typeof config.latest_build_config_key === "string" ? config.latest_build_config_key : null;
@@ -905,6 +941,9 @@ export default function DIYBuilderPage() {
     setBoardId(nextBoard.id);
     setPins(nextPins);
     setSelectedPinId(null);
+    setCpuMhz(nextCpuMhz);
+    setFlashSize(nextFlashSize);
+    setPsramSize(nextPsramSize);
     setFlashSource(nextFlashSource);
     setSerialPort(
       typeof config.serial_port === "string" && config.serial_port.trim()
@@ -939,6 +978,9 @@ export default function DIYBuilderPage() {
         buildKey: savedBuildJobId ? savedBuildKey : null,
         wifiSsid: nextWifiSsid,
         wifiPassword: nextWifiPassword,
+        cpuMhz: nextCpuMhz,
+        flashSize: nextFlashSize,
+        psramSize: nextPsramSize,
       }),
     );
     setProjectSyncState("saved");
@@ -1004,6 +1046,9 @@ export default function DIYBuilderPage() {
             : nextBoard.family,
         );
         setBoardId(nextBoard.id);
+        setCpuMhz(typeof savedDraft.cpuMhz === "number" ? savedDraft.cpuMhz : null);
+        setFlashSize(typeof savedDraft.flashSize === "string" ? savedDraft.flashSize : null);
+        setPsramSize(typeof savedDraft.psramSize === "string" ? savedDraft.psramSize : null);
         setPins(Array.isArray(savedDraft.pins) ? sanitizePins(savedDraft.pins, MODE_METADATA) : []);
         setFlashSource(
           savedDraft.flashSource === "demo" && !nextBoard.demoFirmware
@@ -1453,11 +1498,14 @@ export default function DIYBuilderPage() {
             roomId,
             flashSource: "server",
             pins,
-            serialPort,
-            buildJobId: job.id,
-            buildKey: currentBuildConfigKey,
+            serialPort: DEFAULT_SERIAL_PORT,
+            buildJobId: serverBuild.jobId,
+            buildKey: serverBuild.configKey ?? currentBuildConfigKey,
             wifiSsid,
             wifiPassword,
+            cpuMhz,
+            flashSize,
+            psramSize,
           }),
         ),
       );
@@ -1746,6 +1794,12 @@ export default function DIYBuilderPage() {
             roomError={roomError}
             creatingRoom={creatingRoom}
             onCreateRoom={handleCreateRoom}
+            cpuMhz={cpuMhz}
+            setCpuMhz={setCpuMhz}
+            flashSize={flashSize}
+            setFlashSize={setFlashSize}
+            psramSize={psramSize}
+            setPsramSize={setPsramSize}
             wifiSsid={wifiSsid}
             setWifiSsid={setWifiSsid}
             wifiPassword={wifiPassword}

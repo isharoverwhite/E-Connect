@@ -1,12 +1,29 @@
 import type { PinMode } from "@/types/device";
 
+export interface I2CLibrary {
+    name: string;
+    display_name: string;
+    category: string;
+    description: string;
+    default_address?: string;
+    pio_lib_deps: string[];
+    supported_channels: string[];
+    is_writable: boolean;
+}
+
 export interface PinMapping {
     gpio_pin: number;
     mode: PinMode;
     function?: string;
     label?: string;
     extra_params?: {
+        subtype?: "on_off" | "pwm";
         active_level?: 0 | 1;
+        min_value?: number;
+        max_value?: number;
+        i2c_role?: "SDA" | "SCL";
+        i2c_address?: string;
+        i2c_library?: string;
     } | null;
 }
 
@@ -116,15 +133,32 @@ export function sanitizePins(input: unknown[], modeMetadata: Record<string, unkn
             nextPin.label = candidate.label;
         }
 
-        if (
-            candidate.extra_params &&
-            typeof candidate.extra_params === "object" &&
-            "active_level" in candidate.extra_params &&
-            (candidate.extra_params.active_level === 0 || candidate.extra_params.active_level === 1)
-        ) {
-            nextPin.extra_params = {
-                active_level: candidate.extra_params.active_level,
-            };
+        if (candidate.extra_params && typeof candidate.extra_params === "object") {
+            nextPin.extra_params = {};
+            
+            const ep = candidate.extra_params as Record<string, unknown>;
+            
+            if ("subtype" in ep && (ep.subtype === "on_off" || ep.subtype === "pwm")) {
+                nextPin.extra_params.subtype = ep.subtype as "on_off" | "pwm";
+            }
+            if ("active_level" in ep && (ep.active_level === 0 || ep.active_level === 1)) {
+                nextPin.extra_params.active_level = ep.active_level as 0 | 1;
+            }
+            if ("min_value" in ep && typeof ep.min_value === "number") {
+                nextPin.extra_params.min_value = ep.min_value;
+            }
+            if ("max_value" in ep && typeof ep.max_value === "number") {
+                nextPin.extra_params.max_value = ep.max_value;
+            }
+            if ("i2c_role" in ep && (ep.i2c_role === "SDA" || ep.i2c_role === "SCL")) {
+                nextPin.extra_params.i2c_role = ep.i2c_role as "SDA" | "SCL";
+            }
+            if ("i2c_address" in ep && typeof ep.i2c_address === "string") {
+                nextPin.extra_params.i2c_address = ep.i2c_address;
+            }
+            if ("i2c_library" in ep && typeof ep.i2c_library === "string") {
+                nextPin.extra_params.i2c_library = ep.i2c_library;
+            }
         }
 
         sanitizedPins.push(nextPin);

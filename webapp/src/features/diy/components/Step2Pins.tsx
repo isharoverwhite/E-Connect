@@ -1,6 +1,7 @@
+import { useState, useEffect } from "react";
 import type { PinMode } from "@/types/device";
 import { type BoardPin, type BoardProfile } from "../board-profiles";
-import { type PinMapping, PIN_FILL, type ProjectSyncState } from "../types";
+import { type PinMapping, PIN_FILL, type ProjectSyncState, type I2CLibrary } from "../types";
 
 export interface Step2PinsProps {
     pins: PinMapping[];
@@ -35,12 +36,105 @@ export function Step2Pins({
     onNext,
     onBack,
 }: Step2PinsProps) {
+    const [i2cCatalog, setI2cCatalog] = useState<I2CLibrary[]>([]);
+    const [catalogLoading, setCatalogLoading] = useState(false);
+    const [catalogError, setCatalogError] = useState<string | null>(null);
+
+    useEffect(() => {
+        const fetchCatalog = async () => {
+            setCatalogLoading(true);
+            try {
+                const response = await fetch("/api/v1/diy/i2c/libraries");
+                if (!response.ok) throw new Error("Failed to fetch library catalog");
+                const data = await response.json();
+                setI2cCatalog(data);
+            } catch (err) {
+                setCatalogError(err instanceof Error ? err.message : "Catalog unavailable");
+            } finally {
+                setCatalogLoading(false);
+            }
+        };
+        void fetchCatalog();
+    }, []);
+
     const handlePinSelection = (pin: BoardPin) => {
         setSelectedPinId(pin.id);
     };
 
-    const handleModeChange = (pin: BoardPin, mode: PinMode) => {
-        // Find and update or insert
+    const handleI2CAutoPairing = (currentPin: BoardPin): PinMapping[] => {
+        const defaults = board.i2cDefaults;
+        if (!defaults) return [];
+
+        const isSdaDefault = currentPin.gpio === defaults.sda;
+        const isSclDefault = currentPin.gpio === defaults.scl;
+
+        let otherGpio: number | undefined;
+        if (isSdaDefault) otherGpio = defaults.scl;
+        else if (isSclDefault) otherGpio = defaults.sda;
+        else {
+            // Find another pin that supports I2C
+            otherGpio = boardPins.find(p => p.gpio !== currentPin.gpio && p.capabilities.includes("I2C"))?.gpio;
+        }
+
+        if (otherGpio === undefined) return [];
+
+        const otherPin = boardPins.find(p => p.gpio === otherGpio);
+        if (!otherPin) return [];
+
+        const currentRole = isSdaDefault ? "SDA" : isSclDefault ? "SCL" : "SDA";
+        const otherRole = currentRole === "SDA" ? "SCL" : "SDA";
+
+        const currentMapping: PinMapping = {
+            gpio_pin: currentPin.gpio,
+            mode: "I2C",
+            function: "i2c",
+            label: `${projectName.split(" ")[0] || "Node"} ${currentPin.label}`,
+            extra_params: { i2c_role: currentRole, i2c_address: "0x3C" }
+        };
+
+        const otherMapping: PinMapping = {
+            gpio_pin: otherPin.gpio,
+            mode: "I2C",
+            function: "i2c",
+            label: `${projectName.split(" ")[0] || "Node"} ${otherPin.label}`,
+            extra_params: { i2c_role: otherRole }
+        };
+
+        return [currentMapping, otherMapping];
+    };
+
+    const handleModeChange = (pin: BoardPin, mode: PinMode | "none") => {
+        const existingMappings = pins.filter(p => p.gpio_pin !== pin.gpio);
+        
+        // If changing FROM I2C, clear the pair
+        const wasI2C = pins.find(p => p.gpio_pin === pin.gpio)?.mode === "I2C";
+        let nextPins = existingMappings;
+        
+        if (wasI2C) {
+            // Find the other I2C pin and clear it too
+            const otherI2C = pins.find(p => p.mode === "I2C" && p.gpio_pin !== pin.gpio);
+            if (otherI2C) {
+                nextPins = nextPins.filter(p => p.gpio_pin !== otherI2C.gpio_pin);
+            }
+        }
+
+        if (mode === "none") {
+            setPins(nextPins.sort((a, b) => a.gpio_pin - b.gpio_pin));
+            return;
+        }
+
+        if (mode === "I2C") {
+            const pair = handleI2CAutoPairing(pin);
+            if (pair.length === 2) {
+                // Remove both from nextPins if they exist to avoid duplicates
+                const pairGpios = pair.map(p => p.gpio_pin);
+                const filtered = nextPins.filter(p => !pairGpios.includes(p.gpio_pin));
+                setPins([...filtered, ...pair].sort((a, b) => a.gpio_pin - b.gpio_pin));
+                return;
+            }
+        }
+
+        // Standard mode change
         const existing = pins.find(p => p.gpio_pin === pin.gpio);
         const newLabel = existing?.label || `${projectName.split(" ")[0] || "Node"} ${pin.label}`;
 
@@ -51,15 +145,13 @@ export function Step2Pins({
             label: newLabel,
             extra_params:
                 mode === "OUTPUT"
-                    ? { active_level: existing?.extra_params?.active_level ?? 1 }
+                    ? { active_level: existing?.extra_params?.active_level ?? 1, subtype: "on_off" }
+                    : mode === "PWM"
+                    ? { min_value: existing?.extra_params?.min_value ?? 0, max_value: existing?.extra_params?.max_value ?? 255, subtype: "pwm" }
                     : null,
         };
 
-        setPins((previous) =>
-            [...previous.filter((mapping) => mapping.gpio_pin !== pin.gpio), nextMapping].sort(
-                (left, right) => left.gpio_pin - right.gpio_pin,
-            ),
-        );
+        setPins([...nextPins, nextMapping].sort((a, b) => a.gpio_pin - b.gpio_pin));
     };
 
     const handleFunctionChange = (pin: BoardPin, functionName: string) => {
@@ -73,7 +165,7 @@ export function Step2Pins({
         });
     };
 
-    const handleActiveLevelChange = (pin: BoardPin, activeLevel: 0 | 1) => {
+    const handleExtraParamChange = (pin: BoardPin, params: Partial<NonNullable<PinMapping['extra_params']>>) => {
         setPins((previous) => {
             const existing = previous.find((mapping) => mapping.gpio_pin === pin.gpio);
             if (!existing) {
@@ -84,8 +176,8 @@ export function Step2Pins({
                 ...existing,
                 extra_params: {
                     ...(existing.extra_params ?? {}),
-                    active_level: activeLevel,
-                },
+                    ...params,
+                } as PinMapping['extra_params'],
             };
 
             return [...previous.filter((mapping) => mapping.gpio_pin !== pin.gpio), nextMapping].sort(
@@ -309,7 +401,7 @@ export function Step2Pins({
                                 {formatSyncState(projectSyncState)}
                             </span>
                         </div>
-                        <div className="flex flex-col gap-4 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                        <div className="flex flex-col gap-4 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
                             {boardPins.filter(pin => pin.capabilities.length > 0 && !pin.reserved).map(pin => {
                                 const assignment = pins.find(p => p.gpio_pin === pin.gpio);
                                 const isSelected = selectedPinId === pin.id;
@@ -331,19 +423,16 @@ export function Step2Pins({
                                                     id={`pin-mode-${pin.gpio}`}
                                                     name={`pin-mode-${pin.gpio}`}
                                                     aria-label={`${pin.label} mode`}
-                                                    value={assignment?.mode || "none"}
+                                                    value={assignment?.mode === 'PWM' ? 'OUTPUT' : (assignment?.mode || "none")}
                                                     onChange={(e) => {
-                                                        if (e.target.value === "none") {
-                                                            setPins(prev => prev.filter(p => p.gpio_pin !== pin.gpio));
-                                                        } else {
-                                                            handleModeChange(pin, e.target.value as PinMode);
-                                                        }
+                                                        const val = e.target.value;
+                                                        handleModeChange(pin, val as PinMode | "none");
                                                     }}
                                                     className={`w-full bg-slate-100 dark:bg-slate-800 border-none rounded-lg text-sm text-slate-900 dark:text-slate-100 py-3 pl-10 pr-4 focus:ring-2 focus:ring-primary appearance-none cursor-pointer ${assignment ? 'font-medium text-primary' : ''}`}
                                                 >
                                                     <option value="none">Disabled</option>
-                                                    {pin.capabilities.map(cap => (
-                                                        <option key={cap} value={cap}>{cap}</option>
+                                                    {Array.from(new Set(pin.capabilities.map(cap => cap === "PWM" ? "OUTPUT" : cap))).map(cap => (
+                                                        <option key={cap} value={cap}>{cap === 'OUTPUT' ? 'Output' : cap}</option>
                                                     ))}
                                                 </select>
                                                 <span className={`material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-xl ${assignment ? 'text-primary' : 'text-slate-400'}`}>
@@ -367,42 +456,175 @@ export function Step2Pins({
                                             )}
                                         </div>
 
-                                        {assignment?.mode === "OUTPUT" && (
+                                        {(assignment?.mode === "OUTPUT" || assignment?.mode === "PWM") && (
                                             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-800 dark:bg-slate-900/60">
-                                                <div className="flex items-center justify-between gap-3">
-                                                    <div>
+                                                <div className="flex flex-col gap-4">
+                                                    <div className="flex items-center justify-between">
                                                         <p className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-                                                            ON level
+                                                            Control Type
                                                         </p>
-                                                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                                            Choose whether logical ON drives the GPIO to 1 or 0 for reverse relays.
-                                                        </p>
-                                                    </div>
-                                                    <div className="grid grid-cols-2 gap-2">
-                                                        {[1, 0].map((level) => {
-                                                            const activeLevel = assignment.extra_params?.active_level ?? 1;
-                                                            const isActive = activeLevel === level;
-                                                            const label = level === 1 ? "ON = 1" : "ON = 0";
-                                                            return (
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <button
+                                                                type="button"
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation();
+                                                                    handleModeChange(pin, "OUTPUT");
+                                                                }}
+                                                                className={`rounded-lg px-3 py-1.5 text-[10px] font-bold transition-colors ${
+                                                                    assignment.mode === "OUTPUT"
+                                                                        ? "bg-primary text-white shadow-sm"
+                                                                        : "bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                                                                }`}
+                                                            >
+                                                                On / Off
+                                                            </button>
+                                                            {pin.capabilities.includes("PWM") && (
                                                                 <button
-                                                                    key={level}
                                                                     type="button"
                                                                     onClick={(event) => {
                                                                         event.stopPropagation();
-                                                                        handleActiveLevelChange(pin, level as 0 | 1);
+                                                                        handleModeChange(pin, "PWM");
                                                                     }}
-                                                                    className={`rounded-lg px-3 py-2 text-xs font-bold transition-colors ${
-                                                                        isActive
+                                                                    className={`rounded-lg px-3 py-1.5 text-[10px] font-bold transition-colors ${
+                                                                        assignment.mode === "PWM"
                                                                             ? "bg-primary text-white shadow-sm"
                                                                             : "bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                                                                     }`}
                                                                 >
-                                                                    {label}
+                                                                    PWM
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+
+                                                    {assignment.mode === "OUTPUT" && (
+                                                        <div className="flex items-center justify-between">
+                                                            <p className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                                                                Active Level
+                                                            </p>
+                                                            <div className="grid grid-cols-2 gap-2">
+                                                                {[1, 0].map((level) => {
+                                                                    const activeLevel = assignment.extra_params?.active_level ?? 1;
+                                                                    const isActive = activeLevel === level;
+                                                                    const label = level === 1 ? "HIGH" : "LOW";
+                                                                    return (
+                                                                        <button
+                                                                            key={level}
+                                                                            type="button"
+                                                                            onClick={(event) => {
+                                                                                event.stopPropagation();
+                                                                                handleExtraParamChange(pin, { active_level: level as 0 | 1 });
+                                                                            }}
+                                                                            className={`rounded-lg px-3 py-1.5 text-[10px] font-bold transition-colors ${
+                                                                                isActive
+                                                                                    ? "bg-primary text-white shadow-sm"
+                                                                                    : "bg-white text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                                                                            }`}
+                                                                        >
+                                                                            {label}
+                                                                        </button>
+                                                                    );
+                                                                })}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {assignment?.mode === "PWM" && (
+                                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-800 dark:bg-slate-900/60">
+                                                <div className="flex flex-col gap-3">
+                                                    <p className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                                                        PWM Range (0-255)
+                                                    </p>
+                                                    <div className="grid grid-cols-2 gap-4">
+                                                        <div className="flex flex-col gap-1">
+                                                            <label className="text-[10px] text-slate-400 font-medium">Min</label>
+                                                            <input 
+                                                                type="number"
+                                                                min="0"
+                                                                max="255"
+                                                                value={assignment.extra_params?.min_value ?? 0}
+                                                                onChange={(e) => handleExtraParamChange(pin, { min_value: parseInt(e.target.value) || 0 })}
+                                                                className="bg-white dark:bg-slate-800 border-none rounded-md py-1.5 px-2 text-xs"
+                                                            />
+                                                        </div>
+                                                        <div className="flex flex-col gap-1">
+                                                            <label className="text-[10px] text-slate-400 font-medium">Max</label>
+                                                            <input 
+                                                                type="number"
+                                                                min="0"
+                                                                max="255"
+                                                                value={assignment.extra_params?.max_value ?? 255}
+                                                                onChange={(e) => handleExtraParamChange(pin, { max_value: parseInt(e.target.value) || 0 })}
+                                                                className="bg-white dark:bg-slate-800 border-none rounded-md py-1.5 px-2 text-xs"
+                                                            />
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        {assignment?.mode === "I2C" && (
+                                            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-800 dark:bg-slate-900/60 flex flex-col gap-3">
+                                                <div className="flex items-center justify-between">
+                                                    <p className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">Bus Role</p>
+                                                    <div className="grid grid-cols-2 gap-2">
+                                                        {["SDA", "SCL"].map((role) => {
+                                                            const currentRole = assignment.extra_params?.i2c_role ?? "SDA";
+                                                            const isActive = currentRole === role;
+                                                            return (
+                                                                <button
+                                                                    key={role}
+                                                                    type="button"
+                                                                    disabled={true} // Auto-assigned roles
+                                                                    className={`rounded-lg px-3 py-1.5 text-[10px] font-bold transition-colors ${
+                                                                        isActive
+                                                                            ? "bg-orange-500 text-white shadow-sm"
+                                                                            : "bg-white text-slate-600 opacity-50 dark:bg-slate-800 dark:text-slate-300"
+                                                                    }`}
+                                                                >
+                                                                    {role}
                                                                 </button>
                                                             );
                                                         })}
                                                     </div>
                                                 </div>
+
+                                                <div className="grid grid-cols-2 gap-4">
+                                                    <div className="flex flex-col gap-1">
+                                                        <label className="text-[10px] text-slate-400 font-medium tracking-tight">Hex Address</label>
+                                                        <input 
+                                                            type="text"
+                                                            placeholder="0x3C"
+                                                            value={assignment.extra_params?.i2c_address ?? ""}
+                                                            onChange={(e) => handleExtraParamChange(pin, { i2c_address: e.target.value })}
+                                                            className="bg-white dark:bg-slate-800 border-none rounded-md py-1.5 px-2 text-xs font-mono uppercase"
+                                                        />
+                                                    </div>
+                                                    <div className="flex flex-col gap-1">
+                                                        <label className="text-[10px] text-slate-400 font-medium tracking-tight text-right">Adafruit Library</label>
+                                                        <select 
+                                                            value={assignment.extra_params?.i2c_library ?? ""}
+                                                            onChange={(e) => {
+                                                                const lib = i2cCatalog.find(l => l.name === e.target.value);
+                                                                handleExtraParamChange(pin, { 
+                                                                    i2c_library: e.target.value,
+                                                                    i2c_address: lib?.default_address || assignment.extra_params?.i2c_address
+                                                                });
+                                                            }}
+                                                            className="bg-white dark:bg-slate-800 border-none rounded-md py-1.5 px-2 text-[10px] appearance-none"
+                                                        >
+                                                            <option value="">Select Library...</option>
+                                                            {i2cCatalog.map(lib => (
+                                                                <option key={lib.name} value={lib.name}>{lib.display_name}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                {catalogLoading && <p className="text-[9px] text-blue-400 animate-pulse">Fetching Adafruit catalog...</p>}
+                                                {catalogError && <p className="text-[9px] text-red-400">Catalog error: {catalogError}</p>}
                                             </div>
                                         )}
                                     </div>

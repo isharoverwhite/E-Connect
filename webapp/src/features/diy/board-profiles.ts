@@ -48,6 +48,13 @@ export interface BoardProfile {
   leftPins: BoardPin[];
   rightPins: BoardPin[];
   demoFirmware?: DemoFirmwarePreset;
+  defaultCpuMhz?: number;
+  defaultFlashSize?: string;
+  defaultPsram?: string;
+  i2cDefaults?: {
+    sda: number;
+    scl: number;
+  };
 }
 
 export interface BoardFamilyInfo {
@@ -441,6 +448,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: classicEsp32Left,
     rightPins: classicEsp32Right,
+    i2cDefaults: { sda: 21, scl: 22 },
   },
   {
     id: "esp32-wrover-devkit",
@@ -456,6 +464,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: classicEsp32Left,
     rightPins: classicEsp32Right,
+    i2cDefaults: { sda: 21, scl: 22 },
   },
   {
     id: "esp32-cam",
@@ -500,6 +509,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32S2Left,
     rightPins: esp32S2Right,
+    i2cDefaults: { sda: 8, scl: 9 },
   },
   {
     id: "lolin-s2-mini",
@@ -530,6 +540,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32S3Left,
     rightPins: esp32S3Right,
+    i2cDefaults: { sda: 8, scl: 9 },
   },
   {
     id: "esp32-s3-zero",
@@ -575,6 +586,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32C3Left,
     rightPins: esp32C3Right,
+    i2cDefaults: { sda: 8, scl: 9 },
   },
   {
     id: "esp32-c3-super-mini",
@@ -590,6 +602,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32C3SuperMiniLeft,
     rightPins: esp32C3SuperMiniRight,
+    i2cDefaults: { sda: 8, scl: 9 },
   },
   {
     id: "dfrobot-beetle-esp32-c3",
