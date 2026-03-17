@@ -27,6 +27,12 @@ interface Step1BoardProps {
     roomError: string;
     creatingRoom: boolean;
     onCreateRoom: () => Promise<void>;
+    cpuMhz: number | null;
+    setCpuMhz: (val: number | null) => void;
+    flashSize: string | null;
+    setFlashSize: (val: string | null) => void;
+    psramSize: string | null;
+    setPsramSize: (val: string | null) => void;
 }
 
 export function Step1Board({
@@ -54,7 +60,18 @@ export function Step1Board({
     roomError,
     creatingRoom,
     onCreateRoom,
+    cpuMhz,
+    setCpuMhz,
+    flashSize,
+    setFlashSize,
+    psramSize,
+    setPsramSize,
 }: Step1BoardProps) {
+    const totalGpios = board.leftPins.length + board.rightPins.length;
+    const defaultCpu = board.defaultCpuMhz || (board.family.includes("C2") ? 120 : board.family.includes("H2") ? 96 : board.family.includes("C3") || board.family.includes("C6") ? 160 : 240);
+    const defaultFlash = board.defaultFlashSize || "4MB";
+    const defaultPsram = board.defaultPsram || "None";
+    
     // Use the HTML from step1.html for the board grid.
     // We'll map the family options to the board selection cards.
     return (
@@ -239,6 +256,55 @@ export function Step1Board({
                 </div>
             </div>
 
+            <div className="mt-2 mb-8">
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-4">
+                    Detailed Board Config
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-5 rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/50">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">CPU Frequency</label>
+                        <select
+                            value={cpuMhz === null ? "" : cpuMhz}
+                            onChange={(e) => setCpuMhz(e.target.value ? Number(e.target.value) : null)}
+                            className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                        >
+                            <option value="">Default ({defaultCpu} MHz)</option>
+                            <option value="240">240 MHz (Max Perf)</option>
+                            <option value="160">160 MHz</option>
+                            <option value="80">80 MHz (Low Power)</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Flash Size</label>
+                        <select
+                            value={flashSize === null ? "" : flashSize}
+                            onChange={(e) => setFlashSize(e.target.value || null)}
+                            className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                        >
+                            <option value="">Default ({defaultFlash})</option>
+                            <option value="2MB">2MB</option>
+                            <option value="4MB">4MB</option>
+                            <option value="8MB">8MB</option>
+                            <option value="16MB">16MB</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">PSRAM</label>
+                        <select
+                            value={psramSize === null ? "" : psramSize}
+                            onChange={(e) => setPsramSize(e.target.value || null)}
+                            className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                        >
+                            <option value="">Default ({defaultPsram})</option>
+                            <option value="None">None</option>
+                            <option value="2MB">2MB</option>
+                            <option value="4MB">4MB</option>
+                            <option value="8MB">8MB</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
             <div className="flex flex-col md:flex-row items-center justify-between gap-6 p-6 rounded-xl bg-slate-100 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800">
                 <div className="flex items-center gap-4">
                     <div className="p-3 bg-primary/10 rounded-full">
@@ -246,7 +312,12 @@ export function Step1Board({
                     </div>
                     <div>
                         <p className="text-slate-900 dark:text-white font-bold">Selected: {board.name}</p>
-                        <p className="text-slate-500 dark:text-slate-400 text-xs">{board.layoutLabel} · {board.serialBridge}</p>
+                        <p className="text-slate-500 dark:text-slate-400 text-xs">
+                          {board.chipLabel} · {board.layoutLabel} · {board.serialBridge}
+                        </p>
+                        <p className="text-slate-500 dark:text-slate-400 text-xs mt-1">
+                          GPIO Count: {totalGpios} pins · Default CPU: {defaultCpu} MHz · Flash: {defaultFlash} · PSRAM: {defaultPsram}
+                        </p>
                         <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
                             {projectSyncMessage}
                         </p>

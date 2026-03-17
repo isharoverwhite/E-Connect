@@ -42,6 +42,7 @@ from .services.device_registration import (
 )
 from .services.diy_validation import validate_diy_config
 from .services.user_management import ensure_temp_support_account, resolve_household_id_for_user
+from .services.i2c_registry import I2CLibrary, get_i2c_catalog
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
@@ -954,6 +955,13 @@ async def generate_diy_config(request: GenerateConfigRequest, user: User = Depen
         ]
     }
     return {"status": "success", "config": config}
+
+@router.get("/diy/i2c/libraries", response_model=List[I2CLibrary])
+async def list_i2c_libraries(current_user: User = Depends(get_current_user)):
+    """
+    Get the catalog of supported Adafruit I2C libraries.
+    """
+    return get_i2c_catalog()
 
 @router.post("/diy/projects", response_model=DiyProjectResponse)
 async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):

@@ -21,6 +21,12 @@ export interface PinConfig {
     v_pin?: number;
     extra_params?: {
         active_level?: 0 | 1;
+        min_value?: number;
+        max_value?: number;
+        subtype?: "on_off" | "pwm";
+        i2c_role?: "SDA" | "SCL";
+        i2c_address?: string;
+        i2c_library?: string;
         [key: string]: unknown;
     } | null;
 }
@@ -46,6 +52,7 @@ export interface DeviceConfig extends DeviceAvailabilitySummary {
         brightness?: number;
         ip_address?: string;
         trend?: string;
+        unit?: string;
     } | null;
     pin_configurations: PinConfig[];
 }
