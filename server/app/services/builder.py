@@ -324,8 +324,22 @@ def build_firmware_task(job_id: str, warnings: list[str] | None = None):
             with open("/tmp/builder_debug.log", "a") as f:
                 f.write(f"Starting PIO subprocess.\\n")
 
+            import shutil
+            import sys
+            
+            pio_cmd = ["pio"]
+            if not shutil.which("pio"):
+                candidate1 = os.path.join(os.path.dirname(sys.executable), "pio")
+                candidate2 = os.path.join(os.path.dirname(sys.argv[0]), "pio")
+                if os.path.exists(candidate1):
+                    pio_cmd = [candidate1]
+                elif os.path.exists(candidate2):
+                    pio_cmd = [candidate2]
+                else:
+                    pio_cmd = [sys.executable, "-m", "platformio"]
+
             process = subprocess.Popen(
-                ["pio", "run"],
+                pio_cmd + ["run"],
                 cwd=project_dir,
                 stdout=log_file,
                 stderr=subprocess.STDOUT,

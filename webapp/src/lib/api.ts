@@ -146,7 +146,7 @@ export async function sendDeviceCommand(
 
 export async function saveDeviceConfig(
     uuid: string,
-    config: { pins: any[] }
+    config: { pins: unknown[] }
 ): Promise<{ status: string; job_id?: string; message?: string }> {
     try {
         const token = getToken();

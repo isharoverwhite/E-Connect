@@ -341,7 +341,7 @@ bool performSecureHandshake() {
   doc["mac_address"] = WiFi.macAddress();
   doc["ip_address"] = WiFi.localIP().toString();
   doc["name"] = ECONNECT_DEVICE_NAME;
-  doc["mode"] = "library";
+  doc["mode"] = "no-code";
   doc["firmware_version"] = ECONNECT_FIRMWARE_VERSION;
 
   JsonArray pins = doc.createNestedArray("pins");
@@ -483,21 +483,45 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
   if (String(doc["kind"] | "") == "system") {
     if (String(doc["action"] | "") == "ota") {
       const String url = doc["url"] | "";
+      const String jobId = doc["job_id"] | "";
       if (url.length() > 0) {
         Serial.printf("Received OTA command for URL: %s\n", url.c_str());
         WiFiClient client;
+        httpUpdate.rebootOnUpdate(false);
         t_httpUpdate_return ret = httpUpdate.update(client, url);
+
+        StaticJsonDocument<512> statusDoc;
+        statusDoc["event"] = "ota_status";
+        statusDoc["job_id"] = jobId;
+        
         switch (ret) {
-          case HTTP_UPDATE_FAILED:
-            Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
+          case HTTP_UPDATE_FAILED: {
+            String errStr = httpUpdate.getLastErrorString();
+            Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", httpUpdate.getLastError(), errStr.c_str());
+            statusDoc["status"] = "failed";
+            statusDoc["message"] = errStr;
             break;
+          }
           case HTTP_UPDATE_NO_UPDATES:
             Serial.println("HTTP_UPDATE_NO_UPDATES");
+            statusDoc["status"] = "failed";
+            statusDoc["message"] = "HTTP_UPDATE_NO_UPDATES";
             break;
           case HTTP_UPDATE_OK:
             Serial.println("HTTP_UPDATE_OK");
-            ESP.restart();
+            statusDoc["status"] = "success";
             break;
+        }
+
+        String payload;
+        serializeJson(statusDoc, payload);
+        const String stateTopic = String("econnect/") + MQTT_NAMESPACE + "/device/" + deviceId + "/state";
+        mqttClient.publish(stateTopic.c_str(), payload.c_str());
+        mqttClient.loop();
+        delay(500);
+
+        if (ret == HTTP_UPDATE_OK) {
+           ESP.restart();
         }
       }
     }

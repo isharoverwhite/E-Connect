@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import type { PinMode } from "@/types/device";
+import { getToken } from "@/lib/auth";
 import { type BoardPin, type BoardProfile } from "../board-profiles";
 import { type PinMapping, PIN_FILL, type ProjectSyncState, type I2CLibrary } from "../types";
 
@@ -44,7 +45,9 @@ export function Step2Pins({
         const fetchCatalog = async () => {
             setCatalogLoading(true);
             try {
-                const response = await fetch("/api/v1/diy/i2c/libraries");
+                const token = getToken();
+                const headers = token ? { Authorization: `Bearer ${token}` } : undefined;
+                const response = await fetch("/api/v1/diy/i2c/libraries", { headers });
                 if (!response.ok) throw new Error("Failed to fetch library catalog");
                 const data = await response.json();
                 setI2cCatalog(data);
