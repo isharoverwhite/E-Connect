@@ -852,6 +852,70 @@ async def list_dashboard_devices(
 ):
     return _load_visible_devices(db, current_user, AuthStatus.approved)
 
+@router.get("/device/{device_id}", response_model=DeviceResponse)
+async def get_device(device_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Get detailed information about a single device.
+    """
+    device = _get_device_or_404(db, device_id)
+    _ensure_device_control_access(db, current_user, device)
+    return _attach_room_name(_attach_runtime_state(db, device))
+
+
+@router.put("/device/{device_id}/config")
+async def update_device_config(
+    device_id: str,
+    config: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Update the pin configuration for a managed device and optionally trigger a rebuild.
+    """
+    device = _get_device_or_404(db, device_id)
+    if not device.provisioning_project_id:
+        raise HTTPException(status_code=400, detail="Not a managed DIY device")
+
+    project = db.query(DiyProject).filter(DiyProject.id == device.provisioning_project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Associated DIY project not found")
+
+    if not isinstance(project.config, dict):
+        project.config = {}
+    
+    current_config = dict(project.config)
+    current_config["pins"] = config.get("pins", [])
+    
+    project.config = current_config
+    
+    # We must also clear device.pin_configurations here so it reflects correctly,
+    # or let the device update its pin configurations when it boots up.
+    # The device sends its pin_configurations on mqtt handshake.
+    # We will just rely on the database for `DiyProject` config.
+    
+    db.commit()
+
+    # Trigger rebuild
+    job = BuildJob(project_id=project.id, status=JobStatus.queued)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    try:
+        validate_diy_config(
+            board_profile=project.board_profile,
+            config_json=current_config
+        )
+    except Exception as e:
+        job.status = JobStatus.failed
+        job.logs = f"Validation failed: {str(e)}"
+        db.commit()
+        raise HTTPException(status_code=400, detail=str(e))
+
+    build_firmware_task.delay(job.id, project.id)
+
+    return {"status": "success", "job_id": job.id, "message": "Configuration saved and build started"}
+
 @router.delete("/device/{device_id}")
 async def delete_device(device_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
     """
@@ -1107,6 +1171,25 @@ async def get_build_artifact_part(
         artifact_path,
         media_type="application/octet-stream",
         filename=f"{artifact_name}_{job_id}.bin",
+    )
+
+@router.get("/diy/ota/download/{job_id}/firmware.bin")
+async def get_ota_firmware(job_id: str, db: Session = Depends(get_db)):
+    """
+    Unauthenticated endpoint for ESP32 devices to download the firmware artifact over OTA.
+    """
+    job = db.query(BuildJob).filter(BuildJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    artifact_path = _resolve_build_artifact_path(job, "firmware")
+    if job.status != JobStatus.artifact_ready or not artifact_path or not os.path.exists(artifact_path):
+        raise HTTPException(status_code=400, detail="Artifact not ready or missing")
+
+    return FileResponse(
+        artifact_path,
+        media_type="application/octet-stream",
+        filename=f"firmware_{job_id}.bin",
     )
 
 @router.get("/diy/build/{job_id}/logs")

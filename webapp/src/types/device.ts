@@ -54,6 +54,7 @@ export interface DeviceConfig extends DeviceAvailabilitySummary {
         trend?: string;
         unit?: string;
     } | null;
+    provisioning_project_id?: string;
     pin_configurations: PinConfig[];
 }
 

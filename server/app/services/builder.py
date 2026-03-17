@@ -76,9 +76,9 @@ def generate_platformio_ini(project, project_dir: str):
                         lib_deps.extend(lib_info.pio_lib_deps)
                         seen_libs.add(lib_name)
 
-    build_flags_block = "\\n".join(f"    {flag}" for flag in build_flags) if build_flags else ""
-    board_configs_block = "\\n".join(board_config_lines) + "\\n" if board_config_lines else ""
-    lib_deps_block = "\\n".join(f"    {lib}" for lib in lib_deps)
+    build_flags_block = "\n".join(f"    {flag}" for flag in build_flags) if build_flags else ""
+    board_configs_block = "\n".join(board_config_lines) + "\n" if board_config_lines else ""
+    lib_deps_block = "\n".join(f"    {lib}" for lib in lib_deps)
     
     ini_content = f"""[env:{board_definition.platformio_board}]
 platform = {board_definition.platform}
