@@ -143,3 +143,31 @@ export async function sendDeviceCommand(
         return { status: "failed", message: "Network error" };
     }
 }
+
+export async function saveDeviceConfig(
+    uuid: string,
+    config: { pins: any[] }
+): Promise<{ status: string; job_id?: string; message?: string }> {
+    try {
+        const token = getToken();
+        if (!token) return { status: "failed", message: "No token" };
+
+        const res = await fetch(`${API_URL}/device/${uuid}/config`, {
+            method: "PUT",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(config)
+        });
+
+        if (!res.ok) {
+            const errorData = await res.json().catch(() => ({}));
+            return { status: "failed", message: errorData.detail || "HTTP Error" };
+        }
+        return res.json();
+    } catch (error) {
+        console.error("Failed to save device config:", error);
+        return { status: "failed", message: "Network error" };
+    }
+}
