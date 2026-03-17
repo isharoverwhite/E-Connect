@@ -94,7 +94,7 @@ def ensure_temp_support_account(db: Session) -> Optional[User]:
                 role=HouseholdRole.admin,
             )
         )
-    else:
+    elif membership.role != HouseholdRole.owner:
         membership.role = HouseholdRole.admin
 
     db.commit()

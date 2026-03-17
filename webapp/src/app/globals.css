@@ -29,3 +29,35 @@
   border-color: var(--color-slate-200);
   box-shadow: var(--shadow-sm);
 }
+
+@layer components {
+  @keyframes slide-in-right {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes fade-out {
+    from {
+      opacity: 1;
+      transform: scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+  }
+
+  .animate-slide-in {
+    animation: slide-in-right 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .animate-fade-out {
+    animation: fade-out 0.2s ease-out forwards;
+  }
+}

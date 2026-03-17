@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from datetime import datetime, timedelta
 import uuid
@@ -10,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from main import app
 from app.auth import create_access_token
 from app.database import Base, get_db
+from app.mqtt import mqtt_manager
 from app.services import builder as builder_service
 from app.services.provisioning import build_project_firmware_identity
 from app.sql_models import (
@@ -202,6 +204,57 @@ def test_diy_build_happy_path(monkeypatch):
     logs_response = client.get(f"/api/v1/diy/build/{job_id}/logs", headers=headers)
     assert logs_response.status_code == 200
     assert "builder-finished" in logs_response.json()["logs"]
+
+
+def test_diy_projects_can_be_filtered_by_board_profile():
+    user = _seed_user("config-library")
+    headers = _auth_headers(user)
+    room_id = _create_room(user)
+
+    db = TestingSessionLocal()
+    assert db.query(DiyProject).count() == 0
+    db.close()
+
+    c3_project_id = _create_project(
+        headers,
+        room_id=room_id,
+        board_profile="dfrobot-beetle-esp32-c3",
+    )
+    esp32_project_id = _create_project(
+        headers,
+        room_id=room_id,
+        board_profile="esp32-devkit-v1",
+    )
+
+    db = TestingSessionLocal()
+    assert db.query(DiyProject).count() == 2
+    assert (
+        db.query(DiyProject)
+        .filter(DiyProject.board_profile == "dfrobot-beetle-esp32-c3")
+        .count()
+        == 1
+    )
+    db.close()
+
+    response = client.get(
+        "/api/v1/diy/projects?board_profile=dfrobot-beetle-esp32-c3",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["id"] == c3_project_id
+    assert payload[0]["board_profile"] == "dfrobot-beetle-esp32-c3"
+
+    response = client.get(
+        "/api/v1/diy/projects?board_profile=esp32-devkit-v1",
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["id"] == esp32_project_id
+    assert payload[0]["board_profile"] == "esp32-devkit-v1"
 
 
 @pytest.mark.parametrize("status", [JobStatus.queued, JobStatus.building, JobStatus.flashing])
@@ -626,7 +679,7 @@ def test_approve_device_restores_widgets_to_device_owner():
     db.close()
 
 
-def test_secure_handshake_auto_approves_project_device_and_provisions_dashboard():
+def test_mqtt_registration_auto_approves_project_device_and_provisions_dashboard(monkeypatch):
     owner = _seed_user("secure-builder")
     headers = _auth_headers(owner)
     project_id = _create_project(
@@ -649,36 +702,56 @@ def test_secure_handshake_auto_approves_project_device_and_provisions_dashboard(
         },
     )
     device_id, secret_key = build_project_firmware_identity(project_id)
+    published_messages: list[tuple[str, dict]] = []
 
-    handshake_response = client.post(
-        "/api/v1/config",
-        json={
-            "device_id": device_id,
-            "project_id": project_id,
-            "secret_key": secret_key,
-            "mac_address": "AA:BB:CC:DD:EE:FF",
-            "name": "Kitchen Relay",
-            "mode": "library",
-            "firmware_version": "build-test",
-            "ip_address": "192.168.2.55",
-            "pins": [
-                {
-                    "gpio_pin": 2,
-                    "mode": "OUTPUT",
-                    "function": "relay",
-                    "label": "Kitchen Relay",
-                    "extra_params": {"active_level": 0},
-                },
-                {"gpio_pin": 3, "mode": "ADC", "function": "temperature", "label": "Temperature"},
-            ],
-        },
+    monkeypatch.setattr("app.mqtt.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr(
+        mqtt_manager,
+        "publish_json",
+        lambda topic, payload, **_kwargs: published_messages.append((topic, payload)) or True,
     )
 
-    assert handshake_response.status_code == 200, handshake_response.text
-    payload = handshake_response.json()
-    assert payload["secret_verified"] is True
-    assert payload["project_id"] == project_id
-    assert payload["auth_status"] == "approved"
+    ack_payload = mqtt_manager.process_registration_message(
+        device_id,
+        json.dumps(
+            {
+                "device_id": device_id,
+                "project_id": project_id,
+                "secret_key": secret_key,
+                "mac_address": "AA:BB:CC:DD:EE:FF",
+                "name": "Kitchen Relay",
+                "mode": "library",
+                "firmware_version": "build-test",
+                "ip_address": "192.168.2.55",
+                "pins": [
+                    {
+                        "gpio_pin": 2,
+                        "mode": "OUTPUT",
+                        "function": "relay",
+                        "label": "Kitchen Relay",
+                        "extra_params": {"active_level": 0},
+                    },
+                    {
+                        "gpio_pin": 3,
+                        "mode": "ADC",
+                        "function": "temperature",
+                        "label": "Temperature",
+                    },
+                ],
+            }
+        ),
+    )
+
+    assert ack_payload["status"] == "ok"
+    assert ack_payload["secret_verified"] is True
+    assert ack_payload["project_id"] == project_id
+    assert ack_payload["auth_status"] == "approved"
+    assert published_messages == [
+        (
+            mqtt_manager.registration_ack_topic(device_id),
+            ack_payload,
+        )
+    ]
 
     db = TestingSessionLocal()
     device = db.query(Device).filter(Device.device_id == device_id).first()
@@ -696,30 +769,107 @@ def test_secure_handshake_auto_approves_project_device_and_provisions_dashboard(
     db.close()
 
 
-def test_secure_handshake_rejects_secret_mismatch():
+def test_mqtt_registration_rejects_secret_mismatch(monkeypatch):
     owner = _seed_user("secure-failure")
     headers = _auth_headers(owner)
     project_id = _create_project(headers, room_id=_create_room(owner))
     device_id, _ = build_project_firmware_identity(project_id)
+    published_messages: list[tuple[str, dict]] = []
 
-    handshake_response = client.post(
+    monkeypatch.setattr("app.mqtt.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr(
+        mqtt_manager,
+        "publish_json",
+        lambda topic, payload, **_kwargs: published_messages.append((topic, payload)) or True,
+    )
+
+    ack_payload = mqtt_manager.process_registration_message(
+        device_id,
+        json.dumps(
+            {
+                "device_id": device_id,
+                "project_id": project_id,
+                "secret_key": "wrong-secret",
+                "mac_address": "AA:BB:CC:00:11:22",
+                "name": "Compromised Node",
+                "mode": "library",
+                "firmware_version": "build-test",
+                "pins": [
+                    {
+                        "gpio_pin": 2,
+                        "mode": "OUTPUT",
+                        "function": "relay",
+                        "label": "Relay",
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert ack_payload["status"] == "error"
+    assert ack_payload["error"] == "unauthorized_device"
+    assert published_messages == [
+        (
+            mqtt_manager.registration_ack_topic(device_id),
+            ack_payload,
+        )
+    ]
+
+    db = TestingSessionLocal()
+    assert db.query(Device).count() == 0
+    db.close()
+
+
+def test_http_config_rejects_library_devices_forcing_mqtt_registration():
+    owner = _seed_user("http-block")
+    headers = _auth_headers(owner)
+    project_id = _create_project(headers, room_id=_create_room(owner))
+    device_id, secret_key = build_project_firmware_identity(project_id)
+
+    response = client.post(
         "/api/v1/config",
         json={
             "device_id": device_id,
             "project_id": project_id,
-            "secret_key": "wrong-secret",
-            "mac_address": "AA:BB:CC:00:11:22",
-            "name": "Compromised Node",
+            "secret_key": secret_key,
+            "mac_address": "AA:BB:CC:12:34:56",
+            "name": "HTTP Blocked Node",
             "mode": "library",
             "firmware_version": "build-test",
             "pins": [{"gpio_pin": 2, "mode": "OUTPUT", "function": "relay", "label": "Relay"}],
         },
     )
 
-    assert handshake_response.status_code == 401
-    payload = handshake_response.json()["detail"]
-    assert payload["error"] == "unauthorized_device"
+    assert response.status_code == 409
+    payload = response.json()["detail"]
+    assert payload["error"] == "mqtt_only"
+
+
+def test_http_history_rejects_mqtt_managed_devices():
+    user = _seed_user("history-block")
 
     db = TestingSessionLocal()
-    assert db.query(Device).count() == 0
+    db.add(
+        Device(
+            device_id="mqtt-history-device",
+            mac_address="AA:BB:CC:66:77:88",
+            name="MQTT History Device",
+            owner_id=user.user_id,
+            auth_status=AuthStatus.approved,
+            conn_status=ConnStatus.online,
+            mode=DeviceMode.library,
+            topic_pub="econnect/local/device/mqtt-history-device/state",
+            topic_sub="econnect/local/device/mqtt-history-device/command",
+        )
+    )
+    db.commit()
     db.close()
+
+    response = client.post(
+        "/api/v1/device/mqtt-history-device/history",
+        json={"event_type": "online", "payload": "{\"kind\":\"state\"}"},
+    )
+
+    assert response.status_code == 409
+    payload = response.json()["detail"]
+    assert payload["error"] == "mqtt_only"

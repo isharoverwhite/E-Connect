@@ -4,14 +4,23 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 
 import { useAuth } from "@/components/AuthProvider";
-import { deleteDevice, fetchDevices } from "@/lib/api";
+import { fetchDevices, deleteDevice } from "@/lib/api";
 import { DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
+import { useToast } from "@/components/ToastContext";
+import ConfirmModal from "@/components/ConfirmModal";
 
 export default function DevicesPage() {
     const { user, logout } = useAuth();
+    const { showToast } = useToast();
     const [devices, setDevices] = useState<DeviceDirectoryEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
+    const [modalConfig, setModalConfig] = useState<{
+        isOpen: boolean;
+        deviceId: string;
+        deviceName: string;
+    }>({ isOpen: false, deviceId: "", deviceName: "" });
+    
     const isAdmin = user?.account_type === "admin";
 
     async function loadDevices() {
@@ -41,24 +50,38 @@ export default function DevicesPage() {
         };
     }, []);
 
-    const handleDelete = async (deviceId: string, deviceName: string) => {
-        if (!window.confirm(`Unpair "${deviceName}" from the dashboard? You can pair it again later from Discovery.`)) {
-            return;
-        }
+    const handleDeleteClick = (deviceId: string, deviceName: string) => {
+        setModalConfig({ isOpen: true, deviceId, deviceName });
+    };
 
+    const handleConfirmDelete = async () => {
+        const { deviceId, deviceName } = modalConfig;
+        setModalConfig(prev => ({ ...prev, isOpen: false }));
+        
         setIsDeleting(deviceId);
         const success = await deleteDevice(deviceId);
 
         if (success) {
             setDevices((previous) => previous.filter((device) => device.device_id !== deviceId));
+            showToast(`"${deviceName}" unpaired successfully.`, "success");
         } else {
-            alert("Failed to unpair device. You might not have permission.");
+            showToast(`Failed to unpair "${deviceName}". You might not have permission.`, "error");
         }
         setIsDeleting(null);
     };
 
     return (
         <div className="flex h-screen w-full overflow-hidden bg-background-light font-sans text-slate-800 transition-colors duration-300 selection:bg-primary selection:text-white dark:bg-background-dark dark:text-slate-200">
+            <ConfirmModal
+                isOpen={modalConfig.isOpen}
+                title="Unpair Device?"
+                message={`Are you sure you want to unpair "${modalConfig.deviceName}" from the dashboard? You can pair it again later from Discovery.`}
+                confirmText="Unpair Device"
+                onConfirm={handleConfirmDelete}
+                onCancel={() => setModalConfig(prev => ({ ...prev, isOpen: false }))}
+                type="danger"
+            />
+
             <aside className="z-20 hidden w-64 flex-col justify-between border-r border-slate-200 bg-surface-light shadow-lg dark:border-slate-700 dark:bg-surface-dark md:flex">
                 <div>
                     <div className="flex h-16 items-center border-b border-slate-200 px-6 dark:border-slate-700">
@@ -262,7 +285,7 @@ export default function DevicesPage() {
                                                 </Link>
 
                                                 <button
-                                                    onClick={() => handleDelete(device.device_id, device.name)}
+                                                    onClick={() => handleDeleteClick(device.device_id, device.name)}
                                                     disabled={isDeleting === device.device_id}
                                                     className="flex items-center justify-center rounded border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-red-600 shadow-sm transition-colors hover:border-red-200 hover:bg-red-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-red-400 dark:hover:border-red-500/30 dark:hover:bg-red-500/10"
                                                 >

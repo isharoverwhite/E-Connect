@@ -135,6 +135,8 @@ def write_generated_firmware_config(project, job_id: str, project_dir: str):
     if api_base_url:
         api_base_url_block = f'#define API_BASE_URL "{_escape_c_string(api_base_url)}"\n'
 
+    pin_rows_block = ",\n".join(pin_rows)
+
     header_content = f"""#pragma once
 
 struct EConnectPinConfig {{
@@ -158,7 +160,7 @@ struct EConnectPinConfig {{
 #define MQTT_PORT {mqtt_port}
 #define MQTT_NAMESPACE "{_escape_c_string(mqtt_namespace)}"
 {api_base_url_block}static const EConnectPinConfig ECONNECT_PIN_CONFIGS[] = {{
-{",\n".join(pin_rows)}
+{pin_rows_block}
 }};
 """
 

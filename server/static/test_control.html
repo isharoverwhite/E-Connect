@@ -28,7 +28,7 @@
     <div class="card">
         <h3>2. Control Device</h3>
         <input type="text" id="deviceId" placeholder="Device UUID (Check Serial Monitor)" value="">
-        <button onclick="checkLatest()">Check Connection (Get Latest)</button>
+        <button onclick="checkLatest()">Check MQTT Policy</button>
         <br><br>
         <button style="background: #28a745;" onclick="sendCommand('on')">Turn ON (LED)</button>
         <button style="background: #dc3545;" onclick="sendCommand('off')">Turn OFF (LED)</button>
@@ -109,11 +109,9 @@
             if (!deviceId) return alert("Enter Device ID");
 
             try {
-                // This endpoint doesn't require auth in our implementation (public polling)
-                // If it does, add header.
                 const res = await fetch(`${API_URL}/device/${deviceId}/command/latest`);
                 const data = await res.json();
-                log("Latest State: " + JSON.stringify(data));
+                log("Policy Response: " + JSON.stringify(data));
             } catch (e) {
                 log("❌ Check Failed: " + e.message);
             }

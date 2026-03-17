@@ -1,0 +1,280 @@
+from __future__ import annotations
+
+import json
+import os
+import uuid
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
+
+from app.models import DeviceRegister
+from app.services.provisioning import build_project_firmware_identity, verify_project_secret
+from app.sql_models import (
+    AccountType,
+    AuthStatus,
+    ConnStatus,
+    Device,
+    DiyProject,
+    HouseholdRole,
+    PinConfiguration,
+    User,
+)
+
+
+@dataclass
+class DeviceRegistrationResult:
+    device: Device
+    secret_verified: bool
+    project_id: str | None
+
+
+def build_device_topics(device_id: str) -> tuple[str, str]:
+    namespace = os.getenv("MQTT_NAMESPACE", "local")
+    return (
+        f"econnect/{namespace}/device/{device_id}/state",
+        f"econnect/{namespace}/device/{device_id}/command",
+    )
+
+
+def get_layout_widgets(layout: Any) -> list[dict[str, Any]]:
+    if isinstance(layout, dict) and isinstance(layout.get("widgets"), list):
+        return [widget for widget in layout["widgets"] if isinstance(widget, dict)]
+    if isinstance(layout, list):
+        return [widget for widget in layout if isinstance(widget, dict)]
+    return []
+
+
+def build_device_widgets(device: Device) -> list[dict[str, Any]]:
+    widgets: list[dict[str, Any]] = []
+    for index, pin in enumerate(device.pin_configurations):
+        pin_mode = pin.mode.value if hasattr(pin.mode, "value") else str(pin.mode)
+        widget_type = "text"
+        if pin_mode == "OUTPUT":
+            widget_type = "switch"
+        elif pin_mode == "PWM":
+            widget_type = "dimmer"
+        elif pin_mode in {"INPUT", "ADC"}:
+            widget_type = "status"
+
+        widgets.append(
+            {
+                "i": f"{device.device_id}:{pin.gpio_pin}:{index}",
+                "x": 0,
+                "y": index * 2,
+                "w": 2,
+                "h": 2,
+                "type": widget_type,
+                "deviceId": device.device_id,
+                "pin": pin.gpio_pin,
+                "label": pin.label or f"{pin.function or 'Pin'} {pin.gpio_pin}",
+            }
+        )
+
+    return widgets
+
+
+def sync_user_dashboard_widgets(user: User, device: Device) -> None:
+    existing_widgets = [
+        widget
+        for widget in get_layout_widgets(user.ui_layout)
+        if widget.get("deviceId") != device.device_id
+    ]
+    user.ui_layout = [*existing_widgets, *build_device_widgets(device)]
+
+
+def remove_device_widgets(user: User | None, device_id: str) -> None:
+    if not user:
+        return
+
+    user.ui_layout = [
+        widget
+        for widget in get_layout_widgets(user.ui_layout)
+        if widget.get("deviceId") != device_id
+    ]
+
+
+def is_room_admin(user: User) -> bool:
+    role = getattr(user, "current_household_role", None)
+    normalized_role = role.value if hasattr(role, "value") else role
+    return user.account_type == AccountType.admin or normalized_role in {
+        HouseholdRole.owner.value,
+        HouseholdRole.admin.value,
+    }
+
+
+def is_mqtt_managed_device(device: Device) -> bool:
+    return bool(device.topic_pub and device.topic_sub)
+
+
+def mqtt_only_error(message: str) -> HTTPException:
+    return HTTPException(
+        status_code=409,
+        detail={"error": "mqtt_only", "message": message},
+    )
+
+
+def _raise_secure_pairing_error(message: str) -> None:
+    raise HTTPException(
+        status_code=401,
+        detail={"error": "unauthorized_device", "message": message},
+    )
+
+
+def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegistrationResult:
+    device = None
+    secure_project = None
+    secret_verified = False
+
+    if payload.device_id:
+        device = db.query(Device).filter(Device.device_id == payload.device_id).first()
+
+    if device and device.provisioning_project_id:
+        if not verify_project_secret(
+            device.provisioning_project_id,
+            device.device_id,
+            payload.secret_key,
+        ):
+            _raise_secure_pairing_error("Secret key mismatch for provisioned device.")
+        secret_verified = True
+        secure_project = (
+            db.query(DiyProject)
+            .filter(DiyProject.id == device.provisioning_project_id)
+            .first()
+        )
+    elif payload.project_id:
+        secure_project = db.query(DiyProject).filter(DiyProject.id == payload.project_id).first()
+        if not secure_project:
+            _raise_secure_pairing_error("Provisioning project was not found on the server.")
+        if secure_project.room_id is None:
+            _raise_secure_pairing_error("Provisioning project is missing a room assignment.")
+
+        expected_device_id, _ = build_project_firmware_identity(secure_project.id)
+        if payload.device_id != expected_device_id:
+            _raise_secure_pairing_error("Provisioned device id does not match the server record.")
+        if not verify_project_secret(secure_project.id, expected_device_id, payload.secret_key):
+            _raise_secure_pairing_error("Secret key mismatch for provisioned project.")
+
+        secret_verified = True
+        if not device:
+            device = db.query(Device).filter(Device.device_id == expected_device_id).first()
+
+    if not device and not secret_verified:
+        device = db.query(Device).filter(Device.mac_address == payload.mac_address).first()
+
+    admin = db.query(User).filter(User.account_type == AccountType.admin).first()
+    if not admin:
+        raise HTTPException(status_code=400, detail="System not initialized. No admin found.")
+
+    resolved_device_id = payload.device_id or (device.device_id if device else str(uuid.uuid4()))
+    topic_pub, topic_sub = build_device_topics(resolved_device_id)
+
+    if not device:
+        secure_owner_id = secure_project.user_id if secure_project else admin.user_id
+        device = Device(
+            device_id=resolved_device_id,
+            mac_address=payload.mac_address,
+            name=payload.name,
+            room_id=secure_project.room_id if secure_project else None,
+            owner_id=secure_owner_id,
+            auth_status=AuthStatus.approved if secret_verified else AuthStatus.pending,
+            conn_status=ConnStatus.online,
+            mode=payload.mode,
+            firmware_version=payload.firmware_version,
+            ip_address=payload.ip_address,
+            last_seen=datetime.utcnow(),
+            topic_pub=topic_pub,
+            topic_sub=topic_sub,
+            provisioning_project_id=secure_project.id if secure_project else None,
+        )
+        db.add(device)
+        db.flush()
+    else:
+        device.mac_address = payload.mac_address
+        device.name = payload.name
+        device.firmware_version = payload.firmware_version
+        device.ip_address = payload.ip_address or device.ip_address
+        device.mode = payload.mode
+        device.last_seen = datetime.utcnow()
+        device.conn_status = ConnStatus.online
+        device.topic_pub = topic_pub
+        device.topic_sub = topic_sub
+        if secret_verified:
+            device.owner_id = secure_project.user_id if secure_project else device.owner_id
+            device.room_id = (
+                secure_project.room_id if secure_project and secure_project.room_id else device.room_id
+            )
+            device.auth_status = AuthStatus.approved
+            device.provisioning_project_id = (
+                secure_project.id if secure_project else device.provisioning_project_id
+            )
+
+    db.query(PinConfiguration).filter(PinConfiguration.device_id == device.device_id).delete()
+
+    for pin in payload.pins:
+        db.add(
+            PinConfiguration(
+                device_id=device.device_id,
+                gpio_pin=pin.gpio_pin,
+                mode=pin.mode,
+                function=pin.function,
+                label=pin.label,
+                v_pin=pin.v_pin,
+                extra_params=pin.extra_params,
+            )
+        )
+
+    db.flush()
+    db.refresh(device)
+
+    if secret_verified:
+        owner = db.query(User).filter(User.user_id == device.owner_id).first()
+        if owner:
+            sync_user_dashboard_widgets(owner, device)
+
+    db.flush()
+    db.refresh(device)
+    return DeviceRegistrationResult(
+        device=device,
+        secret_verified=secret_verified,
+        project_id=secure_project.id if secure_project else device.provisioning_project_id,
+    )
+
+
+def build_registration_ack_payload(
+    *,
+    status: str,
+    device_id: str,
+    secret_verified: bool,
+    project_id: str | None = None,
+    auth_status: str | None = None,
+    topic_pub: str | None = None,
+    topic_sub: str | None = None,
+    error: str | None = None,
+    message: str | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "status": status,
+        "transport": "mqtt",
+        "device_id": device_id,
+        "secret_verified": secret_verified,
+    }
+    if project_id:
+        payload["project_id"] = project_id
+    if auth_status:
+        payload["auth_status"] = auth_status
+    if topic_pub:
+        payload["topic_pub"] = topic_pub
+    if topic_sub:
+        payload["topic_sub"] = topic_sub
+    if error:
+        payload["error"] = error
+    if message:
+        payload["message"] = message
+    return payload
+
+
+def serialize_payload(payload: dict[str, Any]) -> str:
+    return json.dumps(payload)
