@@ -168,6 +168,7 @@ class DeviceResponse(DeviceBase):
     conn_status: ConnStatus
     last_seen: Optional[datetime] = None
     last_state: Optional[Dict[str, Any]] = None
+    provisioning_project_id: Optional[str] = None
     pin_configurations: List[PinConfigResponse] = []
 
     class Config:

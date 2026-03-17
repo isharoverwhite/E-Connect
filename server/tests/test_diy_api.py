@@ -343,3 +343,54 @@ def test_mqtt_only_rest_block():
     assert response.status_code == 409
     payload = response.json()["detail"]
     assert payload["error"] == "mqtt_only"
+
+def test_builder_generates_correct_config(tmp_path):
+    from app.services.builder import write_generated_firmware_config
+    
+    class MockProject:
+        def __init__(self, id, name, config, board_profile):
+            self.id = id
+            self.name = name
+            self.config = config
+            self.board_profile = board_profile
+    
+    mock_config = {
+        "wifi_ssid": "test_ssid",
+        "wifi_password": "test_password",
+        "pins": [
+            {
+                "gpio": 2,
+                "mode": "PWM",
+                "label": "PWM Dimmer",
+                "extra_params": {
+                    "min_value": 20,
+                    "max_value": 200
+                }
+            },
+            {
+                "gpio": 4,
+                "mode": "I2C",
+                "label": "I2C Sensor",
+                "extra_params": {
+                    "i2c_role": "SDA",
+                    "i2c_address": "0x3C",
+                    "i2c_library": "Wire"
+                }
+            }
+        ]
+    }
+    project = MockProject(id="test-proj-123", name="Test Project", config=mock_config, board_profile="esp32-devkit-v1")
+    
+    dest_dir = str(tmp_path)
+    write_generated_firmware_config(project, "job-456", dest_dir)
+    
+    header_path = tmp_path / "include" / "generated_firmware_config.h"
+    assert header_path.exists()
+    
+    content = header_path.read_text()
+    
+    # First pin config: PWM pin with min_value 20 and max_value 200
+    assert '{ 2, "PWM", "pwm", "PWM Dimmer", 1, 20, 200, "", "", "" }' in content, f"Missing PWM pin in: {content}"
+    
+    # Second pin config: I2C pin with SDA role, address 0x3C, library Wire
+    assert '{ 4, "I2C", "i2c", "I2C Sensor", 1, 0, 255, "SDA", "0x3C", "Wire" }' in content, f"Missing I2C pin in: {content}"

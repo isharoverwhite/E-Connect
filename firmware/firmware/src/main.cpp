@@ -2,6 +2,7 @@
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 #include <Wire.h>
+#include <HTTPUpdate.h>
 
 #if defined(ESP8266)
 #include <ESP8266WiFi.h>
@@ -21,10 +22,15 @@ struct EConnectPinConfig {
   const char *function_name;
   const char *label;
   int active_level;
+  int pwm_min;
+  int pwm_max;
+  const char *i2c_role;
+  const char *i2c_address;
+  const char *i2c_library;
 };
 
 static const EConnectPinConfig ECONNECT_PIN_CONFIGS[] = {
-    {ECONNECT_BUILTIN_LED_PIN, "OUTPUT", "builtin_led", "Built-in LED", 1},
+    {ECONNECT_BUILTIN_LED_PIN, "OUTPUT", "builtin_led", "Built-in LED", 1, 0, 255, "", "", ""},
 };
 #endif
 
@@ -41,6 +47,8 @@ struct PinRuntimeState {
   int activeLevel;
   int value;
   int brightness;
+  int pwmMin;
+  int pwmMax;
 };
 
 struct WifiTarget {
@@ -472,6 +480,30 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
     return;
   }
 
+  if (String(doc["kind"] | "") == "system") {
+    if (String(doc["action"] | "") == "ota") {
+      const String url = doc["url"] | "";
+      if (url.length() > 0) {
+        Serial.printf("Received OTA command for URL: %s\n", url.c_str());
+        WiFiClient client;
+        t_httpUpdate_return ret = httpUpdate.update(client, url);
+        switch (ret) {
+          case HTTP_UPDATE_FAILED:
+            Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
+            break;
+          case HTTP_UPDATE_NO_UPDATES:
+            Serial.println("HTTP_UPDATE_NO_UPDATES");
+            break;
+          case HTTP_UPDATE_OK:
+            Serial.println("HTTP_UPDATE_OK");
+            ESP.restart();
+            break;
+        }
+      }
+    }
+    return;
+  }
+
   if (String(doc["kind"] | "") != "action") {
     return;
   }
@@ -500,6 +532,8 @@ void initializePinStates() {
     pinStates[index].activeLevel = ECONNECT_PIN_CONFIGS[index].active_level == 0 ? 0 : 1;
     pinStates[index].value = 0;
     pinStates[index].brightness = 0;
+    pinStates[index].pwmMin = ECONNECT_PIN_CONFIGS[index].pwm_min;
+    pinStates[index].pwmMax = ECONNECT_PIN_CONFIGS[index].pwm_max;
 
     if (isOutputMode(pinStates[index].mode) || isPwmMode(pinStates[index].mode)) {
       pinMode(pinStates[index].gpio, OUTPUT);
@@ -516,16 +550,30 @@ void initializeI2CBus() {
   int sdaPin = -1;
   int sclPin = -1;
 
+  // First pass: look for explicit roles
   for (size_t index = 0; index < PIN_CONFIG_COUNT; index++) {
-    if (!modeEquals(pinStates[index].mode, "I2C")) {
-      continue;
+    if (!modeEquals(ECONNECT_PIN_CONFIGS[index].mode, "I2C")) continue;
+    
+    if (strcmp(ECONNECT_PIN_CONFIGS[index].i2c_role, "SDA") == 0) {
+      sdaPin = ECONNECT_PIN_CONFIGS[index].gpio;
+    } else if (strcmp(ECONNECT_PIN_CONFIGS[index].i2c_role, "SCL") == 0) {
+      sclPin = ECONNECT_PIN_CONFIGS[index].gpio;
     }
+  }
 
-    if (sdaPin < 0) {
-      sdaPin = pinStates[index].gpio;
-    } else if (sclPin < 0) {
-      sclPin = pinStates[index].gpio;
-      break;
+  // Second pass: fallback for legacy configs missing explicit roles
+  if (sdaPin < 0 || sclPin < 0) {
+    sdaPin = -1;
+    sclPin = -1;
+    for (size_t index = 0; index < PIN_CONFIG_COUNT; index++) {
+      if (!modeEquals(ECONNECT_PIN_CONFIGS[index].mode, "I2C")) continue;
+      
+      if (sdaPin < 0) {
+        sdaPin = ECONNECT_PIN_CONFIGS[index].gpio;
+      } else if (sclPin < 0) {
+        sclPin = ECONNECT_PIN_CONFIGS[index].gpio;
+        break;
+      }
     }
   }
 
@@ -601,17 +649,23 @@ bool applyCommandToPin(PinRuntimeState &pinState, int value, int brightness) {
   if (isPwmMode(pinState.mode)) {
     int nextBrightness = brightness;
     if (nextBrightness < 0 && value != -1) {
-      nextBrightness = value == 0 ? 0 : 100;
+      nextBrightness = value == 0 ? 0 : pinState.pwmMax;
     }
 
     if (nextBrightness < 0) {
       return false;
     }
 
-    nextBrightness = constrain(nextBrightness, 0, 100);
+    // Treat brightness as a raw analog output value clamped to the configured boundaries.
+    if (value == 0) {
+       nextBrightness = 0; // Turn off immediately if value=0 was sent
+    } else {
+       nextBrightness = constrain(nextBrightness, pinState.pwmMin, pinState.pwmMax);
+    }
+    
     pinState.brightness = nextBrightness;
     pinState.value = nextBrightness > 0 ? 1 : 0;
-    analogWrite(pinState.gpio, map(nextBrightness, 0, 100, 0, 255));
+    analogWrite(pinState.gpio, nextBrightness);
     return true;
   }
 
