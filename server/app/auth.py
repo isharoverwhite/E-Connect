@@ -48,3 +48,19 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
+
+def create_ota_token(job_id: str) -> str:
+    """Create a short-lived token specifically for OTA downloads."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=60) # 1 hour
+    to_encode = {"sub": job_id, "type": "ota", "exp": expire}
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def verify_ota_token(token: str) -> str | None:
+    """Verify OTA token and return job_id."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != "ota":
+            return None
+        return payload.get("sub")
+    except jwt.JWTError:
+        return None

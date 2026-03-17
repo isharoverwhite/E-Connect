@@ -11,6 +11,7 @@ import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models import DeviceRegister
@@ -30,6 +31,56 @@ MQTT_NAMESPACE = os.getenv("MQTT_NAMESPACE", "local")
 
 STATE_TOPIC_SUBSCRIPTION = f"econnect/{MQTT_NAMESPACE}/device/+/state"
 REGISTER_TOPIC_SUBSCRIPTION = f"econnect/{MQTT_NAMESPACE}/device/+/register"
+
+
+def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> None:
+    if not device.provisioning_project_id or not reported_version:
+        return
+        
+    from app.sql_models import BuildJob, JobStatus
+    
+    flashing_jobs = db.query(BuildJob).filter(
+        BuildJob.project_id == device.provisioning_project_id,
+        BuildJob.status == JobStatus.flashing
+    ).all()
+    
+    if not flashing_jobs:
+        return
+
+    now = datetime.utcnow()
+    matched_job = None
+    for job in flashing_jobs:
+        expected_version = f"build-{job.id[:8]}"
+        if reported_version == expected_version:
+            matched_job = job
+            break
+
+    if matched_job:
+        matched_job.status = JobStatus.flashed
+        matched_job.finished_at = now
+        logger.info("Reconciled OTA job %s to flashed via firmware_version match.", matched_job.id)
+        return
+
+    if len(flashing_jobs) > 1:
+        logger.warning(
+            "Skipping OTA mismatch reconciliation for device %s because %s flashing jobs are active.",
+            device.device_id,
+            len(flashing_jobs),
+        )
+        return
+
+    job = flashing_jobs[0]
+    delta = now - (job.updated_at or job.created_at or now)
+    # Only fail if it's been active for > 60 seconds to avoid race conditions with pre-OTA buffered messages
+    if delta.total_seconds() > 60:
+        expected_version = f"build-{job.id[:8]}"
+        job.status = JobStatus.flash_failed
+        job.error_message = (
+            f"OTA timeout/reconciliation: device reported version '{reported_version}' "
+            f"after reboot, expected '{expected_version}'"
+        )
+        job.finished_at = now
+        logger.warning("Reconciled OTA job %s to flash_failed (version mismatch).", job.id)
 
 
 class MQTTClientManager:
@@ -136,6 +187,11 @@ class MQTTClientManager:
                 reported_ip = payload_json.get("ip_address")
                 if isinstance(reported_ip, str) and reported_ip.strip():
                     device.ip_address = reported_ip.strip()
+                    
+                reported_fw = payload_json.get("firmware_version")
+                if isinstance(reported_fw, str) and reported_fw.strip():
+                    device.firmware_version = reported_fw.strip()
+                    _reconcile_ota_jobs(db, device, device.firmware_version)
 
             if was_offline:
                 db.add(
@@ -158,6 +214,25 @@ class MQTTClientManager:
                     payload=payload_str,
                 )
             )
+
+            # Check if this is an OTA status report from the device
+            if isinstance(payload_json, dict) and payload_json.get("event") == "ota_status":
+                from app.sql_models import BuildJob, JobStatus
+                job_id = payload_json.get("job_id")
+                ota_status = payload_json.get("status")
+                
+                if job_id and ota_status:
+                    job = db.query(BuildJob).filter(BuildJob.id == job_id).first()
+                    if job:
+                        if ota_status == "success":
+                            job.status = JobStatus.flashed
+                        elif ota_status == "failed":
+                            job.status = JobStatus.flash_failed
+                            job.error_message = payload_json.get("message")
+                        
+                        job.finished_at = datetime.utcnow()
+                        db.commit()
+
             db.commit()
         finally:
             db.close()
@@ -189,6 +264,11 @@ class MQTTClientManager:
             result = register_device_payload(db, payload)
             db.commit()
             db.refresh(result.device)
+            
+            if result.device.firmware_version:
+                _reconcile_ota_jobs(db, result.device, result.device.firmware_version)
+                db.commit()
+
             ack_payload = build_registration_ack_payload(
                 status="ok",
                 device_id=result.device.device_id,

@@ -1,24 +1,34 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, use } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
-import { fetchDevice, saveDeviceConfig, sendDeviceCommand } from "@/lib/api";
+import { fetchDevice, saveDeviceConfig, sendDeviceCommand, API_URL } from "@/lib/api";
+import { getToken } from "@/lib/auth";
 import { Step2Pins } from "@/features/diy/components/Step2Pins";
-import type { DeviceConfig } from "@/types/device";
+import type { DeviceConfig, PinConfig } from "@/types/device";
 import type { PinMapping, BuildJobStatus } from "@/features/diy/types";
-import { BOARD_PROFILES } from "@/features/diy/board-profiles";
+import { BOARD_PROFILES, type BoardProfile } from "@/features/diy/board-profiles";
 
-type DiyProjectResponse = any; // or import from actual generic type if available
+interface DiyProjectResponse {
+    board_profile: string;
+}
 
-export default function DevicePinConfigurator({ params }: { params: { id: string } }) {
+function getErrorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
+
+export default function DevicePinConfigurator({ params }: { params: Promise<{ id: string }> }) {
     const router = useRouter();
     const { user } = useAuth();
     const isAdmin = user?.account_type === "admin";
+    // Unwrap the Next.js 16 params Promise
+    const resolvedParams = use(params);
+    const deviceId = resolvedParams.id;
     
     const [device, setDevice] = useState<DeviceConfig | null>(null);
     const [project, setProject] = useState<DiyProjectResponse | null>(null);
-    const [boardProfile, setBoardProfile] = useState<any>(null);
+    const [boardProfile, setBoardProfile] = useState<BoardProfile | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -37,21 +47,21 @@ export default function DevicePinConfigurator({ params }: { params: { id: string
 
         const init = async () => {
             try {
-                const dev = await fetchDevice(params.id);
+                const dev = await fetchDevice(deviceId);
                 if (!dev) throw new Error("Device not found");
-                if (dev.mode !== "no-code") {
-                    throw new Error("Pin configuration is only available for DIY/No-Code devices.");
-                }
                 if (!dev.provisioning_project_id) {
-                    throw new Error("Device is missing a provisioning project ID.");
+                    throw new Error("Pin configuration is only available for DIY/No-Code devices that have a provisioning project.");
                 }
 
                 // Fetch the DIY project to get board profile
-                const res = await fetch(`/api/v1/diy/projects/${dev.provisioning_project_id}`);
+                const token = getToken();
+                const res = await fetch(`${API_URL}/diy/projects/${dev.provisioning_project_id}`, {
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
                 if (!res.ok) throw new Error("Failed to load device project data");
                 const projData = await res.json();
                 
-                const bp = BOARD_PROFILES.find((b: any) => b.id === projData.board_profile);
+                const bp = BOARD_PROFILES.find((board) => board.id === projData.board_profile);
                 if (!bp) throw new Error(`Unknown board profile: ${projData.board_profile}`);
 
                 if (isMounted) {
@@ -59,51 +69,47 @@ export default function DevicePinConfigurator({ params }: { params: { id: string
                     setProject(projData);
                     setBoardProfile(bp);
                     // Map Device PinConfigResponse to PinMapping[]
-                    const mappedPins: PinMapping[] = dev.pin_configurations.map((p: any) => ({
-                        gpio_pin: p.pin_number,
-                        mode: p.mode,
-                        function: p.function_name,
-                        label: p.label,
-                        extra_params: {
-                            subtype: p.subtype,
-                            active_level: p.active_level,
-                            min_value: p.min_value,
-                            max_value: p.max_value,
-                            i2c_role: p.i2c_role,
-                            i2c_address: p.i2c_address,
-                            i2c_library: p.i2c_library
-                        }
+                    const mappedPins: PinMapping[] = dev.pin_configurations.map((pin: PinConfig) => ({
+                        gpio_pin: pin.gpio_pin,
+                        mode: pin.mode,
+                        function: pin.function,
+                        label: pin.label,
+                        extra_params: pin.extra_params ?? {}
                     }));
                     setPins(mappedPins);
                 }
             } catch (err) {
-                if (isMounted) setError(err instanceof Error ? err.message : String(err));
+                if (isMounted) setError(getErrorMessage(err));
             } finally {
                 if (isMounted) setLoading(false);
             }
         };
         init();
         return () => { isMounted = false; };
-    }, [params.id, isAdmin]);
+    }, [deviceId, isAdmin]);
 
     useEffect(() => {
         if (!jobId || !otaModalOpen) return;
         
         const interval = setInterval(async () => {
             try {
-                const res = await fetch(`/api/v1/diy/build/${jobId}`);
+                const token = getToken();
+                const res = await fetch(`${API_URL}/diy/build/${jobId}`, {
+                    headers: { "Authorization": `Bearer ${token}` }
+                });
                 if (res.ok) {
                     const data = await res.json();
                     setJobStatus(data.status);
                     
-                    if (data.status === 'artifact_ready' || data.status === 'build_failed') {
+                    // Do not stop polling when artifact_ready, stop only when flashed or failed
+                    if (data.status === 'build_failed' || data.status === 'flashed' || data.status === 'flash_failed') {
                         clearInterval(interval);
                     }
                 }
             } catch (e) {
                 console.error("Failed to poll job", e);
             }
-        }, 1500);
+        }, 2000);
         return () => clearInterval(interval);
     }, [jobId, otaModalOpen]);
 
@@ -134,29 +140,46 @@ export default function DevicePinConfigurator({ params }: { params: { id: string
         setIsSaving(true);
         try {
             const result = await saveDeviceConfig(device.device_id, { pins });
+            if (result.status === "failed") {
+                throw new Error(result.message || "Failed to save configuration");
+            }
             setJobId(result.job_id || null);
             setJobStatus('queued');
             setOtaModalOpen(true);
-        } catch (err: any) {
-            alert("Failed to save config: " + err.message);
+        } catch (err) {
+            alert("Failed to save config: " + getErrorMessage(err));
         } finally {
             setIsSaving(false);
         }
     };
 
     const handleInitiateOTA = async () => {
+        if (!device || !jobId) return;
         try {
-            const fwUrl = `${window.location.protocol}//${window.location.host}/api/v1/diy/ota/download/${jobId}/firmware.bin`;
-            await sendDeviceCommand(device.device_id, {
+            // Get the job data, which now has the ota_token
+            const token = getToken();
+            const res = await fetch(`${API_URL}/diy/build/${jobId}`, {
+                headers: { "Authorization": `Bearer ${token}` }
+            });
+            if (!res.ok) throw new Error("Failed to get job token");
+            const jobData = await res.json();
+            
+            if (!jobData.ota_token) throw new Error("Server did not provide an OTA token");
+
+            const fwUrl = `${window.location.protocol}//${window.location.host}/api/v1/diy/ota/download/${jobId}/firmware.bin?token=${jobData.ota_token}`;
+            const result = await sendDeviceCommand(device.device_id, {
                 kind: "system",
                 action: "ota",
                 payload: fwUrl,
-                url: fwUrl
+                url: fwUrl,
+                job_id: jobId
             });
-            alert("OTA Command sent to device. The device will download and restart shortly.");
-            setOtaModalOpen(false);
-        } catch (err: any) {
-            alert("Failed to send OTA command: " + err.message);
+            if (result.status === "failed") {
+                throw new Error(result.message || "Command failed");
+            }
+            // Keep the modal open so we can poll the flashing status
+        } catch (err) {
+            alert("Failed to send OTA command: " + getErrorMessage(err));
         }
     };
 
@@ -241,6 +264,27 @@ export default function DevicePinConfigurator({ params }: { params: { id: string
                                 <div className="flex items-center space-x-3 text-red-600">
                                     <span className="material-icons-round">error</span>
                                     <span>Firmware build failed. Check server logs.</span>
+                                </div>
+                            )}
+
+                            {jobStatus === 'flashing' && (
+                                <div className="flex items-center space-x-3 text-blue-600">
+                                    <span className="material-icons-round animate-bounce">system_update_alt</span>
+                                    <span>Device is downloading firmware and flashing...</span>
+                                </div>
+                            )}
+
+                            {jobStatus === 'flashed' && (
+                                <div className="flex items-center space-x-3 text-green-600">
+                                    <span className="material-icons-round">task_alt</span>
+                                    <span>OTA update successful! Device will reboot shortly.</span>
+                                </div>
+                            )}
+
+                            {jobStatus === 'flash_failed' && (
+                                <div className="flex items-center space-x-3 text-red-600">
+                                    <span className="material-icons-round">warning</span>
+                                    <span>Device reported failure installing OTA.</span>
                                 </div>
                             )}
                         </div>

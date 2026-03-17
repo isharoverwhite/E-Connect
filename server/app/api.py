@@ -33,7 +33,7 @@ from .sql_models import (
     UserApprovalStatus as SqlUserApprovalStatus
 )
 from .database import get_db
-from .auth import verify_password, get_password_hash, create_access_token, SECRET_KEY, ALGORITHM
+from .auth import verify_password, get_password_hash, create_access_token, create_ota_token, verify_ota_token, SECRET_KEY, ALGORITHM
 from .services.builder import build_firmware_task, get_durable_artifact_path
 from .services.device_registration import (
     is_mqtt_managed_device,
@@ -866,6 +866,7 @@ async def get_device(device_id: str, db: Session = Depends(get_db), current_user
 async def update_device_config(
     device_id: str,
     config: dict,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user)
 ):
@@ -885,34 +886,43 @@ async def update_device_config(
     
     current_config = dict(project.config)
     current_config["pins"] = config.get("pins", [])
-    
-    project.config = current_config
-    
-    # We must also clear device.pin_configurations here so it reflects correctly,
-    # or let the device update its pin configurations when it boots up.
-    # The device sends its pin_configurations on mqtt handshake.
-    # We will just rely on the database for `DiyProject` config.
-    
-    db.commit()
 
-    # Trigger rebuild
-    job = BuildJob(project_id=project.id, status=JobStatus.queued)
+    validation_warnings = []
+    try:
+        _, validation_errors, validation_warnings = validate_diy_config(
+            board_profile=project.board_profile,
+            config=current_config
+        )
+        if validation_errors:
+            raise Exception(" ".join(validation_errors))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    active_job = (
+        db.query(BuildJob)
+        .filter(
+            BuildJob.project_id == project.id,
+            BuildJob.status.in_(ACTIVE_BUILD_JOB_STATUSES),
+        )
+        .with_for_update()
+        .order_by(BuildJob.created_at.desc())
+        .first()
+    )
+    if active_job:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "conflict", "message": "Another build or OTA job is already in progress for this device"},
+        )
+
+    project.config = current_config
+
+    # Trigger rebuild only after validation passes and no active job exists.
+    job = BuildJob(id=str(uuid.uuid4()), project_id=project.id, status=JobStatus.queued)
     db.add(job)
     db.commit()
     db.refresh(job)
 
-    try:
-        validate_diy_config(
-            board_profile=project.board_profile,
-            config_json=current_config
-        )
-    except Exception as e:
-        job.status = JobStatus.failed
-        job.logs = f"Validation failed: {str(e)}"
-        db.commit()
-        raise HTTPException(status_code=400, detail=str(e))
-
-    build_firmware_task.delay(job.id, project.id)
+    background_tasks.add_task(build_firmware_task, job.id, validation_warnings)
 
     return {"status": "success", "job_id": job.id, "message": "Configuration saved and build started"}
 
@@ -937,8 +947,34 @@ async def send_command(device_id: str, command: dict, db: Session = Depends(get_
     device = _get_device_or_404(db, device_id)
     _ensure_device_control_access(db, current_user, device)
 
+    # If this is an OTA command, mark the build job as flashing
+    ota_job = None
+    if command.get("action") == "ota" and command.get("job_id"):
+        if not _is_room_admin(current_user):
+            raise HTTPException(status_code=403, detail="Admin or Owner privileges required for OTA")
+        if not device.provisioning_project_id:
+            raise HTTPException(status_code=400, detail="Device is not linked to a managed DIY project")
+        ota_job = db.query(BuildJob).filter(BuildJob.id == command["job_id"]).first()
+        if not ota_job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if ota_job.project_id != device.provisioning_project_id:
+            raise HTTPException(status_code=400, detail="Build job does not belong to the target device")
+        if ota_job.status != JobStatus.artifact_ready:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "conflict", "message": "Artifact is not ready for flashing"},
+            )
+        ota_job.status = JobStatus.flashing
+        db.commit()
+
     # Publish via MQTT
     success = mqtt_manager.publish_command(device_id, command)
+    
+    # If the OTA publish failed entirely, revert the job out of flashing
+    if not success and ota_job and ota_job.status == JobStatus.flashing:
+        ota_job.status = JobStatus.flash_failed
+        ota_job.error_message = "Failed to publish firmware download command over MQTT."
+        db.commit()
     
     if success:
         event_type = EventType.command_requested
@@ -1137,6 +1173,9 @@ async def get_build_job(job_id: str, db: Session = Depends(get_db), current_user
     job = db.query(BuildJob).join(DiyProject).filter(BuildJob.id == job_id, DiyProject.user_id == current_user.user_id).first()
     if not job:
          raise HTTPException(status_code=404, detail="Job not found")
+    
+    # Inject an ephemeral OTA token upon successful access by owner
+    job.ota_token = create_ota_token(job.id)
     return job
 
 @router.get("/diy/build/{job_id}/artifact")
@@ -1174,16 +1213,23 @@ async def get_build_artifact_part(
     )
 
 @router.get("/diy/ota/download/{job_id}/firmware.bin")
-async def get_ota_firmware(job_id: str, db: Session = Depends(get_db)):
+async def get_ota_firmware(job_id: str, token: str, db: Session = Depends(get_db)):
     """
-    Unauthenticated endpoint for ESP32 devices to download the firmware artifact over OTA.
+    Endpoint for ESP32 devices to download the firmware artifact over OTA.
+    Requires a valid JWT token tied to the specific job_id to prevent unauthorized downloads.
     """
+    verified_job_id = verify_ota_token(token)
+    if not verified_job_id or verified_job_id != job_id:
+        raise HTTPException(status_code=401, detail="Invalid or expired OTA token")
+
     job = db.query(BuildJob).filter(BuildJob.id == job_id).first()
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
     artifact_path = _resolve_build_artifact_path(job, "firmware")
-    if job.status != JobStatus.artifact_ready or not artifact_path or not os.path.exists(artifact_path):
+    # Only allow download if the job is either artifact_ready or already flashing.
+    allowed_statuses = [JobStatus.artifact_ready, JobStatus.flashing, JobStatus.flashed, JobStatus.flash_failed]
+    if job.status not in allowed_statuses or not artifact_path or not os.path.exists(artifact_path):
         raise HTTPException(status_code=400, detail="Artifact not ready or missing")
 
     return FileResponse(
@@ -1223,6 +1269,7 @@ async def stream_build_logs(job_id: str, db: Session = Depends(get_db), current_
     when the job reaches a terminal state.
     """
     from fastapi.responses import StreamingResponse as _StreamingResponse
+    from app.database import SessionLocal  # Import missing SessionLocal
 
     job = db.query(BuildJob).join(DiyProject).filter(
         BuildJob.id == job_id,
