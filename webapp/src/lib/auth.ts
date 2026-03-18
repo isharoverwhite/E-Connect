@@ -87,6 +87,7 @@ export async function initializeServer(data: object) {
 }
 
 export async function adminCreateUser(data: object, token: string): Promise<ManagedUser> {
+    console.log("SENDING DATA", data);
     const res = await fetch(`${API_URL}/users`, {
         method: "POST",
         headers: {
@@ -136,8 +137,22 @@ export async function approveManagedUser(userId: number, token: string): Promise
     return res.json();
 }
 
-export async function revokeManagedUser(userId: number, token: string): Promise<ManagedUser> {
-    const res = await fetch(`${API_URL}/users/${userId}/revoke`, {
+export async function deleteManagedUser(userId: number, token: string): Promise<void> {
+    const res = await fetch(`${API_URL}/users/${userId}`, {
+        method: "DELETE",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+        },
+    });
+
+    if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.detail?.message || errorData.detail || errorData.message || "Failed to revoke user");
+    }
+}
+
+export async function promoteManagedUser(userId: number, token: string): Promise<ManagedUser> {
+    const res = await fetch(`${API_URL}/users/${userId}/promote`, {
         method: "POST",
         headers: {
             "Authorization": `Bearer ${token}`,
@@ -146,7 +161,7 @@ export async function revokeManagedUser(userId: number, token: string): Promise<
 
     if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.detail?.message || errorData.detail || "Failed to revoke user");
+        throw new Error(errorData.detail?.message || errorData.detail || "Failed to promote user");
     }
 
     return res.json();

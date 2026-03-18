@@ -48,6 +48,14 @@ function toHex(value: number) {
     return `0x${value.toString(16).toUpperCase()}`;
 }
 
+function getSingleBinaryOffset(board: BoardProfile) {
+    return board.family === "ESP8266" ? 0 : 65536;
+}
+
+function requiresFullFlashBundle(board: BoardProfile) {
+    return board.family !== "ESP8266";
+}
+
 function formatStatusLabel(value: ProjectSyncState | ServerBuildState["status"]) {
     return value.replace(/_/g, " ");
 }
@@ -170,6 +178,7 @@ export function Step4Flash({
 }: Step4FlashProps) {
     const previewLines = JSON.stringify(draftConfig, null, 2).split("\n");
     const readiness = getReadinessModel({
+        board,
         flashSource,
         manifestUrl,
         flashLockedReason,
@@ -380,18 +389,27 @@ export function Step4Flash({
 
                             {flashSource === "upload" && (
                                 <div className="flex flex-col gap-5 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-950">
+                                    <p className="text-sm text-slate-600 dark:text-slate-400">
+                                        {requiresFullFlashBundle(board)
+                                            ? "Upload the full bootloader + partitions + firmware bundle for this board family."
+                                            : "ESP8266 custom upload only needs the firmware binary. The generated manifest will flash it at 0x0."}
+                                    </p>
+                                    {requiresFullFlashBundle(board) ? (
+                                        <>
+                                            <FirmwareFileInput
+                                                label="Bootloader (.bin)"
+                                                file={uploadState.bootloader}
+                                                onChange={(file) => setUploadState((previous) => ({ ...previous, bootloader: file }))}
+                                            />
+                                            <FirmwareFileInput
+                                                label="Partitions (.bin)"
+                                                file={uploadState.partitions}
+                                                onChange={(file) => setUploadState((previous) => ({ ...previous, partitions: file }))}
+                                            />
+                                        </>
+                                    ) : null}
                                     <FirmwareFileInput
-                                        label="Bootloader (.bin)"
-                                        file={uploadState.bootloader}
-                                        onChange={(file) => setUploadState((previous) => ({ ...previous, bootloader: file }))}
-                                    />
-                                    <FirmwareFileInput
-                                        label="Partitions (.bin)"
-                                        file={uploadState.partitions}
-                                        onChange={(file) => setUploadState((previous) => ({ ...previous, partitions: file }))}
-                                    />
-                                    <FirmwareFileInput
-                                        label="Firmware App (.bin)"
+                                        label={requiresFullFlashBundle(board) ? "Firmware App (.bin)" : "Firmware (.bin)"}
                                         file={uploadState.firmware}
                                         onChange={(file) => setUploadState((previous) => ({ ...previous, firmware: file }))}
                                     />
@@ -477,7 +495,7 @@ export function Step4Flash({
                         <h3 className="text-lg font-bold text-slate-900 dark:text-white">Web Flasher</h3>
                         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
                             <p className="mb-2">
-                                Ensure your ESP32 is connected via USB. The browser asks for serial permission only after the server-side guardrails confirm the manifest and port reservation are safe.
+                                Ensure your device is connected via USB. The browser asks for serial permission only after the server-side guardrails confirm the manifest and port reservation are safe.
                             </p>
                             <label htmlFor="erase-all-flash" className="mt-4 flex cursor-pointer items-center gap-3">
                                 <input
@@ -608,7 +626,9 @@ export function Step4Flash({
                             </pre>
                         </div>
                         <div className="border-t border-slate-800 px-4 py-3 text-xs text-slate-500">
-                            Server builds currently expose the application binary at {toHex(65536)}.
+                            {board.family === "ESP8266"
+                                ? `ESP8266 server builds currently expose firmware.bin only at ${toHex(getSingleBinaryOffset(board))}.`
+                                : `Server builds currently expose the application binary at ${toHex(getSingleBinaryOffset(board))}.`}
                         </div>
                     </div>
                 </div>
@@ -627,12 +647,14 @@ export function Step4Flash({
 }
 
 function getReadinessModel({
+    board,
     flashSource,
     manifestUrl,
     flashLockedReason,
     serverBuildStatus,
     serialLocked,
 }: {
+    board: BoardProfile;
     flashSource: FlashSource;
     manifestUrl: string | null;
     flashLockedReason: string | null;
@@ -680,7 +702,7 @@ function getReadinessModel({
                     progress: 82,
                     headline: "Artifact ready",
                     detail: flashLockedReason || "The `.bin` artifact is ready. Reserve the serial port to unlock browser flashing.",
-                    subline: "Binary ready at 0x10000",
+                    subline: `Binary ready at ${toHex(getSingleBinaryOffset(board))}`,
                 };
             case "build_failed":
             case "flash_failed":
