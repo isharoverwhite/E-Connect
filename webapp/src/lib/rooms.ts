@@ -106,3 +106,50 @@ export async function updateRoomAccess(
 
     return response.json();
 }
+
+export async function updateRoom(
+    roomId: number,
+    name: string,
+    token?: string,
+): Promise<RoomRecord> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/rooms/${roomId}`, {
+        method: "PUT",
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ name }),
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseRoomError(response));
+    }
+
+    return response.json();
+}
+
+export async function deleteRoom(
+    roomId: number,
+    token?: string,
+): Promise<void> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/rooms/${roomId}`, {
+        method: "DELETE",
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseRoomError(response));
+    }
+}

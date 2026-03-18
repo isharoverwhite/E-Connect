@@ -344,6 +344,127 @@ def test_mqtt_only_rest_block():
     payload = response.json()["detail"]
     assert payload["error"] == "mqtt_only"
 
+def test_resolve_board_definition_supports_explicit_esp8266_variants():
+    from app.services.diy_validation import resolve_board_definition
+
+    assert resolve_board_definition("esp8266").platformio_board == "nodemcuv2"
+    assert resolve_board_definition("wemos-d1-mini").platformio_board == "d1_mini"
+    assert resolve_board_definition("d1-mini-pro").platformio_board == "d1_mini_pro"
+    assert resolve_board_definition("esp-01s").platformio_board == "esp01_1m"
+    assert resolve_board_definition("esp12f").platformio_board == "esp12e"
+
+    # Existing ESP32 alias resolution must remain intact.
+    assert resolve_board_definition("esp32-c3-super-mini").platformio_board == "esp32-c3-devkitm-1"
+
+def test_validate_diy_config_is_board_aware_for_esp8266():
+    from app.services.diy_validation import validate_diy_config
+
+    valid_config = {
+        "wifi_ssid": "ssid",
+        "wifi_password": "pass",
+        "pins": [
+            {"gpio": 16, "mode": "PWM", "label": "PWM Output"},
+        ],
+    }
+    board, errors, warnings = validate_diy_config("d1_mini", valid_config)
+    assert board.canonical_id == "d1_mini"
+    assert errors == []
+    assert warnings == []
+
+    board, errors, _ = validate_diy_config("esp01_1m", valid_config)
+    assert board.canonical_id == "esp01_1m"
+    assert "Invalid config: GPIO 16 is not supported for esp01_1m" in errors
+
+    reserved_uart_config = {
+        "wifi_ssid": "ssid",
+        "wifi_password": "pass",
+        "pins": [
+            {"gpio": 1, "mode": "OUTPUT", "label": "Unsafe TX"},
+        ],
+    }
+    _, errors, _ = validate_diy_config("nodemcuv2", reserved_uart_config)
+    assert "Invalid config: GPIO 1 is reserved for nodemcuv2" in errors
+
+def test_builder_generates_esp8266_platformio_ini(tmp_path):
+    from app.services.builder import generate_platformio_ini
+
+    class MockProject:
+        def __init__(self, config, board_profile):
+            self.config = config
+            self.board_profile = board_profile
+
+    project = MockProject(
+        config={
+            "cpu_mhz": 80,
+            "flash_size": "16MB",
+            "psram_size": "None",
+            "pins": [],
+        },
+        board_profile="d1_mini_pro",
+    )
+
+    generate_platformio_ini(project, str(tmp_path))
+
+    content = (tmp_path / "platformio.ini").read_text()
+    assert "[env:d1_mini_pro]" in content
+    assert "platform = espressif8266" in content
+    assert "board = d1_mini_pro" in content
+    assert "board_upload.flash_size = 16MB" in content
+    assert "ARDUINO_USB_MODE" not in content
+
+def test_collect_build_outputs_supports_esp8266_firmware_only(tmp_path):
+    from app.services.builder import collect_build_outputs
+
+    build_dir = tmp_path / ".pio" / "build" / "d1_mini"
+    build_dir.mkdir(parents=True)
+    firmware_path = build_dir / "firmware.bin"
+    firmware_path.write_bytes(b"esp8266-firmware")
+
+    outputs = collect_build_outputs(str(tmp_path), "d1_mini")
+
+    assert outputs == {"firmware": str(firmware_path)}
+
+def test_list_diy_projects_matches_legacy_esp8266_aliases():
+    db = TestingSessionLocal()
+    user, room = create_test_user(db, username="legacyesp8266")
+    token = get_token(username="legacyesp8266")
+
+    legacy_project = DiyProject(
+        id=str(uuid.uuid4()),
+        user_id=user.user_id,
+        room_id=room.room_id,
+        name="Legacy ESP8266",
+        board_profile="esp8266",
+        config={
+            "wifi_ssid": "ssid",
+            "wifi_password": "pass",
+            "pins": [{"gpio": 4, "mode": "OUTPUT", "label": "Legacy Relay"}],
+        },
+    )
+    other_project = DiyProject(
+        id=str(uuid.uuid4()),
+        user_id=user.user_id,
+        room_id=room.room_id,
+        name="Other ESP8266",
+        board_profile="d1_mini",
+        config={
+            "wifi_ssid": "ssid",
+            "wifi_password": "pass",
+            "pins": [{"gpio": 4, "mode": "OUTPUT", "label": "Other Relay"}],
+        },
+    )
+    db.add_all([legacy_project, other_project])
+    db.commit()
+
+    response = client.get(
+        "/api/v1/diy/projects?board_profile=nodemcuv2",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert [project["board_profile"] for project in payload] == ["esp8266"]
+
 def test_builder_generates_correct_config(tmp_path):
     from app.services.builder import write_generated_firmware_config
     

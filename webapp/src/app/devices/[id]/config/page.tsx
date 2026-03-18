@@ -8,7 +8,7 @@ import { getToken } from "@/lib/auth";
 import { Step2Pins } from "@/features/diy/components/Step2Pins";
 import type { DeviceConfig, PinConfig } from "@/types/device";
 import type { PinMapping, BuildJobStatus } from "@/features/diy/types";
-import { BOARD_PROFILES, type BoardProfile } from "@/features/diy/board-profiles";
+import { getBoardProfile, resolveBoardProfileId, type BoardProfile } from "@/features/diy/board-profiles";
 
 interface DiyProjectResponse {
     board_profile: string;
@@ -61,7 +61,8 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                 if (!res.ok) throw new Error("Failed to load device project data");
                 const projData = await res.json();
                 
-                const bp = BOARD_PROFILES.find((board) => board.id === projData.board_profile);
+                const resolvedBoardId = resolveBoardProfileId(projData.board_profile) ?? projData.board_profile;
+                const bp = getBoardProfile(resolvedBoardId);
                 if (!bp) throw new Error(`Unknown board profile: ${projData.board_profile}`);
 
                 if (isMounted) {

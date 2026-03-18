@@ -196,6 +196,9 @@ class RoomCreate(BaseModel):
 class RoomAccessUpdate(BaseModel):
     allowed_user_ids: List[int] = Field(default_factory=list)
 
+class RoomUpdate(BaseModel):
+    name: str
+
 class RoomResponse(RoomCreate):
     room_id: int
     user_id: int
@@ -292,6 +295,21 @@ class DiyProjectResponse(DiyProjectBase):
 
     class Config:
         from_attributes = True
+
+class ProjectDeviceUsage(BaseModel):
+    device_id: str
+    name: str
+    conn_status: ConnStatus
+    auth_status: AuthStatus
+    room_id: Optional[int] = None
+    room_name: Optional[str] = None
+    
+    class Config:
+        from_attributes = True
+
+class DiyProjectUsageResponse(DiyProjectResponse):
+    usage_state: Literal["unused", "in_use"]
+    devices: List[ProjectDeviceUsage] = []
 
 class BuildJobResponse(BaseModel):
     id: str

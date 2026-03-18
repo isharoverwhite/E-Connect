@@ -21,10 +21,10 @@ from .models import (
     AutomationCreate, AutomationResponse,
     DeviceHistoryCreate, DeviceHistoryResponse,
     FirmwareResponse, DeviceMode, AccountType, EventType,
-    RoomAccessUpdate, RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
+    RoomAccessUpdate, RoomUpdate, RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
     SetupResponse, HouseholdResponse, TriggerResponse, ExecutionStatus, AutomationLogResponse,
     DiyProjectCreate, DiyProjectResponse, BuildJobResponse, JobStatus, SerialSessionResponse,
-    ManagedUserResponse, UserApprovalStatus
+    ManagedUserResponse, UserApprovalStatus, DiyProjectUsageResponse, ProjectDeviceUsage
 )
 from .sql_models import (
     User, Device, Automation, DeviceHistory, 
@@ -40,7 +40,7 @@ from .services.device_registration import (
     mqtt_only_error,
     register_device_payload,
 )
-from .services.diy_validation import validate_diy_config
+from .services.diy_validation import resolve_board_definition, validate_diy_config
 from .services.user_management import ensure_temp_support_account, resolve_household_id_for_user
 from .services.i2c_registry import I2CLibrary, get_i2c_catalog
 
@@ -604,13 +604,30 @@ async def approve_user(user_id: int, db: Session = Depends(get_db), admin: User 
     return _serialize_managed_user(membership.user, membership)
 
 
-@router.post("/users/{user_id}/revoke", response_model=ManagedUserResponse)
-async def revoke_user(user_id: int, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+@router.delete("/users/{user_id}", response_model=dict)
+async def delete_user(user_id: int, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
     if user_id == admin.user_id:
         raise HTTPException(status_code=400, detail="You cannot revoke your own account")
 
     membership = _get_managed_membership_or_404(db, admin, user_id)
-    membership.user.approval_status = SqlUserApprovalStatus.revoked
+    user = membership.user
+
+    user.approval_status = SqlUserApprovalStatus.revoked
+    db.commit()
+
+    return {"status": "success", "message": "User access revoked"}
+
+
+@router.post("/users/{user_id}/promote", response_model=ManagedUserResponse)
+async def promote_user(user_id: int, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+    if user_id == admin.user_id:
+        raise HTTPException(status_code=400, detail="You cannot promote your own account")
+
+    from app.models import AccountType
+    membership = _get_managed_membership_or_404(db, admin, user_id)
+    
+    # Needs to be explicitly upgraded in User table
+    membership.user.account_type = AccountType.admin
     db.commit()
     db.refresh(membership.user)
     return _serialize_managed_user(membership.user, membership)
@@ -739,6 +756,65 @@ async def update_room_access(
     return _serialize_room_response(room, assigned_user_ids)
 
 
+@router.put("/rooms/{room_id}", response_model=RoomResponse)
+async def update_room(
+    room_id: int,
+    payload: RoomUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    room = _get_room_in_household_or_404(db, current_user, room_id)
+    room_name = payload.name.strip()
+    if not room_name:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": "Room name is required."},
+        )
+
+    household_id = resolve_household_id_for_user(db, current_user)
+    existing_room = (
+        db.query(Room)
+        .filter(Room.household_id == household_id, Room.name == room_name, Room.room_id != room_id)
+        .first()
+    )
+    if existing_room:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "conflict", "message": "A room with this name already exists."},
+        )
+
+    room.name = room_name
+    db.commit()
+    db.refresh(room)
+    
+    room_ids = [room.room_id]
+    permission_map = _get_room_permission_map(db, room_ids) if _is_room_admin(current_user) else {}
+    return _serialize_room_response(room, permission_map.get(room.room_id, []))
+
+
+@router.delete("/rooms/{room_id}")
+async def delete_room(
+    room_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    room = _get_room_in_household_or_404(db, current_user, room_id)
+    # 1. Clear room associations from devices
+    devices_in_room = db.query(Device).filter(Device.room_id == room_id).all()
+    for d in devices_in_room:
+        d.room_id = None
+        
+    # 2. Clear room associations from DIY projects to prevent MariaDB foreign key violations
+    from app.sql_models import DiyProject
+    projects_in_room = db.query(DiyProject).filter(DiyProject.room_id == room_id).all()
+    for p in projects_in_room:
+        p.room_id = None
+    
+    db.delete(room)
+    db.commit()
+    return {"message": "Room deleted successfully"}
+
+
 @router.post("/config", response_model=DeviceHandshakeResponse)
 async def register_device_handshake(
     payload: DeviceRegister, 
@@ -746,7 +822,7 @@ async def register_device_handshake(
 ):
     """
     HTTP handshake remains available only for legacy discovery paths.
-    MQTT-managed ESP32 firmware must register over MQTT.
+    MQTT-managed DIY firmware must register over MQTT.
     """
     if (
         payload.mode == DeviceMode.library
@@ -754,7 +830,7 @@ async def register_device_handshake(
         or payload.secret_key is not None
     ):
         raise mqtt_only_error(
-            "ESP32 registration must be published to the MQTT register topic."
+            "DIY firmware registration must be published to the MQTT register topic."
         )
 
     result = register_device_payload(db, payload)
@@ -1004,7 +1080,7 @@ async def get_latest_command(device_id: str, db: Session = Depends(get_db)):
     device = _get_device_or_404(db, device_id)
     if is_mqtt_managed_device(device):
         raise mqtt_only_error(
-            "MQTT-managed ESP32 devices do not support HTTP command polling."
+            "MQTT-managed DIY devices do not support HTTP command polling."
         )
 
     cmd = (
@@ -1085,16 +1161,128 @@ async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(ge
     db.refresh(new_project)
     return new_project
 
-@router.get("/diy/projects", response_model=List[DiyProjectResponse])
+@router.get("/diy/projects", response_model=List[DiyProjectUsageResponse])
 async def list_diy_projects(
     board_profile: Optional[str] = Query(default=None),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
-    query = db.query(DiyProject).filter(DiyProject.user_id == current_user.user_id)
+    household_id = resolve_household_id_for_user(db, current_user)
+    household_member_ids = _get_household_member_ids(db, household_id)
+    
+    query = db.query(DiyProject)
+    if current_user.account_type != AccountType.admin:
+        if not household_member_ids:
+            return []
+        query = query.filter(DiyProject.user_id.in_(household_member_ids))
+    
+    projects = query.order_by(DiyProject.updated_at.desc(), DiyProject.created_at.desc()).all()
     if board_profile:
-        query = query.filter(DiyProject.board_profile == board_profile)
-    return query.order_by(DiyProject.updated_at.desc(), DiyProject.created_at.desc()).all()
+        try:
+            expected_board = resolve_board_definition(board_profile)
+            matched_projects = []
+            for project in projects:
+                try:
+                    if resolve_board_definition(project.board_profile).canonical_id == expected_board.canonical_id:
+                        matched_projects.append(project)
+                except ValueError:
+                    if project.board_profile == board_profile:
+                        matched_projects.append(project)
+            projects = matched_projects
+        except ValueError:
+            projects = [project for project in projects if project.board_profile == board_profile]
+
+    if not projects:
+        return []
+
+    project_ids = [p.id for p in projects]
+    devices = db.query(Device).filter(
+        Device.provisioning_project_id.in_(project_ids),
+        Device.auth_status == AuthStatus.approved
+    ).all()
+    devices = [_attach_room_name(d) for d in devices]
+
+    device_map = {}
+    for d in devices:
+        proj_id = d.provisioning_project_id
+        if proj_id not in device_map:
+            device_map[proj_id] = []
+        device_map[proj_id].append({
+            "device_id": d.device_id,
+            "name": d.name,
+            "conn_status": d.conn_status,
+            "auth_status": d.auth_status,
+            "room_id": d.room_id,
+            "room_name": getattr(d, "room_name", None)
+        })
+
+    response_data = []
+    for p in projects:
+        p_devices = device_map.get(p.id, [])
+        usage_state = "in_use" if p_devices else "unused"
+        # We can construct Pydantic models directly or let router validate dicts
+        p_dict = {
+            "id": p.id,
+            "user_id": p.user_id,
+            "room_id": p.room_id,
+            "name": p.name,
+            "board_profile": p.board_profile,
+            "config": p.config,
+            "created_at": p.created_at,
+            "updated_at": p.updated_at,
+            "usage_state": usage_state,
+            "devices": p_devices
+        }
+        response_data.append(p_dict)
+
+    return response_data
+
+@router.delete("/diy/projects/{project_id}")
+async def delete_diy_project(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
+    project = db.query(DiyProject).filter(DiyProject.id == project_id).first()
+    if not project:
+         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Check if used by any approved device
+    active_devices = db.query(Device).filter(
+        Device.provisioning_project_id == project_id,
+        Device.auth_status == AuthStatus.approved
+    ).all()
+    if active_devices:
+        # Return 409 Conflict with machine-actionable error payload
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "conflict",
+                "message": f"Cannot delete '{project.name}' because it is in use by {len(active_devices)} approved device(s)."
+            }
+        )
+
+    # Unlink pending/rejected devices before deleting
+    db.query(Device).filter(Device.provisioning_project_id == project_id).update(
+        {Device.provisioning_project_id: None}, synchronize_session=False
+    )
+    db.commit()
+    # Clean up serial sessions referencing build jobs from this project
+    build_job_ids = [job.id for job in project.build_jobs]
+    if build_job_ids:
+        db.query(SerialSession).filter(SerialSession.build_job_id.in_(build_job_ids)).delete(synchronize_session=False)
+        db.commit()
+
+    try:
+        db.delete(project)
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        # This catches things like SerialSession -> build_job constraint violation.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "conflict",
+                "message": "Cannot delete because its build artifact is locked by an active process."
+            }
+        )
+    return {"status": "deleted", "id": project_id}
 
 @router.get("/diy/projects/{project_id}", response_model=DiyProjectResponse)
 async def get_diy_project(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
@@ -1215,7 +1403,7 @@ async def get_build_artifact_part(
 @router.get("/diy/ota/download/{job_id}/firmware.bin")
 async def get_ota_firmware(job_id: str, token: str, db: Session = Depends(get_db)):
     """
-    Endpoint for ESP32 devices to download the firmware artifact over OTA.
+    Endpoint for DIY devices to download the firmware artifact over OTA.
     Requires a valid JWT token tied to the specific job_id to prevent unauthorized downloads.
     """
     verified_job_id = verify_ota_token(token)
@@ -1458,7 +1646,7 @@ async def push_history(device_id: str, entry: DeviceHistoryCreate, db: Session =
         raise HTTPException(status_code=404, detail="Device not found")
     if is_mqtt_managed_device(device):
         raise mqtt_only_error(
-            "MQTT-managed ESP32 devices must publish telemetry to the MQTT state topic."
+            "MQTT-managed DIY devices must publish telemetry to the MQTT state topic."
         )
     
     # Update last seen
