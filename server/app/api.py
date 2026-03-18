@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Backgro
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Any, Literal, Union
 import ast
@@ -56,6 +56,10 @@ DEVICE_HEARTBEAT_TIMEOUT_SECONDS = max(
     int(os.getenv("DEVICE_HEARTBEAT_TIMEOUT_SECONDS", "75")),
 )
 DEVICE_HEARTBEAT_TIMEOUT = timedelta(seconds=DEVICE_HEARTBEAT_TIMEOUT_SECONDS)
+
+
+def _background_session_factory(db: Session) -> sessionmaker:
+    return sessionmaker(autocommit=False, autoflush=False, bind=db.get_bind())
 
 
 def _decode_history_payload(payload: Optional[str]) -> Optional[dict[str, Any]]:
@@ -998,7 +1002,12 @@ async def update_device_config(
     db.commit()
     db.refresh(job)
 
-    background_tasks.add_task(build_firmware_task, job.id, validation_warnings)
+    background_tasks.add_task(
+        build_firmware_task,
+        job.id,
+        validation_warnings,
+        _background_session_factory(db),
+    )
 
     return {"status": "success", "job_id": job.id, "message": "Configuration saved and build started"}
 
@@ -1353,7 +1362,12 @@ async def trigger_diy_build(project_id: str, background_tasks: BackgroundTasks, 
     db.commit()
     db.refresh(job)
 
-    background_tasks.add_task(build_firmware_task, job_id, validation_warnings)
+    background_tasks.add_task(
+        build_firmware_task,
+        job_id,
+        validation_warnings,
+        _background_session_factory(db),
+    )
     return job
 
 @router.get("/diy/build/{job_id}", response_model=BuildJobResponse)

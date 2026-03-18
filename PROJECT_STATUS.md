@@ -1,34 +1,33 @@
 # Project Status
 
-## Current Phase: Pending Final Acceptance
+## Current Phase: Complete
 
 ## Active Task
-- Task ID: TASK-DIY-FLASHER-002
-- Objective: Fix infinite loop when switching boards in DIY Flasher and close regression finding for Playwright spec.
-- Owner: Antigravity
-- Started At: 2026-03-18
+- Task ID: TASK-GIT-PUSH-MAIN-001
+- Objective: Validate push readiness for `origin/main`, fix the background build DB-session regression, and publish the ready commits.
+- Owner: Codex
+- Started At: 2026-03-18 21:50:00
 
 ## Gate Status
 - [x] G0 Task intake
 - [x] G1 Requirement approved
 - [x] G2 Design approved
 - [x] G3 Implementation complete
-- [ ] G4 Test complete (Awaiting User Git Stage & Commit)
+- [x] G4 Test complete
 
 ## Deliverables
 - PRD: /Users/kiendinhtrung/Documents/GitHub/Final-Project/PRD.md
 - Design docs: Design unchanged
-- Code: 
-   - `webapp/src/app/devices/diy/page.tsx`
-   - `webapp/tests/test_board_switch_loop.spec.ts`
-   - `webapp/tests/test_delete_config.spec.ts`
-- Verification: Build/Lint PASS. Playwright run safely skips when env is missing. Verification based on static logic & CI readiness.
+- Code:
+  - `server/app/api.py`
+  - `server/app/services/builder.py`
+- Verification: `webapp` lint/build PASS. `server` targeted pytest PASS (`tests/test_auth.py`, `tests/test_diy_api.py`).
 
 ## Risks / Blockers
-- None
+- Local worktree remains dirty with unrelated artifacts and docs that were intentionally not included in this push.
 
 ## Next Action
-- Reassign or wait for next task.
+- Confirm the uncommitted local files should be reviewed, cleaned, or committed separately.
 
 ## Last Updated
-2026-03-18 20:25:00
+2026-03-18 22:37:43
