@@ -2,11 +2,12 @@
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 #include <Wire.h>
-#include <HTTPUpdate.h>
 
 #if defined(ESP8266)
 #include <ESP8266WiFi.h>
+#include <ESP8266httpUpdate.h>
 #else
+#include <HTTPUpdate.h>
 #include <WiFi.h>
 #endif
 
@@ -55,7 +56,7 @@ struct WifiTarget {
   bool found;
   int32_t channel;
   int32_t rssi;
-  wifi_auth_mode_t authMode;
+  int32_t authMode;
   uint8_t bssid[6];
 };
 
@@ -93,19 +94,23 @@ int readRuntimeValue(PinRuntimeState &pinState);
 int readRuntimeBrightness(PinRuntimeState &pinState);
 bool applyCommandToPin(PinRuntimeState &pinState, int value, int brightness);
 int resolvePhysicalLevel(const PinRuntimeState &pinState, int logicalValue);
-const char *authModeName(wifi_auth_mode_t authMode);
+const char *authModeName(int32_t authMode);
 WifiTarget scanWifiTarget();
 void logVisibleWifiTargets(const WifiTarget &target);
 void formatBssid(const uint8_t *bssid, char *buffer, size_t bufferSize);
+#if !defined(ESP8266)
 void handleWiFiEvent(arduino_event_id_t event, arduino_event_info_t info);
+#endif
 
 void setup() {
   Serial.begin(115200);
   delay(1500);
   Serial.println("\n--- Starting E-Connect Server-Built Firmware ---");
+#if !defined(ESP8266)
   WiFi.onEvent(handleWiFiEvent);
-  WiFi.setAutoReconnect(true);
   WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
+#endif
+  WiFi.setAutoReconnect(true);
 
   initializePinStates();
   initializeI2CBus();
@@ -159,9 +164,14 @@ bool connectToWiFi() {
 
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
+#if defined(ESP8266)
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  WiFi.disconnect();
+#else
   WiFi.setSleep(false);
   WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
   WiFi.disconnect(false, true);
+#endif
   delay(250);
 
   const WifiTarget target = scanWifiTarget();
@@ -201,7 +211,13 @@ bool connectToWiFi() {
   return false;
 }
 
-const char *authModeName(wifi_auth_mode_t authMode) {
+const char *authModeName(int32_t authMode) {
+#if defined(ESP8266)
+  if (authMode == ENC_TYPE_NONE) {
+    return "OPEN";
+  }
+  return "SECURED";
+#else
   switch (authMode) {
     case WIFI_AUTH_OPEN:
       return "OPEN";
@@ -220,6 +236,7 @@ const char *authModeName(wifi_auth_mode_t authMode) {
     default:
       return "UNKNOWN";
   }
+#endif
 }
 
 WifiTarget scanWifiTarget() {
@@ -227,7 +244,11 @@ WifiTarget scanWifiTarget() {
       false,
       0,
       -127,
+#if defined(ESP8266)
+      ENC_TYPE_NONE,
+#else
       WIFI_AUTH_OPEN,
+#endif
       {0, 0, 0, 0, 0, 0},
   };
   const int networkCount = WiFi.scanNetworks(false, true);
@@ -292,6 +313,7 @@ void formatBssid(const uint8_t *bssid, char *buffer, size_t bufferSize) {
       bssid[5]);
 }
 
+#if !defined(ESP8266)
 void handleWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
   if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
     Serial.println("Wi-Fi event: STA connected");
@@ -314,6 +336,7 @@ void handleWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
         WiFi.disconnectReasonName(reason));
   }
 }
+#endif
 
 bool performSecureHandshake() {
   if (WiFi.status() != WL_CONNECTED) {
@@ -487,8 +510,13 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
       if (url.length() > 0) {
         Serial.printf("Received OTA command for URL: %s\n", url.c_str());
         WiFiClient client;
+#if defined(ESP8266)
+        ESPhttpUpdate.rebootOnUpdate(false);
+        t_httpUpdate_return ret = ESPhttpUpdate.update(client, url);
+#else
         httpUpdate.rebootOnUpdate(false);
         t_httpUpdate_return ret = httpUpdate.update(client, url);
+#endif
 
         StaticJsonDocument<512> statusDoc;
         statusDoc["event"] = "ota_status";
@@ -496,8 +524,13 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
         
         switch (ret) {
           case HTTP_UPDATE_FAILED: {
+#if defined(ESP8266)
+            String errStr = ESPhttpUpdate.getLastErrorString();
+            Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", ESPhttpUpdate.getLastError(), errStr.c_str());
+#else
             String errStr = httpUpdate.getLastErrorString();
             Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", httpUpdate.getLastError(), errStr.c_str());
+#endif
             statusDoc["status"] = "failed";
             statusDoc["message"] = errStr;
             break;
