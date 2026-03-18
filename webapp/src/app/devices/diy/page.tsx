@@ -14,7 +14,7 @@ import {
   resolveBoardProfileId,
   type BoardPin,
   type BoardProfile,
-  type Esp32ChipFamily,
+  type ChipFamily,
 } from "@/features/diy/board-profiles";
 import {
   type BuildJobStatus,
@@ -71,7 +71,7 @@ interface SerializedDraft {
   projectId?: string;
   projectName?: string;
   roomId?: number | null;
-  family?: Esp32ChipFamily;
+  family?: ChipFamily;
   boardId?: string;
   pins?: PinMapping[];
   flashSource?: FlashSource;
@@ -363,7 +363,9 @@ export default function DIYBuilderPage() {
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [wifiSsid, setWifiSsid] = useState("");
   const [wifiPassword, setWifiPassword] = useState("");
-  const [family, setFamily] = useState<Esp32ChipFamily>("ESP32-C3");
+  const [family, setFamily] = useState<ChipFamily>(
+    () => getBoardProfile(DEFAULT_BOARD_ID)?.family ?? BOARD_PROFILES[0].family,
+  );
   const [boardId, setBoardId] = useState(DEFAULT_BOARD_ID);
   const [cpuMhz, setCpuMhz] = useState<number | null>(null);
   const [flashSize, setFlashSize] = useState<string | null>(null);
@@ -381,6 +383,7 @@ export default function DIYBuilderPage() {
   const [eraseFirst, setEraseFirst] = useState(false);
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [projectHydrated, setProjectHydrated] = useState(false);
+  const hasHydratedRef = useRef(false);
   const [configBusy, setConfigBusy] = useState(false);
   const [projectSyncState, setProjectSyncState] = useState<ProjectSyncState>("loading");
   const [projectSyncMessage, setProjectSyncMessage] = useState("Loading server draft...");
@@ -767,14 +770,17 @@ export default function DIYBuilderPage() {
     };
   }
 
-  const refreshBuildJob = useCallback(async (jobId: string, buildKey: string | null) => {
-    const token = getToken();
-    if (!token) {
-      return;
-    }
+  const refreshBuildJob = useCallback(
+    async (jobId: string, buildKey: string | null, overridingFamily?: ChipFamily) => {
+      const token = getToken();
+      if (!token) {
+        return;
+      }
 
-    try {
-      const jobResponse = await fetch(`${API_URL}/diy/build/${jobId}`, {
+      try {
+        const effectiveFamily = overridingFamily ?? board.family;
+        const expectsFullBundle = effectiveFamily !== "ESP8266";
+        const jobResponse = await fetch(`${API_URL}/diy/build/${jobId}`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
       });
@@ -790,10 +796,10 @@ export default function DIYBuilderPage() {
         job.status === "artifact_ready"
           ? fetchBuildArtifact(job.id, token, "firmware").catch(() => null)
           : Promise.resolve(null),
-        job.status === "artifact_ready"
+        job.status === "artifact_ready" && expectsFullBundle
           ? fetchBuildArtifact(job.id, token, "bootloader").catch(() => null)
           : Promise.resolve(null),
-        job.status === "artifact_ready"
+        job.status === "artifact_ready" && expectsFullBundle
           ? fetchBuildArtifact(job.id, token, "partitions").catch(() => null)
           : Promise.resolve(null),
       ]);
@@ -828,7 +834,7 @@ export default function DIYBuilderPage() {
         error: getErrorMessage(error),
       }));
     }
-  }, [handleBuildAuthFailure]);
+  }, [board.family, handleBuildAuthFailure]);
 
   const refreshSerialStatus = useCallback(async (options?: { silent?: boolean }) => {
     if (!isAdmin) {
@@ -985,7 +991,7 @@ export default function DIYBuilderPage() {
     setBoardConfigsError("");
 
     if (savedBuildJobId) {
-      void refreshBuildJob(savedBuildJobId, savedBuildKey);
+      void refreshBuildJob(savedBuildJobId, savedBuildKey, nextBoard.family);
     }
   }, [refreshBuildJob]);
 
@@ -1009,6 +1015,9 @@ export default function DIYBuilderPage() {
     };
   }, []);
 
+  const loadServerProjectRef = useRef(loadServerProject);
+  loadServerProjectRef.current = loadServerProject;
+
   useEffect(() => {
     let cancelled = false;
 
@@ -1019,6 +1028,11 @@ export default function DIYBuilderPage() {
         setProjectHydrated(true);
         return;
       }
+
+      if (hasHydratedRef.current) {
+        return;
+      }
+      hasHydratedRef.current = true;
 
       if (typeof window === "undefined") {
         return;
@@ -1095,7 +1109,7 @@ export default function DIYBuilderPage() {
 
             const preferredProject = (await response.json()) as DiyProjectRecord;
             if (!cancelled) {
-              await loadServerProject(preferredProject);
+              await loadServerProjectRef.current(preferredProject);
             }
           }
         } else if (!cancelled) {
@@ -1123,8 +1137,9 @@ export default function DIYBuilderPage() {
 
     return () => {
       cancelled = true;
+      hasHydratedRef.current = false;
     };
-  }, [isAdmin, loadRooms, loadServerProject]);
+  }, [isAdmin, loadRooms]);
 
   useEffect(() => {
     if (!draftLoaded || !projectHydrated || !isAdmin) {
@@ -1617,13 +1632,14 @@ export default function DIYBuilderPage() {
       return;
     }
 
+    const nextBoard = getBoardProfile(DEFAULT_BOARD_ID) ?? BOARD_PROFILES[0];
     setProjectId(null);
     setProjectName("Living Room Relay Node");
     setRoomId(rooms[0]?.room_id ?? null);
     setNewRoomName("");
     setRoomError("");
-    setFamily("ESP32-C3");
-    setBoardId(DEFAULT_BOARD_ID);
+    setFamily(nextBoard.family);
+    setBoardId(nextBoard.id);
     setPins([]);
     setSelectedPinId(null);
     setFlashSource("server");
@@ -1948,7 +1964,7 @@ function validateMappings(
       errors.push(`GPIO ${mapping.gpio_pin} is input-only and cannot drive outputs.`);
     }
 
-    if (boardPin.reserved && mapping.mode !== "INPUT" && mapping.mode !== "ADC") {
+    if (boardPin.reserved) {
       errors.push(
         `GPIO ${mapping.gpio_pin} is reserved or tightly coupled to boot / USB functions on ${board.name}.`,
       );
@@ -2002,6 +2018,9 @@ function buildFlashManifest({
   } | null;
   createFileUrl: (file: File) => string;
 }): FlashManifest | null {
+  const singleBinaryOffset = board.family === "ESP8266" ? 0 : APPLICATION_OFFSET;
+  const requiresFullBundle = board.family !== "ESP8266";
+
   if (flashSource === "server") {
     if (!serverArtifactUrls?.firmware) {
       return null;
@@ -2014,7 +2033,7 @@ function buildFlashManifest({
             { path: serverArtifactUrls.partitions, offset: 32768 },
             { path: serverArtifactUrls.firmware, offset: APPLICATION_OFFSET },
           ]
-        : [{ path: serverArtifactUrls.firmware, offset: APPLICATION_OFFSET }];
+        : [{ path: serverArtifactUrls.firmware, offset: singleBinaryOffset }];
 
     return {
       name: `${projectName || board.name} (${board.name})`,
@@ -2048,7 +2067,11 @@ function buildFlashManifest({
     };
   }
 
-  if (!uploadState.bootloader || !uploadState.partitions || !uploadState.firmware) {
+  if (!uploadState.firmware) {
+    return null;
+  }
+
+  if (requiresFullBundle && (!uploadState.bootloader || !uploadState.partitions)) {
     return null;
   }
 
@@ -2058,11 +2081,13 @@ function buildFlashManifest({
     builds: [
       {
         chipFamily: board.family,
-        parts: [
-          { path: createFileUrl(uploadState.bootloader), offset: 0 },
-          { path: createFileUrl(uploadState.partitions), offset: 32768 },
-          { path: createFileUrl(uploadState.firmware), offset: APPLICATION_OFFSET },
-        ],
+        parts: requiresFullBundle
+          ? [
+              { path: createFileUrl(uploadState.bootloader as File), offset: 0 },
+              { path: createFileUrl(uploadState.partitions as File), offset: 32768 },
+              { path: createFileUrl(uploadState.firmware), offset: APPLICATION_OFFSET },
+            ]
+          : [{ path: createFileUrl(uploadState.firmware), offset: singleBinaryOffset }],
       },
     ],
   };
@@ -2117,7 +2142,9 @@ function getFlashLockedReason({
     }
 
     if (eraseFirst && !serverBuildHasFullBundle) {
-      return "Server builds currently expose the application binary only. Turn off 'erase all flash' or switch to a full bundled/upload bundle.";
+      return board.family === "ESP8266"
+        ? "ESP8266 server builds expose a single firmware.bin only. Leave 'erase all flash' disabled or provide a custom full bundle."
+        : "Server builds currently expose the application binary only. Turn off 'erase all flash' or switch to a full bundled/upload bundle.";
     }
 
     if (serverBuildStatus !== "artifact_ready") {
@@ -2130,7 +2157,9 @@ function getFlashLockedReason({
       ? `No demo manifest is available for ${board.name}. Switch to "Server build" or "Upload custom build".`
       : flashSource === "server"
         ? "The server build artifact is not ready yet."
-        : "Upload bootloader, partitions, and firmware binaries to build a flasher manifest.";
+        : board.family === "ESP8266"
+          ? "Upload at least the firmware binary to build an ESP8266 flasher manifest."
+          : "Upload bootloader, partitions, and firmware binaries to build a flasher manifest.";
   }
 
   return null;
