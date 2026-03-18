@@ -1,6 +1,6 @@
 import type { PinMode } from "@/types/device";
 
-export type Esp32ChipFamily =
+export type ChipFamily =
   | "ESP32"
   | "ESP32-S2"
   | "ESP32-S3"
@@ -10,7 +10,8 @@ export type Esp32ChipFamily =
   | "ESP32-C6"
   | "ESP32-C61"
   | "ESP32-H2"
-  | "ESP32-P4";
+  | "ESP32-P4"
+  | "ESP8266";
 
 export interface BoardPin {
   id: string;
@@ -39,7 +40,7 @@ export interface DemoFirmwarePreset {
 export interface BoardProfile {
   id: string;
   name: string;
-  family: Esp32ChipFamily;
+  family: ChipFamily;
   chipLabel: string;
   description: string;
   layoutLabel: string;
@@ -58,7 +59,7 @@ export interface BoardProfile {
 }
 
 export interface BoardFamilyInfo {
-  id: Esp32ChipFamily;
+  id: ChipFamily;
   title: string;
   subtitle: string;
   accent: string;
@@ -88,6 +89,7 @@ const IO = ["INPUT", "OUTPUT", "PWM"] satisfies PinMode[];
 const IO_ADC = ["INPUT", "OUTPUT", "PWM", "ADC"] satisfies PinMode[];
 const INPUT_ADC = ["INPUT", "ADC"] satisfies PinMode[];
 const INPUT_ONLY = ["INPUT"] satisfies PinMode[];
+const ADC_ONLY = ["ADC"] satisfies PinMode[];
 const I2C_IO = ["INPUT", "OUTPUT", "I2C"] satisfies PinMode[];
 
 export const BOARD_FAMILIES: BoardFamilyInfo[] = [
@@ -100,6 +102,17 @@ export const BOARD_FAMILIES: BoardFamilyInfo[] = [
       core: "Dual-core Xtensa® LX6",
       clock: "240 MHz",
       wireless: "Wi-Fi 4, BLE 4.2",
+    },
+  },
+  {
+    id: "ESP8266",
+    title: "ESP8266",
+    subtitle: "The original compact Wi-Fi MCU that started it all.",
+    accent: "from-cyan-600 to-sky-700",
+    specs: {
+      core: "Single-core Tensilica L106",
+      clock: "80 MHz",
+      wireless: "Wi-Fi 4",
     },
   },
   {
@@ -433,6 +446,97 @@ const esp32P4Right = [
   pin(13, "GPIO13", "right", IO),
 ];
 
+const nodemcuLeft = [
+  pin(17, "A0", "left", ADC_ONLY, {
+    inputOnly: true,
+    note: "Single ADC input exposed as A0. Use ADC mode only.",
+  }),
+  pin(-1, "RSV", "left", [], { reserved: true }),
+  pin(-2, "RSV", "left", [], { reserved: true }),
+  pin(10, "SD3", "left", IO, { reserved: true, note: "Used for flash" }),
+  pin(9, "SD2", "left", IO, { reserved: true, note: "Used for flash" }),
+  pin(8, "SD1", "left", IO, { reserved: true, note: "Used for flash" }),
+  pin(11, "CMD", "left", IO, { reserved: true, note: "Used for flash" }),
+  pin(7, "SD0", "left", IO, { reserved: true, note: "Used for flash" }),
+  pin(6, "CLK", "left", IO, { reserved: true, note: "Used for flash" }),
+];
+
+const nodemcuRight = [
+  pin(16, "D0 (GPIO16)", "right", IO, { note: "General-purpose IO/PWM pin. Avoid using it for I2C." }),
+  pin(5, "D1 (GPIO5)", "right", I2C_IO, { note: "Often used as SCL" }),
+  pin(4, "D2 (GPIO4)", "right", I2C_IO, { note: "Often used as SDA" }),
+  pin(0, "D3 (GPIO0)", "right", IO, { bootSensitive: true, note: "Boot strap pin" }),
+  pin(2, "D4 (GPIO2)", "right", IO, { bootSensitive: true, note: "Built-in LED, Boot strap pin" }),
+  pin(14, "D5 (GPIO14)", "right", IO, { note: "SPI SCK" }),
+  pin(12, "D6 (GPIO12)", "right", IO, { note: "SPI MISO" }),
+  pin(13, "D7 (GPIO13)", "right", IO, { note: "SPI MOSI" }),
+  pin(15, "D8 (GPIO15)", "right", IO, { bootSensitive: true, note: "Boot strap pin" }),
+  pin(3, "RX (GPIO3)", "right", IO, { reserved: true, note: "UART RX for flashing / logs." }),
+  pin(1, "TX (GPIO1)", "right", IO, { reserved: true, note: "UART TX for flashing / boot logs." }),
+];
+
+const d1MiniLeft = [
+  pin(-1, "RST", "left", [], { reserved: true }),
+  pin(17, "A0", "left", ADC_ONLY, {
+    inputOnly: true,
+    note: "Single ADC input exposed as A0. Use ADC mode only.",
+  }),
+  pin(16, "D0 (GPIO16)", "left", IO, { note: "General-purpose IO/PWM pin. Avoid using it for I2C." }),
+  pin(14, "D5 (GPIO14)", "left", IO),
+  pin(12, "D6 (GPIO12)", "left", IO),
+  pin(13, "D7 (GPIO13)", "left", IO),
+  pin(15, "D8 (GPIO15)", "left", IO, { bootSensitive: true }),
+  pin(-2, "3V3", "left", [], { reserved: true }),
+];
+
+const d1MiniRight = [
+  pin(1, "TX (GPIO1)", "right", IO, { reserved: true, note: "UART TX for flashing / boot logs." }),
+  pin(3, "RX (GPIO3)", "right", IO, { reserved: true, note: "UART RX for flashing / logs." }),
+  pin(5, "D1 (GPIO5)", "right", I2C_IO),
+  pin(4, "D2 (GPIO4)", "right", I2C_IO),
+  pin(0, "D3 (GPIO0)", "right", IO, { bootSensitive: true }),
+  pin(2, "D4 (GPIO2)", "right", IO, { bootSensitive: true, note: "Built-in LED" }),
+  pin(-3, "GND", "right", [], { reserved: true }),
+  pin(-4, "5V", "right", [], { reserved: true }),
+];
+
+const d1MiniProLeft = [...d1MiniLeft];
+const d1MiniProRight = [...d1MiniRight];
+
+const esp01Left = [
+  pin(-1, "VCC", "left", [], { reserved: true }),
+  pin(-2, "RST", "left", [], { reserved: true }),
+  pin(-3, "CH_PD", "left", [], { reserved: true }),
+  pin(1, "TX (GPIO1)", "left", IO, { reserved: true, note: "UART TX for flashing / boot logs." }),
+];
+const esp01Right = [
+  pin(-4, "GND", "right", [], { reserved: true }),
+  pin(2, "GPIO2", "right", IO, { bootSensitive: true }),
+  pin(0, "GPIO0", "right", IO, { bootSensitive: true }),
+  pin(3, "RX (GPIO3)", "right", IO, { reserved: true, note: "UART RX for flashing / logs." }),
+];
+
+const esp12eLeft = [
+  pin(17, "A0", "left", ADC_ONLY, {
+    inputOnly: true,
+    note: "Single ADC input exposed as A0. Use ADC mode only.",
+  }),
+  pin(16, "GPIO16", "left", IO, { note: "General-purpose IO/PWM pin. Avoid using it for I2C." }),
+  pin(14, "GPIO14", "left", IO, { note: "SPI SCK on many carrier boards." }),
+  pin(12, "GPIO12", "left", IO, { note: "SPI MISO on many carrier boards." }),
+  pin(13, "GPIO13", "left", IO, { note: "SPI MOSI on many carrier boards." }),
+  pin(15, "GPIO15", "left", IO, { bootSensitive: true, note: "Boot strap pin." }),
+];
+
+const esp12eRight = [
+  pin(5, "GPIO5", "right", I2C_IO, { note: "Typical I2C SCL on ESP8266." }),
+  pin(4, "GPIO4", "right", I2C_IO, { note: "Typical I2C SDA on ESP8266." }),
+  pin(0, "GPIO0", "right", IO, { bootSensitive: true, note: "Boot strap pin." }),
+  pin(2, "GPIO2", "right", IO, { bootSensitive: true, note: "Boot strap pin." }),
+  pin(3, "GPIO3", "right", IO, { reserved: true, note: "UART RX for flashing / logs." }),
+  pin(1, "GPIO1", "right", IO, { reserved: true, note: "UART TX for flashing / boot logs." }),
+];
+
 export const BOARD_PROFILES: BoardProfile[] = [
   {
     id: "esp32-devkit-v1",
@@ -449,6 +553,100 @@ export const BOARD_PROFILES: BoardProfile[] = [
     leftPins: classicEsp32Left,
     rightPins: classicEsp32Right,
     i2cDefaults: { sda: 21, scl: 22 },
+  },
+  {
+    id: "nodemcuv2",
+    name: "NodeMCU (v2/v3)",
+    family: "ESP8266",
+    chipLabel: "ESP-12E / ESP8266",
+    description: "Classic widely-available generic ESP8266 dev board.",
+    layoutLabel: "NodeMCU Layout",
+    serialBridge: "USB-to-UART bridge (CP2102 / CH340)",
+    warnings: [
+      "GPIO 0, 2, 15 are boot strap pins. Do not hold them inappropriately during reset.",
+      "GPIO 1 and 3 stay reserved for serial flashing and boot logs.",
+    ],
+    leftPins: nodemcuLeft,
+    rightPins: nodemcuRight,
+    defaultCpuMhz: 80,
+    defaultFlashSize: "4MB",
+    defaultPsram: "None",
+    i2cDefaults: { sda: 4, scl: 5 },
+  },
+  {
+    id: "d1_mini",
+    name: "WeMos D1 mini",
+    family: "ESP8266",
+    chipLabel: "ESP-12S / ESP8266",
+    description: "Compact widely-available ESP8266 dev board.",
+    layoutLabel: "D1 Mini Layout",
+    serialBridge: "USB-to-UART bridge (CH340 / CP2104)",
+    warnings: [
+      "Boot strap pins must not be held low on startup.",
+      "GPIO 1 and 3 stay reserved for serial flashing and boot logs.",
+    ],
+    leftPins: d1MiniLeft,
+    rightPins: d1MiniRight,
+    defaultCpuMhz: 80,
+    defaultFlashSize: "4MB",
+    defaultPsram: "None",
+    i2cDefaults: { sda: 4, scl: 5 },
+  },
+  {
+    id: "d1_mini_pro",
+    name: "WeMos D1 mini Pro",
+    family: "ESP8266",
+    chipLabel: "ESP-12F / ESP8266",
+    description: "D1 mini Pro variant with larger flash and external antenna option.",
+    layoutLabel: "D1 Mini Pro Layout",
+    serialBridge: "USB-to-UART bridge (CH340 / CP2104)",
+    warnings: [
+      "Boot strap pins must not be held low on startup.",
+      "GPIO 1 and 3 stay reserved for serial flashing and boot logs.",
+    ],
+    leftPins: d1MiniProLeft,
+    rightPins: d1MiniProRight,
+    defaultCpuMhz: 80,
+    defaultFlashSize: "16MB",
+    defaultPsram: "None",
+    i2cDefaults: { sda: 4, scl: 5 },
+  },
+  {
+    id: "esp01_1m",
+    name: "ESP-01 / ESP-01S (1MB)",
+    family: "ESP8266",
+    chipLabel: "ESP8266",
+    description: "Barebones module with 1MB flash.",
+    layoutLabel: "2x4 pin header",
+    serialBridge: "External 3.3V USB-to-UART adapter required",
+    warnings: [
+      "Requires external USB adapter and manual boot state jumping to flash.",
+      "Only 4 GPIOs available, 2 of them are TX/RX.",
+    ],
+    leftPins: esp01Left,
+    rightPins: esp01Right,
+    defaultCpuMhz: 80,
+    defaultFlashSize: "1MB",
+    defaultPsram: "None",
+  },
+  {
+    id: "esp12e",
+    name: "ESP-12E / ESP-12F Module",
+    family: "ESP8266",
+    chipLabel: "ESP-12E/F",
+    description: "Module-grade ESP8266 profile for custom carrier boards and soldered projects.",
+    layoutLabel: "Module breakout layout",
+    serialBridge: "External 3.3V USB-to-UART adapter required",
+    warnings: [
+      "GPIO 0, 2, 15 are boot strap pins. Confirm pull resistors on your carrier board.",
+      "GPIO 1 and 3 stay reserved for serial flashing and boot logs.",
+    ],
+    leftPins: esp12eLeft,
+    rightPins: esp12eRight,
+    defaultCpuMhz: 80,
+    defaultFlashSize: "4MB",
+    defaultPsram: "None",
+    i2cDefaults: { sda: 4, scl: 5 },
   },
   {
     id: "esp32-wrover-devkit",
@@ -819,12 +1017,26 @@ export const COMPONENT_TEMPLATES: Array<{
     },
   ];
 
-export function getBoardFamily(id: Esp32ChipFamily): BoardFamilyInfo | undefined {
+export function getBoardFamily(id: ChipFamily): BoardFamilyInfo | undefined {
   return BOARD_FAMILIES.find((family) => family.id === id);
 }
 
+function normalizeBoardProfileId(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, "-")
+    .replace(/\s+/g, "-");
+}
+
 export function getBoardProfile(id: string): BoardProfile | undefined {
-  return BOARD_PROFILES.find((profile) => profile.id === id);
+  const normalized = normalizeBoardProfileId(id);
+  return BOARD_PROFILES.find(
+    (profile) =>
+      profile.id === id ||
+      normalizeBoardProfileId(profile.id) === normalized ||
+      normalizeBoardProfileId(profile.name) === normalized,
+  );
 }
 
 const BOARD_PROFILE_ALIASES: Record<string, string> = {
@@ -852,11 +1064,29 @@ const BOARD_PROFILE_ALIASES: Record<string, string> = {
   "esp32-h2-devkitm-1": "esp32-h2-devkitm-1",
   "esp32-p4": "esp32-p4-reference",
   "esp32-p4-reference": "esp32-p4-reference",
+  "esp8266": "nodemcuv2",
+  "esp8266-nodemcu": "nodemcuv2",
+  "nodemcu": "nodemcuv2",
+  "nodemcu-v2": "nodemcuv2",
+  "nodemcu-v3": "nodemcuv2",
+  "nodemcuv2": "nodemcuv2",
+  "node-mcu-v2-v3": "nodemcuv2",
+  "d1-mini": "d1_mini",
+  "wemos-d1-mini": "d1_mini",
+  "d1_mini": "d1_mini",
+  "d1-mini-pro": "d1_mini_pro",
+  "wemos-d1-mini-pro": "d1_mini_pro",
+  "d1_mini_pro": "d1_mini_pro",
+  "esp-01": "esp01_1m",
+  "esp-01s": "esp01_1m",
+  "esp01": "esp01_1m",
+  "esp01-1m": "esp01_1m",
+  "esp01_1m": "esp01_1m",
+  "esp-12e": "esp12e",
+  "esp-12f": "esp12e",
+  "esp12e": "esp12e",
+  "esp12f": "esp12e",
 };
-
-function normalizeBoardProfileId(value: string) {
-  return value.trim().toLowerCase().replace(/_/g, "-");
-}
 
 export function resolveBoardProfileId(id: string): string | undefined {
   const normalized = normalizeBoardProfileId(id);
@@ -870,6 +1100,21 @@ export function resolveBoardProfileId(id: string): string | undefined {
     return BOARD_PROFILE_ALIASES[normalized];
   }
 
+  if (normalized.includes("d1-mini-pro")) {
+    return "d1_mini_pro";
+  }
+  if (normalized.includes("d1-mini")) {
+    return "d1_mini";
+  }
+  if (normalized.includes("esp-01")) {
+    return "esp01_1m";
+  }
+  if (normalized.includes("esp-12")) {
+    return "esp12e";
+  }
+  if (normalized.includes("esp8266") || normalized.includes("nodemcu")) {
+    return "nodemcuv2";
+  }
   if (normalized.includes("c3")) {
     return "esp32-c3-devkitm-1";
   }

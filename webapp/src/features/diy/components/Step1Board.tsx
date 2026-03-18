@@ -1,4 +1,4 @@
-import { BOARD_PROFILES, BOARD_FAMILIES, type Esp32ChipFamily, type BoardProfile } from "../board-profiles";
+import { BOARD_PROFILES, BOARD_FAMILIES, type ChipFamily, type BoardProfile } from "../board-profiles";
 import type { ProjectSyncState } from "../types";
 import type { RoomRecord } from "@/lib/rooms";
 
@@ -9,8 +9,8 @@ interface Step1BoardProps {
     setWifiSsid: (val: string) => void;
     wifiPassword: string;
     setWifiPassword: (val: string) => void;
-    family: Esp32ChipFamily;
-    setFamily: (val: Esp32ChipFamily) => void;
+    family: ChipFamily;
+    setFamily: (val: ChipFamily) => void;
     setBoardId: (val: string) => void;
     onNext: () => void;
     familyOptions: typeof BOARD_PROFILES;
@@ -67,7 +67,7 @@ export function Step1Board({
     psramSize,
     setPsramSize,
 }: Step1BoardProps) {
-    const totalGpios = board.leftPins.length + board.rightPins.length;
+    const totalGpios = [...board.leftPins, ...board.rightPins].filter((pin) => pin.gpio >= 0).length;
     const defaultCpu = board.defaultCpuMhz || (board.family.includes("C2") ? 120 : board.family.includes("H2") ? 96 : board.family.includes("C3") || board.family.includes("C6") ? 160 : 240);
     const defaultFlash = board.defaultFlashSize || "4MB";
     const defaultPsram = board.defaultPsram || "None";

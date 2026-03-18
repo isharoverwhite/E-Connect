@@ -35,7 +35,27 @@ def _pin_rule(
 IO = ["INPUT", "OUTPUT", "PWM"]
 IO_ADC = ["INPUT", "OUTPUT", "PWM", "ADC"]
 INPUT_ADC = ["INPUT", "ADC"]
+ADC_ONLY = ["ADC"]
 I2C_IO = ["INPUT", "OUTPUT", "I2C"]
+
+
+def _esp8266_shared_pins(*, include_adc: bool) -> dict[int, PinRule]:
+    pins = {
+        0: _pin_rule(IO, boot_sensitive=True),
+        1: _pin_rule(IO, reserved=True),
+        2: _pin_rule(IO, boot_sensitive=True),
+        3: _pin_rule(IO, reserved=True),
+        4: _pin_rule(I2C_IO),
+        5: _pin_rule(I2C_IO),
+        12: _pin_rule(IO),
+        13: _pin_rule(IO),
+        14: _pin_rule(IO),
+        15: _pin_rule(IO, boot_sensitive=True),
+        16: _pin_rule(IO),
+    }
+    if include_adc:
+        pins[17] = _pin_rule(ADC_ONLY)
+    return pins
 
 
 BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
@@ -162,23 +182,40 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
             10: _pin_rule(IO_ADC),
         },
     ),
-    "esp8266": BoardDefinition(
-        canonical_id="esp8266",
+    "nodemcuv2": BoardDefinition(
+        canonical_id="nodemcuv2",
         platformio_board="nodemcuv2",
+        platform="espressif8266",
+        pins=_esp8266_shared_pins(include_adc=True),
+    ),
+    "d1_mini": BoardDefinition(
+        canonical_id="d1_mini",
+        platformio_board="d1_mini",
+        platform="espressif8266",
+        pins=_esp8266_shared_pins(include_adc=True),
+    ),
+    "d1_mini_pro": BoardDefinition(
+        canonical_id="d1_mini_pro",
+        platformio_board="d1_mini_pro",
+        platform="espressif8266",
+        pins=_esp8266_shared_pins(include_adc=True),
+    ),
+    "esp01_1m": BoardDefinition(
+        canonical_id="esp01_1m",
+        platformio_board="esp01_1m",
         platform="espressif8266",
         pins={
             0: _pin_rule(IO, boot_sensitive=True),
             1: _pin_rule(IO, reserved=True),
             2: _pin_rule(IO, boot_sensitive=True),
             3: _pin_rule(IO, reserved=True),
-            4: _pin_rule(I2C_IO),
-            5: _pin_rule(I2C_IO),
-            12: _pin_rule(IO),
-            13: _pin_rule(IO),
-            14: _pin_rule(IO),
-            15: _pin_rule(IO, boot_sensitive=True),
-            16: _pin_rule(IO),
         },
+    ),
+    "esp12e": BoardDefinition(
+        canonical_id="esp12e",
+        platformio_board="esp12e",
+        platform="espressif8266",
+        pins=_esp8266_shared_pins(include_adc=True),
     ),
 }
 
@@ -199,10 +236,28 @@ BOARD_ALIASES = {
     "esp32-s3-zero": "esp32-s3",
     "esp32-c2": "esp32-c2",
     "esp32-c2-devkitm-1": "esp32-c2",
-    "esp8266": "esp8266",
-    "esp8266-nodemcu": "esp8266",
-    "nodemcu": "esp8266",
-    "nodemcuv2": "esp8266",
+    "esp8266": "nodemcuv2",
+    "esp8266-nodemcu": "nodemcuv2",
+    "nodemcu": "nodemcuv2",
+    "nodemcu-v2": "nodemcuv2",
+    "nodemcu-v3": "nodemcuv2",
+    "nodemcuv2": "nodemcuv2",
+    "node-mcu-v2-v3": "nodemcuv2",
+    "d1-mini": "d1_mini",
+    "wemos-d1-mini": "d1_mini",
+    "d1_mini": "d1_mini",
+    "d1-mini-pro": "d1_mini_pro",
+    "wemos-d1-mini-pro": "d1_mini_pro",
+    "d1_mini_pro": "d1_mini_pro",
+    "esp-01": "esp01_1m",
+    "esp-01s": "esp01_1m",
+    "esp01": "esp01_1m",
+    "esp01-1m": "esp01_1m",
+    "esp01_1m": "esp01_1m",
+    "esp-12e": "esp12e",
+    "esp-12f": "esp12e",
+    "esp12e": "esp12e",
+    "esp12f": "esp12e",
 }
 
 
@@ -216,8 +271,16 @@ def resolve_board_definition(board_profile: str) -> BoardDefinition:
     if normalized in BOARD_ALIASES:
         return BOARD_DEFINITIONS[BOARD_ALIASES[normalized]]
 
+    if "d1-mini-pro" in normalized:
+        return BOARD_DEFINITIONS["d1_mini_pro"]
+    if "d1-mini" in normalized:
+        return BOARD_DEFINITIONS["d1_mini"]
+    if "esp-01" in normalized:
+        return BOARD_DEFINITIONS["esp01_1m"]
+    if "esp-12" in normalized:
+        return BOARD_DEFINITIONS["esp12e"]
     if "esp8266" in normalized or "nodemcu" in normalized:
-        return BOARD_DEFINITIONS["esp8266"]
+        return BOARD_DEFINITIONS["nodemcuv2"]
     if "c3" in normalized:
         return BOARD_DEFINITIONS["esp32-c3"]
     if "s3" in normalized:

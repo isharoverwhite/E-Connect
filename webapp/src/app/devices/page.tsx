@@ -208,7 +208,7 @@ export default function DevicesPage() {
                                 <h3 className="mb-2 text-lg font-semibold text-slate-900 dark:text-white">No devices found</h3>
                                 <p className="mx-auto mb-6 max-w-sm text-sm text-slate-500 dark:text-slate-400">
                                     {isAdmin
-                                        ? "Start with the SVG builder for ESP32-family boards or use discovery for already provisioned nodes."
+                                        ? "Start with the SVG builder for supported ESP32 or ESP8266 boards, or use discovery for already provisioned nodes."
                                         : "An administrator has not yet assigned any rooms with devices to your account."}
                                 </p>
                                 {isAdmin ? (

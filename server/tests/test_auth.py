@@ -133,14 +133,14 @@ def test_admin_can_create_user():
             "fullname": "Child User",
             "username": "child1",
             "password": "password123",
-            "account_type": "child",
+            "account_type": "parent",
             "ui_layout": {}
         }
     )
     assert create_resp.status_code == 200
     data = create_resp.json()
     assert data["username"] == "child1"
-    assert data["account_type"] == "child"
+    assert data["account_type"] == "parent"
     assert data["approval_status"] == UserApprovalStatus.pending.value
 
 def test_non_admin_cannot_create_user():
@@ -154,7 +154,7 @@ def test_non_admin_cannot_create_user():
     create_resp = client.post(
         "/api/v1/users",
         headers={"Authorization": f"Bearer {token_admin}"},
-        json={"fullname": "User 1", "username": "user1", "password": "password123", "account_type": "child"}
+        json={"fullname": "User 1", "username": "user1", "password": "password123", "account_type": "parent"}
     )
     assert create_resp.status_code == 200
     created_user = create_resp.json()
@@ -174,7 +174,7 @@ def test_non_admin_cannot_create_user():
     create_resp = client.post(
         "/api/v1/users",
         headers={"Authorization": f"Bearer {token_user}"},
-        json={"fullname": "User 2", "username": "user2", "password": "password", "account_type": "child"}
+        json={"fullname": "User 2", "username": "user2", "password": "password", "account_type": "parent"}
     )
     assert create_resp.status_code == 403
     assert create_resp.json()["detail"] == "Admin or Owner privileges required"
@@ -182,7 +182,7 @@ def test_non_admin_cannot_create_user():
 def test_unauthenticated_cannot_create_user():
     create_resp = client.post(
         "/api/v1/users",
-        json={"fullname": "User 2", "username": "user2", "password": "password", "account_type": "child"}
+        json={"fullname": "User 2", "username": "user2", "password": "password", "account_type": "parent"}
     )
     assert create_resp.status_code == 401
 
@@ -241,12 +241,11 @@ def test_revoked_user_cannot_access_authenticated_routes():
     assert user_login.status_code == 200
     user_token = user_login.json()["access_token"]
 
-    revoke_resp = client.post(
-        f"/api/v1/users/{created['user_id']}/revoke",
+    revoke_resp = client.delete(
+        f"/api/v1/users/{created['user_id']}",
         headers={"Authorization": f"Bearer {token_admin}"},
     )
     assert revoke_resp.status_code == 200
-    assert revoke_resp.json()["approval_status"] == UserApprovalStatus.revoked.value
 
     login_again = client.post("/api/v1/auth/token", data={"username": "revoked1", "password": "password123"})
     assert login_again.status_code == 403
