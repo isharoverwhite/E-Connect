@@ -1,31 +1,34 @@
 # Project Status
 
-## Current Phase: Test
+## Current Phase: Pending Final Acceptance
 
 ## Active Task
-- Task ID: UI-DEVICE-CONFIG-OTA-001
-- Objective: Admin-only OTA reconfiguration flow for DIY devices at /devices/[id]/config
-- Owner: Main
-- Started At: 2026-03-17 21:12:01+07:00
+- Task ID: TASK-DIY-FLASHER-002
+- Objective: Fix infinite loop when switching boards in DIY Flasher and close regression finding for Playwright spec.
+- Owner: Antigravity
+- Started At: 2026-03-18
 
 ## Gate Status
 - [x] G0 Task intake
 - [x] G1 Requirement approved
 - [x] G2 Design approved
 - [x] G3 Implementation complete
-- [x] G4 Test complete
+- [ ] G4 Test complete (Awaiting User Git Stage & Commit)
 
 ## Deliverables
-- PRD: Unchanged, tracked via CR
-- Design docs: Complete
-- Code: Complete
-- Verification: Complete (Backend & Compilation Passed, Live E2E skipped due to missing environments)
+- PRD: /Users/kiendinhtrung/Documents/GitHub/Final-Project/PRD.md
+- Design docs: Design unchanged
+- Code: 
+   - `webapp/src/app/devices/diy/page.tsx`
+   - `webapp/tests/test_board_switch_loop.spec.ts`
+   - `webapp/tests/test_delete_config.spec.ts`
+- Verification: Build/Lint PASS. Playwright run safely skips when env is missing. Verification based on static logic & CI readiness.
 
 ## Risks / Blockers
 - None
 
 ## Next Action
-- Await user approval on G4 Final Acceptance based on the checklist report.
+- Reassign or wait for next task.
 
 ## Last Updated
-2026-03-17 21:28:00+07:00
+2026-03-18 20:25:00
