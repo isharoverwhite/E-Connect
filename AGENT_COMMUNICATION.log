@@ -73,3 +73,7 @@
 [2026-03-18 20:45:00] Tester -> Main | Verification done: npm build/lint passed. Playwright skips without Env safely. Report aligned.
 [2026-03-18 21:18:35] Main -> Tester | Correction: "Regression spec committed" at 19:43:43 was false. The file is modified/untracked, not committed.
 [2026-03-18 21:19:00] Coder -> Main | Found and deleted test_ui.py (local artifact) to clear remaining hardcoded credentials from repo.
+[2026-03-18 21:50:00] Main -> Planner | Assess main push readiness and inspect repo/Git blockers
+[2026-03-18 22:18:00] Planner -> Coder | Fix background build task to use request DB bind in tests
+[2026-03-18 22:20:00] Coder -> Tester | Re-run webapp validation and targeted backend pytest after DB fix
+[2026-03-18 22:37:43] Tester -> Main | Push readiness PASS for HEAD; local dirty files remain out of scope
