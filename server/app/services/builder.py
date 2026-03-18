@@ -4,6 +4,7 @@ import socket
 import subprocess
 from datetime import datetime
 from pathlib import Path
+from typing import Callable
 
 from sqlalchemy.orm import Session
 
@@ -274,11 +275,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def build_firmware_task(job_id: str, warnings: list[str] | None = None):
+def build_firmware_task(
+    job_id: str,
+    warnings: list[str] | None = None,
+    session_factory: Callable[[], Session] = SessionLocal,
+):
     try:
         with open("/tmp/builder_debug.log", "a") as f:
             f.write(f"\\n--- Starting build_firmware_task for job_id={job_id} ---\\n")
-        db: Session = SessionLocal()
+        db: Session = session_factory()
         with open("/tmp/builder_debug.log", "a") as f:
             f.write(f"DB session created.\\n")
     except Exception as e:
