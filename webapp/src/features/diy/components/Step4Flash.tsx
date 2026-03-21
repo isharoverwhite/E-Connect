@@ -38,7 +38,6 @@ export interface Step4FlashProps {
     serialJobId: string | null;
     serialMessage: string;
     serialError: string | null;
-    onAcquireSerialLock: () => Promise<void>;
     onReleaseSerialLock: () => Promise<void>;
     onRefreshSerialStatus: () => Promise<void>;
     onLogPanelRef?: (element: HTMLDivElement | null) => void;
@@ -171,7 +170,6 @@ export function Step4Flash({
     serialJobId,
     serialMessage,
     serialError,
-    onAcquireSerialLock,
     onReleaseSerialLock,
     onRefreshSerialStatus,
     onLogPanelRef,
@@ -183,7 +181,6 @@ export function Step4Flash({
         manifestUrl,
         flashLockedReason,
         serverBuildStatus: serverBuild.status,
-        serialLocked,
     });
     const buildActionLabel = buildBusy
         ? "Queueing..."
@@ -202,7 +199,7 @@ export function Step4Flash({
                     Flash Firmware
                 </h1>
                 <p className="text-slate-500 dark:text-slate-400 text-lg">
-                    The SVG pin map is already persisted as a build config. From here we build the firmware, reserve serial access, and hand off a safe manifest to the browser flasher.
+                    The SVG pin map is already persisted as a build config. From here we build the firmware, clear any stale serial reservation, and hand off a safe manifest to the browser flasher.
                 </p>
             </div>
 
@@ -422,7 +419,7 @@ export function Step4Flash({
                         <div className="flex flex-col gap-2">
                             <h3 className="text-lg font-bold text-slate-900 dark:text-white">Serial Coordination</h3>
                             <p className="text-sm text-slate-600 dark:text-slate-400">
-                                Reserve the USB serial port before flashing so build jobs and browser serial sessions never compete for the same device.
+                                Successful server builds release the saved serial reservation automatically. If another serial session still holds this port, release it here before flashing.
                             </p>
                         </div>
 
@@ -439,16 +436,6 @@ export function Step4Flash({
                         </label>
 
                         <div className="mt-4 flex flex-wrap gap-2">
-                            <button
-                                onClick={onAcquireSerialLock}
-                                disabled={serialBusy}
-                                className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                            >
-                                <span className="material-symbols-outlined text-base">
-                                    {serialBusy ? "autorenew" : "usb"}
-                                </span>
-                                {serialBusy ? "Updating..." : serialLocked ? "Renew Lock" : "Reserve Port"}
-                            </button>
                             <button
                                 onClick={onRefreshSerialStatus}
                                 disabled={serialBusy}
@@ -469,10 +456,10 @@ export function Step4Flash({
 
                         <div className={`mt-4 rounded-xl border p-4 text-sm ${
                             serialLocked
-                                ? "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300"
-                                : "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-300"
+                                ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300"
+                                : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300"
                         }`}>
-                            <p className="font-semibold">{serialLocked ? "Port reserved" : "Port not reserved"}</p>
+                            <p className="font-semibold">{serialLocked ? "Port busy" : "Port free"}</p>
                             <p className="mt-1">{serialMessage}</p>
                             {serialJobId && (
                                 <p className="mt-2 font-mono text-xs uppercase tracking-[0.18em]">
@@ -495,7 +482,7 @@ export function Step4Flash({
                         <h3 className="text-lg font-bold text-slate-900 dark:text-white">Web Flasher</h3>
                         <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
                             <p className="mb-2">
-                                Ensure your device is connected via USB. The browser asks for serial permission only after the server-side guardrails confirm the manifest and port reservation are safe.
+                                Ensure your device is connected via USB. The browser asks for serial permission only after the server-side guardrails confirm the manifest is ready and the port is no longer occupied.
                             </p>
                             <label htmlFor="erase-all-flash" className="mt-4 flex cursor-pointer items-center gap-3">
                                 <input
@@ -652,14 +639,12 @@ function getReadinessModel({
     manifestUrl,
     flashLockedReason,
     serverBuildStatus,
-    serialLocked,
 }: {
     board: BoardProfile;
     flashSource: FlashSource;
     manifestUrl: string | null;
     flashLockedReason: string | null;
     serverBuildStatus: ServerBuildState["status"];
-    serialLocked: boolean;
 }) {
     if (serverBuildStatus === "flashed") {
         return {
@@ -689,19 +674,19 @@ function getReadinessModel({
                     subline: "Compiling generated code",
                 };
             case "artifact_ready":
-                if (serialLocked && manifestUrl && !flashLockedReason) {
+                if (manifestUrl && !flashLockedReason) {
                     return {
                         progress: 100,
                         headline: "Ready for web flashing",
-                        detail: "Artifact, manifest, and serial reservation are all in place. You can open the browser flasher below.",
-                        subline: "Guardrails satisfied",
+                        detail: "Artifact, manifest, and serial access are all in place. You can open the browser flasher below.",
+                        subline: "Port free for browser flashing",
                     };
                 }
 
                 return {
                     progress: 82,
                     headline: "Artifact ready",
-                    detail: flashLockedReason || "The `.bin` artifact is ready. Reserve the serial port to unlock browser flashing.",
+                    detail: flashLockedReason || "The `.bin` artifact is ready. Clear any lingering serial session to unlock browser flashing.",
                     subline: `Binary ready at ${toHex(getSingleBinaryOffset(board))}`,
                 };
             case "build_failed":
@@ -718,11 +703,11 @@ function getReadinessModel({
         }
     }
 
-    if (manifestUrl && serialLocked && !flashLockedReason) {
+    if (manifestUrl && !flashLockedReason) {
         return {
             progress: 100,
             headline: "Ready for web flashing",
-            detail: "The selected firmware bundle is ready and the serial port is reserved.",
+            detail: "The selected firmware bundle is ready and the serial port is free.",
             subline: "Manifest and port ready",
         };
     }
@@ -731,7 +716,7 @@ function getReadinessModel({
         return {
             progress: 76,
             headline: "Firmware bundle prepared",
-            detail: flashLockedReason || "Reserve the serial port to continue to the browser flasher.",
+            detail: flashLockedReason || "Clear the active serial session to continue to the browser flasher.",
             subline: "Waiting for serial coordination",
         };
     }

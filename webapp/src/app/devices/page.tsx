@@ -8,6 +8,7 @@ import { fetchDevices, deleteDevice } from "@/lib/api";
 import { DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
 import { useToast } from "@/components/ToastContext";
 import ConfirmModal from "@/components/ConfirmModal";
+import { useWebSocket } from "@/hooks/useWebSocket";
 
 export default function DevicesPage() {
     const { user, logout } = useAuth();
@@ -49,6 +50,22 @@ export default function DevicesPage() {
             cancelled = true;
         };
     }, []);
+
+    useWebSocket((event) => {
+        setDevices((prev) => {
+            return prev.map((device) => {
+                if (device.device_id === event.device_id) {
+                    if (event.type === "device_online") {
+                        return { ...device, conn_status: "online", last_seen: event.payload?.reported_at || new Date().toISOString() };
+                    }
+                    if (event.type === "device_offline") {
+                        return { ...device, conn_status: "offline" };
+                    }
+                }
+                return device;
+            });
+        });
+    });
 
     const handleDeleteClick = (deviceId: string, deviceName: string) => {
         setModalConfig({ isOpen: true, deviceId, deviceName });

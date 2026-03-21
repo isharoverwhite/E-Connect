@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, BackgroundTasks, Query
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, BackgroundTasks, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import or_
@@ -12,8 +12,10 @@ import os
 import uuid
 from datetime import datetime, timedelta
 import anyio
+import asyncio
 
 from .mqtt import mqtt_manager
+from .ws_manager import manager as ws_manager
 
 from .models import (
     UserCreate, UserResponse, Token, TokenData, InitialServerRequest,
@@ -36,6 +38,7 @@ from .database import get_db
 from .auth import verify_password, get_password_hash, create_access_token, create_ota_token, verify_ota_token, SECRET_KEY, ALGORITHM
 from .services.builder import build_firmware_task, get_durable_artifact_path
 from .services.device_registration import (
+    build_pairing_request_event_payload,
     is_mqtt_managed_device,
     mqtt_only_error,
     register_device_payload,
@@ -118,6 +121,18 @@ def _expire_device_if_stale(db: Session, device: Device, *, reference_time: date
             ),
         )
     )
+
+    # Broadcast offline event via WebSocket dynamically instead of waiting for full restart
+    try:
+        ws_manager.broadcast_device_event_sync(
+            "device_offline",
+            device.device_id,
+            device.room_id,
+            {"reason": "heartbeat_timeout"}
+        )
+    except Exception:
+        pass
+        
     return True
 
 
@@ -417,6 +432,7 @@ def _serialize_device_availability(device: Device) -> dict[str, Any]:
         "room_name": getattr(device, "room_name", None),
         "auth_status": device.auth_status,
         "conn_status": device.conn_status,
+        "pairing_requested_at": device.pairing_requested_at,
     }
 
 
@@ -479,6 +495,43 @@ async def get_admin_user(current_user: User = Depends(get_current_user)):
     if not _is_room_admin(current_user):
         raise HTTPException(status_code=403, detail="Admin or Owner privileges required")
     return current_user
+
+# --- WebSocket Endpoints ---
+
+@router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(None), db: Session = Depends(get_db)):
+    if not token:
+        await websocket.close(code=1008, reason="Missing token")
+        return
+        
+    from jose import jwt, JWTError
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("sub")
+        if not username:
+            raise ValueError("Invalid sub in token")
+    except (JWTError, ValueError):
+        await websocket.close(code=1008, reason="Invalid token")
+        return
+        
+    user = db.query(User).filter(User.username == username).first()
+    if not user or user.approval_status != SqlUserApprovalStatus.approved:
+        await websocket.close(code=1008, reason="User missing or unapproved")
+        return
+        
+    acc_type_val = user.account_type.value if hasattr(user.account_type, "value") else str(user.account_type)
+    accessible_room_ids = _get_accessible_room_ids_for_user(db, user) if acc_type_val != "admin" else []
+
+    await ws_manager.connect(websocket, user.user_id, acc_type_val, accessible_room_ids)
+    try:
+        while True:
+            # We don't expect much client->server WS text, but we need to keep the loop
+            # alive and wait for disconnects
+            data = await websocket.receive_text()
+            if data == "ping":
+                await websocket.send_text("pong")
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
 
 # --- Auth Endpoints ---
 
@@ -828,18 +881,29 @@ async def register_device_handshake(
     HTTP handshake remains available only for legacy discovery paths.
     MQTT-managed DIY firmware must register over MQTT.
     """
-    if (
-        payload.mode == DeviceMode.library
-        or payload.project_id is not None
-        or payload.secret_key is not None
-    ):
+    if payload.mode == DeviceMode.library:
         raise mqtt_only_error(
             "DIY firmware registration must be published to the MQTT register topic."
         )
 
+    if payload.mode == DeviceMode.no_code:
+        if not payload.mac_address or not payload.name:
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "validation", "message": "mac_address and name are required for no-code mode"}
+            )
+
     result = register_device_payload(db, payload)
     db.commit()
     db.refresh(result.device)
+
+    if result.pairing_requested:
+        ws_manager.broadcast_device_event_sync(
+            "pairing_requested",
+            result.device.device_id,
+            None,
+            build_pairing_request_event_payload(result.device),
+        )
 
     _attach_room_name(result.device)
     response = DeviceHandshakeResponse.model_validate(result.device)
@@ -858,6 +922,7 @@ async def approve_device(
     room = _get_room_in_household_or_404(db, admin, payload.room_id)
     
     device.auth_status = AuthStatus.approved
+    device.pairing_requested_at = None
     device.room_id = room.room_id
     owner = db.query(User).filter(User.user_id == device.owner_id).first()
     _sync_user_dashboard_widgets(owner or admin, device)
@@ -875,6 +940,7 @@ async def reject_device(device_id: str, db: Session = Depends(get_db), admin: Us
         raise HTTPException(status_code=404, detail="Device not found")
         
     device.auth_status = AuthStatus.rejected
+    device.pairing_requested_at = None
     db.commit()
     return {"status": "rejected"}
 
@@ -884,6 +950,8 @@ def _load_visible_devices(
     requested_status: AuthStatus,
 ) -> list[Device]:
     query = db.query(Device).filter(Device.auth_status == requested_status)
+    if requested_status == AuthStatus.pending:
+        query = query.filter(Device.pairing_requested_at.isnot(None)).order_by(Device.pairing_requested_at.desc())
     household_id = resolve_household_id_for_user(db, current_user)
     household_member_ids = _get_household_member_ids(db, household_id)
     household_room_ids = _get_household_room_ids(db, household_id)
@@ -1020,6 +1088,7 @@ async def delete_device(device_id: str, db: Session = Depends(get_db), current_u
         
     owner = db.query(User).filter(User.user_id == device.owner_id).first()
     device.auth_status = AuthStatus.pending
+    device.pairing_requested_at = None
     _remove_device_widgets(owner, device.device_id)
     db.commit()
     return {"status": "unpaired", "detail": f"Device {device_id} removed from the dashboard and is ready to pair again."}
@@ -1744,47 +1813,49 @@ async def trigger_automation(automation_id: int, db: Session = Depends(get_db), 
     # Execution logic
     auto.last_triggered = datetime.utcnow()
     
-    # Capture output via custom print instead of global stdout hijacking
-    output_buffer = io.StringIO()
-    def custom_print(*args, **kwargs):
-        kwargs['file'] = output_buffer
-        print(*args, **kwargs)
-    
     status = ExecutionStatus.success
     error_msg = None
+    log_output = ""
     
-    def run_script(code, env):
-        exec(code, {}, env)
-
+    import tempfile
+    import os
+    import asyncio
+    
+    import subprocess
+    
     try:
-        local_env = {
-            "device_id": None, # Provided if triggered via event
-            "print": custom_print,
-        }
-        
-        # Run in a separate thread to avoid blocking the event loop
-        print(f"DEBUG: Starting automation script {auto.id} in thread")
+        print(f"DEBUG: Starting automation script {auto.id} in process")
+        fd, script_path = tempfile.mkstemp(suffix=".py")
+        with os.fdopen(fd, 'w') as f:
+            f.write("device_id = None\n")
+            f.write(auto.script_code)
+            
         try:
-            with anyio.fail_after(30):
-                await anyio.to_thread.run_sync(run_script, auto.script_code, local_env)
-            print(f"DEBUG: Automation script {auto.id} finished successfully")
-        except (TimeoutError, anyio.get_cancelled_exc_class()):
-            status = ExecutionStatus.failed
-            error_msg = "Execution timed out after 30 seconds"
-        except Exception:
-            status = ExecutionStatus.failed
-            error_msg = traceback.format_exc()
+            process = await asyncio.create_subprocess_exec(
+                sys.executable, script_path,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
+            )
+            
+            try:
+                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
+                log_output = stdout.decode('utf-8', errors='replace')
+                if process.returncode != 0:
+                    status = ExecutionStatus.failed
+                    error_msg = stderr.decode('utf-8', errors='replace')
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.communicate()
+                status = ExecutionStatus.failed
+                error_msg = "Execution timed out after 30 seconds"
+                
+            print(f"DEBUG: Automation script {auto.id} finished")
+        finally:
+            if os.path.exists(script_path):
+                os.unlink(script_path)
     except Exception as e:
         status = ExecutionStatus.failed
         error_msg = f"Setup error: {traceback.format_exc()}"
-    finally:
-        pass
-        
-    log_output = output_buffer.getvalue()
-    if len(log_output) > 2000:
-        log_output = log_output[:2000] + "...(truncated)"
-    if not log_output:
-        log_output = None
         
     execution_log = AutomationExecutionLog(
         automation_id=auto.id,

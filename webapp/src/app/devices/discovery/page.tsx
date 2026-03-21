@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import { approveDiscoveredDevice, fetchDevices } from "@/lib/api";
 import { createRoom, fetchRooms, type RoomRecord } from "@/lib/rooms";
 import { DeviceConfig } from "@/types/device";
@@ -21,6 +22,12 @@ export default function DeviceDiscovery() {
     const router = useRouter();
     const { user } = useAuth();
     const isAdmin = user?.account_type === "admin";
+
+    const refreshPendingDevices = async () => {
+        const pending = (await fetchDevices({ authStatus: "pending" })) as DeviceConfig[];
+        setPendingDevices(pending);
+        setScanState(pending.length > 0 ? "found" : "idle");
+    };
 
     useEffect(() => {
         if (!isAdmin) {
@@ -81,7 +88,12 @@ export default function DeviceDiscovery() {
                 if (pending.length > 0) {
                     setPendingDevices(pending);
                     setScanState("found");
-                } else if (scanState === "scanning") {
+                } else {
+                    setPendingDevices([]);
+                    if (scanState !== "scanning") {
+                        setScanState("idle");
+                        return;
+                    }
                     timeoutId = window.setTimeout(() => setScanState("idle"), 3000);
                 }
             } catch (error) {
@@ -101,6 +113,14 @@ export default function DeviceDiscovery() {
             }
         };
     }, [isAdmin, scanState]);
+
+    useWebSocket((event) => {
+        if (!isAdmin || event.type !== "pairing_requested") {
+            return;
+        }
+
+        void refreshPendingDevices();
+    });
 
     const handleCreateRoom = async () => {
         if (!newRoomName.trim()) {

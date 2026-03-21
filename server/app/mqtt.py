@@ -13,13 +13,16 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+import asyncio
 from app.database import SessionLocal
 from app.models import DeviceRegister
 from app.services.device_registration import (
+    build_pairing_request_event_payload,
     build_registration_ack_payload,
     register_device_payload,
 )
-from app.sql_models import ConnStatus, Device, DeviceHistory, EventType
+from app.sql_models import AuthStatus, ConnStatus, Device, DeviceHistory, EventType
+from app.ws_manager import manager as ws_manager
 
 load_dotenv()
 
@@ -119,6 +122,9 @@ class MQTTClientManager:
     def command_topic(self, device_id: str) -> str:
         return f"econnect/{MQTT_NAMESPACE}/device/{device_id}/command"
 
+    def state_ack_topic(self, device_id: str) -> str:
+        return f"econnect/{MQTT_NAMESPACE}/device/{device_id}/state/ack"
+
     def on_connect(self, client, userdata, flags, reason_code, properties=None):
         if reason_code.is_failure:
             logger.error("Failed to connect, return code %s", reason_code)
@@ -177,6 +183,38 @@ class MQTTClientManager:
                     "Ignoring MQTT state for unknown device %s",
                     device_id,
                 )
+                self.publish_json(
+                    self.state_ack_topic(device_id),
+                    {
+                        "status": "re_pair_required",
+                        "device_id": device_id,
+                        "reason": "unknown_device",
+                        "message": "Device UUID is not registered on the server.",
+                    },
+                    wait_for_publish=False,
+                )
+                return
+
+            auth_status = (
+                device.auth_status.value if hasattr(device.auth_status, "value") else str(device.auth_status)
+            )
+            if device.auth_status != AuthStatus.approved:
+                logger.info(
+                    "Requesting re-pair for device %s because auth_status=%s",
+                    device_id,
+                    auth_status,
+                )
+                self.publish_json(
+                    self.state_ack_topic(device_id),
+                    {
+                        "status": "re_pair_required",
+                        "device_id": device_id,
+                        "reason": "not_approved",
+                        "auth_status": auth_status,
+                        "message": "Device is no longer approved and must pair again.",
+                    },
+                    wait_for_publish=False,
+                )
                 return
 
             observed_at = datetime.utcnow()
@@ -207,6 +245,16 @@ class MQTTClientManager:
                     )
                 )
 
+                try:
+                    ws_manager.broadcast_device_event_sync(
+                        "device_online",
+                        device_id,
+                        device.room_id,
+                        {"reason": "mqtt_state"}
+                    )
+                except Exception:
+                    pass
+
             db.add(
                 DeviceHistory(
                     device_id=device_id,
@@ -214,6 +262,16 @@ class MQTTClientManager:
                     payload=payload_str,
                 )
             )
+
+            try:
+                ws_manager.broadcast_device_event_sync(
+                    "device_state",
+                    device_id,
+                    device.room_id,
+                    payload_json or {}
+                )
+            except Exception:
+                pass
 
             # Check if this is an OTA status report from the device
             if isinstance(payload_json, dict) and payload_json.get("event") == "ota_status":
@@ -264,6 +322,14 @@ class MQTTClientManager:
             result = register_device_payload(db, payload)
             db.commit()
             db.refresh(result.device)
+
+            if result.pairing_requested:
+                ws_manager.broadcast_device_event_sync(
+                    "pairing_requested",
+                    result.device.device_id,
+                    None,
+                    build_pairing_request_event_payload(result.device),
+                )
             
             if result.device.firmware_version:
                 _reconcile_ota_jobs(db, result.device, result.device.firmware_version)
