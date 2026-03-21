@@ -1,0 +1,41 @@
+# Local AI working artifacts
+/antigravity-prompts/
+/ANTIGRAVITY_*PROMPT.md
+
+# Python caches and local environments
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+
+# Local runtime state and diagnostics
+*.db
+*.sqlite3
+*.log
+
+# Scratch tests and debug helpers kept outside the real test suites
+/test_*.py
+/server/test_*.py
+/server/debug_*.py
+/server/check_*.py
+/test_server/node_modules/
+/test_server/*.bak
+
+# Browser/MCP captures and temporary debug exports
+/.playwright-mcp/
+/temp_mcp_config.json
+/current_flash_ui.md
+/full_page.md
+/dialog.html
+/toast.html
+/econnect_login.png
+/webapp/*.html
+/webapp/*.png
+/webapp/*.log
+
+# Agent-generated planning docs; keep canonical design baseline files trackable
+/design/flows/TASK-PACKET-*.md
+/design/flows/REPORT_*.md
+/design/change-requests/CR-*.md
