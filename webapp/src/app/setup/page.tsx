@@ -13,6 +13,7 @@ export default function SetupPage() {
     const [fullname, setFullname] = useState("");
     const [householdName, setHouseholdName] = useState("");
     const [password, setPassword] = useState("");
+    const [repassword, setRepassword] = useState("");
 
     const [error, setError] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -47,6 +48,12 @@ export default function SetupPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
+
+        if (password !== repassword) {
+            setError("Passwords do not match");
+            return;
+        }
+
         setIsLoading(true);
 
         try {
@@ -54,7 +61,7 @@ export default function SetupPage() {
                 username,
                 password,
                 fullname,
-                householdName: householdName,
+                householdName,
                 ui_layout: {}
             });
             // Success, send them to login
@@ -119,6 +126,22 @@ export default function SetupPage() {
 
                     <form onSubmit={handleSubmit} className="w-full space-y-4">
 
+                        {/* Household Name */}
+                        <div>
+                            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wide">Household Name</label>
+                            <div className="relative">
+                                <span className="material-icons-round absolute left-3 top-2.5 text-slate-400 text-[18px]">home</span>
+                                <input
+                                    type="text"
+                                    value={householdName}
+                                    onChange={(e) => setHouseholdName(e.target.value)}
+                                    className="w-full bg-slate-50 dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                                    placeholder="My Smart Home"
+                                    required
+                                />
+                            </div>
+                        </div>
+
                         {/* Fullname */}
                         <div>
                             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wide">Full Name</label>
@@ -151,22 +174,6 @@ export default function SetupPage() {
                             </div>
                         </div>
 
-                        {/* Household Name */}
-                        <div>
-                            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wide">Household Name</label>
-                            <div className="relative">
-                                <span className="material-icons-round absolute left-3 top-2.5 text-slate-400 text-[18px]">home</span>
-                                <input
-                                    type="text"
-                                    value={householdName}
-                                    onChange={(e) => setHouseholdName(e.target.value)}
-                                    className="w-full bg-slate-50 dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-                                    placeholder="My Smart Home"
-                                    required
-                                />
-                            </div>
-                        </div>
-
                         {/* Password */}
                         <div>
                             <div className="flex justify-between items-center mb-1.5">
@@ -178,6 +185,25 @@ export default function SetupPage() {
                                     type="password"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
+                                    className="w-full bg-slate-50 dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                                    placeholder="••••••••"
+                                    required
+                                    minLength={8}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Re-enter Password */}
+                        <div>
+                            <div className="flex justify-between items-center mb-1.5">
+                                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">Re-Enter Password</label>
+                            </div>
+                            <div className="relative">
+                                <span className="material-icons-round absolute left-3 top-2.5 text-slate-400 text-[18px]">lock</span>
+                                <input
+                                    type="password"
+                                    value={repassword}
+                                    onChange={(e) => setRepassword(e.target.value)}
                                     className="w-full bg-slate-50 dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                                     placeholder="••••••••"
                                     required
