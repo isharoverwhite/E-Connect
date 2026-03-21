@@ -2,14 +2,16 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { fetchDashboardDevices, sendDeviceCommand } from "@/lib/api";
+import { fetchDashboardDevices, fetchDevices, sendDeviceCommand } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { DeviceConfig } from "@/types/device";
+import { useWebSocket } from "@/hooks/useWebSocket";
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
   const router = useRouter();
   const [devices, setDevices] = useState<DeviceConfig[]>([]);
+  const [pairingRequests, setPairingRequests] = useState<DeviceConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNotifications, setShowNotifications] = useState(false);
   const isAdmin = user?.account_type === "admin";
@@ -18,21 +20,48 @@ export default function Dashboard() {
     let active = true;
 
     async function load() {
-      const data = await fetchDashboardDevices();
+      const [dashboardDevices, pendingRequests] = await Promise.all([
+        fetchDashboardDevices(),
+        isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
+      ]);
       if (!active) return;
-      setDevices(data);
+      setDevices(dashboardDevices);
+      setPairingRequests((pendingRequests as DeviceConfig[]) || []);
       setLoading(false);
     }
 
-    load();
-
-    const intervalId = window.setInterval(load, 3000);
+    void load();
 
     return () => {
       active = false;
-      window.clearInterval(intervalId);
     };
-  }, []);
+  }, [isAdmin]);
+
+  useWebSocket((event) => {
+    if (event.type === "pairing_requested" && isAdmin) {
+      void fetchDevices({ authStatus: "pending" }).then((pending) => {
+        setPairingRequests(pending as DeviceConfig[]);
+      });
+      return;
+    }
+
+    setDevices((prev) => {
+      return prev.map((device) => {
+        if (device.device_id === event.device_id) {
+          if (event.type === "device_online") {
+            return { ...device, conn_status: "online", last_seen: event.payload?.reported_at || new Date().toISOString() };
+          }
+          if (event.type === "device_offline") {
+            return { ...device, conn_status: "offline" };
+          }
+          if (event.type === "device_state") {
+            return { ...device, runtime_state: event.payload, last_seen: new Date().toISOString() };
+          }
+        }
+        return device;
+      });
+    });
+  });
 
   const isDeviceOnline = (d: DeviceConfig) => {
     return d.auth_status === "approved" && d.conn_status === "online";
@@ -45,7 +74,7 @@ export default function Dashboard() {
   const newThisWeek = devices.filter(d => d.created_at && new Date(d.created_at) > oneWeekAgo).length;
 
   const offlineDevices = devices.filter(d => !isDeviceOnline(d) && d.auth_status === "approved");
-  const alertCount = offlineDevices.length;
+  const alertCount = offlineDevices.length + pairingRequests.length;
 
   return (
     <div className="bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-200 font-sans h-screen flex overflow-hidden selection:bg-primary selection:text-white">
@@ -129,7 +158,7 @@ export default function Dashboard() {
                     <button className="text-xs font-medium text-primary hover:text-blue-600 transition-colors">Mark all read</button>
                   </div>
                   <div className="max-h-[32rem] overflow-y-auto">
-                    {isAdmin ? (
+                    {isAdmin && pairingRequests.length > 0 ? (
                       <div className="p-4 bg-blue-50/40 dark:bg-blue-900/10 border-b border-slate-100 dark:border-slate-700/50">
                         <div className="flex gap-3">
                           <div className="flex-shrink-0 mt-1">
@@ -140,9 +169,15 @@ export default function Dashboard() {
                           <div className="flex-1">
                             <div className="flex justify-between items-start mb-1">
                               <p className="text-sm font-semibold text-slate-900 dark:text-white">New Device Found</p>
-                              <span className="text-[10px] font-bold tracking-wide text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-500/20 px-1.5 py-0.5 rounded uppercase">New</span>
+                              <span className="text-[10px] font-bold tracking-wide text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-500/20 px-1.5 py-0.5 rounded uppercase">
+                                {pairingRequests.length} pending
+                              </span>
                             </div>
-                            <p className="text-xs text-slate-600 dark:text-slate-400 mb-3">Pending devices are available in discovery when a node handshakes with this instance.</p>
+                            <p className="text-xs text-slate-600 dark:text-slate-400 mb-3">
+                              {pairingRequests[0]?.name
+                                ? `"${pairingRequests[0].name}" requested pairing.`
+                                : "A board requested pairing and is waiting in discovery."}
+                            </p>
                             <div className="flex gap-2">
                               <button
                                 onClick={() => router.push("/devices/discovery")}

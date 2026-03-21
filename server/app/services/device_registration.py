@@ -29,6 +29,7 @@ class DeviceRegistrationResult:
     device: Device
     secret_verified: bool
     project_id: str | None
+    pairing_requested: bool
 
 
 def build_device_topics(device_id: str) -> tuple[str, str]:
@@ -123,10 +124,29 @@ def _raise_secure_pairing_error(message: str) -> None:
     )
 
 
+def build_pairing_request_event_payload(device: Device) -> dict[str, Any]:
+    auth_status = device.auth_status.value if hasattr(device.auth_status, "value") else str(device.auth_status)
+    conn_status = device.conn_status.value if hasattr(device.conn_status, "value") else str(device.conn_status)
+    mode = device.mode.value if hasattr(device.mode, "value") else str(device.mode)
+    return {
+        "name": device.name,
+        "mode": mode,
+        "auth_status": auth_status,
+        "conn_status": conn_status,
+        "mac_address": device.mac_address,
+        "pairing_requested_at": (
+            device.pairing_requested_at.isoformat() if device.pairing_requested_at else None
+        ),
+    }
+
+
 def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegistrationResult:
     device = None
     secure_project = None
     secret_verified = False
+    pairing_requested = False
+    requested_at = datetime.utcnow()
+    force_pairing_request = bool(payload.force_pairing_request)
 
     if payload.device_id:
         device = db.query(Device).filter(Device.device_id == payload.device_id).first()
@@ -164,6 +184,8 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
     if not device and not secret_verified:
         device = db.query(Device).filter(Device.mac_address == payload.mac_address).first()
 
+    existing_auth_status = device.auth_status if device else None
+
     admin = db.query(User).filter(User.account_type == AccountType.admin).first()
     if not admin:
         raise HTTPException(status_code=400, detail="System not initialized. No admin found.")
@@ -173,22 +195,25 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
 
     if not device:
         secure_owner_id = secure_project.user_id if secure_project else admin.user_id
+        should_start_pending = force_pairing_request or not secret_verified
         device = Device(
             device_id=resolved_device_id,
             mac_address=payload.mac_address,
             name=payload.name,
             room_id=secure_project.room_id if secure_project else None,
             owner_id=secure_owner_id,
-            auth_status=AuthStatus.approved if secret_verified else AuthStatus.pending,
+            auth_status=AuthStatus.pending if should_start_pending else AuthStatus.approved,
             conn_status=ConnStatus.online,
             mode=payload.mode,
             firmware_version=payload.firmware_version,
             ip_address=payload.ip_address,
             last_seen=datetime.utcnow(),
+            pairing_requested_at=requested_at if should_start_pending else None,
             topic_pub=topic_pub,
             topic_sub=topic_sub,
             provisioning_project_id=secure_project.id if secure_project else None,
         )
+        pairing_requested = should_start_pending
         db.add(device)
         db.flush()
     else:
@@ -206,10 +231,17 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
             device.room_id = (
                 secure_project.room_id if secure_project and secure_project.room_id else device.room_id
             )
-            device.auth_status = AuthStatus.approved
             device.provisioning_project_id = (
                 secure_project.id if secure_project else device.provisioning_project_id
             )
+
+        if existing_auth_status == AuthStatus.approved and not force_pairing_request:
+            device.auth_status = AuthStatus.approved
+            device.pairing_requested_at = None
+        else:
+            device.auth_status = AuthStatus.pending
+            device.pairing_requested_at = requested_at
+            pairing_requested = True
 
     db.query(PinConfiguration).filter(PinConfiguration.device_id == device.device_id).delete()
 
@@ -229,7 +261,7 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
     db.flush()
     db.refresh(device)
 
-    if secret_verified:
+    if device.auth_status == AuthStatus.approved:
         owner = db.query(User).filter(User.user_id == device.owner_id).first()
         if owner:
             sync_user_dashboard_widgets(owner, device)
@@ -240,6 +272,7 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
         device=device,
         secret_verified=secret_verified,
         project_id=secure_project.id if secure_project else device.provisioning_project_id,
+        pairing_requested=pairing_requested,
     )
 
 

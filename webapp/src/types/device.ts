@@ -9,6 +9,7 @@ export interface DeviceAvailabilitySummary {
     room_name?: string | null;
     auth_status: AuthStatus;
     conn_status: ConnStatus;
+    pairing_requested_at?: string | null;
 }
 
 export interface PinConfig {
@@ -44,6 +45,7 @@ export interface DeviceConfig extends DeviceAvailabilitySummary {
     owner_id?: number;
     created_at?: string;
     last_seen?: string;
+    pairing_requested_at?: string | null;
     last_state?: {
         kind?: string;
         pin?: number;

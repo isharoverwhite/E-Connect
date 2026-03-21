@@ -1,3 +1,5 @@
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -5,11 +7,13 @@ from sqlalchemy.orm import sessionmaker
 
 from app.auth import create_access_token
 from app.database import Base, get_db
+from app.services.provisioning import build_project_firmware_identity
 from app.sql_models import (
     AccountType,
     AuthStatus,
     ConnStatus,
     Device,
+    DiyProject,
     Household,
     HouseholdMembership,
     HouseholdRole,
@@ -171,6 +175,24 @@ def _approve_device_response(headers: dict[str, str], *, device_id: str, room_id
     )
 
 
+def _insert_diy_project(*, user_id: int, room_id: int) -> dict[str, str]:
+    db = TestingSessionLocal()
+    project_id = str(uuid.uuid4())
+    project = DiyProject(
+        id=project_id,
+        user_id=user_id,
+        room_id=room_id,
+        name="Recovery Project",
+        board_profile="esp32-devkit-v1",
+        config={"pins": []},
+    )
+    db.add(project)
+    db.commit()
+    db.close()
+    device_id, secret_key = build_project_firmware_identity(project_id)
+    return {"project_id": project_id, "device_id": device_id, "secret_key": secret_key}
+
+
 @pytest.fixture(autouse=True)
 def reset_state():
     app.dependency_overrides[get_db] = override_get_db
@@ -280,3 +302,98 @@ def test_non_admin_cannot_create_project_delete_device_or_pair():
         room_id=room["room_id"],
     )
     assert pair_response.status_code == 403
+
+
+def test_unpair_stays_hidden_until_board_requests_pairing_again():
+    household, admin, _member, _observer = _seed_household()
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+
+    room = _create_room(admin_headers, name="Workshop")
+    project = _insert_diy_project(user_id=admin["user_id"], room_id=room["room_id"])
+
+    handshake_payload = {
+        "device_id": project["device_id"],
+        "project_id": project["project_id"],
+        "secret_key": project["secret_key"],
+        "mac_address": "AA:BB:CC:11:22:33",
+        "name": "Workshop Controller",
+        "mode": "no-code",
+        "firmware_version": "build-12345678",
+        "pins": [],
+    }
+
+    first_handshake = client.post("/api/v1/config", json=handshake_payload)
+    assert first_handshake.status_code == 200, first_handshake.text
+    assert first_handshake.json()["auth_status"] == "approved"
+
+    delete_response = client.delete(
+        f"/api/v1/device/{project['device_id']}",
+        headers=admin_headers,
+    )
+    assert delete_response.status_code == 200, delete_response.text
+
+    pending_after_unpair = client.get(
+        "/api/v1/devices?auth_status=pending",
+        headers=admin_headers,
+    )
+    assert pending_after_unpair.status_code == 200
+    assert pending_after_unpair.json() == []
+
+    second_handshake = client.post("/api/v1/config", json=handshake_payload)
+    assert second_handshake.status_code == 200, second_handshake.text
+    assert second_handshake.json()["auth_status"] == "pending"
+    assert second_handshake.json()["pairing_requested_at"] is not None
+
+    pending_after_retry = client.get(
+        "/api/v1/devices?auth_status=pending",
+        headers=admin_headers,
+    )
+    assert pending_after_retry.status_code == 200
+    pending_devices = pending_after_retry.json()
+    assert len(pending_devices) == 1
+    assert pending_devices[0]["device_id"] == project["device_id"]
+    assert pending_devices[0]["pairing_requested_at"] is not None
+
+
+def test_force_pairing_request_keeps_unknown_secure_device_pending():
+    household, admin, _member, _observer = _seed_household()
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+
+    room = _create_room(admin_headers, name="Recovery Lab")
+    project = _insert_diy_project(user_id=admin["user_id"], room_id=room["room_id"])
+
+    handshake_payload = {
+        "device_id": project["device_id"],
+        "project_id": project["project_id"],
+        "secret_key": project["secret_key"],
+        "force_pairing_request": True,
+        "mac_address": "AA:BB:CC:44:55:66",
+        "name": "Recovered Board",
+        "mode": "no-code",
+        "firmware_version": "build-repair",
+        "pins": [],
+    }
+
+    response = client.post("/api/v1/config", json=handshake_payload)
+    assert response.status_code == 200, response.text
+    assert response.json()["auth_status"] == "pending"
+    assert response.json()["pairing_requested_at"] is not None
+
+    pending_after_recovery = client.get(
+        "/api/v1/devices?auth_status=pending",
+        headers=admin_headers,
+    )
+    assert pending_after_recovery.status_code == 200
+    pending_devices = pending_after_recovery.json()
+    assert len(pending_devices) == 1
+    assert pending_devices[0]["device_id"] == project["device_id"]

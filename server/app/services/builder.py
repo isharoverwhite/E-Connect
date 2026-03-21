@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.services.diy_validation import resolve_board_definition
 from app.services.provisioning import build_project_firmware_identity
-from app.sql_models import BuildJob, JobStatus
+from app.sql_models import BuildJob, JobStatus, SerialSession, SerialSessionStatus
 from app.services.i2c_registry import find_library_by_name
 
 BUILD_BASE_DIR = os.getenv("BUILD_BASE_DIR", "/tmp/econnect_builds")
@@ -28,6 +28,30 @@ ARTIFACT_FILENAMES = {
 
 for path in (BUILD_BASE_DIR, JOBS_DIR, ARTIFACTS_DIR, LOGS_DIR, PLATFORMIO_CORE_DIR):
     os.makedirs(path, exist_ok=True)
+
+
+def release_project_serial_reservation(project, db: Session) -> str | None:
+    config_json = project.config if isinstance(project.config, dict) else {}
+    configured_port = config_json.get("serial_port")
+    if not isinstance(configured_port, str) or not configured_port.strip():
+        return None
+
+    active_lock = (
+        db.query(SerialSession)
+        .filter(
+            SerialSession.port == configured_port.strip(),
+            SerialSession.locked_by_user_id == project.user_id,
+            SerialSession.status == SerialSessionStatus.locked,
+        )
+        .order_by(SerialSession.created_at.desc())
+        .first()
+    )
+    if not active_lock:
+        return None
+
+    active_lock.status = SerialSessionStatus.released
+    active_lock.released_at = datetime.utcnow()
+    return configured_port.strip()
 
 
 def generate_platformio_ini(project, project_dir: str):
@@ -363,6 +387,12 @@ def build_firmware_task(
                 job.status = JobStatus.artifact_ready
                 job.artifact_path = durable_artifacts["firmware"]
                 job.finished_at = datetime.utcnow()
+                released_port = release_project_serial_reservation(project, db)
+                if released_port:
+                    with open(log_path, "a") as log_file:
+                        log_file.write(
+                            f"Released serial reservation for {released_port} so browser flashing can proceed.\\n"
+                        )
                 with open("/tmp/builder_debug.log", "a") as f:
                     artifact_names = ", ".join(sorted(durable_artifacts.keys()))
                     f.write(f"Artifacts successfully saved: {artifact_names}.\\n")

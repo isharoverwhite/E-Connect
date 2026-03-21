@@ -101,6 +101,12 @@ def _ensure_additive_columns():
             "VARCHAR(64) NULL COMMENT 'Current LAN IP reported by the device'",
         ),
         (
+            "devices",
+            "pairing_requested_at",
+            "DATETIME",
+            "DATETIME NULL COMMENT 'UTC timestamp of the latest board-initiated pairing request awaiting admin action'",
+        ),
+        (
             "rooms",
             "household_id",
             "INTEGER",

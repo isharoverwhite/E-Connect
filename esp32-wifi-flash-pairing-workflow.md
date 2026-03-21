@@ -81,7 +81,8 @@ Khi artifact đã sẵn sàng:
 
 - WebUI mở web flasher
 - User chọn cổng serial tương ứng với ESP32
-- Hệ thống giữ lock cổng serial để tránh xung đột giữa build/flash và serial monitor
+- Nếu build flow đã tạo serial reservation cho cùng `serial_port`, hệ thống phải tự release reservation đó khi job chuyển sang `artifact_ready`
+- WebUI chỉ cho phép bấm flash khi cổng serial đã rảnh; nếu còn serial session đang giữ cổng thì phải block và yêu cầu release trước
 - Firmware được flash xuống thiết bị
 
 Kết thúc bước này, trạng thái build/flash chuyển sang:
@@ -97,6 +98,12 @@ Ngay sau khi reboot lần đầu sau flash:
 2. ESP32 kết nối vào mạng Wi-Fi tương ứng.
 3. Sau khi có mạng, ESP32 khởi tạo kết nối về server.
 4. ESP32 gửi yêu cầu handshake hoặc pair lên server qua API onboarding.
+
+Sau khi đã được approve và chạy bình thường:
+
+5. ESP32 tiếp tục gửi heartbeat định kỳ lên server qua MQTT state topic.
+6. Nếu server phản hồi rằng `device_id` không còn hợp lệ hoặc không còn ở trạng thái managed/approved, ESP32 phải coi đó là yêu cầu pair lại.
+7. Khi nhận tín hiệu này, ESP32 phải gửi lại secure pairing request thay vì chỉ tiếp tục publish heartbeat mù.
 
 Theo baseline PRD, yêu cầu pair ban đầu đi qua command path:
 
@@ -118,6 +125,12 @@ Sau khi server nhận handshake:
 - Server tạo mới hoặc cập nhật bản ghi thiết bị
 - Thiết bị được đưa vào trạng thái `pending authorization`
 - WebUI discovery hiển thị thiết bị trong danh sách chờ duyệt
+
+Quy tắc visibility:
+
+- Discovery và dashboard pairing notification chỉ được hiển thị khi board vừa gửi handshake/pairing request.
+- Nếu admin gỡ board khỏi dashboard nhưng board vẫn còn firmware, thao tác unpair không được tự tạo thông báo pair.
+- Board đó chỉ xuất hiện lại trong discovery sau khi nó chủ động gửi handshake mới; đây được coi là luồng recover cho trường hợp user xóa nhầm.
 
 Admin vào màn hình discovery để:
 
@@ -183,6 +196,12 @@ sequenceDiagram
 
 - Thiết bị đã gửi handshake nhưng vẫn ở trạng thái `pending authorization`
 - Chưa được coi là online hợp lệ cho dashboard chính
+
+#### 5. Thiết bị đã bị unpair khỏi dashboard
+
+- Thao tác unpair chỉ đưa thiết bị về trạng thái chờ pair lại, không tự sinh pairing notification.
+- Nếu board còn firmware và vẫn có thể kết nối server, heartbeat kế tiếp phải cho phép server yêu cầu pair lại, rồi board gửi handshake mới để re-enter discovery.
+- Admin chỉ thấy thông báo pair lại sau handshake mới đó.
 
 ### 8. Acceptance criteria cho workflow này
 
