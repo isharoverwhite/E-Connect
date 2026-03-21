@@ -120,17 +120,6 @@ interface SerialStatusRecord {
   job_id?: string | null;
 }
 
-interface SerialSessionRecord {
-  id: number;
-  port: string;
-  device_id?: string | null;
-  build_job_id?: string | null;
-  locked_by_user_id: number;
-  status: "locked" | "released";
-  created_at: string;
-  released_at?: string | null;
-}
-
 function createEmptyBuildState(): ServerBuildState {
   return {
     jobId: null,
@@ -384,6 +373,7 @@ export default function DIYBuilderPage() {
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [projectHydrated, setProjectHydrated] = useState(false);
   const hasHydratedRef = useRef(false);
+  const serialArtifactRefreshRef = useRef<string | null>(null);
   const [configBusy, setConfigBusy] = useState(false);
   const [projectSyncState, setProjectSyncState] = useState<ProjectSyncState>("loading");
   const [projectSyncMessage, setProjectSyncMessage] = useState("Loading server draft...");
@@ -393,7 +383,9 @@ export default function DIYBuilderPage() {
   const [serialBusy, setSerialBusy] = useState(false);
   const [serialLocked, setSerialLocked] = useState(false);
   const [serialJobId, setSerialJobId] = useState<string | null>(null);
-  const [serialMessage, setSerialMessage] = useState("Reserve a port before opening the web flasher.");
+  const [serialMessage, setSerialMessage] = useState(
+    "Successful server builds release this port automatically. Flash becomes available when the port is free.",
+  );
   const [serialError, setSerialError] = useState<string | null>(null);
 
   const familyOptions = useMemo(
@@ -836,7 +828,7 @@ export default function DIYBuilderPage() {
     }
   }, [board.family, handleBuildAuthFailure]);
 
-  const refreshSerialStatus = useCallback(async (options?: { silent?: boolean }) => {
+  const refreshSerialStatus = useCallback(async (options?: { silent?: boolean; freeMessage?: string }) => {
     if (!isAdmin) {
       return;
     }
@@ -869,8 +861,8 @@ export default function DIYBuilderPage() {
       setSerialJobId(payload.job_id ?? null);
       setSerialMessage(
         payload.locked
-          ? `Port ${payload.port} is reserved${payload.job_id ? ` for build ${shortId(payload.job_id)}` : ""}.`
-          : `Port ${payload.port} is currently free.`,
+          ? `Port ${payload.port} is currently busy${payload.job_id ? ` for build ${shortId(payload.job_id)}` : ""}. Release it before flashing.`
+          : options?.freeMessage ?? `Port ${payload.port} is free for browser flashing.`,
       );
     } catch (error) {
       setSerialError(getErrorMessage(error));
@@ -1400,6 +1392,23 @@ export default function DIYBuilderPage() {
     };
   }, [draftLoaded, projectHydrated, refreshSerialStatus, serialPort]);
 
+  useEffect(() => {
+    if (
+      serverBuild.status !== "artifact_ready" ||
+      !serverBuild.jobId ||
+      serialArtifactRefreshRef.current === serverBuild.jobId ||
+      !serialPort.trim()
+    ) {
+      return;
+    }
+
+    serialArtifactRefreshRef.current = serverBuild.jobId;
+    void refreshSerialStatus({
+      silent: true,
+      freeMessage: `Build ${shortId(serverBuild.jobId)} is ready. Port ${serialPort.trim()} is free for browser flashing.`,
+    });
+  }, [refreshSerialStatus, serialPort, serverBuild.jobId, serverBuild.status]);
+
   const generateConfig = async () => {
     setConfigBusy(true);
 
@@ -1501,6 +1510,9 @@ export default function DIYBuilderPage() {
       });
       setProjectSyncState("saving");
       setProjectSyncMessage(`Build ${shortId(job.id)} queued on the server.`);
+      setSerialMessage(
+        `Build ${shortId(job.id)} queued. Port ${serialPort.trim() || DEFAULT_SERIAL_PORT} will be released automatically when the artifact is ready.`,
+      );
       await refreshBuildJob(job.id, currentBuildConfigKey);
       await persistProject(
         JSON.stringify(
@@ -1510,7 +1522,7 @@ export default function DIYBuilderPage() {
             roomId,
             flashSource: "server",
             pins,
-            serialPort: DEFAULT_SERIAL_PORT,
+            serialPort,
             buildJobId: job.id,
             buildKey: currentBuildConfigKey,
             wifiSsid,
@@ -1547,50 +1559,6 @@ export default function DIYBuilderPage() {
     link.click();
   };
 
-  const acquireSerialLock = async () => {
-    if (!serialPort.trim()) {
-      setSerialError("Enter a COM or tty port label before reserving the flasher.");
-      return;
-    }
-
-    const token = getToken();
-    if (!token) {
-      return;
-    }
-
-    setSerialBusy(true);
-    setSerialError(null);
-
-    try {
-      const params = new URLSearchParams({
-        device_id: slugify(projectName || board.name) || "generic",
-        port: serialPort.trim(),
-      });
-
-      if (flashSource === "server" && serverBuild.status === "artifact_ready" && activeBuildJobId) {
-        params.set("job_id", activeBuildJobId);
-      }
-
-      const response = await fetch(`${API_URL}/serial/lock?${params.toString()}`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      if (!response.ok) {
-        throw new Error(await parseApiError(response));
-      }
-
-      const payload = (await response.json()) as SerialSessionRecord;
-      setSerialLocked(payload.status === "locked");
-      setSerialJobId(payload.build_job_id ?? null);
-      setSerialMessage(`Reserved ${payload.port} for flashing.`);
-    } catch (error) {
-      setSerialError(getErrorMessage(error));
-    } finally {
-      setSerialBusy(false);
-    }
-  };
-
   const releaseSerialLock = async () => {
     if (!serialPort.trim()) {
       return;
@@ -1619,7 +1587,7 @@ export default function DIYBuilderPage() {
 
       setSerialLocked(false);
       setSerialJobId(null);
-      setSerialMessage(`Released ${serialPort.trim()}.`);
+      setSerialMessage(`Released ${serialPort.trim()}. The browser flasher can claim it now.`);
     } catch (error) {
       setSerialError(getErrorMessage(error));
     } finally {
@@ -1652,7 +1620,9 @@ export default function DIYBuilderPage() {
     setSerialPort(DEFAULT_SERIAL_PORT);
     setSerialLocked(false);
     setSerialJobId(null);
-    setSerialMessage("Reserve a port before opening the web flasher.");
+    setSerialMessage(
+      "Successful server builds release this port automatically. Flash becomes available when the port is free.",
+    );
     setSerialError(null);
     setEraseFirst(false);
     setCurrentStep(1);
@@ -1910,7 +1880,6 @@ export default function DIYBuilderPage() {
             serialJobId={serialJobId}
             serialMessage={serialMessage}
             serialError={serialError}
-            onAcquireSerialLock={acquireSerialLock}
             onReleaseSerialLock={releaseSerialLock}
             onRefreshSerialStatus={() => refreshSerialStatus()}
             onLogPanelRef={(el) => { logPanelRef.current = el; }}
@@ -2132,10 +2101,6 @@ function getFlashLockedReason({
     return "Enter the target COM or tty port label first so the server can coordinate serial access.";
   }
 
-  if (!serialLocked) {
-    return "Reserve the serial port before flashing so build and serial sessions cannot overlap.";
-  }
-
   if (flashSource === "server") {
     if (serverBuildIsStale) {
       return "The GPIO mapping changed after the last server build. Rebuild before flashing.";
@@ -2160,6 +2125,10 @@ function getFlashLockedReason({
         : board.family === "ESP8266"
           ? "Upload at least the firmware binary to build an ESP8266 flasher manifest."
           : "Upload bootloader, partitions, and firmware binaries to build a flasher manifest.";
+  }
+
+  if (serialLocked) {
+    return "Release the active serial session before flashing so the browser can claim this port.";
   }
 
   return null;

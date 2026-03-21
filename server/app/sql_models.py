@@ -143,6 +143,11 @@ class Device(Base):
     firmware_version = Column(String(50))
     ip_address = Column(String(64), nullable=True, comment='Current LAN IP reported by the device')
     last_seen = Column(DateTime, nullable=True)
+    pairing_requested_at = Column(
+        DateTime,
+        nullable=True,
+        comment="UTC timestamp of the latest board-initiated pairing request awaiting admin action",
+    )
     topic_pub = Column(String(255), comment='MQTT Publish Topic')
     topic_sub = Column(String(255), comment='MQTT Subscribe Topic')
     provisioning_project_id = Column(String(36), nullable=True, comment='DIY project id used to derive secure firmware credentials')

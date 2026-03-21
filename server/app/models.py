@@ -152,8 +152,9 @@ class DeviceRegister(BaseModel):
     device_id: Optional[str] = None
     project_id: Optional[str] = None
     secret_key: Optional[str] = None
-    mac_address: str
-    name: str
+    force_pairing_request: bool = False
+    mac_address: Optional[str] = None
+    name: Optional[str] = None
     mode: DeviceMode = DeviceMode.library
     firmware_version: Optional[str] = None
     ip_address: Optional[str] = None
@@ -167,6 +168,7 @@ class DeviceResponse(DeviceBase):
     auth_status: AuthStatus
     conn_status: ConnStatus
     last_seen: Optional[datetime] = None
+    pairing_requested_at: Optional[datetime] = None
     last_state: Optional[Dict[str, Any]] = None
     provisioning_project_id: Optional[str] = None
     pin_configurations: List[PinConfigResponse] = []
@@ -181,6 +183,7 @@ class DeviceAvailabilityResponse(BaseModel):
     room_name: Optional[str] = None
     auth_status: AuthStatus
     conn_status: ConnStatus
+    pairing_requested_at: Optional[datetime] = None
 
 
 class DeviceHandshakeResponse(DeviceResponse):

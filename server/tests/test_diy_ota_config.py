@@ -2,11 +2,12 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+import json
 import uuid
 
 from app.api import router
 from app.database import Base, get_db
-from app.sql_models import User, Household, HouseholdMembership, HouseholdRole, UserApprovalStatus, Room, DiyProject, BuildJob, JobStatus, Device, DeviceMode
+from app.sql_models import AuthStatus, User, Household, HouseholdMembership, HouseholdRole, UserApprovalStatus, Room, DiyProject, BuildJob, JobStatus, Device, DeviceMode
 from app.auth import get_password_hash, create_ota_token
 
 # Setup test DB
@@ -338,6 +339,54 @@ def test_mqtt_process_ota_status():
     db.refresh(job2)
     assert job2.status == JobStatus.flash_failed
     assert job2.error_message == "HTTP error"
+
+
+def test_mqtt_state_unknown_device_requests_repair():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    mgr = MQTTClientManager()
+    mgr.publish_json = MagicMock(return_value=True)
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps({"kind": "state", "device_id": "missing-device"})
+    with patch('app.mqtt.SessionLocal', return_value=db_mock):
+        mgr.process_state_message("missing-device", payload)
+
+    mgr.publish_json.assert_called_once()
+    topic, ack_payload = mgr.publish_json.call_args.args[:2]
+    assert topic == mgr.state_ack_topic("missing-device")
+    assert ack_payload["status"] == "re_pair_required"
+    assert ack_payload["reason"] == "unknown_device"
+
+
+def test_mqtt_state_pending_device_requests_repair():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+    device.auth_status = AuthStatus.pending
+    db.commit()
+
+    mgr = MQTTClientManager()
+    mgr.publish_json = MagicMock(return_value=True)
+
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps({"kind": "state", "device_id": device.device_id})
+    with patch('app.mqtt.SessionLocal', return_value=db_mock):
+        mgr.process_state_message(device.device_id, payload)
+
+    mgr.publish_json.assert_called_once()
+    topic, ack_payload = mgr.publish_json.call_args.args[:2]
+    assert topic == mgr.state_ack_topic(device.device_id)
+    assert ack_payload["status"] == "re_pair_required"
+    assert ack_payload["reason"] == "not_approved"
+    assert ack_payload["auth_status"] == "pending"
 
 
 def test_mqtt_reconcile_ota_success():

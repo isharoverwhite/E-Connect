@@ -10,7 +10,19 @@ from sqlalchemy.orm import sessionmaker
 
 from app.api import router
 from app.database import Base, get_db
-from app.sql_models import User, Household, HouseholdMembership, HouseholdRole, UserApprovalStatus, Room, DiyProject, BuildJob, JobStatus
+from app.sql_models import (
+    User,
+    Household,
+    HouseholdMembership,
+    HouseholdRole,
+    UserApprovalStatus,
+    Room,
+    DiyProject,
+    BuildJob,
+    JobStatus,
+    SerialSession,
+    SerialSessionStatus,
+)
 from app.auth import get_password_hash
 
 # Setup test DB
@@ -515,3 +527,88 @@ def test_builder_generates_correct_config(tmp_path):
     
     # Second pin config: I2C pin with SDA role, address 0x3C, library Wire
     assert '{ 4, "I2C", "i2c", "I2C Sensor", 1, 0, 255, "SDA", "0x3C", "Wire" }' in content, f"Missing I2C pin in: {content}"
+
+
+def test_release_project_serial_reservation_releases_same_user_lock():
+    from app.services.builder import release_project_serial_reservation
+
+    db = TestingSessionLocal()
+    user, room = create_test_user(db, username="serialowner")
+
+    project = DiyProject(
+        id=str(uuid.uuid4()),
+        user_id=user.user_id,
+        room_id=room.room_id,
+        name="Serial Release Project",
+        board_profile="esp32",
+        config={
+            "wifi_ssid": "ssid",
+            "wifi_password": "pass",
+            "serial_port": "/dev/ttyUSB0",
+            "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}],
+        },
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    serial_session = SerialSession(
+        port="/dev/ttyUSB0",
+        device_id="serial-owner",
+        locked_by_user_id=user.user_id,
+        status=SerialSessionStatus.locked,
+    )
+    db.add(serial_session)
+    db.commit()
+    db.refresh(serial_session)
+
+    released_port = release_project_serial_reservation(project, db)
+    db.commit()
+    db.refresh(serial_session)
+
+    assert released_port == "/dev/ttyUSB0"
+    assert serial_session.status == SerialSessionStatus.released
+    assert serial_session.released_at is not None
+
+
+def test_release_project_serial_reservation_ignores_other_user_lock():
+    from app.services.builder import release_project_serial_reservation
+
+    db = TestingSessionLocal()
+    user, room = create_test_user(db, username="serialproject")
+    other_user, _ = create_test_user(db, username="serialother")
+
+    project = DiyProject(
+        id=str(uuid.uuid4()),
+        user_id=user.user_id,
+        room_id=room.room_id,
+        name="Busy Port Project",
+        board_profile="esp32",
+        config={
+            "wifi_ssid": "ssid",
+            "wifi_password": "pass",
+            "serial_port": "/dev/ttyUSB0",
+            "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}],
+        },
+    )
+    db.add(project)
+    db.commit()
+    db.refresh(project)
+
+    serial_session = SerialSession(
+        port="/dev/ttyUSB0",
+        device_id="serial-other",
+        locked_by_user_id=other_user.user_id,
+        status=SerialSessionStatus.locked,
+    )
+    db.add(serial_session)
+    db.commit()
+    db.refresh(serial_session)
+
+    released_port = release_project_serial_reservation(project, db)
+    db.commit()
+    db.refresh(serial_session)
+
+    assert released_port is None
+    assert serial_session.status == SerialSessionStatus.locked
+    assert serial_session.released_at is None
