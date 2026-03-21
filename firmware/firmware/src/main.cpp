@@ -2,14 +2,7 @@
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 #include <Wire.h>
-
-#if defined(ESP8266)
-#include <ESP8266WiFi.h>
-#include <ESP8266httpUpdate.h>
-#else
-#include <HTTPUpdate.h>
-#include <WiFi.h>
-#endif
+#include "board_support.h"
 
 #if __has_include("generated_firmware_config.h")
 #include "generated_firmware_config.h"
@@ -52,14 +45,6 @@ struct PinRuntimeState {
   int pwmMax;
 };
 
-struct WifiTarget {
-  bool found;
-  int32_t channel;
-  int32_t rssi;
-  int32_t authMode;
-  uint8_t bssid[6];
-};
-
 constexpr size_t PIN_CONFIG_COUNT =
     sizeof(ECONNECT_PIN_CONFIGS) / sizeof(ECONNECT_PIN_CONFIGS[0]);
 constexpr size_t PIN_STATE_CAPACITY = PIN_CONFIG_COUNT > 0 ? PIN_CONFIG_COUNT : 1;
@@ -71,6 +56,7 @@ PinRuntimeState pinStates[PIN_STATE_CAPACITY];
 String deviceId = ECONNECT_DEVICE_ID;
 unsigned long lastHeartbeatAt = 0;
 bool securePairingVerified = false;
+bool forcePairingRequestOnNextHandshake = false;
 unsigned long lastReconnectAttemptAt = 0;
 
 bool connectToWiFi();
@@ -82,7 +68,10 @@ void publishState(bool applied);
 String commandTopic();
 String registerTopic();
 String registerAckTopic();
+String stateAckTopic();
 void subscribeCommandTopic();
+void subscribeRegisterAckTopic();
+void subscribeStateAckTopic();
 void initializePinStates();
 void initializeI2CBus();
 int findPinIndex(int gpio);
@@ -94,23 +83,15 @@ int readRuntimeValue(PinRuntimeState &pinState);
 int readRuntimeBrightness(PinRuntimeState &pinState);
 bool applyCommandToPin(PinRuntimeState &pinState, int value, int brightness);
 int resolvePhysicalLevel(const PinRuntimeState &pinState, int logicalValue);
-const char *authModeName(int32_t authMode);
 WifiTarget scanWifiTarget();
 void logVisibleWifiTargets(const WifiTarget &target);
 void formatBssid(const uint8_t *bssid, char *buffer, size_t bufferSize);
-#if !defined(ESP8266)
-void handleWiFiEvent(arduino_event_id_t event, arduino_event_info_t info);
-#endif
 
 void setup() {
   Serial.begin(115200);
   delay(1500);
   Serial.println("\n--- Starting E-Connect Server-Built Firmware ---");
-#if !defined(ESP8266)
-  WiFi.onEvent(handleWiFiEvent);
-  WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
-#endif
-  WiFi.setAutoReconnect(true);
+  initializeBoardNetworking();
 
   initializePinStates();
   initializeI2CBus();
@@ -162,16 +143,7 @@ bool connectToWiFi() {
     return false;
   }
 
-  WiFi.mode(WIFI_STA);
-  WiFi.persistent(false);
-#if defined(ESP8266)
-  WiFi.setSleepMode(WIFI_NONE_SLEEP);
-  WiFi.disconnect();
-#else
-  WiFi.setSleep(false);
-  WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
-  WiFi.disconnect(false, true);
-#endif
+  prepareBoardForWifiConnection();
   delay(250);
 
   const WifiTarget target = scanWifiTarget();
@@ -185,7 +157,7 @@ bool connectToWiFi() {
         "(locked channel=%d bssid=%s auth=%s rssi=%d) ",
         target.channel,
         bssidBuffer,
-        authModeName(target.authMode),
+        boardAuthModeName(target.authMode),
         target.rssi);
     WiFi.begin(WIFI_SSID, WIFI_PASS, target.channel, target.bssid, true);
   } else {
@@ -211,44 +183,12 @@ bool connectToWiFi() {
   return false;
 }
 
-const char *authModeName(int32_t authMode) {
-#if defined(ESP8266)
-  if (authMode == ENC_TYPE_NONE) {
-    return "OPEN";
-  }
-  return "SECURED";
-#else
-  switch (authMode) {
-    case WIFI_AUTH_OPEN:
-      return "OPEN";
-    case WIFI_AUTH_WEP:
-      return "WEP";
-    case WIFI_AUTH_WPA_PSK:
-      return "WPA_PSK";
-    case WIFI_AUTH_WPA2_PSK:
-      return "WPA2_PSK";
-    case WIFI_AUTH_WPA_WPA2_PSK:
-      return "WPA_WPA2_PSK";
-    case WIFI_AUTH_WPA3_PSK:
-      return "WPA3_PSK";
-    case WIFI_AUTH_WPA2_WPA3_PSK:
-      return "WPA2_WPA3_PSK";
-    default:
-      return "UNKNOWN";
-  }
-#endif
-}
-
 WifiTarget scanWifiTarget() {
   WifiTarget target = {
       false,
       0,
       -127,
-#if defined(ESP8266)
-      ENC_TYPE_NONE,
-#else
-      WIFI_AUTH_OPEN,
-#endif
+      defaultBoardAuthMode(),
       {0, 0, 0, 0, 0, 0},
   };
   const int networkCount = WiFi.scanNetworks(false, true);
@@ -296,7 +236,7 @@ void logVisibleWifiTargets(const WifiTarget &target) {
       WIFI_SSID,
       target.channel,
       target.rssi,
-      authModeName(target.authMode),
+      boardAuthModeName(target.authMode),
       bssidBuffer);
 }
 
@@ -312,31 +252,6 @@ void formatBssid(const uint8_t *bssid, char *buffer, size_t bufferSize) {
       bssid[4],
       bssid[5]);
 }
-
-#if !defined(ESP8266)
-void handleWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
-  if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
-    Serial.println("Wi-Fi event: STA connected");
-    return;
-  }
-
-  if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
-    Serial.printf(
-        "Wi-Fi event: got IP %s\n",
-        IPAddress(info.got_ip.ip_info.ip.addr).toString().c_str());
-    return;
-  }
-
-  if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
-    const wifi_err_reason_t reason =
-        static_cast<wifi_err_reason_t>(info.wifi_sta_disconnected.reason);
-    Serial.printf(
-        "Wi-Fi disconnect reason: %u (%s)\n",
-        info.wifi_sta_disconnected.reason,
-        WiFi.disconnectReasonName(reason));
-  }
-}
-#endif
 
 bool performSecureHandshake() {
   if (WiFi.status() != WL_CONNECTED) {
@@ -361,6 +276,7 @@ bool performSecureHandshake() {
   doc["device_id"] = deviceId;
   doc["project_id"] = ECONNECT_PROJECT_ID;
   doc["secret_key"] = ECONNECT_SECRET_KEY;
+  doc["force_pairing_request"] = forcePairingRequestOnNextHandshake;
   doc["mac_address"] = WiFi.macAddress();
   doc["ip_address"] = WiFi.localIP().toString();
   doc["name"] = ECONNECT_DEVICE_NAME;
@@ -423,10 +339,27 @@ String registerAckTopic() {
          "/register/ack";
 }
 
+String stateAckTopic() {
+  return String("econnect/") + MQTT_NAMESPACE + "/device/" + deviceId +
+         "/state/ack";
+}
+
 void subscribeCommandTopic() {
   const String topic = commandTopic();
   mqttClient.subscribe(topic.c_str());
   Serial.printf("Subscribed to command topic: %s\n", topic.c_str());
+}
+
+void subscribeRegisterAckTopic() {
+  const String topic = registerAckTopic();
+  mqttClient.subscribe(topic.c_str());
+  Serial.printf("Subscribed to pairing ack topic: %s\n", topic.c_str());
+}
+
+void subscribeStateAckTopic() {
+  const String topic = stateAckTopic();
+  mqttClient.subscribe(topic.c_str());
+  Serial.printf("Subscribed to heartbeat ack topic: %s\n", topic.c_str());
 }
 
 void reconnectMQTT() {
@@ -445,9 +378,8 @@ void reconnectMQTT() {
   Serial.print("Attempting MQTT connection...");
   if (mqttClient.connect(clientId.c_str())) {
     Serial.println(" connected");
-    const String ackTopic = registerAckTopic();
-    mqttClient.subscribe(ackTopic.c_str());
-    Serial.printf("Subscribed to pairing ack topic: %s\n", ackTopic.c_str());
+    subscribeRegisterAckTopic();
+    subscribeStateAckTopic();
     if (securePairingVerified) {
       subscribeCommandTopic();
       publishState(true);
@@ -491,10 +423,25 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
     }
 
     securePairingVerified = true;
+    forcePairingRequestOnNextHandshake = false;
+    subscribeRegisterAckTopic();
+    subscribeStateAckTopic();
     subscribeCommandTopic();
     publishState(true);
     lastHeartbeatAt = millis();
     Serial.printf("Secure MQTT handshake complete. Device id: %s\n", deviceId.c_str());
+    return;
+  }
+
+  if (incomingTopic == stateAckTopic()) {
+    const String status = doc["status"] | "";
+    if (status == "re_pair_required") {
+      forcePairingRequestOnNextHandshake = true;
+      securePairingVerified = false;
+      Serial.printf(
+          "Server requested re-pair: %s\n",
+          String(doc["message"] | "Unknown reason").c_str());
+    }
     return;
   }
 
@@ -509,41 +456,17 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
       const String jobId = doc["job_id"] | "";
       if (url.length() > 0) {
         Serial.printf("Received OTA command for URL: %s\n", url.c_str());
-        WiFiClient client;
-#if defined(ESP8266)
-        ESPhttpUpdate.rebootOnUpdate(false);
-        t_httpUpdate_return ret = ESPhttpUpdate.update(client, url);
-#else
-        httpUpdate.rebootOnUpdate(false);
-        t_httpUpdate_return ret = httpUpdate.update(client, url);
-#endif
+        const OtaUpdateResult otaResult = runBoardOtaUpdate(url);
 
         StaticJsonDocument<512> statusDoc;
         statusDoc["event"] = "ota_status";
         statusDoc["job_id"] = jobId;
-        
-        switch (ret) {
-          case HTTP_UPDATE_FAILED: {
-#if defined(ESP8266)
-            String errStr = ESPhttpUpdate.getLastErrorString();
-            Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", ESPhttpUpdate.getLastError(), errStr.c_str());
-#else
-            String errStr = httpUpdate.getLastErrorString();
-            Serial.printf("HTTP_UPDATE_FAILED Error (%d): %s\n", httpUpdate.getLastError(), errStr.c_str());
-#endif
-            statusDoc["status"] = "failed";
-            statusDoc["message"] = errStr;
-            break;
-          }
-          case HTTP_UPDATE_NO_UPDATES:
-            Serial.println("HTTP_UPDATE_NO_UPDATES");
-            statusDoc["status"] = "failed";
-            statusDoc["message"] = "HTTP_UPDATE_NO_UPDATES";
-            break;
-          case HTTP_UPDATE_OK:
-            Serial.println("HTTP_UPDATE_OK");
-            statusDoc["status"] = "success";
-            break;
+        statusDoc["status"] = otaResult.status;
+        if (otaResult.message.length() > 0) {
+          statusDoc["message"] = otaResult.message;
+          Serial.printf("OTA update %s: %s\n", otaResult.status, otaResult.message.c_str());
+        } else {
+          Serial.printf("OTA update %s\n", otaResult.status);
         }
 
         String payload;
@@ -553,8 +476,8 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
         mqttClient.loop();
         delay(500);
 
-        if (ret == HTTP_UPDATE_OK) {
-           ESP.restart();
+        if (otaResult.shouldRestart) {
+          ESP.restart();
         }
       }
     }
