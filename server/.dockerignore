@@ -4,5 +4,6 @@ venv
 .git
 .gitignore
 *.pyc
+firmware_template/.pio
 firmwares/*
 !firmwares/.keep

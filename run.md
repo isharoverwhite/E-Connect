@@ -92,6 +92,8 @@ MQTT_PORT=1883
 MQTT_NAMESPACE=local
 ```
 
+*Lưu ý: Khi build firmware từ WebUI, server sẽ tự suy ra host quảng bá từ request hiện tại và dùng cùng host đó cho MQTT/API của firmware. Vì vậy hãy mở WebUI bằng IP LAN hoặc hostname reverse-proxy thật của server, không dùng `localhost`, `127.0.0.1`, hay địa chỉ nội bộ Docker.*
+
 ### Bước 4: chạy FastAPI
 
 ```bash
@@ -151,6 +153,7 @@ Chạy theo thứ tự này để webapp gọi API được ngay:
 - `webapp` mặc định gọi API tại `/api/v1`
 - Next.js sẽ proxy `/api/v1/*` sang `BACKEND_INTERNAL_URL`, mặc định là `http://server:8000`
 - Nếu bạn muốn browser gọi API trực tiếp thay vì qua proxy, có thể override `NEXT_PUBLIC_API_URL`
+- Để firmware nhận đúng host của server khi build qua Docker, hãy truy cập WebUI bằng địa chỉ mà board thật có thể reach được
 - Nếu `DATABASE_URL` sai hoặc database không truy cập được, `server` sẽ không lên
 - Nếu MQTT broker không sẵn sàng, backend vẫn có thể chạy nhưng log sẽ báo lỗi kết nối MQTT
 

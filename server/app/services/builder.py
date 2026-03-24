@@ -1,10 +1,11 @@
 import os
 import shutil
-import socket
 import subprocess
+import ipaddress
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Mapping
+from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
 
@@ -19,7 +20,7 @@ JOBS_DIR = os.path.join(BUILD_BASE_DIR, "jobs")
 ARTIFACTS_DIR = os.path.join(BUILD_BASE_DIR, "artifacts")
 LOGS_DIR = os.path.join(BUILD_BASE_DIR, "logs")
 PLATFORMIO_CORE_DIR = os.getenv("PLATFORMIO_CORE_DIR", os.path.join(BUILD_BASE_DIR, ".platformio"))
-FIRMWARE_TEMPLATE_DIR = Path(__file__).resolve().parents[3] / "firmware" / "firmware"
+FIRMWARE_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "firmware_template"
 ARTIFACT_FILENAMES = {
     "firmware": "{job_id}.bin",
     "bootloader": "{job_id}.bootloader.bin",
@@ -28,6 +29,131 @@ ARTIFACT_FILENAMES = {
 
 for path in (BUILD_BASE_DIR, JOBS_DIR, ARTIFACTS_DIR, LOGS_DIR, PLATFORMIO_CORE_DIR):
     os.makedirs(path, exist_ok=True)
+
+
+_BLOCKED_ADVERTISED_HOSTNAMES = {
+    "localhost",
+    "server",
+    "mqtt",
+    "db",
+    "webapp",
+}
+
+
+def _first_header_value(value: str | None) -> str | None:
+    if not value:
+        return None
+    first = value.split(",", 1)[0].strip()
+    return first or None
+
+
+def _parse_forwarded_header(value: str | None) -> tuple[str | None, str | None]:
+    first = _first_header_value(value)
+    if not first:
+        return None, None
+
+    host = None
+    proto = None
+    for part in first.split(";"):
+        key, separator, raw_value = part.partition("=")
+        if not separator:
+            continue
+        normalized_key = key.strip().lower()
+        normalized_value = raw_value.strip().strip('"')
+        if normalized_key == "host" and normalized_value:
+            host = normalized_value
+        elif normalized_key == "proto" and normalized_value:
+            proto = normalized_value.lower()
+
+    return host, proto
+
+
+def _parse_host_candidate(raw_value: str, *, default_scheme: str) -> tuple[str, str, str]:
+    candidate = raw_value.strip()
+    parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}", scheme=default_scheme)
+    netloc = parsed.netloc or parsed.path
+    hostname = parsed.hostname
+    scheme = parsed.scheme or default_scheme
+
+    if not netloc or not hostname:
+        raise ValueError(f"Could not parse host value '{raw_value}'.")
+
+    return netloc, hostname.strip().lower(), scheme
+
+
+def _validate_advertised_hostname(hostname: str) -> None:
+    normalized = hostname.strip().lower().rstrip(".")
+    if normalized in _BLOCKED_ADVERTISED_HOSTNAMES:
+        raise ValueError(f"Host '{hostname}' is a Docker-local service name and is not reachable from the board.")
+
+    try:
+        ip = ipaddress.ip_address(normalized)
+    except ValueError:
+        return
+
+    if ip.is_loopback:
+        raise ValueError(f"Host '{hostname}' is loopback and is not reachable from the board.")
+    if ip.is_unspecified:
+        raise ValueError(f"Host '{hostname}' is unspecified and is not reachable from the board.")
+    if ip.is_link_local:
+        raise ValueError(f"Host '{hostname}' is link-local and is not stable for firmware provisioning.")
+    if ip.is_multicast:
+        raise ValueError(f"Host '{hostname}' is multicast and cannot be used as the server address.")
+
+
+def infer_firmware_network_targets(headers: Mapping[str, str], request_scheme: str) -> dict[str, str]:
+    forwarded_host, forwarded_proto = _parse_forwarded_header(headers.get("forwarded"))
+    candidates = [
+        (
+            "X-Forwarded-Host",
+            _first_header_value(headers.get("x-forwarded-host")),
+            _first_header_value(headers.get("x-forwarded-proto")) or request_scheme,
+        ),
+        (
+            "Forwarded",
+            forwarded_host,
+            forwarded_proto or request_scheme,
+        ),
+        (
+            "Origin",
+            headers.get("origin"),
+            request_scheme,
+        ),
+        (
+            "Referer",
+            headers.get("referer"),
+            request_scheme,
+        ),
+        (
+            "Host",
+            headers.get("host"),
+            request_scheme,
+        ),
+    ]
+
+    errors: list[str] = []
+    for source, raw_value, default_scheme in candidates:
+        if not raw_value:
+            continue
+
+        try:
+            netloc, hostname, scheme = _parse_host_candidate(raw_value, default_scheme=default_scheme)
+            _validate_advertised_hostname(hostname)
+            return {
+                "advertised_host": hostname,
+                "api_base_url": f"{scheme}://{netloc.rstrip('/')}/api/v1",
+            }
+        except ValueError as exc:
+            errors.append(f"{source}: {exc}")
+
+    detail = (
+        "Server could not infer a reachable host for firmware provisioning from the current request. "
+        "Open the Web UI using the server LAN IP or a trusted reverse-proxy hostname, not localhost, "
+        "127.0.0.1, or Docker-only names."
+    )
+    if errors:
+        detail = f"{detail} Checked headers: {' | '.join(errors)}"
+    raise ValueError(detail)
 
 
 def release_project_serial_reservation(project, db: Session) -> str | None:
@@ -145,21 +271,37 @@ def _escape_c_string(value: str) -> str:
 def _resolve_api_base_url(config_json: dict) -> str | None:
     candidate = config_json.get("api_base_url") if isinstance(config_json, dict) else None
     if isinstance(candidate, str) and candidate.strip():
-        return candidate.strip()
+        normalized = candidate.strip().rstrip("/")
+        _, hostname, _ = _parse_host_candidate(normalized, default_scheme="http")
+        _validate_advertised_hostname(hostname)
+        return normalized
 
-    for env_name in ("FIRMWARE_API_BASE_URL", "DIY_API_BASE_URL", "PUBLIC_API_BASE_URL"):
-        env_value = os.getenv(env_name, "").strip()
-        if env_value:
-            return env_value
+    return None
 
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
-            probe.connect(("8.8.8.8", 80))
-            lan_ip = probe.getsockname()[0]
-        api_port = os.getenv("FIRMWARE_API_PORT", os.getenv("PORT", "8000")).strip() or "8000"
-        return f"http://{lan_ip}:{api_port}/api/v1"
-    except OSError:
-        return None
+
+def _resolve_mqtt_broker(config_json: dict) -> str:
+    if isinstance(config_json, dict):
+        advertised_host = config_json.get("advertised_host")
+        if isinstance(advertised_host, str) and advertised_host.strip():
+            normalized = advertised_host.strip()
+            _validate_advertised_hostname(normalized)
+            return normalized
+
+        candidate = config_json.get("mqtt_broker")
+        if isinstance(candidate, str) and candidate.strip():
+            normalized = candidate.strip()
+            _validate_advertised_hostname(normalized)
+            return normalized
+
+        api_base_url = config_json.get("api_base_url")
+        if isinstance(api_base_url, str) and api_base_url.strip():
+            _, hostname, _ = _parse_host_candidate(api_base_url.strip(), default_scheme="http")
+            _validate_advertised_hostname(hostname)
+            return hostname
+
+    raise ValueError(
+        "Missing reachable server host in project config. Re-open the DIY builder from the server LAN address and start the build again."
+    )
 
 
 def write_generated_firmware_config(project, job_id: str, project_dir: str):
@@ -172,7 +314,7 @@ def write_generated_firmware_config(project, job_id: str, project_dir: str):
     firmware_version = f"build-{job_id[:8]}"
     wifi_ssid = str(config_json.get("wifi_ssid") or "")
     wifi_password = str(config_json.get("wifi_password") or "")
-    mqtt_broker = str(config_json.get("mqtt_broker") or os.getenv("FIRMWARE_MQTT_BROKER") or os.getenv("MQTT_BROKER", "broker.emqx.io"))
+    mqtt_broker = _resolve_mqtt_broker(config_json)
     mqtt_port = int(os.getenv("FIRMWARE_MQTT_PORT", os.getenv("MQTT_PORT", "1883")))
     mqtt_namespace = str(os.getenv("FIRMWARE_MQTT_NAMESPACE", os.getenv("MQTT_NAMESPACE", "local")))
     api_base_url = _resolve_api_base_url(config_json)

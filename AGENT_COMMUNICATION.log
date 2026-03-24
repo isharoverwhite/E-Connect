@@ -233,3 +233,46 @@
 [2026-03-24 19:24:12] Planner -> Coder | Commit current cleanup tree on main and include status/log updates
 [2026-03-24 19:25:05] Coder -> Tester | Candidate full-tree commit ready; verify build, script syntax, and push readiness
 [2026-03-24 19:26:10] Tester -> Main | webapp build PASS; firmware scripts compile; pytest unavailable locally
+[2026-03-24 20:54:29] Main -> Planner | Review relocation report and isolate runtime defects before coder rework
+[2026-03-24 20:54:29] Planner -> Coder | Ready rework prompt for demo firmware runtime and Docker-safe packaging
+[2026-03-24 21:20:21] Main -> Planner | Lock REWORK-DEMO-FIRMWARE scope and verify fail-closed Docker/runtime behavior
+[2026-03-24 21:20:21] Planner -> Coder | Disable demo artifact serving, remove UI promise, keep webapp Docker copy safe
+[2026-03-24 21:20:21] Coder -> Tester | Rework applied; verify compose builds, webapp build, and demo route fail-closed
+[2026-03-24 21:26:45] Tester -> Main | PASS; compose builds green, route 404s, host 3306 forced standalone runtime checks
+[2026-03-24 21:36:13] Main -> Planner | Scope failing GitHub Actions Server PyTest run on main after repo cleanup
+[2026-03-24 21:36:13] Planner -> Debug | Isolate CI pytest collection failures from latest Actions logs
+[2026-03-24 21:36:13] Debug -> Coder | Fix static mount import crash and broken reject-semantics test setup
+[2026-03-24 21:39:49] Coder -> Tester | CI pytest fix applied; rerun targeted and full server test suite on Python 3.11
+[2026-03-24 21:39:49] Tester -> Main | PASS; full server/tests suite green locally, 65 passed with warnings only
+[2026-03-24 21:43:27] Main -> Git Analyst | User requested scoped push of CI pytest fix
+[2026-03-24 21:53:51] Main -> Planner | Scope Jenkins CD change to require app build gate before deploy
+[2026-03-24 21:54:10] Planner -> Coder | Add Jenkins build gate, resolve detached branch, keep webapp/public tracked
+[2026-03-24 21:56:45] Coder -> Tester | Jenkins/CD patch ready; verify lint, build, pytest, and compose image build
+[2026-03-24 21:58:01] Tester -> Main | PASS; compose config valid, webapp build OK, server pytest 65 passed, images build
+[2026-03-24 21:59:24] Tester -> Debug | Jenkins slim Python gate fails because pytest user install is outside PATH
+[2026-03-24 21:59:44] Debug -> Coder | Use python -m pytest in Build Gate instead of pytest binary
+[2026-03-24 22:00:08] Coder -> Tester | Patched Jenkins gate; rerun exact python:3.11-slim validation command
+[2026-03-24 22:02:56] Tester -> Main | PASS; python -m pytest fixes slim container gate and server suite passes
+[2026-03-24 22:36:14] Main -> Planner | Scope Jenkins CD deploy failure on MQTT bind mount
+[2026-03-24 22:36:14] Planner -> Coder | Replace workspace-mounted MQTT config with built image
+[2026-03-24 22:38:40] Coder -> Tester | MQTT image fix applied; verify compose build and isolated broker boot
+[2026-03-24 22:39:35] Tester -> Main | PASS; mqtt image boots with baked config and compose build stays green
+[2026-03-24 22:46:00] Main -> Planner | Scope build #8 failure on db port 3306 collision during deploy
+[2026-03-24 22:46:00] Planner -> Coder | Add Jenkins-only compose override to keep DB internal and unbound
+[2026-03-24 22:48:20] Coder -> Tester | Jenkins DB-port override added; verify rendered compose drops db ports
+[2026-03-24 22:48:58] Tester -> Main | PASS; Jenkins compose config removes db host port while keeping app links
+[2026-03-24 23:03:00] Main -> Planner | Scope Jenkins readiness race after db becomes healthy
+[2026-03-24 23:03:00] Planner -> Coder | Add compose healthchecks and wait-based deploy before smoke tests
+[2026-03-24 23:04:10] Coder -> Tester | Readiness hardening applied; verify wait-based deploy and smoke path
+[2026-03-24 23:04:41] Tester -> Main | PASS; up --wait reaches healthy app services and smoke checks pass
+[2026-03-24 23:10:00] Main -> Planner | Scope build #10 failure on backend host port 8000 collision
+[2026-03-24 23:10:00] Planner -> Coder | Keep backend internal-only in Jenkins compose override
+[2026-03-24 23:17:45] Coder -> Tester | Backend port override applied; verify Jenkins render and smoke path
+[2026-03-24 23:18:58] Tester -> Main | PASS; Jenkins stack drops host port 8000 and smoke path still passes
+[2026-03-25 00:38:29] Main -> Planner | Audit firmware config fields vs form and Docker IP behavior
+[2026-03-25 00:38:29] Planner -> Tester | Verify SSID/password/broker/server-IP alignment across UI API firmware
+[2026-03-25 00:38:29] Tester -> Main | PASS static audit; broker/server-IP missing in UI and Docker env gap exists
+[2026-03-25 00:58:26] Main -> Planner | Implement request-host derived firmware MQTT/API targets
+[2026-03-25 00:58:26] Planner -> Coder | Stamp validated advertised host during build and remove env dependency
+[2026-03-25 00:58:26] Coder -> Tester | Host inference patch ready; verify Docker-targeted backend tests
+[2026-03-25 00:58:26] Tester -> Main | PASS; 6 targeted Docker tests green, MariaDB MCP unconfigured
