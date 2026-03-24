@@ -37,9 +37,29 @@ pipeline {
         stage('Preflight') {
             steps {
                 script {
-                    env.RESOLVED_BRANCH = (env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'detached')
-                        .replaceFirst(/^\*\//, '')
-                        .replaceFirst(/^origin\//, '')
+                    env.RESOLVED_BRANCH = sh(
+                        returnStdout: true,
+                        script: '''
+                            set -eu
+
+                            for candidate in "${CHANGE_BRANCH:-}" "${BRANCH_NAME:-}" "${GIT_LOCAL_BRANCH:-}" "${GIT_BRANCH:-}"; do
+                                if [ -n "$candidate" ]; then
+                                    printf '%s' "$candidate" | sed -e 's#^origin/##' -e 's#^\\*/##'
+                                    exit 0
+                                fi
+                            done
+
+                            remote_branches="$(git for-each-ref --format='%(refname:short)' refs/remotes/origin --contains HEAD \
+                                | sed 's#^origin/##' \
+                                | grep -v '^HEAD$' || true)"
+
+                            if [ -n "$remote_branches" ]; then
+                                printf '%s\n' "$remote_branches" | awk '/^(main|master)$/{ print; found=1; exit } END { if (!found && NR > 0) print $1 }'
+                            else
+                                printf 'detached'
+                            fi
+                        '''
+                    ).trim()
                     echo "Resolved branch: ${env.RESOLVED_BRANCH}"
                 }
 
@@ -48,6 +68,33 @@ pipeline {
                     docker version
                     docker compose version
                     docker compose config -q
+                '''
+            }
+        }
+
+        stage('Build Gate') {
+            steps {
+                echo 'Running webapp build and server tests before CD.'
+                sh '''
+                    set -eu
+
+                    docker run --rm \
+                        -u "$(id -u):$(id -g)" \
+                        -e HOME=/tmp \
+                        -e NEXT_TELEMETRY_DISABLED=1 \
+                        -v "$PWD/webapp:/app" \
+                        -w /app \
+                        node:20-alpine \
+                        sh -lc "npm ci && npm run lint && npm run build"
+
+                    docker run --rm \
+                        -u "$(id -u):$(id -g)" \
+                        -e HOME=/tmp \
+                        -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
+                        -v "$PWD/server:/app" \
+                        -w /app \
+                        python:3.11-slim \
+                        sh -lc "python -m pip install --upgrade pip && pip install -r requirements-dev.txt && python -m pytest tests/"
                 '''
             }
         }
