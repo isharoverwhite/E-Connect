@@ -1,11 +1,137 @@
 from datetime import datetime
 import uuid
-from unittest.mock import Mock, patch
-from sqlalchemy.orm import Session
+from unittest.mock import Mock
 
-from app.sql_models import AuthStatus, ConnStatus, Device, HouseholdRole
-from app.mqtt import build_pairing_rejected_ack_payload
-from tests.conftest import client, TestingSessionLocal, _seed_household, _auth_headers, _create_room
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.auth import create_access_token
+from app.database import Base, get_db
+from app.sql_models import (
+    AccountType,
+    AuthStatus,
+    ConnStatus,
+    Device,
+    Household,
+    HouseholdMembership,
+    HouseholdRole,
+    User,
+    UserApprovalStatus,
+)
+from main import app
+
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///./test_reject_semantics.db"
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base.metadata.create_all(bind=engine)
+
+
+def override_get_db():
+    try:
+        db = TestingSessionLocal()
+        yield db
+    finally:
+        db.close()
+
+
+client = TestClient(app)
+
+
+def _issue_token(username: str, *, account_type: str, household_id: int, household_role: str) -> str:
+    return create_access_token(
+        {
+            "sub": username,
+            "account_type": account_type,
+            "household_id": household_id,
+            "household_role": household_role,
+        }
+    )
+
+
+def _auth_headers(username: str, *, account_type: str, household_id: int, household_role: str) -> dict[str, str]:
+    return {
+        "Authorization": f"Bearer {_issue_token(username, account_type=account_type, household_id=household_id, household_role=household_role)}"
+    }
+
+
+def _seed_household(prefix: str = "reject"):
+    db = TestingSessionLocal()
+    household = Household(name=f"{prefix.title()} Access House")
+    admin = User(
+        fullname="Admin User",
+        username=f"admin-{prefix}",
+        authentication="hashed-pass",
+        account_type=AccountType.admin,
+        approval_status=UserApprovalStatus.approved,
+        ui_layout={},
+    )
+    member = User(
+        fullname="Member User",
+        username=f"member-{prefix}",
+        authentication="hashed-pass",
+        account_type=AccountType.parent,
+        approval_status=UserApprovalStatus.approved,
+        ui_layout={},
+    )
+    observer = User(
+        fullname="Observer User",
+        username=f"observer-{prefix}",
+        authentication="hashed-pass",
+        account_type=AccountType.parent,
+        approval_status=UserApprovalStatus.approved,
+        ui_layout={},
+    )
+    db.add_all([household, admin, member, observer])
+    db.commit()
+    db.refresh(household)
+    db.refresh(admin)
+    db.refresh(member)
+    db.refresh(observer)
+
+    db.add_all(
+        [
+            HouseholdMembership(household_id=household.household_id, user_id=admin.user_id, role=HouseholdRole.owner),
+            HouseholdMembership(household_id=household.household_id, user_id=member.user_id, role=HouseholdRole.member),
+            HouseholdMembership(household_id=household.household_id, user_id=observer.user_id, role=HouseholdRole.member),
+        ]
+    )
+    db.commit()
+    payload = (
+        {"household_id": household.household_id},
+        {"user_id": admin.user_id, "username": admin.username, "account_type": admin.account_type.value},
+        {"user_id": member.user_id, "username": member.username, "account_type": member.account_type.value},
+        {"user_id": observer.user_id, "username": observer.username, "account_type": observer.account_type.value},
+    )
+    db.close()
+
+    return payload
+
+
+def _create_room(headers: dict[str, str], *, name: str, allowed_user_ids: list[int] | None = None) -> dict:
+    response = client.post(
+        "/api/v1/rooms",
+        headers=headers,
+        json={"name": name, "allowed_user_ids": allowed_user_ids or []},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+@pytest.fixture(autouse=True)
+def reset_state():
+    app.dependency_overrides[get_db] = override_get_db
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    yield
+    app.dependency_overrides.clear()
+    Base.metadata.drop_all(bind=engine)
 
 def test_reject_device_forwards_rejection_and_hides_pending_device(monkeypatch):
     household, admin, _member, _observer = _seed_household()
