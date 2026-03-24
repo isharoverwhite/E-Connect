@@ -48,6 +48,18 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      mqtt:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import json, urllib.request; data = json.loads(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5).read().decode()); assert data.get("status") == "ok"
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 5s
 
   webapp:
     build:
@@ -64,7 +76,18 @@ services:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
       BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://server:8000}
     depends_on:
-      - server
+      server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - const main = async () => { const res = await fetch("http://127.0.0.1:3000/login"); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 5s
 
 volumes:
   db_data:
