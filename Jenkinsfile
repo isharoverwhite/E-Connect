@@ -1,39 +1,136 @@
 pipeline {
     agent any
 
+    options {
+        disableConcurrentBuilds()
+        skipDefaultCheckout(true)
+    }
+
+    parameters {
+        booleanParam(
+            name: 'DEPLOY',
+            defaultValue: true,
+            description: 'Deploy the active Docker Compose stack after validation.'
+        )
+        booleanParam(
+            name: 'ALLOW_NON_MAIN_DEPLOY',
+            defaultValue: false,
+            description: 'Allow deployment from a branch other than main/master.'
+        )
+    }
+
     environment {
-        // Có thể định nghĩa thêm các environment variable nếu cần
-        DOCKER_BUILDKIT = 1
+        COMPOSE_FILE = 'docker-compose.yml'
+        COMPOSE_PROJECT_NAME = 'econnect'
+        DOCKER_BUILDKIT = '1'
+        BUILDKIT_PROGRESS = 'plain'
     }
 
     stages {
         stage('Checkout') {
             steps {
-                echo "1. Checking out latest code from SCM..."
+                echo 'Checking out source from SCM...'
                 checkout scm
             }
         }
-        
-        stage('Deploy with Docker Compose') {
+
+        stage('Preflight') {
             steps {
-                echo "2. Rebuilding and deploying application..."
+                script {
+                    env.RESOLVED_BRANCH = (env.BRANCH_NAME ?: env.GIT_BRANCH ?: 'detached')
+                        .replaceFirst(/^\*\//, '')
+                        .replaceFirst(/^origin\//, '')
+                    echo "Resolved branch: ${env.RESOLVED_BRANCH}"
+                }
+
                 sh '''
-                # Tắt các container hiện tại
-                docker compose down
-                
-                # Khởi động lại các container với source code mới cài đặt (--build)
-                docker compose up -d --build
+                    set -eu
+                    docker version
+                    docker compose version
+                    docker compose config -q
+                '''
+            }
+        }
+
+        stage('Build Active Images') {
+            steps {
+                echo 'Building active release services: server + webapp'
+                sh '''
+                    set -eu
+                    docker compose build server webapp
+                '''
+            }
+        }
+
+        stage('Deploy') {
+            when {
+                expression { return params.DEPLOY }
+            }
+            steps {
+                script {
+                    if (!(params.ALLOW_NON_MAIN_DEPLOY || ['main', 'master'].contains(env.RESOLVED_BRANCH))) {
+                        error("Refusing to deploy branch '${env.RESOLVED_BRANCH}'. Set ALLOW_NON_MAIN_DEPLOY=true to override.")
+                    }
+                }
+
+                sh '''
+                    set -eu
+                    docker compose up -d --remove-orphans
+                '''
+            }
+        }
+
+        stage('Smoke Test') {
+            when {
+                expression { return params.DEPLOY }
+            }
+            steps {
+                sh '''
+                    set -eu
+
+                    retry() {
+                        attempts="$1"
+                        delay="$2"
+                        shift 2
+
+                        count=1
+                        while [ "$count" -le "$attempts" ]; do
+                            if "$@"; then
+                                return 0
+                            fi
+
+                            if [ "$count" -eq "$attempts" ]; then
+                                return 1
+                            fi
+
+                            count=$((count + 1))
+                            sleep "$delay"
+                        done
+                    }
+
+                    retry 30 2 docker compose exec -T server python -c "import json, urllib.request; data = json.loads(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read().decode()); assert data.get('status') == 'ok'"
+                    retry 30 2 docker compose exec -T webapp node -e "const main = async () => { const res = await fetch('http://127.0.0.1:3000/login'); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))"
                 '''
             }
         }
     }
-    
+
     post {
-        success {
-            echo "🚀 Deployment successful!"
+        always {
+            sh '''
+                docker compose ps || true
+            '''
         }
+
         failure {
-            echo "❌ Deployment failed! Please check logs."
+            sh '''
+                docker compose logs --tail=200 server webapp db mqtt || true
+            '''
+            echo 'Deployment failed. Review compose status and service logs above.'
+        }
+
+        success {
+            echo 'Pipeline finished successfully.'
         }
     }
 }

@@ -45,3 +45,8 @@ test-results/
 playwright-report/
 blob-report/
 
+# local scratch artifacts
+/lint*.txt
+/screenshot_*.png
+/step*.html
+/webapp.log

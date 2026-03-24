@@ -140,6 +140,13 @@ def build_pairing_request_event_payload(device: Device) -> dict[str, Any]:
     }
 
 
+def build_pairing_queue_event_payload(device: Device, *, reason: str) -> dict[str, Any]:
+    return {
+        **build_pairing_request_event_payload(device),
+        "reason": reason,
+    }
+
+
 def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegistrationResult:
     device = None
     secure_project = None

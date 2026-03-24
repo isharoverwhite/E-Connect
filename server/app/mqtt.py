@@ -39,14 +39,14 @@ REGISTER_TOPIC_SUBSCRIPTION = f"econnect/{MQTT_NAMESPACE}/device/+/register"
 def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> None:
     if not device.provisioning_project_id or not reported_version:
         return
-        
+
     from app.sql_models import BuildJob, JobStatus
-    
+
     flashing_jobs = db.query(BuildJob).filter(
         BuildJob.project_id == device.provisioning_project_id,
         BuildJob.status == JobStatus.flashing
     ).all()
-    
+
     if not flashing_jobs:
         return
 
@@ -86,6 +86,22 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> N
         logger.warning("Reconciled OTA job %s to flash_failed (version mismatch).", job.id)
 
 
+def build_pairing_rejected_ack_payload(device: Device) -> dict[str, Any]:
+    auth_status = device.auth_status.value if hasattr(device.auth_status, "value") else str(device.auth_status)
+    conn_status = device.conn_status.value if hasattr(device.conn_status, "value") else str(device.conn_status)
+    mode = device.mode.value if hasattr(device.mode, "value") else str(device.mode)
+    return {
+        "status": "pairing_rejected",
+        "device_id": device.device_id,
+        "reason": "admin_rejected",
+        "auth_status": auth_status,
+        "conn_status": conn_status,
+        "mode": mode,
+        "mac_address": device.mac_address,
+        "message": "Pairing was rejected by the server. Reboot or power-cycle the board to try again.",
+    }
+
+
 class MQTTClientManager:
     def __init__(self):
         self.client_id = f"econnect_server_{MQTT_NAMESPACE}_{uuid.uuid4().hex[:8]}"
@@ -97,6 +113,7 @@ class MQTTClientManager:
         self.client.on_message = self.on_message
         self.client.on_disconnect = self.on_disconnect
         self.connected = False
+        self.pending_commands = {}
 
     def start(self):
         try:
@@ -199,20 +216,28 @@ class MQTTClientManager:
                 device.auth_status.value if hasattr(device.auth_status, "value") else str(device.auth_status)
             )
             if device.auth_status != AuthStatus.approved:
-                logger.info(
-                    "Requesting re-pair for device %s because auth_status=%s",
-                    device_id,
-                    auth_status,
-                )
-                self.publish_json(
-                    self.state_ack_topic(device_id),
-                    {
+                if device.auth_status == AuthStatus.rejected:
+                    logger.info(
+                        "Informing device %s that pairing was rejected until reboot.",
+                        device_id,
+                    )
+                    ack_payload = build_pairing_rejected_ack_payload(device)
+                else:
+                    logger.info(
+                        "Requesting re-pair for device %s because auth_status=%s",
+                        device_id,
+                        auth_status,
+                    )
+                    ack_payload = {
                         "status": "re_pair_required",
                         "device_id": device_id,
                         "reason": "not_approved",
                         "auth_status": auth_status,
                         "message": "Device is no longer approved and must pair again.",
-                    },
+                    }
+                self.publish_json(
+                    self.state_ack_topic(device_id),
+                    ack_payload,
                     wait_for_publish=False,
                 )
                 return
@@ -222,10 +247,12 @@ class MQTTClientManager:
             device.conn_status = ConnStatus.online
             device.last_seen = observed_at
             if isinstance(payload_json, dict):
+                self.resolve_command_ack(device_id, payload_json, db)
+
                 reported_ip = payload_json.get("ip_address")
                 if isinstance(reported_ip, str) and reported_ip.strip():
                     device.ip_address = reported_ip.strip()
-                    
+
                 reported_fw = payload_json.get("firmware_version")
                 if isinstance(reported_fw, str) and reported_fw.strip():
                     device.firmware_version = reported_fw.strip()
@@ -250,7 +277,10 @@ class MQTTClientManager:
                         "device_online",
                         device_id,
                         device.room_id,
-                        {"reason": "mqtt_state"}
+                        {
+                            "reason": "mqtt_state",
+                            "reported_at": observed_at.isoformat(),
+                        }
                     )
                 except Exception:
                     pass
@@ -268,7 +298,10 @@ class MQTTClientManager:
                     "device_state",
                     device_id,
                     device.room_id,
-                    payload_json or {}
+                    {
+                        **(payload_json or {}),
+                        "reported_at": observed_at.isoformat(),
+                    }
                 )
             except Exception:
                 pass
@@ -278,7 +311,7 @@ class MQTTClientManager:
                 from app.sql_models import BuildJob, JobStatus
                 job_id = payload_json.get("job_id")
                 ota_status = payload_json.get("status")
-                
+
                 if job_id and ota_status:
                     job = db.query(BuildJob).filter(BuildJob.id == job_id).first()
                     if job:
@@ -287,13 +320,77 @@ class MQTTClientManager:
                         elif ota_status == "failed":
                             job.status = JobStatus.flash_failed
                             job.error_message = payload_json.get("message")
-                        
+
                         job.finished_at = datetime.utcnow()
                         db.commit()
 
             db.commit()
         finally:
             db.close()
+
+    def resolve_command_ack(self, device_id: str, state_payload: dict, db: Session) -> None:
+        ack_cmd_id = state_payload.get("command_id")
+        applied = state_payload.get("applied", True)
+
+        matched_cmd_id = None
+        if ack_cmd_id and ack_cmd_id in self.pending_commands:
+            matched_cmd_id = ack_cmd_id
+        else:
+            pin = state_payload.get("pin")
+            val = state_payload.get("value")
+            bright = state_payload.get("brightness")
+
+            if isinstance(val, bool):
+                val = 1 if val else 0
+
+            for cid, cmd in list(self.pending_commands.items()):
+                if cmd["device_id"] == device_id and cmd.get("pin") == pin:
+                    cmd_val = cmd.get("value")
+                    if isinstance(cmd_val, bool):
+                        cmd_val = 1 if cmd_val else 0
+                    cmd_bright = cmd.get("brightness")
+
+                    match_val = val is not None and cmd_val is not None and cmd_val == val
+                    match_bright = bright is not None and cmd_bright is not None and cmd_bright == bright
+
+                    if match_val or match_bright:
+                        matched_cmd_id = cid
+                        break
+
+        if matched_cmd_id:
+            cmd = self.pending_commands.pop(matched_cmd_id, None)
+            if cmd:
+                if applied is False:
+                    status = "failed"
+                    reason = "applied_false"
+                    event_type = EventType.command_failed
+                else:
+                    status = "acknowledged"
+                    reason = "state_match"
+                    event_type = EventType.state_change
+
+                if status == "failed":
+                    db.add(
+                        DeviceHistory(
+                            device_id=device_id,
+                            event_type=event_type,
+                            payload=json.dumps({"command_id": matched_cmd_id, "reason": reason})
+                        )
+                    )
+
+                try:
+                    ws_manager.broadcast_device_event_sync(
+                        "command_delivery",
+                        device_id,
+                        None,
+                        {
+                            "command_id": matched_cmd_id,
+                            "status": status,
+                            "reason": reason
+                        }
+                    )
+                except Exception:
+                    pass
 
     def process_registration_message(self, device_id: str, payload_str: str) -> dict[str, Any]:
         ack_topic = self.registration_ack_topic(device_id)
@@ -330,7 +427,7 @@ class MQTTClientManager:
                     None,
                     build_pairing_request_event_payload(result.device),
                 )
-            
+
             if result.device.firmware_version:
                 _reconcile_ota_jobs(db, result.device, result.device.firmware_version)
                 db.commit()

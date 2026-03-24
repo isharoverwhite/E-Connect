@@ -10,6 +10,7 @@ export const API_URL = configuredApiUrl && configuredApiUrl.length > 0
 export interface DeviceCommandResponse {
     status: string;
     message?: string;
+    command_id?: string;
     command?: unknown;
 }
 
@@ -30,6 +31,25 @@ export async function approveDiscoveredDevice(uuid: string, roomId: number): Pro
         return res.ok;
     } catch (error) {
         console.error("Failed to approve device:", error);
+        return false;
+    }
+}
+
+export async function rejectDiscoveredDevice(uuid: string): Promise<boolean> {
+    try {
+        const token = getToken();
+        if (!token) return false;
+
+        const res = await fetch(`${API_URL}/device/${uuid}/reject`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${token}`,
+            },
+        });
+
+        return res.ok;
+    } catch (error) {
+        console.error("Failed to reject device:", error);
         return false;
     }
 }
