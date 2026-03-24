@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { approveDiscoveredDevice, fetchDevices } from "@/lib/api";
+import { approveDiscoveredDevice, fetchDevices, rejectDiscoveredDevice } from "@/lib/api";
 import { createRoom, fetchRooms, type RoomRecord } from "@/lib/rooms";
 import { DeviceConfig } from "@/types/device";
 
@@ -13,6 +13,7 @@ export default function DeviceDiscovery() {
     const [scanState, setScanState] = useState<"idle" | "scanning" | "found">("scanning");
     const [pendingDevices, setPendingDevices] = useState<DeviceConfig[]>([]);
     const [approving, setApproving] = useState(false);
+    const [rejecting, setRejecting] = useState(false);
     const [rooms, setRooms] = useState<RoomRecord[]>([]);
     const [roomsLoading, setRoomsLoading] = useState(true);
     const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
@@ -115,7 +116,10 @@ export default function DeviceDiscovery() {
     }, [isAdmin, scanState]);
 
     useWebSocket((event) => {
-        if (!isAdmin || event.type !== "pairing_requested") {
+        if (
+            !isAdmin ||
+            (event.type !== "pairing_requested" && event.type !== "pairing_queue_updated")
+        ) {
             return;
         }
 
@@ -159,6 +163,20 @@ export default function DeviceDiscovery() {
             }
         } finally {
             setApproving(false);
+        }
+    };
+
+    const rejectDevice = async (deviceId: string) => {
+        setRejecting(true);
+        try {
+            const success = await rejectDiscoveredDevice(deviceId);
+            if (success) {
+                await refreshPendingDevices();
+            } else {
+                alert("Failed to ignore pairing.");
+            }
+        } finally {
+            setRejecting(false);
         }
     };
 
@@ -325,15 +343,19 @@ export default function DeviceDiscovery() {
                                 <div className="space-y-3">
                                     <button
                                         onClick={() => void approveDevice(pendingDevices[0].device_id)}
-                                        disabled={approving || !selectedRoomId}
+                                        disabled={approving || rejecting || !selectedRoomId}
                                         className="flex w-full items-center justify-center rounded-xl bg-green-600 px-4 py-3 font-medium text-white shadow-[0_4px_14px_0_rgba(37,99,235,0.39)] transition-all hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
                                     >
                                         <span className="material-icons-round mr-2">verified</span>
                                         {approving ? "Pairing..." : "Pair Device"}
                                     </button>
 
-                                    <button onClick={() => setScanState("idle")} className="flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-3 font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700">
-                                        Ignore
+                                    <button
+                                        onClick={() => void rejectDevice(pendingDevices[0].device_id)}
+                                        disabled={rejecting || approving}
+                                        className="flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-3 font-medium text-slate-700 transition-colors hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                                    >
+                                        {rejecting ? "Ignoring..." : "Ignore"}
                                     </button>
                                 </div>
                             </div>

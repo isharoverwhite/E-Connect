@@ -8,7 +8,7 @@ Every non-trivial task must result in:
 - implementation aligned with product requirements
 - explicit phase execution in the order `Requirement -> Design -> Implementation -> Test`
 - verifiable technical evidence instead of assumption-based claims
-- explicit role separation between planning, coding, and testing
+- explicit role separation between planning, coding, testing, and debugging
 - handoff-friendly artifacts, status tracking, and agent communication logs
 - a checklist report showing what was done, verified, skipped, and still pending
 
@@ -29,6 +29,12 @@ Instruction precedence:
 
 If the codebase conflicts with the PRD, the conflict must be surfaced explicitly in the task report. Agents must not silently choose one source and ignore the other.
 
+Default execution mapping for this repository:
+- `Codex` owns `Main`, `Planner`, `Tester`, and `Debug`
+- `Antigravity` owns `Coder`
+
+If an older PRD section, report, or note still refers to `Antigravity - Tester`, treat that naming as stale and follow this file unless the user explicitly overrides the mapping.
+
 ---
 
 ## 3. Process Overview
@@ -42,13 +48,24 @@ Phase order is fixed:
 Process rules:
 1. Do not skip, merge, or reorder phases unless the user explicitly approves a deviation.
 2. User approval is required at the checkpoints defined in this file.
-3. Every non-trivial task must be executed through four logical roles:
+3. Every non-trivial task must be executed through five logical roles:
 - `Main`
 - `Planner`
 - `Coder`
 - `Tester`
-4. One implementation session may perform multiple roles, but role outputs, evidence, and handoffs must remain distinct.
-5. If [PROJECT_STATUS.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PROJECT_STATUS.md) or [AGENT_COMMUNICATION.log](/Users/kiendinhtrung/Documents/GitHub/Final-Project/AGENT_COMMUNICATION.log) does not exist, `Main` must create it before claiming the first non-trivial task is complete.
+- `Debug`
+4. Default agent assignment is:
+- `Codex` -> `Main`, `Planner`, `Tester`, `Debug`
+- `Antigravity` -> `Coder`
+5. One implementation session may perform multiple roles, but role outputs, evidence, and handoffs must remain distinct.
+6. If [PROJECT_STATUS.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PROJECT_STATUS.md) or [AGENT_COMMUNICATION.log](/Users/kiendinhtrung/Documents/GitHub/Final-Project/AGENT_COMMUNICATION.log) does not exist, `Main` must create it before claiming the first non-trivial task is complete.
+
+### Delegation Language For Antigravity
+
+1. If the user says `yêu cầu Antigravity sửa`, `nhờ Antigravity sửa`, or equivalent, `Codex` must treat that as a request to prepare a coder handoff prompt for `Antigravity`.
+2. That phrasing does not authorize `Codex` to take the `Coder` role or implement the requested code change directly.
+3. The handoff prompt for `Antigravity` must include the objective, project context, scope in/out, impacted files or modules, constraints, validation requirements, and expected evidence.
+4. After `Antigravity` returns implementation output, `Codex` resumes its repository responsibilities as `Planner`, `Tester`, and `Debug`.
 
 ---
 
@@ -76,11 +93,12 @@ Artifact rules:
 | Role | Core responsibility | Required outputs |
 |---|---|---|
 | `Main` | Coordinate phases, approvals, status, logging, and final reporting | Gate summary, status updates, communication log entries, final task report |
-| `Planner` | Translate the request into an approved implementation slice and technical verification plan | Task Packet, FR/NFR mapping, scope boundaries, design deltas, risks, pass criteria |
+| `Planner` | Translate the request into an approved implementation slice and technical verification plan | Task Packet, FR/NFR mapping, scope boundaries, design deltas, risks, pass criteria, Antigravity handoff prompt when coding is delegated |
 | `Coder` | Implement the approved slice with the smallest correct change set | Code changes, migrations if needed, updated validation/tests, implementation notes |
 | `Tester` | Validate the result independently against acceptance criteria | Evidence log, defect list, happy/failure-path results, `PASS` or `FAIL` conclusion |
+| `Debug` | Reproduce defects, isolate likely root cause, and hand back a narrow rework brief | Reproduction steps, suspect path, root-cause notes, remediation brief, re-test hooks |
 
-Supporting specialists such as UI, UX, database, or firmware agents may assist, but they do not replace the mandatory responsibilities of `Planner`, `Coder`, or `Tester`.
+Supporting specialists such as UI, UX, database, or firmware agents may assist, but they do not replace the mandatory responsibilities of `Planner`, `Coder`, or `Tester`, and they do not replace `Debug` when a defect investigation is active.
 
 ---
 
@@ -102,6 +120,7 @@ Convert the user request into an approved scope slice that is traceable to the P
    - Assumptions, risks, and blockers
    - Verification plan covering code validation, browser checks, database checks, and at least one failure path
    - Gate expectation and pass criteria
+   - A ready-to-send coder prompt when the user explicitly delegates the fix to `Antigravity`
 4. If the request exceeds the current baseline, `Main` creates a change request note in [design/change-requests](/Users/kiendinhtrung/Documents/GitHub/Final-Project/design/change-requests) and waits for approval before continuing.
 5. `Main` records the active task and current phase in [PROJECT_STATUS.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PROJECT_STATUS.md).
 
@@ -152,7 +171,8 @@ Implement the approved task slice with the smallest correct change set.
 3. `Coder` keeps business rules near the domain or backend layer instead of scattering them across UI code.
 4. `Coder` preserves durable state, explicit lifecycle transitions, validation boundaries, and retry safety.
 5. `Coder` updates supporting tests, validation logic, or migrations when the change requires them.
-6. `Main` updates [PROJECT_STATUS.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PROJECT_STATUS.md) when the task changes phase or hits a blocker.
+6. If the task is a bug fix or implementation is blocked by unclear failure behavior, `Coder` requests `Debug` to reproduce the issue and narrow the suspect path before expanding scope.
+7. `Main` updates [PROJECT_STATUS.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PROJECT_STATUS.md) when the task changes phase or hits a blocker.
 
 ### Implementation Standards
 
@@ -184,6 +204,14 @@ For DIY and firmware-related work:
 2. A diff alone is not completion evidence.
 3. User approval does not replace the Test phase.
 
+### Debug Trigger And Handoff
+
+1. `Debug` is owned by `Codex` and is activated for bug reports, failed verification, unexpected regressions, or unclear runtime behavior.
+2. `Debug` must reproduce the issue, capture concrete evidence, and narrow the likely root cause before asking `Coder` to rework the implementation.
+3. `Debug` hands `Coder` a concise remediation brief covering suspected file paths, failing scenario, and re-test hooks.
+4. `Debug` does not replace `Tester`: debugging explains why the failure happens; testing proves whether the final behavior now passes.
+5. Every debug-to-code or test-to-debug handoff must be logged in [AGENT_COMMUNICATION.log](/Users/kiendinhtrung/Documents/GitHub/Final-Project/AGENT_COMMUNICATION.log).
+
 ---
 
 ## 9. Phase 4: Test
@@ -194,7 +222,7 @@ Independently verify the implemented behavior against the approved task slice an
 
 ### Workflow
 
-1. `Tester` validates the implementation independently from `Coder`.
+1. `Tester` validates the implementation independently from `Coder` and does not treat `Debug` hypotheses as proof.
 2. `Tester` executes a happy path and at least one failure or edge path.
 3. `Tester` runs relevant lint, typecheck, unit, integration, or backend validation commands.
 4. `Tester` verifies browser behavior for frontend-affecting work through `chrome-devtools`.
@@ -291,13 +319,14 @@ All inter-agent coordination must be logged in [AGENT_COMMUNICATION.log](/Users/
 
 ### Must Be Logged
 
-1. `Main` assigns work to `Planner`, `Coder`, or `Tester`
-2. `Planner` hands approved scope/design to `Coder`
+1. `Main` assigns work to `Planner`, `Coder`, `Tester`, or `Debug`
+2. `Planner` hands approved scope/design or the ready-to-send Antigravity prompt to `Coder`
 3. `Coder` hands build output to `Tester`
-4. any agent requests clarification or missing evidence from another agent
-5. blocker escalation, defect return, or rework handoff
-6. a logical handoff between roles, even when one session performs both roles
-7. notice that an MCP dependency is unavailable and affects verification
+4. `Tester` or `Debug` returns a defect or root-cause brief to `Coder`
+5. any agent requests clarification or missing evidence from another agent
+6. blocker escalation, defect return, or rework handoff
+7. a logical handoff between roles, even when one session performs both roles
+8. notice that an MCP dependency is unavailable and affects verification
 
 ### Must Not Be Logged
 
@@ -441,6 +470,7 @@ Sub-agent Outputs:
 - Planner:
 - Coder:
 - Tester:
+- Debug:
 
 Changed Files:
 
@@ -469,6 +499,7 @@ Working principles:
 6. do not skip browser verification for frontend-affecting work
 7. do not skip database inspection for persistence-affecting work
 8. do not invent behavior that conflicts with the PRD
+9. do not let `Codex` self-assign `Coder` when the user explicitly delegates the implementation to `Antigravity`
 
 Exception and deviation handling:
 1. If a request exceeds the current scope baseline, create a short change request note that describes the proposed change, affected FR/NFR items, affected gates, and the approval needed.
@@ -488,6 +519,8 @@ Exception and deviation handling:
 2. `Main` logs the task in [PROJECT_STATUS.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PROJECT_STATUS.md) and records the first role assignment in [AGENT_COMMUNICATION.log](/Users/kiendinhtrung/Documents/GitHub/Final-Project/AGENT_COMMUNICATION.log).
 3. `Planner` checks the PRD, current code path, affected API, and relevant database tables, then creates the Task Packet.
 4. If the task changes persistence behavior, `Planner` updates [design/database/schema.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/design/database/schema.md) or records why the design baseline is unchanged.
-5. After the appropriate approval gate, `Coder` implements the smallest correct change set and updates supporting validation or tests.
-6. `Tester` runs the required code checks, verifies the browser flow through `chrome-devtools`, verifies database before/after state through `mariadb_nas`, and records at least one failure path.
-7. `Tester` issues `PASS` or `FAIL`, `Main` updates [PROJECT_STATUS.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PROJECT_STATUS.md), and the final task report is delivered with the mandatory Checklist Report.
+5. If the user explicitly says `yêu cầu Antigravity sửa`, `Planner` writes the coder prompt and hands that prompt to `Antigravity` instead of letting `Codex` implement directly.
+6. After the appropriate approval gate, `Antigravity` acting as `Coder` implements the smallest correct change set and updates supporting validation or tests.
+7. `Tester` runs the required code checks, verifies the browser flow through `chrome-devtools`, verifies database before/after state through `mariadb_nas`, and records at least one failure path.
+8. If verification fails or the task is explicitly a bug/debug request, `Codex` acting as `Debug` reproduces the issue, records the likely root cause, and hands a rework brief back to `Antigravity`.
+9. After rework passes, `Tester` issues `PASS` or `FAIL`, `Main` updates [PROJECT_STATUS.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PROJECT_STATUS.md), and the final task report is delivered with the mandatory Checklist Report.

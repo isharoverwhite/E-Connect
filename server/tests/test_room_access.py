@@ -1,4 +1,6 @@
 import uuid
+from datetime import datetime
+from unittest.mock import Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,12 +13,14 @@ from app.services.provisioning import build_project_firmware_identity
 from app.sql_models import (
     AccountType,
     AuthStatus,
+    BuildJob,
     ConnStatus,
     Device,
     DiyProject,
     Household,
     HouseholdMembership,
     HouseholdRole,
+    JobStatus,
     RoomPermission,
     User,
     UserApprovalStatus,
@@ -62,12 +66,12 @@ def _auth_headers(username: str, *, account_type: str, household_id: int, househ
     }
 
 
-def _seed_household():
+def _seed_household(prefix: str = "room"):
     db = TestingSessionLocal()
-    household = Household(name="Room Access House")
+    household = Household(name=f"{prefix.title()} Access House")
     admin = User(
         fullname="Admin User",
-        username="admin-room",
+        username=f"admin-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.admin,
         approval_status=UserApprovalStatus.approved,
@@ -75,7 +79,7 @@ def _seed_household():
     )
     member = User(
         fullname="Member User",
-        username="member-room",
+        username=f"member-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.parent,
         approval_status=UserApprovalStatus.approved,
@@ -83,7 +87,7 @@ def _seed_household():
     )
     observer = User(
         fullname="Observer User",
-        username="observer-room",
+        username=f"observer-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.parent,
         approval_status=UserApprovalStatus.approved,
@@ -112,6 +116,36 @@ def _seed_household():
     )
     db.close()
 
+    return payload
+
+
+def _insert_household_admin(*, household_id: int, prefix: str) -> dict[str, object]:
+    db = TestingSessionLocal()
+    admin = User(
+        fullname=f"{prefix.title()} Admin",
+        username=f"{prefix}-admin",
+        authentication="hashed-pass",
+        account_type=AccountType.admin,
+        approval_status=UserApprovalStatus.approved,
+        ui_layout={},
+    )
+    db.add(admin)
+    db.commit()
+    db.refresh(admin)
+    db.add(
+        HouseholdMembership(
+            household_id=household_id,
+            user_id=admin.user_id,
+            role=HouseholdRole.admin,
+        )
+    )
+    db.commit()
+    payload = {
+        "user_id": admin.user_id,
+        "username": admin.username,
+        "account_type": admin.account_type.value,
+    }
+    db.close()
     return payload
 
 
@@ -249,7 +283,8 @@ def test_room_access_filters_devices_and_commands(monkeypatch):
         json={"power": True},
     )
     assert command_response.status_code == 200
-    assert command_response.json()["status"] == "sent"
+    assert command_response.json()["status"] == "pending"
+    assert "command_id" in command_response.json()
 
     forbidden_command = client.post(
         "/api/v1/device/device-office/command",
@@ -360,6 +395,178 @@ def test_unpair_stays_hidden_until_board_requests_pairing_again():
     assert pending_devices[0]["pairing_requested_at"] is not None
 
 
+def test_approve_device_broadcasts_pairing_queue_refresh(monkeypatch):
+    household, admin, _member, _observer = _seed_household(prefix="approvews")
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+
+    room = _create_room(admin_headers, name="Approve Lab")
+    device_id = str(uuid.uuid4())
+    db = TestingSessionLocal()
+    device = Device(
+        device_id=device_id,
+        mac_address="AA:BB:CC:DD:EE:22",
+        name="Approve Board",
+        room_id=None,
+        owner_id=admin["user_id"],
+        auth_status=AuthStatus.pending,
+        conn_status=ConnStatus.online,
+        pairing_requested_at=datetime.utcnow(),
+    )
+    db.add(device)
+    db.commit()
+    db.close()
+
+    ws_mock = Mock()
+    monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", ws_mock)
+
+    approve_response = _approve_device_response(
+        admin_headers,
+        device_id=device_id,
+        room_id=room["room_id"],
+    )
+    assert approve_response.status_code == 200, approve_response.text
+    assert approve_response.json()["status"] == "approved"
+
+    db = TestingSessionLocal()
+    approved_device = db.query(Device).filter(Device.device_id == device_id).first()
+    assert approved_device is not None
+    db.refresh(approved_device)
+    assert approved_device.auth_status == AuthStatus.approved
+    assert approved_device.pairing_requested_at is None
+    assert approved_device.room_id == room["room_id"]
+    db.close()
+
+    ws_mock.assert_called_once()
+    event_type, ws_device_id, ws_room_id, payload = ws_mock.call_args.args
+    assert event_type == "pairing_queue_updated"
+    assert ws_device_id == device_id
+    assert ws_room_id is None
+    assert payload["reason"] == "approved"
+    assert payload["auth_status"] == "approved"
+    assert payload["pairing_requested_at"] is None
+
+
+def test_reject_device_forwards_rejection_and_hides_pending_device(monkeypatch):
+    household, admin, _member, _observer = _seed_household()
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+
+    room = _create_room(admin_headers, name="Reject Lab")
+    device_id = str(uuid.uuid4())
+    db = TestingSessionLocal()
+    device = Device(
+        device_id=device_id,
+        mac_address="AA:BB:CC:DD:EE:11",
+        name="Rejected Board",
+        room_id=room["room_id"],
+        owner_id=admin["user_id"],
+        auth_status=AuthStatus.pending,
+        conn_status=ConnStatus.online,
+        pairing_requested_at=datetime.utcnow(),
+    )
+    db.add(device)
+    db.commit()
+    db.close()
+
+    publish_mock = Mock(return_value=True)
+    ws_mock = Mock()
+    monkeypatch.setattr("app.api.mqtt_manager.publish_json", publish_mock)
+    monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", ws_mock)
+
+    reject_response = client.post(
+        f"/api/v1/device/{device_id}/reject",
+        headers=admin_headers,
+    )
+    assert reject_response.status_code == 200, reject_response.text
+    assert reject_response.json()["status"] == "rejected"
+
+    db = TestingSessionLocal()
+    rejected_device = db.query(Device).filter(Device.device_id == device_id).first()
+    assert rejected_device is not None
+    db.refresh(rejected_device)
+    assert rejected_device.auth_status == AuthStatus.rejected
+    assert rejected_device.pairing_requested_at is None
+    db.close()
+
+    pending_after_reject = client.get(
+        "/api/v1/devices?auth_status=pending",
+        headers=admin_headers,
+    )
+    assert pending_after_reject.status_code == 200
+    assert pending_after_reject.json() == []
+
+    publish_mock.assert_called_once()
+    topic, payload = publish_mock.call_args.args[:2]
+    assert topic.endswith("/state/ack")
+    assert payload["status"] == "pairing_rejected"
+    assert payload["reason"] == "admin_rejected"
+    assert payload["auth_status"] == "rejected"
+
+    ws_mock.assert_called_once()
+    event_type, ws_device_id, ws_room_id, ws_payload = ws_mock.call_args.args
+    assert event_type == "pairing_queue_updated"
+    assert ws_device_id == device_id
+    assert ws_room_id is None
+    assert ws_payload["reason"] == "rejected"
+    assert ws_payload["auth_status"] == "rejected"
+    assert ws_payload["pairing_requested_at"] is None
+
+
+def test_unpair_device_broadcasts_pairing_queue_refresh(monkeypatch):
+    household, admin, _member, _observer = _seed_household(prefix="unpairws")
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+
+    room = _create_room(admin_headers, name="Unpair Lab")
+    device_id = "device-unpair-ws"
+    _insert_device(
+        device_id=device_id,
+        name="Unpair Board",
+        room_id=room["room_id"],
+        owner_id=admin["user_id"],
+    )
+
+    ws_mock = Mock()
+    monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", ws_mock)
+
+    delete_response = client.delete(
+        f"/api/v1/device/{device_id}",
+        headers=admin_headers,
+    )
+    assert delete_response.status_code == 200, delete_response.text
+    assert delete_response.json()["status"] == "unpaired"
+
+    db = TestingSessionLocal()
+    unpaired_device = db.query(Device).filter(Device.device_id == device_id).first()
+    assert unpaired_device is not None
+    db.refresh(unpaired_device)
+    assert unpaired_device.auth_status == AuthStatus.pending
+    assert unpaired_device.pairing_requested_at is None
+    db.close()
+
+    ws_mock.assert_called_once()
+    event_type, ws_device_id, ws_room_id, payload = ws_mock.call_args.args
+    assert event_type == "pairing_queue_updated"
+    assert ws_device_id == device_id
+    assert ws_room_id is None
+    assert payload["reason"] == "unpaired"
+    assert payload["auth_status"] == "pending"
+    assert payload["pairing_requested_at"] is None
+
+
 def test_force_pairing_request_keeps_unknown_secure_device_pending():
     household, admin, _member, _observer = _seed_household()
     admin_headers = _auth_headers(
@@ -397,3 +604,112 @@ def test_force_pairing_request_keeps_unknown_secure_device_pending():
     pending_devices = pending_after_recovery.json()
     assert len(pending_devices) == 1
     assert pending_devices[0]["device_id"] == project["device_id"]
+
+
+def test_same_household_admin_can_manage_project_and_build_job():
+    household, admin, member, _observer = _seed_household()
+    co_admin = _insert_household_admin(
+        household_id=household["household_id"],
+        prefix="coadmin",
+    )
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+    co_admin_headers = _auth_headers(
+        co_admin["username"],
+        account_type=co_admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.admin.value,
+    )
+
+    room = _create_room(admin_headers, name="Builder Lab")
+    project = _insert_diy_project(user_id=member["user_id"], room_id=room["room_id"])
+
+    project_response = client.get(
+        f"/api/v1/diy/projects/{project['project_id']}",
+        headers=co_admin_headers,
+    )
+    assert project_response.status_code == 200, project_response.text
+    assert project_response.json()["id"] == project["project_id"]
+
+    update_response = client.put(
+        f"/api/v1/diy/projects/{project['project_id']}",
+        headers=co_admin_headers,
+        json={
+            "name": "Updated Recovery Project",
+            "board_profile": "esp32-devkit-v1",
+            "room_id": room["room_id"],
+            "config": {"pins": []},
+        },
+    )
+    assert update_response.status_code == 200, update_response.text
+    assert update_response.json()["name"] == "Updated Recovery Project"
+
+    db = TestingSessionLocal()
+    job_id = str(uuid.uuid4())
+    db.add(BuildJob(id=job_id, project_id=project["project_id"], status=JobStatus.queued))
+    db.commit()
+    db.close()
+
+    job_response = client.get(
+        f"/api/v1/diy/build/{job_id}",
+        headers=co_admin_headers,
+    )
+    assert job_response.status_code == 200, job_response.text
+    assert job_response.json()["project_id"] == project["project_id"]
+    assert job_response.json()["ota_token"]
+
+
+def test_foreign_household_admin_cannot_mutate_device_or_project():
+    household, admin, _member, _observer = _seed_household()
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+    foreign_household, foreign_admin, _foreign_member, _foreign_observer = _seed_household(prefix="foreign")
+    foreign_headers = _auth_headers(
+        foreign_admin["username"],
+        account_type=foreign_admin["account_type"],
+        household_id=foreign_household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+
+    room = _create_room(admin_headers, name="Scoped Lab")
+    project = _insert_diy_project(user_id=admin["user_id"], room_id=room["room_id"])
+    _insert_device(
+        device_id=project["device_id"],
+        name="Scoped Board",
+        room_id=room["room_id"],
+        owner_id=admin["user_id"],
+    )
+
+    db = TestingSessionLocal()
+    device = db.query(Device).filter(Device.device_id == project["device_id"]).first()
+    assert device is not None
+    device.provisioning_project_id = project["project_id"]
+    db.commit()
+    db.close()
+
+    delete_response = client.delete(
+        f"/api/v1/device/{project['device_id']}",
+        headers=foreign_headers,
+    )
+    assert delete_response.status_code == 404
+
+    config_response = client.put(
+        f"/api/v1/device/{project['device_id']}/config",
+        headers=foreign_headers,
+        json={"pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}]},
+    )
+    assert config_response.status_code == 404
+
+    project_response = client.get(
+        f"/api/v1/diy/projects/{project['project_id']}",
+        headers=foreign_headers,
+    )
+    assert project_response.status_code == 404

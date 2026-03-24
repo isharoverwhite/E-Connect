@@ -29,3 +29,7 @@ void prepareBoardForWifiConnection();
 int32_t defaultBoardAuthMode();
 const char *boardAuthModeName(int32_t authMode);
 OtaUpdateResult runBoardOtaUpdate(const String &url);
+bool restoreRejectedPairingLock();
+void persistRejectedPairingLock(bool rejected);
+String boardResetReasonSummary();
+void shutdownBoardNetworkingAfterPairingReject();

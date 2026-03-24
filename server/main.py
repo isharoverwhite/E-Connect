@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import logging
+from pathlib import Path
 from app.api import router as device_router
 from sqlalchemy.exc import OperationalError
 
@@ -13,6 +14,7 @@ from app.mqtt import mqtt_manager
 from app.services.user_management import ensure_temp_support_account
 
 logger = logging.getLogger(__name__)
+STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 def _using_overridden_database(app: FastAPI) -> bool:
     return get_db in app.dependency_overrides
@@ -62,7 +64,7 @@ app.add_middleware(
 
 app.include_router(device_router, prefix="/api/v1")
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.exception_handler(OperationalError)
 async def database_error_handler(request: Request, exc: OperationalError):

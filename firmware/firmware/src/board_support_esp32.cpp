@@ -97,4 +97,15 @@ OtaUpdateResult runBoardOtaUpdate(const String &url) {
       false,
   };
 }
+
+bool restoreRejectedPairingLock() { return false; }
+
+void persistRejectedPairingLock(bool rejected) { (void)rejected; }
+
+String boardResetReasonSummary() { return String("stateless"); }
+
+void shutdownBoardNetworkingAfterPairingReject() {
+  WiFi.disconnect(true, true);
+  WiFi.mode(WIFI_OFF);
+}
 #endif

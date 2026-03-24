@@ -7,14 +7,13 @@ from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Any, Literal, Union
 import ast
 import json
-import shutil
 import os
 import uuid
 from datetime import datetime, timedelta
 import anyio
 import asyncio
 
-from .mqtt import mqtt_manager
+from .mqtt import build_pairing_rejected_ack_payload, mqtt_manager
 from .ws_manager import manager as ws_manager
 
 from .models import (
@@ -29,8 +28,8 @@ from .models import (
     ManagedUserResponse, UserApprovalStatus, DiyProjectUsageResponse, ProjectDeviceUsage
 )
 from .sql_models import (
-    User, Device, Automation, DeviceHistory, 
-    Firmware, Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
+    User, Device, Automation, DeviceHistory,
+    Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
     AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, BuildJob, SerialSession, SerialSessionStatus,
     UserApprovalStatus as SqlUserApprovalStatus
 )
@@ -38,6 +37,7 @@ from .database import get_db
 from .auth import verify_password, get_password_hash, create_access_token, create_ota_token, verify_ota_token, SECRET_KEY, ALGORITHM
 from .services.builder import build_firmware_task, get_durable_artifact_path
 from .services.device_registration import (
+    build_pairing_queue_event_payload,
     build_pairing_request_event_payload,
     is_mqtt_managed_device,
     mqtt_only_error,
@@ -59,6 +59,9 @@ DEVICE_HEARTBEAT_TIMEOUT_SECONDS = max(
     int(os.getenv("DEVICE_HEARTBEAT_TIMEOUT_SECONDS", "75")),
 )
 DEVICE_HEARTBEAT_TIMEOUT = timedelta(seconds=DEVICE_HEARTBEAT_TIMEOUT_SECONDS)
+AUTOMATION_SANDBOX_BLOCK_MESSAGE = (
+    "Automation execution is disabled until a sandbox worker is implemented."
+)
 
 
 def _background_session_factory(db: Session) -> sessionmaker:
@@ -132,7 +135,7 @@ def _expire_device_if_stale(db: Session, device: Device, *, reference_time: date
         )
     except Exception:
         pass
-        
+
     return True
 
 
@@ -149,6 +152,18 @@ def _expire_stale_devices(db: Session, devices: list[Device]) -> None:
 
     if status_changed:
         db.commit()
+
+
+def _broadcast_pairing_queue_updated(device: Device, *, reason: str) -> None:
+    try:
+        ws_manager.broadcast_device_event_sync(
+            "pairing_queue_updated",
+            device.device_id,
+            None,
+            build_pairing_queue_event_payload(device, reason=reason),
+        )
+    except Exception:
+        pass
 
 
 def _resolve_build_artifact_path(job: BuildJob, artifact_name: Literal["firmware", "bootloader", "partitions"]) -> Optional[str]:
@@ -299,6 +314,40 @@ def _get_household_room_ids(db: Session, household_id: Optional[int]) -> list[in
     return [row[0] for row in rows]
 
 
+def _resolve_household_scope(
+    db: Session,
+    current_user: User,
+) -> tuple[Optional[int], list[int], list[int]]:
+    household_id = resolve_household_id_for_user(db, current_user)
+    household_member_ids = _get_household_member_ids(db, household_id)
+    household_room_ids = _get_household_room_ids(db, household_id)
+    return household_id, household_member_ids, household_room_ids
+
+
+def _build_household_device_scope_filters(
+    household_member_ids: list[int],
+    household_room_ids: list[int],
+) -> list[Any]:
+    filters: list[Any] = []
+    if household_member_ids:
+        filters.append(Device.owner_id.in_(household_member_ids))
+    if household_room_ids:
+        filters.append(Device.room_id.in_(household_room_ids))
+    return filters
+
+
+def _build_household_project_scope_filters(
+    household_member_ids: list[int],
+    household_room_ids: list[int],
+) -> list[Any]:
+    filters: list[Any] = []
+    if household_member_ids:
+        filters.append(DiyProject.user_id.in_(household_member_ids))
+    if household_room_ids:
+        filters.append(DiyProject.room_id.in_(household_room_ids))
+    return filters
+
+
 def _get_room_permission_map(db: Session, room_ids: list[int]) -> dict[int, list[int]]:
     if not room_ids:
         return {}
@@ -408,6 +457,58 @@ def _get_device_or_404(db: Session, device_id: str) -> Device:
     return device
 
 
+def _get_device_in_household_or_404(db: Session, current_user: User, device_id: str) -> Device:
+    _household_id, household_member_ids, household_room_ids = _resolve_household_scope(db, current_user)
+    household_filters = _build_household_device_scope_filters(household_member_ids, household_room_ids)
+    if not household_filters:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    device = (
+        db.query(Device)
+        .filter(Device.device_id == device_id)
+        .filter(or_(*household_filters))
+        .first()
+    )
+    if not device:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return device
+
+
+def _get_project_in_household_or_404(db: Session, current_user: User, project_id: str) -> DiyProject:
+    _household_id, household_member_ids, household_room_ids = _resolve_household_scope(db, current_user)
+    household_filters = _build_household_project_scope_filters(household_member_ids, household_room_ids)
+    if not household_filters:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project = (
+        db.query(DiyProject)
+        .filter(DiyProject.id == project_id)
+        .filter(or_(*household_filters))
+        .first()
+    )
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
+
+
+def _get_build_job_in_household_or_404(db: Session, current_user: User, job_id: str) -> BuildJob:
+    _household_id, household_member_ids, household_room_ids = _resolve_household_scope(db, current_user)
+    household_filters = _build_household_project_scope_filters(household_member_ids, household_room_ids)
+    if not household_filters:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = (
+        db.query(BuildJob)
+        .join(DiyProject)
+        .filter(BuildJob.id == job_id)
+        .filter(or_(*household_filters))
+        .first()
+    )
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return job
+
+
 def _ensure_device_control_access(db: Session, current_user: User, device: Device) -> None:
     if device.auth_status != AuthStatus.approved:
         raise HTTPException(status_code=409, detail="Device is not approved for control")
@@ -454,6 +555,16 @@ def _get_managed_membership_or_404(db: Session, admin: User, user_id: int) -> Ho
 
     return membership
 
+
+def _raise_legacy_ota_disabled() -> None:
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "error": "disabled",
+            "message": "Legacy OTA endpoints are disabled. Use DIY build artifacts and signed OTA downloads instead.",
+        },
+    )
+
 # --- Dependencies ---
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     from jose import jwt, JWTError
@@ -471,24 +582,24 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         if username is None:
             raise credentials_exception
         token_data = TokenData(
-            username=username, 
-            account_type=account_type, 
-            household_id=household_id, 
+            username=username,
+            account_type=account_type,
+            household_id=household_id,
             household_role=household_role
         )
     except JWTError:
         raise credentials_exception
-    
+
     user = db.query(User).filter(User.username == token_data.username).first()
     if user is None:
         raise credentials_exception
     if user.approval_status != SqlUserApprovalStatus.approved:
         _raise_user_approval_error(user.approval_status)
-        
+
     # Attach session household context dynamically for route handlers
     setattr(user, "current_household_id", token_data.household_id)
     setattr(user, "current_household_role", token_data.household_role)
-    
+
     return user
 
 async def get_admin_user(current_user: User = Depends(get_current_user)):
@@ -503,7 +614,7 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
     if not token:
         await websocket.close(code=1008, reason="Missing token")
         return
-        
+
     from jose import jwt, JWTError
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -513,12 +624,12 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
     except (JWTError, ValueError):
         await websocket.close(code=1008, reason="Invalid token")
         return
-        
+
     user = db.query(User).filter(User.username == username).first()
     if not user or user.approval_status != SqlUserApprovalStatus.approved:
         await websocket.close(code=1008, reason="User missing or unapproved")
         return
-        
+
     acc_type_val = user.account_type.value if hasattr(user.account_type, "value") else str(user.account_type)
     accessible_room_ids = _get_accessible_room_ids_for_user(db, user) if acc_type_val != "admin" else []
 
@@ -548,9 +659,9 @@ async def initialserver(payload: InitialServerRequest, db: Session = Depends(get
     # Check if system is already initialized
     if db.query(User).count() > 0:
         raise HTTPException(status_code=403, detail={"error": "system_initialized", "message": "System already initialized"})
-        
+
     hashed_password = get_password_hash(payload.password)
-        
+
     new_user = User(
         fullname=payload.fullname,
         username=payload.username,
@@ -566,7 +677,7 @@ async def initialserver(payload: InitialServerRequest, db: Session = Depends(get
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=400, detail="Username already registered")
-        
+
     # Optimistic concurrency check to handle race conditions
     first_user = db.query(User).order_by(User.user_id.asc()).first()
     if first_user and first_user.user_id != new_user.user_id:
@@ -601,12 +712,12 @@ async def create_user(user_data: UserCreate, db: Session = Depends(get_db), admi
     """
     if db.query(User).filter(User.username == user_data.username).first():
         raise HTTPException(status_code=400, detail="Username already registered")
-        
+
     hashed_password = get_password_hash(user_data.password)
     admin_household_id = resolve_household_id_for_user(db, admin)
     if admin_household_id is None:
         raise HTTPException(status_code=404, detail="Household not found")
-    
+
     new_user = User(
         fullname=user_data.fullname,
         username=user_data.username,
@@ -622,7 +733,7 @@ async def create_user(user_data: UserCreate, db: Session = Depends(get_db), admi
     except IntegrityError:
         db.rollback()
         raise HTTPException(status_code=400, detail="Database error or username collision")
-        
+
     # Bind to Admin's Household
     membership_role = HouseholdRole.admin if user_data.account_type == AccountType.admin else HouseholdRole.member
     membership = HouseholdMembership(
@@ -632,7 +743,7 @@ async def create_user(user_data: UserCreate, db: Session = Depends(get_db), admi
     )
     db.add(membership)
     db.commit()
-        
+
     return new_user
 
 
@@ -682,7 +793,7 @@ async def promote_user(user_id: int, db: Session = Depends(get_db), admin: User 
 
     from app.models import AccountType
     membership = _get_managed_membership_or_404(db, admin, user_id)
-    
+
     # Needs to be explicitly upgraded in User table
     membership.user.account_type = AccountType.admin
     db.commit()
@@ -701,12 +812,12 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         )
     if user.approval_status != SqlUserApprovalStatus.approved:
         _raise_user_approval_error(user.approval_status)
-        
+
     # Find active household membership for context binding
     membership = db.query(HouseholdMembership).filter(HouseholdMembership.user_id == user.user_id).first()
     household_id = membership.household_id if membership else None
     household_role = membership.role.value if membership else None
-    
+
     access_token = create_access_token(
         data={
             "sub": user.username,
@@ -843,7 +954,7 @@ async def update_room(
     room.name = room_name
     db.commit()
     db.refresh(room)
-    
+
     room_ids = [room.room_id]
     permission_map = _get_room_permission_map(db, room_ids) if _is_room_admin(current_user) else {}
     return _serialize_room_response(room, permission_map.get(room.room_id, []))
@@ -860,13 +971,13 @@ async def delete_room(
     devices_in_room = db.query(Device).filter(Device.room_id == room_id).all()
     for d in devices_in_room:
         d.room_id = None
-        
+
     # 2. Clear room associations from DIY projects to prevent MariaDB foreign key violations
     from app.sql_models import DiyProject
     projects_in_room = db.query(DiyProject).filter(DiyProject.room_id == room_id).all()
     for p in projects_in_room:
         p.room_id = None
-    
+
     db.delete(room)
     db.commit()
     return {"message": "Room deleted successfully"}
@@ -874,7 +985,7 @@ async def delete_room(
 
 @router.post("/config", response_model=DeviceHandshakeResponse)
 async def register_device_handshake(
-    payload: DeviceRegister, 
+    payload: DeviceRegister,
     db: Session = Depends(get_db)
 ):
     """
@@ -918,16 +1029,17 @@ async def approve_device(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user),
 ):
-    device = _get_device_or_404(db, device_id)
+    device = _get_device_in_household_or_404(db, admin, device_id)
     room = _get_room_in_household_or_404(db, admin, payload.room_id)
-    
+
     device.auth_status = AuthStatus.approved
     device.pairing_requested_at = None
     device.room_id = room.room_id
     owner = db.query(User).filter(User.user_id == device.owner_id).first()
     _sync_user_dashboard_widgets(owner or admin, device)
-    
+
     db.commit()
+    _broadcast_pairing_queue_updated(device, reason="approved")
     return {"status": "approved", "device_id": device_id}
 
 @router.post("/device/{device_id}/reject")
@@ -935,13 +1047,17 @@ async def reject_device(device_id: str, db: Session = Depends(get_db), admin: Us
     """
     Explicitly reject a pending device handshake so it does not appear in discovery.
     """
-    device = db.query(Device).filter(Device.device_id == device_id).first()
-    if not device:
-        raise HTTPException(status_code=404, detail="Device not found")
-        
+    device = _get_device_in_household_or_404(db, admin, device_id)
+
     device.auth_status = AuthStatus.rejected
     device.pairing_requested_at = None
     db.commit()
+    mqtt_manager.publish_json(
+        mqtt_manager.state_ack_topic(device_id),
+        build_pairing_rejected_ack_payload(device),
+        wait_for_publish=False,
+    )
+    _broadcast_pairing_queue_updated(device, reason="rejected")
     return {"status": "rejected"}
 
 def _load_visible_devices(
@@ -1021,17 +1137,15 @@ async def update_device_config(
     """
     Update the pin configuration for a managed device and optionally trigger a rebuild.
     """
-    device = _get_device_or_404(db, device_id)
+    device = _get_device_in_household_or_404(db, current_user, device_id)
     if not device.provisioning_project_id:
         raise HTTPException(status_code=400, detail="Not a managed DIY device")
 
-    project = db.query(DiyProject).filter(DiyProject.id == device.provisioning_project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Associated DIY project not found")
+    project = _get_project_in_household_or_404(db, current_user, device.provisioning_project_id)
 
     if not isinstance(project.config, dict):
         project.config = {}
-    
+
     current_config = dict(project.config)
     current_config["pins"] = config.get("pins", [])
 
@@ -1084,13 +1198,14 @@ async def delete_device(device_id: str, db: Session = Depends(get_db), current_u
     """
     Unpair a device from the dashboard while preserving its identity so it can be paired again.
     """
-    device = _get_device_or_404(db, device_id)
-        
+    device = _get_device_in_household_or_404(db, current_user, device_id)
+
     owner = db.query(User).filter(User.user_id == device.owner_id).first()
     device.auth_status = AuthStatus.pending
     device.pairing_requested_at = None
     _remove_device_widgets(owner, device.device_id)
     db.commit()
+    _broadcast_pairing_queue_updated(device, reason="unpaired")
     return {"status": "unpaired", "detail": f"Device {device_id} removed from the dashboard and is ready to pair again."}
 
 @router.post("/device/{device_id}/command")
@@ -1108,9 +1223,7 @@ async def send_command(device_id: str, command: dict, db: Session = Depends(get_
             raise HTTPException(status_code=403, detail="Admin or Owner privileges required for OTA")
         if not device.provisioning_project_id:
             raise HTTPException(status_code=400, detail="Device is not linked to a managed DIY project")
-        ota_job = db.query(BuildJob).filter(BuildJob.id == command["job_id"]).first()
-        if not ota_job:
-            raise HTTPException(status_code=404, detail="Job not found")
+        ota_job = _get_build_job_in_household_or_404(db, current_user, command["job_id"])
         if ota_job.project_id != device.provisioning_project_id:
             raise HTTPException(status_code=400, detail="Build job does not belong to the target device")
         if ota_job.status != JobStatus.artifact_ready:
@@ -1121,15 +1234,18 @@ async def send_command(device_id: str, command: dict, db: Session = Depends(get_
         ota_job.status = JobStatus.flashing
         db.commit()
 
+    command_id = str(uuid.uuid4())
+    command["command_id"] = command_id
+
     # Publish via MQTT
     success = mqtt_manager.publish_command(device_id, command)
-    
+
     # If the OTA publish failed entirely, revert the job out of flashing
     if not success and ota_job and ota_job.status == JobStatus.flashing:
         ota_job.status = JobStatus.flash_failed
         ota_job.error_message = "Failed to publish firmware download command over MQTT."
         db.commit()
-    
+
     if success:
         event_type = EventType.command_requested
     else:
@@ -1144,11 +1260,55 @@ async def send_command(device_id: str, command: dict, db: Session = Depends(get_
     )
     db.add(history)
     db.commit()
-    
+
     if not success:
         return {"status": "failed", "message": "Failed to publish to MQTT broker"}
 
-    return {"status": "sent", "command": command}
+    if command.get("action") != "ota":
+        mqtt_manager.pending_commands[command_id] = {
+            "device_id": device_id,
+            "pin": command.get("pin"),
+            "value": command.get("value"),
+            "brightness": command.get("brightness"),
+            "timestamp": datetime.utcnow().timestamp(),
+            "command_id": command_id
+        }
+
+        async def check_command_timeout():
+            await asyncio.sleep(5)
+            if command_id in mqtt_manager.pending_commands:
+                cmd = mqtt_manager.pending_commands.pop(command_id, None)
+                if cmd:
+                    from app.database import SessionLocal
+                    db_bg = SessionLocal()
+                    try:
+                        db_bg.add(
+                            DeviceHistory(
+                                device_id=device_id,
+                                event_type=EventType.command_failed,
+                                payload=json.dumps({"command_id": command_id, "reason": "timeout"}),
+                                changed_by=current_user.user_id
+                            )
+                        )
+                        db_bg.commit()
+                    finally:
+                        db_bg.close()
+                    try:
+                        ws_manager.broadcast_device_event_sync(
+                            "command_delivery",
+                            device_id,
+                            None,
+                            {
+                                "command_id": command_id,
+                                "status": "failed",
+                                "reason": "timeout"
+                            }
+                        )
+                    except Exception:
+                        pass
+        asyncio.create_task(check_command_timeout())
+
+    return {"status": "pending", "command_id": command_id, "message": "Command requested"}
 
 @router.get("/device/{device_id}/command/latest")
 async def get_latest_command(device_id: str, db: Session = Depends(get_db)):
@@ -1172,10 +1332,10 @@ async def get_latest_command(device_id: str, db: Session = Depends(get_db)):
         .order_by(DeviceHistory.timestamp.desc())
         .first()
     )
-    
+
     if not cmd:
         return {"status": "none"}
-    
+
     return {
         "status": "ok",
         "command_id": cmd.id,
@@ -1247,13 +1407,13 @@ async def list_diy_projects(
 ):
     household_id = resolve_household_id_for_user(db, current_user)
     household_member_ids = _get_household_member_ids(db, household_id)
-    
+
     query = db.query(DiyProject)
     if current_user.account_type != AccountType.admin:
         if not household_member_ids:
             return []
         query = query.filter(DiyProject.user_id.in_(household_member_ids))
-    
+
     projects = query.order_by(DiyProject.updated_at.desc(), DiyProject.created_at.desc()).all()
     if board_profile:
         try:
@@ -1317,9 +1477,7 @@ async def list_diy_projects(
 
 @router.delete("/diy/projects/{project_id}")
 async def delete_diy_project(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
-    project = db.query(DiyProject).filter(DiyProject.id == project_id).first()
-    if not project:
-         raise HTTPException(status_code=404, detail="Project not found")
+    project = _get_project_in_household_or_404(db, current_user, project_id)
 
     # Check if used by any approved device
     active_devices = db.query(Device).filter(
@@ -1364,16 +1522,11 @@ async def delete_diy_project(project_id: str, db: Session = Depends(get_db), cur
 
 @router.get("/diy/projects/{project_id}", response_model=DiyProjectResponse)
 async def get_diy_project(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
-    project = db.query(DiyProject).filter(DiyProject.id == project_id, DiyProject.user_id == current_user.user_id).first()
-    if not project:
-         raise HTTPException(status_code=404, detail="Project not found")
-    return project
+    return _get_project_in_household_or_404(db, current_user, project_id)
 
 @router.put("/diy/projects/{project_id}", response_model=DiyProjectResponse)
 async def update_diy_project(project_id: str, project_update: DiyProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
-    project = db.query(DiyProject).filter(DiyProject.id == project_id, DiyProject.user_id == current_user.user_id).first()
-    if not project:
-         raise HTTPException(status_code=404, detail="Project not found")
+    project = _get_project_in_household_or_404(db, current_user, project_id)
     if project_update.room_id is None:
         raise HTTPException(
             status_code=400,
@@ -1392,12 +1545,13 @@ async def update_diy_project(project_id: str, project_update: DiyProjectCreate, 
 async def trigger_diy_build(project_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
     project = (
         db.query(DiyProject)
-        .filter(DiyProject.id == project_id, DiyProject.user_id == current_user.user_id)
+        .filter(DiyProject.id == project_id)
         .with_for_update()
         .first()
     )
     if not project:
          raise HTTPException(status_code=404, detail="Project not found")
+    _get_project_in_household_or_404(db, current_user, project_id)
     if project.room_id is None:
          raise HTTPException(
              status_code=400,
@@ -1441,24 +1595,20 @@ async def trigger_diy_build(project_id: str, background_tasks: BackgroundTasks, 
 
 @router.get("/diy/build/{job_id}", response_model=BuildJobResponse)
 async def get_build_job(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
-    job = db.query(BuildJob).join(DiyProject).filter(BuildJob.id == job_id, DiyProject.user_id == current_user.user_id).first()
-    if not job:
-         raise HTTPException(status_code=404, detail="Job not found")
-    
+    job = _get_build_job_in_household_or_404(db, current_user, job_id)
+
     # Inject an ephemeral OTA token upon successful access by owner
     job.ota_token = create_ota_token(job.id)
     return job
 
 @router.get("/diy/build/{job_id}/artifact")
 async def get_build_artifact(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
-    job = db.query(BuildJob).join(DiyProject).filter(BuildJob.id == job_id, DiyProject.user_id == current_user.user_id).first()
-    if not job:
-         raise HTTPException(status_code=404, detail="Job not found")
-         
+    job = _get_build_job_in_household_or_404(db, current_user, job_id)
+
     artifact_path = _resolve_build_artifact_path(job, "firmware")
     if job.status != JobStatus.artifact_ready or not artifact_path or not os.path.exists(artifact_path):
          raise HTTPException(status_code=400, detail="Artifact not ready or missing")
-         
+
     return FileResponse(artifact_path, media_type='application/octet-stream', filename=f"firmware_{job_id}.bin")
 
 
@@ -1469,9 +1619,7 @@ async def get_build_artifact_part(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
-    job = db.query(BuildJob).join(DiyProject).filter(BuildJob.id == job_id, DiyProject.user_id == current_user.user_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = _get_build_job_in_household_or_404(db, current_user, job_id)
 
     artifact_path = _resolve_build_artifact_path(job, artifact_name)
     if job.status != JobStatus.artifact_ready or not artifact_path or not os.path.exists(artifact_path):
@@ -1511,18 +1659,14 @@ async def get_ota_firmware(job_id: str, token: str, db: Session = Depends(get_db
 
 @router.get("/diy/build/{job_id}/logs")
 async def get_build_logs(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
-    job = db.query(BuildJob).join(DiyProject).filter(BuildJob.id == job_id, DiyProject.user_id == current_user.user_id).first()
-    if not job:
-         raise HTTPException(status_code=404, detail="Job not found")
-         
+    job = _get_build_job_in_household_or_404(db, current_user, job_id)
+
     if not job.log_path or not os.path.exists(job.log_path):
          return {"logs": ""}
-         
+
     with open(job.log_path, "r") as f:
          return {"logs": f.read()}
 
-
-import asyncio
 
 TERMINAL_JOB_STATUSES = {
     JobStatus.artifact_ready,
@@ -1542,13 +1686,7 @@ async def stream_build_logs(job_id: str, db: Session = Depends(get_db), current_
     from fastapi.responses import StreamingResponse as _StreamingResponse
     from app.database import SessionLocal  # Import missing SessionLocal
 
-    job = db.query(BuildJob).join(DiyProject).filter(
-        BuildJob.id == job_id,
-        DiyProject.user_id == current_user.user_id,
-    ).first()
-
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+    job = _get_build_job_in_household_or_404(db, current_user, job_id)
 
     # For already-terminal jobs with a log, stream the full log and close immediately.
     job_id_str = str(job.id)
@@ -1645,14 +1783,7 @@ async def acquire_serial_lock(
 
     build_job = None
     if job_id:
-        build_job = (
-            db.query(BuildJob)
-            .join(DiyProject)
-            .filter(BuildJob.id == job_id, DiyProject.user_id == current_user.user_id)
-            .first()
-        )
-        if not build_job:
-            raise HTTPException(status_code=404, detail="Job not found")
+        build_job = _get_build_job_in_household_or_404(db, current_user, job_id)
         if build_job.status != JobStatus.artifact_ready:
             raise HTTPException(
                 status_code=409,
@@ -1731,10 +1862,10 @@ async def push_history(device_id: str, entry: DeviceHistoryCreate, db: Session =
         raise mqtt_only_error(
             "MQTT-managed DIY devices must publish telemetry to the MQTT state topic."
         )
-    
+
     # Update last seen
     device.last_seen = datetime.utcnow()
-    
+
     history = DeviceHistory(
         device_id=device_id,
         event_type=entry.event_type,
@@ -1761,14 +1892,14 @@ async def export_history_csv(device_id: str, db: Session = Depends(get_db), _adm
     from fastapi.responses import StreamingResponse
 
     history = db.query(DeviceHistory).filter(DeviceHistory.device_id == device_id).all()
-    
+
     output = StringIO()
     writer = csv.writer(output)
     writer.writerow(['Timestamp', 'Event Type', 'Payload', 'Changed By'])
-    
+
     for h in history:
         writer.writerow([h.timestamp, h.event_type.value, h.payload, h.changed_by])
-    
+
     output.seek(0)
     return StreamingResponse(
         iter([output.getvalue()]),
@@ -1796,67 +1927,21 @@ async def create_automation(auto: AutomationCreate, db: Session = Depends(get_db
 async def list_automations(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     return db.query(Automation).filter(Automation.creator_id == user.user_id).all()
 
-import io
-import sys
-import traceback
-
 @router.post("/automation/{automation_id}/trigger", response_model=TriggerResponse)
 async def trigger_automation(automation_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """
-    Manually trigger an automation script.
-    Note: Real execution would happen in a sandboxed worker. This is a placeholder that updates timestamp.
+    Manually trigger an automation definition.
+    Execution is blocked until a sandboxed worker exists.
     """
     auto = db.query(Automation).filter(Automation.id == automation_id, Automation.creator_id == user.user_id).first()
     if not auto:
         raise HTTPException(status_code=404, detail="Automation not found")
-    
-    # Execution logic
+
     auto.last_triggered = datetime.utcnow()
-    
-    status = ExecutionStatus.success
-    error_msg = None
-    log_output = ""
-    
-    import tempfile
-    import os
-    import asyncio
-    
-    import subprocess
-    
-    try:
-        print(f"DEBUG: Starting automation script {auto.id} in process")
-        fd, script_path = tempfile.mkstemp(suffix=".py")
-        with os.fdopen(fd, 'w') as f:
-            f.write("device_id = None\n")
-            f.write(auto.script_code)
-            
-        try:
-            process = await asyncio.create_subprocess_exec(
-                sys.executable, script_path,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
-            )
-            
-            try:
-                stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=30.0)
-                log_output = stdout.decode('utf-8', errors='replace')
-                if process.returncode != 0:
-                    status = ExecutionStatus.failed
-                    error_msg = stderr.decode('utf-8', errors='replace')
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.communicate()
-                status = ExecutionStatus.failed
-                error_msg = "Execution timed out after 30 seconds"
-                
-            print(f"DEBUG: Automation script {auto.id} finished")
-        finally:
-            if os.path.exists(script_path):
-                os.unlink(script_path)
-    except Exception as e:
-        status = ExecutionStatus.failed
-        error_msg = f"Setup error: {traceback.format_exc()}"
-        
+    status = ExecutionStatus.failed
+    error_msg = AUTOMATION_SANDBOX_BLOCK_MESSAGE
+    log_output = "Execution skipped by policy: sandbox worker unavailable."
+
     execution_log = AutomationExecutionLog(
         automation_id=auto.id,
         triggered_at=auto.last_triggered,
@@ -1864,12 +1949,12 @@ async def trigger_automation(automation_id: int, db: Session = Depends(get_db), 
         log_output=log_output,
         error_message=error_msg
     )
-    
+
     db.add(execution_log)
     db.commit()
     db.refresh(execution_log)
-    
-    msg = f"Automation '{auto.name}' executed with status: {status.value}"
+
+    msg = f"Automation '{auto.name}' was blocked: sandbox worker required."
     return TriggerResponse(
         status=status,
         message=msg,
@@ -1880,30 +1965,15 @@ async def trigger_automation(automation_id: int, db: Session = Depends(get_db), 
 
 @router.post("/ota/upload", response_model=FirmwareResponse)
 async def upload_firmware(version: str, board: str, file: UploadFile = File(...), db: Session = Depends(get_db)):
-    file_location = f"firmwares/{file.filename}"
-    os.makedirs("firmwares", exist_ok=True)
-    with open(file_location, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-        
-    fw = Firmware(version=version, board=board, filename=file.filename)
-    db.add(fw)
-    db.commit()
-    db.refresh(fw)
-    return fw
+    _raise_legacy_ota_disabled()
 
 @router.get("/ota/latest/{board}", response_model=FirmwareResponse)
 async def get_latest_firmware(board: str, db: Session = Depends(get_db)):
-    fw = db.query(Firmware).filter(Firmware.board == board).order_by(Firmware.id.desc()).first()
-    if not fw:
-        raise HTTPException(status_code=404, detail="No firmware found")
-    return fw
+    _raise_legacy_ota_disabled()
 
 @router.get("/ota/download/{filename}")
 async def download_firmware(filename: str):
-    file_path = f"firmwares/{filename}"
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="File not found")
-    return FileResponse(file_path, media_type='application/octet-stream', filename=filename)
+    _raise_legacy_ota_disabled()
 
 
 # --- System & Backup ---
@@ -1921,7 +1991,7 @@ async def system_backup_endpoint(db: Session = Depends(get_db), admin: User = De
     devices = db.query(Device).all()
     # 3. Automations
     automations = db.query(Automation).all()
-    
+
     backup_data = {
         "timestamp": str(datetime.utcnow()),
         "users": [{"username": u.username, "layout": u.ui_layout} for u in users],
@@ -1938,7 +2008,7 @@ async def create_device_backup(device_id: str, note: str, db: Session = Depends(
     device = db.query(Device).filter(Device.device_id == device_id).first()
     if not device:
         raise HTTPException(status_code=404, detail="Device not found")
-    
+
     # Snapshot config
     config_snapshot = {
         "device_info": {
@@ -1947,13 +2017,13 @@ async def create_device_backup(device_id: str, note: str, db: Session = Depends(
         },
         "pins": [
             {
-                "pin": p.gpio_pin, 
+                "pin": p.gpio_pin,
                 "mode": p.mode,
                 "label": p.label
             } for p in device.pin_configurations
         ]
     }
-    
+
     archive = BackupArchive(
         device_id=device_id,
         full_config_snapshot=config_snapshot,
@@ -1971,15 +2041,15 @@ async def restore_device_backup(device_id: str, archive_id: int, db: Session = D
     archive = db.query(BackupArchive).filter(BackupArchive.id == archive_id, BackupArchive.device_id == device_id).first()
     if not archive:
         raise HTTPException(status_code=404, detail="Archive not found")
-        
+
     device = db.query(Device).filter(Device.device_id == device_id).first()
-    
+
     snapshot = archive.full_config_snapshot
     if "device_info" in snapshot:
         device.name = snapshot["device_info"].get("name", device.name)
         device.mode = snapshot["device_info"].get("mode", device.mode)
-        
+
     # Restore pins logic can be added here if needed (delete old, add new from snapshot)
-    
+
     db.commit()
     return {"status": "restored"}

@@ -77,3 +77,159 @@
 [2026-03-18 22:18:00] Planner -> Coder | Fix background build task to use request DB bind in tests
 [2026-03-18 22:20:00] Coder -> Tester | Re-run webapp validation and targeted backend pytest after DB fix
 [2026-03-18 22:37:43] Tester -> Main | Push readiness PASS for HEAD; local dirty files remain out of scope
+[2026-03-18 22:40:00] Main -> Planner | Classify repo noise into product artifacts vs local-only files
+[2026-03-18 22:43:00] Planner -> Coder | Update root gitignore for debug, runtime, and planning artifacts
+[2026-03-18 22:45:08] Coder -> Tester | Verify ignored patterns reduce untracked noise without hiding canonical docs
+[2026-03-18 23:20:15] Main -> Tester | Run E2E verification via Playwright MCP
+[2026-03-18 23:43:41] TESTER -> MAIN | Interactive Playwright MCP UI Testing completed via Chrome DevTools MCP. PASS. Report ready.
+[2026-03-19 01:23:22] USER -> Main | Intake T-WS-REALTIME WebSocket migration task
+[2026-03-19 01:23:22] Main -> Planner | Task Packet generation for T-WS-REALTIME
+[2026-03-19 01:24:00] Planner -> Coder | Handoff approved WS design for Implementation
+[2026-03-19 13:00:39] TESTER -> MAIN | G4 Verification successful. Playwright passed and DB checked.
+[2026-03-19 13:00:39] MAIN -> USER | Task T-WS-REALTIME is complete and report generated.
+[2026-03-19 13:33:19] Main -> Planner | Analyze setup screen reorder task and create task packet
+[2026-03-19 13:33:20] Planner -> Coder | Implement UI reorder, remove household name, add password match
+[2026-03-19 13:34:53] Coder -> Tester | UI implemented, please verify Setup page in browser
+[2026-03-19 13:37:20] Tester -> Main | UI Verification passed, checklist prepared
+[2026-03-19 13:54:28] Main -> Planner | Requested Task Packet for WebSocket failure
+[2026-03-19 13:54:28] Planner -> Coder | Handed off approved scope for NEXT_PUBLIC_WS_URL fix
+[2026-03-19 13:54:28] Coder -> Tester | Appended backend Enum safely. Handed off for browser check
+[2026-03-19 13:54:28] Tester -> Main | WS test passed. Expected backend connect + StrictMode close.
+[2026-03-21 12:30:55] Main -> Tester | Run automated backend tests
+[2026-03-21 12:46:14] Tester -> Main | Verification complete, FAIL due to Discovery/Build defects.
+[2026-03-21 15:57:22] User -> Main | Intake local Docker clone of remote DB and switch env to localhost
+[2026-03-21 15:57:22] Main -> Planner | Scope DB clone task, protect existing local MariaDB data, define verification
+[2026-03-21 15:57:22] Planner -> Coder | Approved Docker MariaDB clone slice and localhost env switch
+[2026-03-21 16:03:43] Coder -> Tester | Local Docker MariaDB clone restored; verify counts, restart persistence, backend DB access
+[2026-03-21 16:03:43] Tester -> Main | DB clone PASS; exact counts matched remote and localhost env connects successfully
+[2026-03-21 16:11:31] Main -> Planner | Draft Task Packet and investigate backend defects VERIFY-001-REMEDIATION
+[2026-03-21 16:13:19] Planner -> Main | Task Packet and Design ready at implementation_plan.md. Awaiting G1/G2 approval.
+[2026-03-21 16:13:29] Main -> Coder | G1 and G2 approved. Implement backend remediation task.
+[2026-03-21 16:15:53] Coder -> Tester | Backend modifications complete, passing to Tester for verification.
+[2026-03-21 16:15:53] Tester -> Main | Verification passed (19 unit tests passing), finalizing Gate 4 report.
+[2026-03-21 16:28:05] User -> Main | Intake DIY serial auto-release after firmware build
+[2026-03-21 16:28:05] Main -> Planner | Scope auto-release flow and verify flash unblock on free serial port
+[2026-03-21 16:28:05] Planner -> Coder | Approved serial auto-release workflow fix for DIY build and flash flow
+[2026-03-21 16:40:42] Coder -> Tester | Auto-release flow implemented; verify ready/free and busy-port flash states
+[2026-03-21 16:40:42] Tester -> Main | DIY serial auto-release PASS; browser and backend evidence captured
+[2026-03-21 17:23:06] User -> Main | Intake pairing-request-only notification and re-pair recovery fix
+[2026-03-21 17:23:06] Main -> Planner | Scope pairing visibility fix and define unpair -> re-pair verification
+[2026-03-21 17:23:06] Planner -> Coder | Approved pairing-request state split for backend and webapp
+[2026-03-21 17:31:59] Coder -> Tester | Pairing-request split implemented; verify unpair hide and handshake recovery
+[2026-03-21 17:31:59] Tester -> Main | PASS; mariadb_nas unavailable, SQLite/browser evidence captured
+[2026-03-21 17:38:27] User -> Main | Intake heartbeat-based re-pair recovery for unpaired boards
+[2026-03-21 17:38:27] Main -> Planner | Scope state heartbeat ack and firmware re-pair trigger
+[2026-03-21 17:38:27] Planner -> Coder | Approved MQTT heartbeat repair flow for server and firmware
+[2026-03-21 17:47:34] Coder -> Tester | Heartbeat repair flow implemented; verify MQTT ack, firmware build, and WebUI pairing
+[2026-03-21 17:47:34] Tester -> Main | PASS; mariadb_nas unavailable, SQLite/API/browser evidence captured
+[2026-03-21 22:32:50] MAIN -> PLANNER | Analyze WebSocket connection error and define fix
+[2026-03-21 22:32:50] PLANNER -> CODER | Remove NEXT_PUBLIC_WS_URL from .env.local to enable Next.js proxying
+[2026-03-21 22:32:51] CODER -> TESTER | verify backend websocket accepts proxied connections
+[2026-03-21 22:32:51] TESTER -> MAIN | proxy WS verified, error logging softened. PASS.
+[2026-03-22 00:17:56] Main -> Planner | Scope ESP32/ESP8266 firmware split and define safe refactor path
+[2026-03-22 00:23:17] Planner -> Coder | Approved internal firmware split into ESP32/ESP8266 board modules
+[2026-03-22 00:23:17] Coder -> Tester | Firmware split implemented; verify builder tests and dual-family PlatformIO builds
+[2026-03-22 00:23:17] Tester -> Main | PASS; targeted pytest plus ESP32 and ESP8266 pio builds succeeded
+[2026-03-22 00:30:31] Main -> Planner | Scope fake board pairing/remote simulator and define verification path
+[2026-03-22 00:41:03] Planner -> Coder | Approved standalone fake-board dashboard using existing MQTT/API contracts
+[2026-03-22 00:41:03] Coder -> Tester | Simulator implemented; verify syntax and dashboard happy/failure smoke paths
+[2026-03-22 00:41:03] Tester -> Main | PASS; py_compile/help and dashboard HTTP smoke checks succeeded
+[2026-03-22 00:48:39] Planner -> Coder | Add discovery fallback for pending scan and old approved device identities
+[2026-03-22 00:48:39] Coder -> Tester | Added HTTP fallback and fresh identity flow; verify pending discovery path
+[2026-03-22 00:48:39] Tester -> Main | PASS; live server showed fake-board-scanfix in pending after HTTP force re-pair
+[2026-03-22 00:52:18] Main -> Planner | Scope usage guide for fake board test harness in test directory
+[2026-03-22 00:52:18] Planner -> Coder | Document quick start, discovery fallback, and remote test flows
+[2026-03-22 00:52:18] Coder -> Tester | Guide drafted in test directory; verify against actual harness actions
+[2026-03-22 00:52:18] Tester -> Main | PASS; guide matches fake_board_test.py actions and CLI entrypoints
+[2026-03-22 01:29:16] Main -> Planner | Scope dashboard command ack and board state reconciliation
+[2026-03-22 01:29:16] Planner -> Coder | Approved in-scope control ack fix for backend and dashboard
+[2026-03-22 01:33:33] Main -> Planner | Scope AGENTS role remap for Codex planner/tester/debug and Antigravity coder
+[2026-03-22 01:33:33] Planner -> Debug | Check AGENTS role mapping against current PRD and workflow wording
+[2026-03-22 01:33:33] Debug -> Tester | Role conflict narrowed; verify AGENTS consistency after edit
+[2026-03-22 01:33:33] Tester -> Main | AGENTS role remap reviewed; ready for final diff check
+[2026-03-22 15:24:22] Main -> Planner | Clarify that Antigravity requests mean prompt handoff, not Codex coding
+[2026-03-22 15:24:22] Planner -> Debug | Check delegation wording so Codex never self-assigns Coder on Antigravity request
+[2026-03-22 15:24:22] Debug -> Tester | Delegation wording updated; verify AGENTS prompt-handoff consistency
+[2026-03-22 15:24:22] Tester -> Main | Antigravity delegation semantics reviewed; final diff ready
+[2026-03-22 01:36:48] Coder -> Tester | Implementation complete, handing off for Test phase
+[2026-03-22 02:15:12] Main -> Planner | Scope WS reconnect instability and delayed online recovery on dashboard
+[2026-03-22 02:16:03] Planner -> Coder | Fix WS resubscribe churn and reconnect-driven online state recovery
+[2026-03-22 02:20:41] Coder -> Tester | Realtime reconnect fix implemented; verify lint and live dashboard recovery
+[2026-03-22 02:23:50] Tester -> Main | PASS; lint clean and live dashboard/device pages recovered online after state publish
+[2026-03-22 02:27:48] Main -> Planner | Scope forced timeout-cycle verification for disconnect over 75 seconds
+[2026-03-22 02:28:02] Planner -> Tester | Validate offline timeout broadcast and reconnect recovery on live dashboard
+[2026-03-22 02:47:26] Tester -> Main | PASS; timeout cycle flipped dashboard offline then online after reconnect
+[2026-03-22 15:10:29] Tester -> Main | PASS; targeted pytest/lint/pio/browser passed, full suite has unrelated failures
+[2026-03-22 15:10:29] Coder -> Tester | Pair reject flow implemented; verify API, firmware build, and discovery ignore
+[2026-03-22 15:30:02] Main -> Planner | Scope live ESP8266 build, flash, pairing, and reject verification
+[2026-03-22 15:30:02] Planner -> Tester | Probe ESP8266 build path, flash real board, then verify pair and reject
+[2026-03-22 15:34:54] Tester -> Main | Blocked: ESP8266EX found on /dev/cu.usbserial-1130 but board profile still ambiguous
+[2026-03-22 15:50:26] Main -> Debug | Investigate ESP8266 reject flow that auto re-pairs before power cycle
+[2026-03-22 15:50:26] Debug -> Coder | Fix firmware reject lock; real ESP8266 re-pairs without intended power cycle
+[2026-03-23 21:25:47] Tester -> Main | PASS; real ESP8266 reject flow verified and report saved to test_reject_flow_report.md
+[2026-03-23 21:25:47] Coder -> Tester | Firmware reject-lock and JSON memory fix ready for final hardware verification
+[2026-03-23 21:51:51] Main -> Planner | Scope OTA lock, automation sandbox, household loaders, and test repair
+[2026-03-23 21:51:51] Planner -> Coder | Approved backend hardening slice; no schema change expected
+[2026-03-23 21:59:32] Coder -> Tester | Hardened OTA/automation/household loaders; run targeted backend pytest
+[2026-03-23 21:59:32] Tester -> Main | PASS; 29 targeted backend tests passed for automation, DIY OTA, and room access
+[2026-03-23 22:01:07] Tester -> Main | mariadb_nas unavailable; DB verification used SQLite test harness instead
+[2026-03-23 22:24:15] Antigravity -> Codex | Implemented notification logic fix and Clear All button
+[2026-03-23 22:32:27] Main -> Planner | Scope stale WebUI pairing alerts after backend clears pending device
+[2026-03-23 22:32:27] Planner -> Debug | Reproduce fake pair path on dashboard/discovery and isolate source
+[2026-03-23 22:32:27] Debug -> Coder | Pending queue clears in backend but WS never refreshes approve/reject/unpair
+[2026-03-23 22:44:14] Coder -> Tester | Added pairing-queue WS sync and regression tests for approve/reject/unpair
+[2026-03-23 22:44:14] Tester -> Main | PASS; pytest+eslint passed, live DB still has fake pending devices, devtools unavailable
+[2026-03-24 00:38:07] Main -> Planner | Scope HMR error on Dashboard useEffect size change
+[2026-03-24 00:38:07] Planner -> Coder | Merge duplicate Dashboard useEffects to stabilize hook order
+[2026-03-24 00:38:07] Coder -> Tester | Hook redundancy removed; run lint and verify Dashboard
+[2026-03-24 00:39:45] Tester -> Main | PASS; Browser verification succeeded, report saved to task_report_FIX_HMR_001.md
+[2026-03-24 15:05:58] Antigravity -> Codex | IMPLEMENTATION_COMPLETE: Notification clear logic & pairing reject API integrated
+[2026-03-24 17:48:14] Main -> Planner | Scope Jenkins pipeline for active server/webapp deploy path
+[2026-03-24 17:48:15] Planner -> Coder | Update Jenkinsfile with preflight, guarded deploy, and smoke checks
+[2026-03-24 17:48:16] Coder -> Tester | Jenkinsfile updated; verify compose validation and available local checks
+[2026-03-24 17:48:17] Tester -> Main | PASS with Docker-daemon blocker; static checks passed, full dry-run pending
+[2026-03-24 18:02:26] Main -> Planner | Scope repo cleanup and classify active vs legacy tests
+[2026-03-24 18:02:26] Planner -> Main | Cleanup scope locked: keep server/webapp suites, move manual harness, drop legacy artifacts
+[2026-03-24 18:02:40] Planner -> Coder | Execute cleanup: move manual tests, drop legacy artifacts, tighten ignores
+[2026-03-24 18:05:40] Coder -> Tester | Cleanup applied; verify pytest collection and moved manual scripts
+[2026-03-24 18:06:55] Tester -> Main | Cleanup PASS; manual scripts compile, pytest blocked by existing test_reject_semantics import error
+[2026-03-24 18:11:33] Main -> Planner | Scope markdown/report cleanup and prune obsolete task docs
+[2026-03-24 18:11:33] Planner -> Main | Keep baseline docs/change requests; delete stale reports, task packets, and prompt handoff docs
+[2026-03-24 18:12:20] Planner -> Coder | Delete stale reports/prompts/task packets and prune README links
+[2026-03-24 18:14:10] Coder -> Tester | Markdown cleanup applied; verify remaining docs and broken-reference fallout
+[2026-03-24 18:14:42] Tester -> Main | PASS; deleted-doc references cleared and Markdown tree reduced to baseline docs only
+[2026-03-24 18:18:14] Main -> Planner | Scope unused config/scripts against active server/webapp delivery path
+[2026-03-24 18:18:15] Planner -> Main | Keep active compose/CI/runtime configs; drop one-off reset/debug/bootstrap helpers
+[2026-03-24 18:18:30] Planner -> Coder | Delete unused config/scripts and tighten ignores for one-off helper files
+[2026-03-24 18:19:10] Coder -> Tester | Config/script cleanup applied; verify references and remaining inventory
+[2026-03-24 18:19:23] Tester -> Main | PASS; deleted helpers unreferenced and active config/script set remains intact
+[2026-03-24 18:21:43] Main -> Planner | Scope unused webapp code and tracked frontend artifacts
+[2026-03-24 18:22:30] Planner -> Main | Keep routed pages and ambient JSX types; drop dead utils, starter assets, and prototypes
+[2026-03-24 18:23:54] Planner -> Coder | Delete confirmed-unused webapp files and prune orphaned frontend deps
+[2026-03-24 18:25:10] Coder -> Tester | Webapp cleanup applied; verify reachability plus lint/build
+[2026-03-24 18:26:12] Tester -> Main | PASS; build succeeds and only ambient esp-web-tools type remains zero-inbound
+[2026-03-24 18:28:22] Tester -> Main | Browser smoke PASS on /login; /file.svg 404 expected; backend proxy unavailable locally
+[2026-03-24 18:31:02] Main -> Planner | Scope root-only clutter and decide what must stay tracked vs ignored
+[2026-03-24 18:31:40] Planner -> Main | Keep canonical repo docs/logs; drop root scratch HTML, temp JSON, screenshots, local DBs
+[2026-03-24 18:32:00] Planner -> Coder | Tighten root ignore patterns and delete local root clutter
+[2026-03-24 18:32:36] Coder -> Tester | Root cleanup applied; verify root inventory and deleted-file references
+[2026-03-24 18:32:53] Tester -> Main | PASS; root reduced to baseline docs/runtime files and ignore patterns cover temp clutter
+[2026-03-24 18:37:08] Main -> Planner | Scope server-only clutter and classify runtime files vs local artifacts
+[2026-03-24 18:37:50] Planner -> Main | Keep source/config/tests/postman baseline; drop cache, logs, DBs, manual server artifacts
+[2026-03-24 18:38:20] Planner -> Coder | Delete server clutter and ignore tracked manual artifacts not tied to operation
+[2026-03-24 18:39:10] Coder -> Tester | Server cleanup applied; verify inventory and deleted-artifact references
+[2026-03-24 18:39:51] Tester -> Main | PASS; server tree reduced to source/config/tests and ignore rules cover deleted artifacts
+[2026-03-24 18:41:45] Main -> Planner | Scope empty/unused directories from repo root downward
+[2026-03-24 18:42:15] Planner -> Main | Drop screens, server/server, empty webapp/public; keep empty design/flows as baseline path
+[2026-03-24 18:42:30] Planner -> Coder | Delete empty/unused dirs and ignore accidental regen paths
+[2026-03-24 18:42:55] Coder -> Tester | Directory cleanup applied; verify remaining tree and empty-dir exceptions
+[2026-03-24 18:43:09] Tester -> Main | PASS; only design/flows remains empty and is intentionally retained for workflow
+[2026-03-24 18:44:23] Planner -> Coder | Delete stale .vscode dir pointing at removed mobile_app path and ignore it
+[2026-03-24 18:44:40] Tester -> Main | PASS; .vscode removed and root dirs now limited to active repo areas
+[2026-03-24 18:46:30] Main -> Planner | Scope Docker packaging gap between server image and root firmware template
+[2026-03-24 18:48:10] Planner -> Main | Move firmware under server and update all build/demo refs for Docker-safe packaging
+[2026-03-24 18:52:23] Planner -> Coder | Ready Antigravity prompt: relocate firmware tree into server and preserve editable workflow
+[2026-03-24 19:22:17] Main -> Planner | Assess full-tree commit/push request on main against origin and cleanup scope
+[2026-03-24 19:24:12] Planner -> Coder | Commit current cleanup tree on main and include status/log updates
+[2026-03-24 19:25:05] Coder -> Tester | Candidate full-tree commit ready; verify build, script syntax, and push readiness
+[2026-03-24 19:26:10] Tester -> Main | webapp build PASS; firmware scripts compile; pytest unavailable locally

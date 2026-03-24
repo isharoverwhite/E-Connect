@@ -31,3 +31,6 @@
 - **Discovery screen**:
   - The discovery list must only show pending devices whose latest state is an active pairing request.
   - If an admin unpairs a board by mistake, the board remains hidden until it handshakes again, then re-enters discovery as a fresh pairing candidate.
+  - The `Ignore` action is a real reject operation, not a local dismiss-only control.
+  - After `Ignore`, the backend must notify the board that pairing was rejected.
+  - A rejected board must stay out of discovery until it is power-cycled and sends a fresh registration request.

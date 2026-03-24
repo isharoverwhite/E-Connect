@@ -56,6 +56,11 @@ export interface DeviceConfig extends DeviceAvailabilitySummary {
         trend?: string;
         unit?: string;
     } | null;
+    last_delivery?: {
+        status: "acknowledged" | "failed";
+        command_id?: string;
+        reason?: string;
+    } | null;
     provisioning_project_id?: string;
     pin_configurations: PinConfig[];
 }
