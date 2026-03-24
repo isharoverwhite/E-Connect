@@ -116,7 +116,7 @@ pipeline {
 
                 sh '''
                     set -eu
-                    docker compose up -d --remove-orphans
+                    docker compose up -d --wait --wait-timeout 120 --remove-orphans
                 '''
             }
         }
