@@ -64,7 +64,8 @@ app.add_middleware(
 
 app.include_router(device_router, prefix="/api/v1")
 
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+# CI/test environments may not ship any static assets; serve 404s instead of failing import-time.
+app.mount("/static", StaticFiles(directory=STATIC_DIR, check_dir=False), name="static")
 
 @app.exception_handler(OperationalError)
 async def database_error_handler(request: Request, exc: OperationalError):
