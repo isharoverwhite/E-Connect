@@ -1,6 +1,6 @@
 # Multi-arch Dockerfile for ARM64 and AMD64/x64
 # Official Python images are multi-arch by default.
-FROM python:3.11-slim
+FROM python:3.11-slim AS base
 
 # Set working directory
 WORKDIR /app
@@ -18,7 +18,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
-COPY requirements.txt .
+COPY requirements.txt requirements-dev.txt ./
 
 # Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
@@ -28,6 +28,13 @@ COPY . .
 
 # Create durable runtime directories for SQLite, PlatformIO cache, logs, and build artifacts
 RUN mkdir -p /data/builds /data/.platformio /app/static /app/firmwares
+
+FROM base AS test
+
+RUN pip install --no-cache-dir -r requirements-dev.txt
+RUN python -m pytest tests/
+
+FROM base AS runtime
 
 VOLUME ["/data"]
 

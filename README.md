@@ -13,9 +13,10 @@ Self-hosted, local-first smart home platform focused on dashboard control, DIY E
 
 ## Delivery pipeline
 
-The Jenkins pipeline now requires a successful application build gate before CD continues:
+The Jenkins pipeline now requires a successful Docker-based build gate before CD continues:
 
-- `webapp`: `npm ci`, `npm run lint`, and `npm run build`
-- `server`: `pip install -r requirements-dev.txt` and `python -m pytest tests/`
+- `webapp`: Docker `check` target runs `npm run lint` and `npm run build`
+- `server`: Docker `test` target runs `python -m pytest tests/`
 
+The gate uses Docker build targets instead of bind-mounting the Jenkins workspace into ad-hoc containers, so it works when Jenkins itself runs inside a container.
 Only after that gate passes does Jenkins build the release Docker images, deploy with Docker Compose, and run the smoke checks.

@@ -8,7 +8,7 @@ FROM base AS deps
 COPY package.json package-lock.json ./
 RUN npm ci
 
-FROM base AS builder
+FROM base AS check
 
 ARG NEXT_PUBLIC_API_URL=/api/v1
 ARG BACKEND_INTERNAL_URL=http://server:8000
@@ -19,7 +19,9 @@ ENV BACKEND_INTERNAL_URL=${BACKEND_INTERNAL_URL}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-RUN npm run build
+RUN npm run lint && npm run build
+
+FROM check AS builder
 
 FROM base AS runner
 
