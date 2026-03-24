@@ -20,6 +20,6 @@ The Jenkins pipeline now requires a successful Docker-based build gate before CD
 
 The gate uses Docker build targets instead of bind-mounting the Jenkins workspace into ad-hoc containers, so it works when Jenkins itself runs inside a container.
 The MQTT broker now follows the same rule: its Mosquitto config is baked into the `mqtt` image instead of bind-mounting a workspace file at deploy time.
-Jenkins also uses [docker-compose.jenkins.yml](docker-compose.jenkins.yml) as an override so the database stays internal to the compose network and does not need to claim host port `3306` during CD.
+Jenkins also uses [docker-compose.jenkins.yml](docker-compose.jenkins.yml) as an override so the database and backend stay internal to the compose network and do not need to claim host ports `3306` or `8000` during CD.
 The compose stack now declares healthchecks for `server` and `webapp`, and Jenkins waits for those services to become healthy before it runs the smoke commands.
 Only after that gate passes does Jenkins build the release Docker images, deploy with Docker Compose, and run the smoke checks.
