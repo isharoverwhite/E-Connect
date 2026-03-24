@@ -1,0 +1,17 @@
+services:
+  jenkins:
+    build: 
+      context: ./jenkins
+      dockerfile: Dockerfile
+    container_name: jenkins_server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      # Mount docker socket so Jenkins Docker CLI can control host docker
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  jenkins_home:
