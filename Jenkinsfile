@@ -20,7 +20,7 @@ pipeline {
     }
 
     environment {
-        COMPOSE_FILE = 'docker-compose.yml'
+        COMPOSE_FILE = 'docker-compose.yml:docker-compose.jenkins.yml'
         COMPOSE_PROJECT_NAME = 'econnect'
         DOCKER_BUILDKIT = '1'
         BUILDKIT_PROGRESS = 'plain'
