@@ -69,3 +69,9 @@ env/
 /design/flows/TASK-PACKET-*.md
 /design/flows/REPORT_*.md
 /design/change-requests/CR-*.md
+AGENTS.md
+PRD.md
+PROJECT_STATUS.md
+run.md
+run_*.md
+TASK_REPORT.md
