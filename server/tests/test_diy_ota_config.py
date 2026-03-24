@@ -100,11 +100,12 @@ def test_put_device_config_success():
         ]
     }
 
-    res = client.put(
-        f"/api/v1/device/{device.device_id}/config",
-        json=payload,
-        headers={"Authorization": f"Bearer {token}"}
-    )
+    with patch("app.api.build_firmware_task", return_value=None):
+        res = client.put(
+            f"/api/v1/device/{device.device_id}/config",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"}
+        )
 
     if res.status_code != 200:
         print("Response:", res.json())
@@ -212,6 +213,23 @@ def test_ota_download_unauthenticated_not_ready():
 
 
 from unittest.mock import patch
+
+
+def test_legacy_ota_endpoints_are_locked():
+    upload_res = client.post(
+        "/api/v1/ota/upload?version=1.0.0&board=esp32",
+        files={"file": ("firmware.bin", b"firmware", "application/octet-stream")},
+    )
+    assert upload_res.status_code == 410
+    assert upload_res.json()["detail"]["error"] == "disabled"
+
+    latest_res = client.get("/api/v1/ota/latest/esp32")
+    assert latest_res.status_code == 410
+    assert latest_res.json()["detail"]["error"] == "disabled"
+
+    download_res = client.get("/api/v1/ota/download/firmware.bin")
+    assert download_res.status_code == 410
+    assert download_res.json()["detail"]["error"] == "disabled"
 
 def test_send_command_ota_publish_success():
     db = TestingSessionLocal()
@@ -387,6 +405,33 @@ def test_mqtt_state_pending_device_requests_repair():
     assert ack_payload["status"] == "re_pair_required"
     assert ack_payload["reason"] == "not_approved"
     assert ack_payload["auth_status"] == "pending"
+
+
+def test_mqtt_state_rejected_device_reports_pairing_rejected():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+    device.auth_status = AuthStatus.rejected
+    db.commit()
+
+    mgr = MQTTClientManager()
+    mgr.publish_json = MagicMock(return_value=True)
+
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps({"kind": "state", "device_id": device.device_id})
+    with patch('app.mqtt.SessionLocal', return_value=db_mock):
+        mgr.process_state_message(device.device_id, payload)
+
+    mgr.publish_json.assert_called_once()
+    topic, ack_payload = mgr.publish_json.call_args.args[:2]
+    assert topic == mgr.state_ack_topic(device.device_id)
+    assert ack_payload["status"] == "pairing_rejected"
+    assert ack_payload["reason"] == "admin_rejected"
+    assert ack_payload["auth_status"] == "rejected"
 
 
 def test_mqtt_reconcile_ota_success():

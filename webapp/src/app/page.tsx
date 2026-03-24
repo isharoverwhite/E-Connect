@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchDashboardDevices, fetchDevices, sendDeviceCommand } from "@/lib/api";
+import { fetchDashboardDevices, fetchDevices, sendDeviceCommand, rejectDiscoveredDevice } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import { DeviceConfig } from "@/types/device";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -14,34 +14,31 @@ export default function Dashboard() {
   const [pairingRequests, setPairingRequests] = useState<DeviceConfig[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNotifications, setShowNotifications] = useState(false);
-  const isAdmin = user?.account_type === "admin";
-
-  useEffect(() => {
-    let active = true;
-
-    async function load() {
-      const [dashboardDevices, pendingRequests] = await Promise.all([
-        fetchDashboardDevices(),
-        isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
-      ]);
-      if (!active) return;
-      setDevices(dashboardDevices);
-      setPairingRequests((pendingRequests as DeviceConfig[]) || []);
-      setLoading(false);
+  const [dismissedNotifIds, setDismissedNotifIds] = useState<Set<string>>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("dismissedNotifs");
+        if (saved) return new Set(JSON.parse(saved));
+      } catch (e) {}
     }
+    return new Set<string>();
+  });
+  const isAdmin = user?.account_type === "admin";
+  async function syncDashboardData() {
+    const [dashboardDevices, pendingRequests] = await Promise.all([
+      fetchDashboardDevices(),
+      isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
+    ]);
+    setDevices(dashboardDevices);
+    setPairingRequests((pendingRequests as DeviceConfig[]) || []);
+    setLoading(false);
+  }
 
-    void load();
 
-    return () => {
-      active = false;
-    };
-  }, [isAdmin]);
 
-  useWebSocket((event) => {
-    if (event.type === "pairing_requested" && isAdmin) {
-      void fetchDevices({ authStatus: "pending" }).then((pending) => {
-        setPairingRequests(pending as DeviceConfig[]);
-      });
+  const { isConnected } = useWebSocket((event) => {
+    if ((event.type === "pairing_requested" || event.type === "pairing_queue_updated") && isAdmin) {
+      void syncDashboardData();
       return;
     }
 
@@ -49,19 +46,59 @@ export default function Dashboard() {
       return prev.map((device) => {
         if (device.device_id === event.device_id) {
           if (event.type === "device_online") {
-            return { ...device, conn_status: "online", last_seen: event.payload?.reported_at || new Date().toISOString() };
+            return {
+              ...device,
+              conn_status: "online",
+              last_seen: (event.payload?.reported_at as string) || new Date().toISOString(),
+            };
           }
           if (event.type === "device_offline") {
             return { ...device, conn_status: "offline" };
           }
           if (event.type === "device_state") {
-            return { ...device, runtime_state: event.payload, last_seen: new Date().toISOString() };
+            return {
+              ...device,
+              conn_status: "online",
+              runtime_state: event.payload,
+              last_state: (event.payload ?? null) as DeviceConfig["last_state"],
+              last_seen: (event.payload?.reported_at as string) || new Date().toISOString(),
+            };
+          }
+          if (event.type === "command_delivery") {
+            return {
+              ...device,
+              last_delivery: (event.payload ?? null) as DeviceConfig["last_delivery"],
+            };
           }
         }
         return device;
       });
     });
   });
+
+  useEffect(() => {
+    let cancelled = false;
+    // Debounce the fetch slightly to prevent rapid double-fetching if WS connects instantly
+    const timeoutId = window.setTimeout(() => {
+      void (async () => {
+        const [dashboardDevices, pendingRequests] = await Promise.all([
+          fetchDashboardDevices(),
+          isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
+        ]);
+        if (cancelled) {
+          return;
+        }
+        setDevices(dashboardDevices);
+        setPairingRequests((pendingRequests as DeviceConfig[]) || []);
+        setLoading(false);
+      })();
+    }, 50);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [isAdmin, isConnected]);
 
   const isDeviceOnline = (d: DeviceConfig) => {
     return d.auth_status === "approved" && d.conn_status === "online";
@@ -74,7 +111,48 @@ export default function Dashboard() {
   const newThisWeek = devices.filter(d => d.created_at && new Date(d.created_at) > oneWeekAgo).length;
 
   const offlineDevices = devices.filter(d => !isDeviceOnline(d) && d.auth_status === "approved");
-  const alertCount = offlineDevices.length + pairingRequests.length;
+
+  const allNotifications = useMemo(() => {
+    const notifs: Array<{ id: string; type: 'pairing' | 'offline'; device: DeviceConfig }> = [];
+    if (isAdmin) {
+      pairingRequests.forEach(req => {
+        notifs.push({
+          id: `pairing-${req.device_id}`,
+          type: 'pairing' as const,
+          device: req,
+        });
+      });
+    }
+    offlineDevices.forEach(dev => {
+      notifs.push({
+        id: `offline-${dev.device_id}-${dev.last_seen || ''}`,
+        type: 'offline' as const,
+        device: dev,
+      });
+    });
+    return notifs;
+  }, [isAdmin, pairingRequests, offlineDevices]);
+
+  const visibleNotifications = allNotifications.filter(n => !dismissedNotifIds.has(n.id));
+  const alertCount = visibleNotifications.length;
+
+  const handleClearAll = async () => {
+    let pairingRejected = false;
+    const newDismissed = new Set(dismissedNotifIds);
+    for (const n of allNotifications) {
+      if (n.type === 'pairing') {
+        await rejectDiscoveredDevice(n.device.device_id).catch(() => {});
+        pairingRejected = true;
+      } else {
+        newDismissed.add(n.id);
+      }
+    }
+    setDismissedNotifIds(newDismissed);
+    try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(newDismissed))); } catch(e) {}
+    if (pairingRejected) {
+      void syncDashboardData();
+    }
+  };
 
   return (
     <div className="bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-200 font-sans h-screen flex overflow-hidden selection:bg-primary selection:text-white">
@@ -155,62 +233,99 @@ export default function Dashboard() {
                 <div className="absolute right-0 top-full mt-3 w-80 sm:w-96 bg-surface-light dark:bg-surface-dark rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
                   <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/50 backdrop-blur-sm">
                     <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-100">Notifications</h3>
-                    <button className="text-xs font-medium text-primary hover:text-blue-600 transition-colors">Mark all read</button>
+                    {visibleNotifications.length > 0 && (
+                      <button
+                        onClick={handleClearAll}
+                        className="text-xs font-medium text-slate-500 hover:text-red-500 transition-colors flex items-center gap-1"
+                      >
+                        <span className="material-icons-round text-[14px]">delete_sweep</span>
+                        Clear all
+                      </button>
+                    )}
                   </div>
                   <div className="max-h-[32rem] overflow-y-auto">
-                    {isAdmin && pairingRequests.length > 0 ? (
-                      <div className="p-4 bg-blue-50/40 dark:bg-blue-900/10 border-b border-slate-100 dark:border-slate-700/50">
-                        <div className="flex gap-3">
-                          <div className="flex-shrink-0 mt-1">
-                            <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-600/20 flex items-center justify-center text-blue-600 dark:text-blue-400">
-                              <span className="material-icons-round text-lg">sensors</span>
-                            </div>
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex justify-between items-start mb-1">
-                              <p className="text-sm font-semibold text-slate-900 dark:text-white">New Device Found</p>
-                              <span className="text-[10px] font-bold tracking-wide text-blue-600 dark:text-blue-400 bg-blue-100 dark:bg-blue-500/20 px-1.5 py-0.5 rounded uppercase">
-                                {pairingRequests.length} pending
-                              </span>
-                            </div>
-                            <p className="text-xs text-slate-600 dark:text-slate-400 mb-3">
-                              {pairingRequests[0]?.name
-                                ? `"${pairingRequests[0].name}" requested pairing.`
-                                : "A board requested pairing and is waiting in discovery."}
-                            </p>
-                            <div className="flex gap-2">
-                              <button
-                                onClick={() => router.push("/devices/discovery")}
-                                className="flex-1 bg-primary hover:bg-blue-600 text-white text-xs font-medium py-1.5 px-3 rounded shadow-sm transition-colors flex items-center justify-center gap-1"
-                              >
-                                <span className="material-icons-round text-sm">link</span> Pair Now
-                              </button>
-                              <button className="bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-600 text-xs font-medium py-1.5 px-3 rounded transition-colors">
-                                Ignore
-                              </button>
-                            </div>
-                          </div>
-                        </div>
+                    {visibleNotifications.length === 0 ? (
+                      <div className="p-8 text-center text-sm text-slate-500 flex flex-col items-center justify-center">
+                        <span className="material-icons-round text-4xl text-slate-300 dark:text-slate-600 mb-2">notifications_off</span>
+                        <p>No new notifications</p>
                       </div>
-                    ) : null}
-                    {offlineDevices.slice(0, 3).map(dev => (
-                      <div key={dev.device_id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 transition-colors cursor-pointer group">
-                        <div className="flex gap-3">
-                          <div className="flex-shrink-0 mt-1">
-                            <div className="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900/20 flex items-center justify-center text-red-500 dark:text-red-400 group-hover:bg-red-200 dark:group-hover:bg-red-900/40 transition-colors">
-                              <span className="material-icons-round text-lg">wifi_off</span>
+                    ) : (
+                      visibleNotifications.map(notif => {
+                        if (notif.type === 'pairing') {
+                          return (
+                            <div key={notif.id} className="p-4 bg-blue-50/40 dark:bg-blue-900/10 border-b border-slate-100 dark:border-slate-700/50 transition-colors group">
+                              <div className="flex gap-3">
+                                <div className="flex-shrink-0 mt-1">
+                                  <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-600/20 flex items-center justify-center text-blue-600 dark:text-blue-400">
+                                    <span className="material-icons-round text-lg">sensors</span>
+                                  </div>
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex justify-between items-start mb-1">
+                                    <p className="text-sm font-semibold text-slate-900 dark:text-white">New Device Found</p>
+                                    <button
+                                      onClick={async () => {
+                                        await rejectDiscoveredDevice(notif.device.device_id).catch(() => {});
+                                        void syncDashboardData();
+                                      }}
+                                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 opacity-0 group-hover:opacity-100 transition-opacity rounded-full hover:bg-slate-100 dark:hover:bg-slate-700"
+                                      title="Reject"
+                                    >
+                                      <span className="material-icons-round text-sm">close</span>
+                                    </button>
+                                  </div>
+                                  <p className="text-xs text-slate-600 dark:text-slate-400 mb-3">
+                                    {notif.device.name
+                                      ? `"${notif.device.name}" requested pairing.`
+                                      : "A board requested pairing and is waiting in discovery."}
+                                  </p>
+                                  <div className="flex gap-2">
+                                    <button
+                                      onClick={() => router.push("/devices/discovery")}
+                                      className="flex-1 bg-primary hover:bg-blue-600 text-white text-xs font-medium py-1.5 px-3 rounded shadow-sm transition-colors flex items-center justify-center gap-1"
+                                    >
+                                      <span className="material-icons-round text-sm">link</span> Pair Now
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex justify-between items-center mb-1">
-                              <p className="text-sm font-medium text-slate-900 dark:text-white">{dev.name} Offline</p>
-                              <span className="text-xs text-slate-400">Recent</span>
+                          );
+                        } else {
+                          return (
+                            <div key={notif.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 transition-colors group">
+                              <div className="flex gap-3">
+                                <div className="flex-shrink-0 mt-1">
+                                  <div className="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900/20 flex items-center justify-center text-red-500 dark:text-red-400 group-hover:bg-red-200 dark:group-hover:bg-red-900/40 transition-colors">
+                                    <span className="material-icons-round text-lg">wifi_off</span>
+                                  </div>
+                                </div>
+                                <div className="flex-1">
+                                  <div className="flex justify-between items-start mb-1">
+                                    <p className="text-sm font-medium text-slate-900 dark:text-white mt-1">{notif.device.name} Offline</p>
+                                    <button
+                                      onClick={() => {
+                                        setDismissedNotifIds(prev => {
+                                          const next = new Set(prev);
+                                          next.add(notif.id);
+                                          try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(next))); } catch(e) {}
+                                          return next;
+                                        });
+                                      }}
+                                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 opacity-0 group-hover:opacity-100 transition-opacity rounded-full hover:bg-slate-100 dark:hover:bg-slate-700"
+                                      title="Dismiss"
+                                    >
+                                      <span className="material-icons-round text-sm">close</span>
+                                    </button>
+                                  </div>
+                                  <p className="text-xs text-slate-500 dark:text-slate-400">Connection lost to {notif.device.board || 'Device'}.</p>
+                                </div>
+                              </div>
                             </div>
-                            <p className="text-xs text-slate-500 dark:text-slate-400">Connection lost to {dev.board || 'Device'}.</p>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                          );
+                        }
+                      })
+                    )}
                   </div>
                   <a className="block w-full text-center py-2 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-700 text-xs font-medium text-slate-500 hover:text-primary transition-colors" href="/logs">
                     View Activity Log
@@ -319,8 +434,11 @@ export default function Dashboard() {
 }
 
 function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
-  const [pending, setPending] = useState(false);
-  
+  const [requestPending, setRequestPending] = useState(false);
+  const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
+  const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
+  const [optimisticSliderValue, setOptimisticSliderValue] = useState<number | null>(null);
+
   const pwmPin = config.pin_configurations?.find((p) => p.mode === 'PWM');
   const outputPin = config.pin_configurations?.find((p) => p.mode === 'OUTPUT');
   const analogPin = config.pin_configurations?.find((p) => p.mode === 'ADC');
@@ -328,35 +446,49 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
 
   const pwmMin = pwmPin?.extra_params?.min_value ?? 0;
   const pwmMax = pwmPin?.extra_params?.max_value ?? 255;
-
-  const [toggleState, setToggleState] = useState(Boolean(config.last_state?.value));
-  const [sliderValue, setSliderValue] = useState(() => {
-    return Number(config.last_state?.brightness ?? pwmMin);
-  });
-
-  useEffect(() => {
-    setToggleState(Boolean(config.last_state?.value));
-    setSliderValue(Number(config.last_state?.brightness ?? pwmMin));
-  }, [config.last_state?.value, config.last_state?.brightness, pwmMin]);
+  const baselineToggleState = Boolean(config.last_state?.value);
+  const baselineSliderValue = Number(config.last_state?.brightness ?? pwmMin);
+  const deliveryForPendingCommand = Boolean(
+    config.last_delivery && pendingCmdId && config.last_delivery.command_id === pendingCmdId
+  );
+  const failedPendingCommand =
+    deliveryForPendingCommand && config.last_delivery?.status === "failed";
+  const acknowledgedPendingCommand =
+    deliveryForPendingCommand && config.last_delivery?.status === "acknowledged";
+  const commandStateSynced =
+    acknowledgedPendingCommand &&
+    (optimisticToggleState === null || baselineToggleState === optimisticToggleState) &&
+    (optimisticSliderValue === null || baselineSliderValue === optimisticSliderValue);
+  const keepOptimisticState =
+    pendingCmdId !== null && !failedPendingCommand && !commandStateSynced;
+  const pending = requestPending || (pendingCmdId !== null && !deliveryForPendingCommand);
+  const toggleState = keepOptimisticState
+    ? optimisticToggleState ?? baselineToggleState
+    : baselineToggleState;
+  const sliderValue = keepOptimisticState
+    ? optimisticSliderValue ?? baselineSliderValue
+    : baselineSliderValue;
 
   const handleToggle = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const isChecked = e.target.checked;
     const targetPin = outputPin || pwmPin;
     if (!targetPin) return;
 
-    setPending(true);
+    setRequestPending(true);
+    setPendingCmdId(null);
+    setOptimisticToggleState(isChecked);
     try {
       const payload = { kind: "action", pin: targetPin.gpio_pin, value: isChecked ? 1 : 0 };
       const response = await sendDeviceCommand(config.device_id, payload);
+      setRequestPending(false);
       if (response && response.status === "failed") {
-        setToggleState(!isChecked);
+        setOptimisticToggleState(null);
       } else {
-        setToggleState(isChecked);
+        setPendingCmdId(response?.command_id || null);
       }
     } catch {
-      setToggleState(!isChecked);
-    } finally {
-      setPending(false);
+      setRequestPending(false);
+      setOptimisticToggleState(null);
     }
   };
 
@@ -364,14 +496,21 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
     const targetPin = pwmPin || outputPin;
     if (!targetPin && !config.provider) return;
 
-    setPending(true);
+    setRequestPending(true);
+    setPendingCmdId(null);
+    setOptimisticSliderValue(rawValue);
     try {
       const payload = { kind: "action", pin: targetPin?.gpio_pin || 0, brightness: rawValue };
-      await sendDeviceCommand(config.device_id, payload);
+      const response = await sendDeviceCommand(config.device_id, payload);
+      setRequestPending(false);
+      if (response && response.status === "failed") {
+        setOptimisticSliderValue(null);
+      } else {
+        setPendingCmdId(response?.command_id || null);
+      }
     } catch {
-      // ignore
-    } finally {
-      setPending(false);
+      setRequestPending(false);
+      setOptimisticSliderValue(null);
     }
   };
 
@@ -381,7 +520,7 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
   if (i2cPin) {
     const libName = i2cPin.extra_params?.i2c_library || "I2C Device";
     const isSensor = !i2cPin.extra_params?.i2c_library?.includes("SSD1306") && !i2cPin.extra_params?.i2c_library?.includes("MCP23017");
-    
+
     return (
       <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-orange-100 dark:border-orange-900/30 p-5 shadow-sm hover:shadow-md transition-shadow">
         <div className="flex justify-between items-start mb-2">
@@ -395,7 +534,7 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
         </div>
         <h3 className="text-base font-semibold text-slate-900 dark:text-white mt-2 truncate" title={config.name}>{config.name}</h3>
         <p className="text-xs text-slate-500 mb-3 truncate" title={libName}>{libName}</p>
-        
+
         <div className="flex items-center gap-4">
           <div className="flex-1">
              <span className="text-2xl font-bold text-slate-800 dark:text-white">{config.last_state?.value ?? '--'}</span>
@@ -448,7 +587,7 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
             max={pwmMax}
             value={sliderValue}
             disabled={pending || !isOnline}
-            onChange={(e) => setSliderValue(parseInt(e.target.value))}
+            onChange={(e) => setOptimisticSliderValue(parseInt(e.target.value))}
             onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
             onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
           />
@@ -534,7 +673,7 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
             max={pwmMax}
             value={sliderValue}
             disabled={pending || !isOnline}
-            onChange={(e) => setSliderValue(parseInt(e.target.value))}
+            onChange={(e) => setOptimisticSliderValue(parseInt(e.target.value))}
             onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
             onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
           />

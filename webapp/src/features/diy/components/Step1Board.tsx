@@ -72,8 +72,6 @@ export function Step1Board({
     const defaultFlash = board.defaultFlashSize || "4MB";
     const defaultPsram = board.defaultPsram || "None";
     
-    // Use the HTML from step1.html for the board grid.
-    // We'll map the family options to the board selection cards.
     return (
         <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-4 mb-10">

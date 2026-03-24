@@ -4,6 +4,7 @@
 
 # Python caches and local environments
 **/__pycache__/
+**/.DS_Store
 *.py[cod]
 .pytest_cache/
 .venv/
@@ -14,26 +15,55 @@ env/
 *.db
 *.sqlite3
 *.log
+*.out
+*.bak
 
 # Scratch tests and debug helpers kept outside the real test suites
 /test_*.py
 /server/test_*.py
 /server/debug_*.py
 /server/check_*.py
+/test_server/
 /test_server/node_modules/
 /test_server/*.bak
+/latest_build_dir.txt
+/server/firmwares/*.bin
+/download_stitch_screens.sh
+/fix_db.py
+/fix_db_enum.py
+/server/patch_builder.py
+/server/reset_db.py
+/server/reset_pwd.py
+/server/run_curl.sh
+/server/update_admin_pwd.py
+/server/full_col.json
+/server/static/test_control.html
+/server/server/
+/screens/
+/.vscode/
 
-# Browser/MCP captures and temporary debug exports
+# Root-level local captures and temporary debug exports
 /.playwright-mcp/
-/temp_mcp_config.json
+/temp_*.json
 /current_flash_ui.md
 /full_page.md
-/dialog.html
-/toast.html
-/econnect_login.png
+/issue.md
+/*.html
+/econnect_*.png
 /webapp/*.html
 /webapp/*.png
 /webapp/*.log
+/verification_report.md
+/weekly_github_changes_*.md
+/phase*_report.md
+/setup-login-register-e2e.md
+/write-*.md
+/TASK_REPORT.md
+/TASK_REPORT_WS.md
+/design/TASK_REPORT.md
+/task_report_*.md
+/ANTIGRAVITY_SERVER_SIDE_PRD_PROMPT.md
+/GEMINI.md
 
 # Agent-generated planning docs; keep canonical design baseline files trackable
 /design/flows/TASK-PACKET-*.md

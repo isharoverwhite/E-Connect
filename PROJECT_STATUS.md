@@ -3,10 +3,10 @@
 ## Current Phase: Complete
 
 ## Active Task
-- Task ID: TASK-GIT-PUSH-MAIN-001
-- Objective: Validate push readiness for `origin/main`, fix the background build DB-session regression, and publish the ready commits.
+- Task ID: GIT-COMMIT-PUSH-001
+- Objective: Commit the full post-cleanup repository state on `main` and push it to `origin/main`
 - Owner: Codex
-- Started At: 2026-03-18 21:50:00
+- Started At: 2026-03-24 19:22:17
 
 ## Gate Status
 - [x] G0 Task intake
@@ -16,18 +16,17 @@
 - [x] G4 Test complete
 
 ## Deliverables
-- PRD: /Users/kiendinhtrung/Documents/GitHub/Final-Project/PRD.md
-- Design docs: Design unchanged
-- Code:
-  - `server/app/api.py`
-  - `server/app/services/builder.py`
-- Verification: `webapp` lint/build PASS. `server` targeted pytest PASS (`tests/test_auth.py`, `tests/test_diy_api.py`).
+- PRD: Active repo state remains aligned to the E-Connect local-first smart-home baseline in `PRD.md`; this task packages the current cleanup and active-stack changes rather than changing scope.
+- Design docs: Committed the current documentation baseline after cleanup, including the remaining design and workflow notes already in the working tree.
+- Code: One repository-wide commit will capture the current state, including cleanup deletions, active `server`/`webapp`/`firmware` changes, and newly added test/manual harness files.
+- Verification: Confirmed `webapp` production build passes, firmware manual scripts compile, and branch/remote state is ready for a standard push after commit.
 
 ## Risks / Blockers
-- Local worktree remains dirty with unrelated artifacts and docs that were intentionally not included in this push.
+- `pytest` is unavailable in the current local Python environment, so the new/retained server test files were not executed here.
+- The repository still contains documented local/dev secrets and defaults (for example `SECRET_KEY` fallbacks) that remain a release risk even if they are accepted for local development.
 
 ## Next Action
-- Confirm the uncommitted local files should be reviewed, cleaned, or committed separately.
+- Monitor `origin/main` after push and run server-side Python tests again once a `pytest`-capable environment is restored.
 
 ## Last Updated
-2026-03-18 22:37:43
+2026-03-24 19:24:12

@@ -102,8 +102,9 @@ Ngay sau khi reboot lần đầu sau flash:
 Sau khi đã được approve và chạy bình thường:
 
 5. ESP32 tiếp tục gửi heartbeat định kỳ lên server qua MQTT state topic.
-6. Nếu server phản hồi rằng `device_id` không còn hợp lệ hoặc không còn ở trạng thái managed/approved, ESP32 phải coi đó là yêu cầu pair lại.
-7. Khi nhận tín hiệu này, ESP32 phải gửi lại secure pairing request thay vì chỉ tiếp tục publish heartbeat mù.
+6. Nếu server phản hồi rằng `device_id` không còn hợp lệ hoặc không còn ở trạng thái managed/approved vì board đã bị unpair hoặc không còn tồn tại trên server, ESP32 phải coi đó là yêu cầu pair lại.
+7. Nếu server phản hồi rằng pairing đã bị admin `reject/ignore`, ESP32 phải dừng mọi lần pair lại tự động trong runtime hiện tại.
+8. Board chỉ được xin pair lại sau lần boot hoặc power cycle kế tiếp.
 
 Theo baseline PRD, yêu cầu pair ban đầu đi qua command path:
 
@@ -137,6 +138,7 @@ Admin vào màn hình discovery để:
 1. nhìn thấy thiết bị mới
 2. xác nhận đúng thiết bị
 3. bấm approve để hoàn tất pair với server
+4. hoặc bấm ignore/reject để từ chối yêu cầu pair hiện tại
 
 Theo code path hiện tại, bước approve dùng endpoint:
 
@@ -147,6 +149,12 @@ Sau khi approve:
 - thiết bị chuyển sang `approved`
 - server có thể provision widget mặc định
 - thiết bị được xem là đã pair thành công với hệ thống
+
+Sau khi reject:
+
+- backend phải forward tín hiệu `pairing rejected` về board
+- board không được tự gửi lại pairing request trong cùng runtime hiện tại
+- board chỉ xuất hiện lại trong discovery sau lần boot mới và registration mới
 
 ### 6. Luồng tổng quát
 
@@ -203,6 +211,13 @@ sequenceDiagram
 - Nếu board còn firmware và vẫn có thể kết nối server, heartbeat kế tiếp phải cho phép server yêu cầu pair lại, rồi board gửi handshake mới để re-enter discovery.
 - Admin chỉ thấy thông báo pair lại sau handshake mới đó.
 
+#### 6. Thiết bị bị admin reject từ Discovery
+
+- Thao tác `Ignore` hoặc `Reject` là từ chối pairing request hiện tại, không phải chỉ ẩn card trên UI.
+- Backend phải gửi ngay tín hiệu từ chối đó về board.
+- Trong runtime hiện tại, board phải dừng auto re-pair và giữ im lặng cho tới khi bị rút điện hoặc reboot.
+- Sau lần boot mới, board được phép gửi lại registration để quay lại discovery như một yêu cầu pair mới.
+
 ### 8. Acceptance criteria cho workflow này
 
 - User bắt buộc nhập `Wi-Fi SSID` và `Wi-Fi Password` trên WebUI ở lần cấu hình đầu tiên.
@@ -211,6 +226,7 @@ sequenceDiagram
 - Khi đã có mạng, ESP32 phải chủ động gửi yêu cầu pair tới server.
 - Thiết bị phải xuất hiện ở discovery trước khi được approve.
 - Pairing chỉ hoàn tất sau khi admin approve trên server.
+- Nếu admin reject, board không được tự spam pair lại cho tới lần boot kế tiếp.
 
 ## Ghi chú về hiện trạng code
 

@@ -57,6 +57,7 @@ String deviceId = ECONNECT_DEVICE_ID;
 unsigned long lastHeartbeatAt = 0;
 bool securePairingVerified = false;
 bool forcePairingRequestOnNextHandshake = false;
+bool pairingRejectedUntilPowerCycle = false;
 unsigned long lastReconnectAttemptAt = 0;
 
 bool connectToWiFi();
@@ -91,7 +92,18 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
   Serial.println("\n--- Starting E-Connect Server-Built Firmware ---");
+  pairingRejectedUntilPowerCycle = restoreRejectedPairingLock();
+  Serial.printf(
+      "Reset reason: %s | persisted reject lock: %s\n",
+      boardResetReasonSummary().c_str(),
+      pairingRejectedUntilPowerCycle ? "true" : "false");
   initializeBoardNetworking();
+
+  if (pairingRejectedUntilPowerCycle) {
+    shutdownBoardNetworkingAfterPairingReject();
+    Serial.println("Reject lock restored. Keeping Wi-Fi and MQTT offline until power loss.");
+    return;
+  }
 
   initializePinStates();
   initializeI2CBus();
@@ -103,13 +115,24 @@ void setup() {
 
   setupMQTT();
 
-  while (!performSecureHandshake()) {
+  while (!securePairingVerified && !pairingRejectedUntilPowerCycle) {
+    if (performSecureHandshake()) {
+      break;
+    }
+    if (pairingRejectedUntilPowerCycle) {
+      break;
+    }
     Serial.println("Secure handshake failed. Retrying...");
     delay(HANDSHAKE_RETRY_DELAY_MS);
   }
 }
 
 void loop() {
+  if (pairingRejectedUntilPowerCycle) {
+    delay(HANDSHAKE_RETRY_DELAY_MS);
+    return;
+  }
+
   if (!securePairingVerified) {
     securePairingVerified = performSecureHandshake();
     delay(HANDSHAKE_RETRY_DELAY_MS);
@@ -272,7 +295,7 @@ bool performSecureHandshake() {
     return false;
   }
 
-  StaticJsonDocument<3072> doc;
+  DynamicJsonDocument doc(3072);
   doc["device_id"] = deviceId;
   doc["project_id"] = ECONNECT_PROJECT_ID;
   doc["secret_key"] = ECONNECT_SECRET_KEY;
@@ -308,9 +331,15 @@ bool performSecureHandshake() {
 
   const unsigned long startedAt = millis();
   while (!securePairingVerified &&
+         !pairingRejectedUntilPowerCycle &&
          millis() - startedAt < HANDSHAKE_ACK_TIMEOUT_MS) {
     mqttClient.loop();
     delay(10);
+  }
+
+  if (pairingRejectedUntilPowerCycle) {
+    Serial.println("Pairing was rejected by the server. Waiting for reboot before retrying.");
+    return false;
   }
 
   if (!securePairingVerified) {
@@ -423,7 +452,9 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
     }
 
     securePairingVerified = true;
+    pairingRejectedUntilPowerCycle = false;
     forcePairingRequestOnNextHandshake = false;
+    persistRejectedPairingLock(false);
     subscribeRegisterAckTopic();
     subscribeStateAckTopic();
     subscribeCommandTopic();
@@ -435,9 +466,29 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
 
   if (incomingTopic == stateAckTopic()) {
     const String status = doc["status"] | "";
+    if (status == "pairing_rejected") {
+      pairingRejectedUntilPowerCycle = true;
+      forcePairingRequestOnNextHandshake = false;
+      securePairingVerified = false;
+      persistRejectedPairingLock(true);
+      if (mqttClient.connected()) {
+        mqttClient.disconnect();
+      }
+      shutdownBoardNetworkingAfterPairingReject();
+      Serial.printf(
+          "Server rejected pairing: %s\n",
+          String(doc["message"] | "Pairing rejected by server.").c_str());
+      return;
+    }
+    if (pairingRejectedUntilPowerCycle) {
+      Serial.println("Ignoring re-pair request after server rejection until reboot.");
+      return;
+    }
     if (status == "re_pair_required") {
+      pairingRejectedUntilPowerCycle = false;
       forcePairingRequestOnNextHandshake = true;
       securePairingVerified = false;
+      persistRejectedPairingLock(false);
       Serial.printf(
           "Server requested re-pair: %s\n",
           String(doc["message"] | "Unknown reason").c_str());
@@ -666,7 +717,7 @@ void publishState(bool applied) {
   const String stateTopic =
       String("econnect/") + MQTT_NAMESPACE + "/device/" + deviceId + "/state";
 
-  StaticJsonDocument<3072> doc;
+  DynamicJsonDocument doc(3072);
   doc["kind"] = "state";
   doc["device_id"] = deviceId;
   doc["applied"] = applied;

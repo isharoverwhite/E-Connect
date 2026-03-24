@@ -23,7 +23,6 @@ export default function DevicesPage() {
     }>({ isOpen: false, deviceId: "", deviceName: "" });
     
     const isAdmin = user?.account_type === "admin";
-
     async function loadDevices() {
         const data = await fetchDevices();
         setDevices(data);
@@ -51,7 +50,12 @@ export default function DevicesPage() {
         };
     }, []);
 
-    useWebSocket((event) => {
+    const { isConnected } = useWebSocket((event) => {
+        if (event.type === "pairing_requested" || event.type === "pairing_queue_updated") {
+            void loadDevices();
+            return;
+        }
+
         setDevices((prev) => {
             return prev.map((device) => {
                 if (device.device_id === event.device_id) {
@@ -61,11 +65,36 @@ export default function DevicesPage() {
                     if (event.type === "device_offline") {
                         return { ...device, conn_status: "offline" };
                     }
+                    if (event.type === "device_state") {
+                        return { ...device, conn_status: "online", last_seen: event.payload?.reported_at || new Date().toISOString() };
+                    }
                 }
                 return device;
             });
         });
     });
+
+    useEffect(() => {
+        if (!isConnected) {
+            return;
+        }
+
+        let cancelled = false;
+        const timeoutId = window.setTimeout(() => {
+            void fetchDevices().then((data) => {
+                if (cancelled) {
+                    return;
+                }
+                setDevices(data);
+                setLoading(false);
+            });
+        }, 0);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timeoutId);
+        };
+    }, [isConnected]);
 
     const handleDeleteClick = (deviceId: string, deviceName: string) => {
         setModalConfig({ isOpen: true, deviceId, deviceName });

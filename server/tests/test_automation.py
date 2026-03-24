@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 
 from main import app
 from app.database import Base, get_db
+from app.auth import create_access_token
 from app.sql_models import User, Household, HouseholdMembership, HouseholdRole, AccountType, Automation, AutomationExecutionLog, ExecutionStatus
 
 # Basic Setup for SQLite in-memory DB
@@ -81,55 +82,77 @@ def setup_db():
     # Teardown
     Base.metadata.drop_all(bind=engine)
 
-def test_trigger_happy(setup_db):
+def _auth_headers(user: User) -> dict[str, str]:
+    token = create_access_token(
+        {
+            "sub": user.username,
+            "account_type": user.account_type.value,
+            "household_id": 1,
+            "household_role": "owner",
+        }
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+def test_trigger_is_blocked_without_sandbox(setup_db):
     user = setup_db["user"]
     auto_id = setup_db["auto1_id"]
-    
-    from app.auth import create_access_token
-    token = create_access_token({"sub": user.username, "account_type": user.account_type.value, "household_id": 1, "household_role": "owner"})
-    
+
     response = client.post(
         f"/api/v1/automation/{auto_id}/trigger",
-        headers={"Authorization": f"Bearer {token}"}
+        headers=_auth_headers(user),
     )
-    
+
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "success"
+    assert data["status"] == "failed"
     assert "log" in data
-    assert data["log"]["status"] == "success"
-    assert "Hello World" in data["log"]["log_output"]
+    assert data["log"]["status"] == "failed"
+    assert "sandbox" in data["message"].lower()
+    assert "sandbox" in data["log"]["error_message"].lower()
+    assert "Execution skipped by policy" in data["log"]["log_output"]
+    assert "Hello World" not in data["log"]["log_output"]
 
-def test_trigger_fail(setup_db):
+
+def test_trigger_records_blocked_execution_log(setup_db):
     user = setup_db["user"]
     auto_id = setup_db["auto2_id"]
-    
-    from app.auth import create_access_token
-    token = create_access_token({"sub": user.username, "account_type": user.account_type.value, "household_id": 1, "household_role": "owner"})
-    
+
     response = client.post(
         f"/api/v1/automation/{auto_id}/trigger",
-        headers={"Authorization": f"Bearer {token}"}
+        headers=_auth_headers(user),
     )
-    
-    assert response.status_code == 200 # Execution completed but script failed
+
+    assert response.status_code == 200
     data = response.json()
     assert data["status"] == "failed"
     assert data["log"]["status"] == "failed"
-    assert "Gonna crash" in data["log"]["log_output"]
-    assert "ZeroDivisionError" in data["log"]["error_message"]
+    assert "sandbox" in data["log"]["error_message"].lower()
+    assert "Gonna crash" not in data["log"]["log_output"]
+    assert "ZeroDivisionError" not in data["log"]["error_message"]
+
+    db = TestingSessionLocal()
+    try:
+        log = (
+            db.query(AutomationExecutionLog)
+            .filter(AutomationExecutionLog.automation_id == auto_id)
+            .order_by(AutomationExecutionLog.id.desc())
+            .first()
+        )
+        assert log is not None
+        assert log.status == ExecutionStatus.failed
+        assert "sandbox" in (log.error_message or "").lower()
+    finally:
+        db.close()
 
 def test_trigger_not_found(setup_db):
     user = setup_db["user"]
-    
-    from app.auth import create_access_token
-    token = create_access_token({"sub": user.username, "account_type": user.account_type.value, "household_id": 1, "household_role": "owner"})
-    
+
     response = client.post(
         f"/api/v1/automation/999/trigger",
-        headers={"Authorization": f"Bearer {token}"}
+        headers=_auth_headers(user),
     )
-    
+
     assert response.status_code == 404
     data = response.json()
     assert "not found" in data["detail"].lower()
