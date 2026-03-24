@@ -78,23 +78,17 @@ pipeline {
                 sh '''
                     set -eu
 
-                    docker run --rm \
-                        -u "$(id -u):$(id -g)" \
-                        -e HOME=/tmp \
-                        -e NEXT_TELEMETRY_DISABLED=1 \
-                        -v "$PWD/webapp:/app" \
-                        -w /app \
-                        node:20-alpine \
-                        sh -lc "npm ci && npm run lint && npm run build"
+                    docker build \
+                        --file webapp/Dockerfile \
+                        --target check \
+                        --tag econnect-webapp-check \
+                        ./webapp
 
-                    docker run --rm \
-                        -u "$(id -u):$(id -g)" \
-                        -e HOME=/tmp \
-                        -e PIP_DISABLE_PIP_VERSION_CHECK=1 \
-                        -v "$PWD/server:/app" \
-                        -w /app \
-                        python:3.11-slim \
-                        sh -lc "python -m pip install --upgrade pip && pip install -r requirements-dev.txt && python -m pytest tests/"
+                    docker build \
+                        --file server/Dockerfile \
+                        --target test \
+                        --tag econnect-server-test \
+                        ./server
                 '''
             }
         }
