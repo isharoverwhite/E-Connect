@@ -16,10 +16,13 @@
   - The board-family picker must expose `ESP8266` as a first-class family next to the existing ESP32 families.
   - Supported ESP8266 profiles are `NodeMCU (v2/v3)`, `WeMos D1 mini`, `WeMos D1 mini Pro`, `ESP-01 / ESP-01S (1MB)`, and `ESP-12E / ESP-12F Module`.
   - Board summaries must show truthful defaults for CPU MHz, flash size, PSRAM, serial bridge, and warnings.
+  - Board cards must not show a `Web flash` badge unless the profile still exposes a maintained demo manifest in the active delivery path.
+  - The builder collects Wi-Fi credentials only; it must not expose a separate MQTT broker field. The server-side build flow derives one reachable advertised host from the current request and reuses it for firmware MQTT/API targets.
 - **Step 4 / Flash**:
   - ESP32-family application-only server builds remain single-binary manifests at `0x10000`.
   - ESP8266 single-binary server builds and custom uploads must produce a manifest that flashes `firmware.bin` at `0x0`.
   - Upload-mode copy must not require `bootloader.bin` or `partitions.bin` for ESP8266 profiles.
+  - If a board no longer has a maintained demo manifest, the `Bundled Demo` source must be hidden and `/api/diy/demo-firmware/...` must fail closed with a `404` JSON response instead of reading local filesystem artifacts from the webapp container.
   - When a server build reaches `artifact_ready`, the backend must auto-release the same-user serial reservation stored in `config.serial_port`.
   - The browser flasher becomes available only when the artifact/manifest is ready and the configured serial port is free; if any serial session still holds the port, the screen must show a release-first blocking message.
 

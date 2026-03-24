@@ -76,6 +76,8 @@ Các giá trị này cũng có thể lấy từ env:
 - `FAKE_BOARD_DASHBOARD_HOST`
 - `FAKE_BOARD_DASHBOARD_PORT`
 
+*Lưu ý: Từ nay, public broker (broker.emqx.io) không còn dùng mặc định. Bạn phải đảm bảo local broker đã chạy, và Fake board harness khai báo đúng IP local broker, nếu không Fake board sẽ bị Timeout chờ broker.*
+
 ## 4. Các khu vực chính trên dashboard
 
 ### Connection Settings

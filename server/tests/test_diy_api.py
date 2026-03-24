@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from datetime import datetime, timedelta
 import uuid
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -42,7 +43,8 @@ app = FastAPI()
 app.include_router(router, prefix="/api/v1")
 app.dependency_overrides[get_db] = override_get_db
 
-client = TestClient(app)
+LAN_BASE_URL = "http://192.168.1.25:3000"
+client = TestClient(app, base_url=LAN_BASE_URL)
 
 @pytest.fixture(autouse=True)
 def setup_db():
@@ -132,6 +134,88 @@ def test_create_project_and_build():
     )
     assert build_response.status_code == 200
     assert build_response.json()["status"] == "queued"
+
+def test_trigger_build_stamps_reachable_server_host_into_project_config():
+    db = TestingSessionLocal()
+    _user, room = create_test_user(db, username="networkstamp")
+    token = get_token(username="networkstamp")
+
+    project_payload = {
+        "name": "Stamped Node",
+        "board_profile": "esp32",
+        "room_id": room.room_id,
+        "config": {
+            "wifi_ssid": "SSID",
+            "wifi_password": "PASS",
+            "pins": [
+                {"gpio": 2, "mode": "OUTPUT", "label": "LED"}
+            ]
+        }
+    }
+    create_response = client.post(
+        "/api/v1/diy/projects",
+        json=project_payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 200
+    project_id = create_response.json()["id"]
+
+    with patch("app.api.build_firmware_task", return_value=None):
+        build_response = client.post(
+            f"/api/v1/diy/build?project_id={project_id}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Forwarded-Host": "192.168.50.10:3000",
+                "X-Forwarded-Proto": "https",
+            },
+        )
+
+    assert build_response.status_code == 200, build_response.text
+
+    project = db.query(DiyProject).filter(DiyProject.id == project_id).first()
+    assert project is not None
+    db.refresh(project)
+    assert project.config["advertised_host"] == "192.168.50.10"
+    assert project.config["api_base_url"] == "https://192.168.50.10:3000/api/v1"
+    assert "mqtt_broker" not in project.config
+
+def test_trigger_build_rejects_localhost_request_host():
+    db = TestingSessionLocal()
+    _user, room = create_test_user(db, username="badhost")
+    token = get_token(username="badhost")
+
+    project_payload = {
+        "name": "Bad Host Node",
+        "board_profile": "esp32",
+        "room_id": room.room_id,
+        "config": {
+            "wifi_ssid": "SSID",
+            "wifi_password": "PASS",
+            "pins": [
+                {"gpio": 2, "mode": "OUTPUT", "label": "LED"}
+            ]
+        }
+    }
+    create_response = client.post(
+        "/api/v1/diy/projects",
+        json=project_payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 200
+    project_id = create_response.json()["id"]
+
+    response = client.post(
+        f"/api/v1/diy/build?project_id={project_id}",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Host": "127.0.0.1:3000",
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()["detail"]
+    assert payload["error"] == "validation"
+    assert "reachable host" in payload["message"]
 
 def test_i2c_catalog_api():
     db = TestingSessionLocal()
@@ -488,6 +572,8 @@ def test_builder_generates_correct_config(tmp_path):
             self.board_profile = board_profile
     
     mock_config = {
+        "advertised_host": "192.168.1.50",
+        "api_base_url": "http://192.168.1.50:3000/api/v1",
         "wifi_ssid": "test_ssid",
         "wifi_password": "test_password",
         "pins": [
@@ -527,6 +613,8 @@ def test_builder_generates_correct_config(tmp_path):
     
     # Second pin config: I2C pin with SDA role, address 0x3C, library Wire
     assert '{ 4, "I2C", "i2c", "I2C Sensor", 1, 0, 255, "SDA", "0x3C", "Wire" }' in content, f"Missing I2C pin in: {content}"
+    assert '#define MQTT_BROKER "192.168.1.50"' in content
+    assert '#define API_BASE_URL "http://192.168.1.50:3000/api/v1"' in content
 
 
 def test_release_project_serial_reservation_releases_same_user_lock():

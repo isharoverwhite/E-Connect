@@ -807,39 +807,14 @@ export const BOARD_PROFILES: BoardProfile[] = [
     name: "DFRobot Beetle ESP32-C3",
     family: "ESP32-C3",
     chipLabel: "DFR0975 / ESP32-C3",
-    description: "Compact C3 board with a ready demo firmware bundle already present in the repo.",
+    description: "Compact C3 board for custom local-first modules.",
     layoutLabel: "Beetle micro layout",
     serialBridge: "Native USB CDC",
     warnings: [
-      "Use the bundled demo firmware only as a flashing bootstrap, then continue to discovery and approval.",
       "GPIO 9 remains tied to boot mode on many Beetle C3 workflows.",
     ],
     leftPins: esp32C3Left.slice(0, 5),
     rightPins: esp32C3Right.slice(0, 5),
-    demoFirmware: {
-      title: "Bundled ESP32-C3 demo firmware",
-      parts: [
-        {
-          offset: 0,
-          path: "/api/diy/demo-firmware/dfrobot-beetle-esp32-c3/bootloader.bin",
-          label: "Bootloader",
-        },
-        {
-          offset: 32768,
-          path: "/api/diy/demo-firmware/dfrobot-beetle-esp32-c3/partitions.bin",
-          label: "Partitions",
-        },
-        {
-          offset: 65536,
-          path: "/api/diy/demo-firmware/dfrobot-beetle-esp32-c3/firmware.bin",
-          label: "Application",
-        },
-      ],
-      notes: [
-        "This bundle comes from the checked-in PlatformIO build artifacts.",
-        "Use it as a live web-flashing proof point while the backend build pipeline is still maturing.",
-      ],
-    },
   },
   {
     id: "esp32-c5-reference",

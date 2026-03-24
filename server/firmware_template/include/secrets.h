@@ -18,7 +18,7 @@
 #endif
 
 #ifndef MQTT_BROKER
-#define MQTT_BROKER "broker.emqx.io"
+#define MQTT_BROKER ""
 #endif
 
 #ifndef MQTT_PORT
@@ -57,4 +57,4 @@
 #define ECONNECT_BOARD_PROFILE "esp32"
 #endif
 
-#endif  // SECRETS_H
+#endif // SECRETS_H

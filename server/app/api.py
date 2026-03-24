@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, BackgroundTasks, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, BackgroundTasks, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import or_
@@ -35,7 +35,11 @@ from .sql_models import (
 )
 from .database import get_db
 from .auth import verify_password, get_password_hash, create_access_token, create_ota_token, verify_ota_token, SECRET_KEY, ALGORITHM
-from .services.builder import build_firmware_task, get_durable_artifact_path
+from .services.builder import (
+    build_firmware_task,
+    get_durable_artifact_path,
+    infer_firmware_network_targets,
+)
 from .services.device_registration import (
     build_pairing_queue_event_payload,
     build_pairing_request_event_payload,
@@ -66,6 +70,15 @@ AUTOMATION_SANDBOX_BLOCK_MESSAGE = (
 
 def _background_session_factory(db: Session) -> sessionmaker:
     return sessionmaker(autocommit=False, autoflush=False, bind=db.get_bind())
+
+
+def _stamp_project_network_targets(config: dict[str, Any], request: Request) -> dict[str, Any]:
+    targets = infer_firmware_network_targets(request.headers, request.url.scheme)
+    stamped = dict(config)
+    stamped["advertised_host"] = targets["advertised_host"]
+    stamped["api_base_url"] = targets["api_base_url"]
+    stamped.pop("mqtt_broker", None)
+    return stamped
 
 
 def _decode_history_payload(payload: Optional[str]) -> Optional[dict[str, Any]]:
@@ -1130,6 +1143,7 @@ async def get_device(device_id: str, db: Session = Depends(get_db), current_user
 async def update_device_config(
     device_id: str,
     config: dict,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user)
@@ -1176,7 +1190,13 @@ async def update_device_config(
             detail={"error": "conflict", "message": "Another build or OTA job is already in progress for this device"},
         )
 
-    project.config = current_config
+    try:
+        project.config = _stamp_project_network_targets(current_config, request)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": str(exc)},
+        )
 
     # Trigger rebuild only after validation passes and no active job exists.
     job = BuildJob(id=str(uuid.uuid4()), project_id=project.id, status=JobStatus.queued)
@@ -1542,7 +1562,13 @@ async def update_diy_project(project_id: str, project_update: DiyProjectCreate, 
     return project
 
 @router.post("/diy/build", response_model=BuildJobResponse)
-async def trigger_diy_build(project_id: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
+async def trigger_diy_build(
+    project_id: str,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
     project = (
         db.query(DiyProject)
         .filter(DiyProject.id == project_id)
@@ -1574,6 +1600,17 @@ async def trigger_diy_build(project_id: str, background_tasks: BackgroundTasks, 
     )
     if active_job:
         return active_job
+
+    try:
+        project.config = _stamp_project_network_targets(
+            project.config if isinstance(project.config, dict) else {},
+            request,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": str(exc)},
+        )
 
     job_id = str(uuid.uuid4())
     job = BuildJob(
