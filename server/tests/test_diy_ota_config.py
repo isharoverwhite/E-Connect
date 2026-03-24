@@ -27,7 +27,8 @@ app = FastAPI()
 app.include_router(router, prefix="/api/v1")
 app.dependency_overrides[get_db] = override_get_db
 
-client = TestClient(app)
+LAN_BASE_URL = "http://192.168.1.25:3000"
+client = TestClient(app, base_url=LAN_BASE_URL)
 
 @pytest.fixture(autouse=True)
 def setup_db():
@@ -119,6 +120,61 @@ def test_put_device_config_success():
     job = db.query(BuildJob).filter(BuildJob.id == job_id).first()
     assert job is not None
     assert job.status == JobStatus.queued
+
+    db.refresh(project)
+    assert project.config["advertised_host"] == "192.168.1.25"
+    assert project.config["api_base_url"] == "http://192.168.1.25:3000/api/v1"
+    assert "mqtt_broker" not in project.config
+
+def test_put_device_config_prefers_forwarded_host_for_firmware_target():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    payload = {
+        "pins": [
+            {"gpio": 2, "mode": "OUTPUT", "label": "LED"}
+        ]
+    }
+
+    with patch("app.api.build_firmware_task", return_value=None):
+        res = client.put(
+            f"/api/v1/device/{device.device_id}/config",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Forwarded-Host": "smart-home.local:8443",
+                "X-Forwarded-Proto": "https",
+            },
+        )
+
+    assert res.status_code == 200, res.text
+    db.refresh(project)
+    assert project.config["advertised_host"] == "smart-home.local"
+    assert project.config["api_base_url"] == "https://smart-home.local:8443/api/v1"
+
+def test_put_device_config_rejects_docker_local_host():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    res = client.put(
+        f"/api/v1/device/{device.device_id}/config",
+        json={"pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}]},
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Host": "server:8000",
+        },
+    )
+
+    assert res.status_code == 400
+    payload = res.json()["detail"]
+    assert payload["error"] == "validation"
+    assert "reachable host" in payload["message"]
 
 def test_put_device_config_invalid_not_diy():
     db = TestingSessionLocal()

@@ -3,10 +3,10 @@
 ## Current Phase: Complete
 
 ## Active Task
-- Task ID: GIT-COMMIT-PUSH-001
-- Objective: Commit the full post-cleanup repository state on `main` and push it to `origin/main`
+- Task ID: FW-HOST-INFER-001
+- Objective: Make server-side firmware builds derive one reachable host from the incoming request and reuse it for firmware MQTT/API targets without changing Docker MQTT service topology
 - Owner: Codex
-- Started At: 2026-03-24 19:22:17
+- Started At: 2026-03-25 00:20:00
 
 ## Gate Status
 - [x] G0 Task intake
@@ -16,17 +16,17 @@
 - [x] G4 Test complete
 
 ## Deliverables
-- PRD: Active repo state remains aligned to the E-Connect local-first smart-home baseline in `PRD.md`; this task packages the current cleanup and active-stack changes rather than changing scope.
-- Design docs: Committed the current documentation baseline after cleanup, including the remaining design and workflow notes already in the working tree.
-- Code: One repository-wide commit will capture the current state, including cleanup deletions, active `server`/`webapp`/`firmware` changes, and newly added test/manual harness files.
-- Verification: Confirmed `webapp` production build passes, firmware manual scripts compile, and branch/remote state is ready for a standard push after commit.
+- PRD: No scope-baseline change; implementation stays inside the current DIY firmware build baseline (`FR-14` / `FR-30`).
+- Design docs: `design/screens.md` now records that the builder exposes Wi-Fi fields only and the server derives one advertised host for firmware MQTT/API targets.
+- Code: Backend build-trigger endpoints now stamp a validated advertised host from request headers into project config; firmware generation derives `MQTT_BROKER` and `API_BASE_URL` from that validated host instead of relying on `FIRMWARE_MQTT_BROKER`.
+- Verification: Python compile checks passed locally. Targeted backend tests passed in Docker for build host stamping, invalid-host rejection, and generated firmware header output.
 
 ## Risks / Blockers
-- `pytest` is unavailable in the current local Python environment, so the new/retained server test files were not executed here.
-- The repository still contains documented local/dev secrets and defaults (for example `SECRET_KEY` fallbacks) that remain a release risk even if they are accepted for local development.
+- Repo has unrelated uncommitted changes in firmware/server/webapp; this patch was kept scoped to backend build flow, tests, and docs.
+- MariaDB MCP is not configured in this environment, so DB verification used backend tests instead of live before/after SQL queries.
 
 ## Next Action
-- Monitor `origin/main` after push and run server-side Python tests again once a `pytest`-capable environment is restored.
+- If you deploy behind a reverse proxy, preserve `X-Forwarded-Host` and `X-Forwarded-Proto` so firmware builds keep receiving the externally reachable host.
 
 ## Last Updated
-2026-03-24 19:24:12
+2026-03-25 00:58:26
