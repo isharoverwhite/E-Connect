@@ -19,14 +19,14 @@ services:
       retries: 5
 
   mqtt:
-    image: eclipse-mosquitto:2
+    build:
+      context: ./mqtt
+      dockerfile: Dockerfile
+    image: econnect-mqtt
     container_name: e-connect-mqtt
     restart: always
     ports:
       - "1883:1883"
-    command: mosquitto -c /mosquitto-no-auth.conf
-    volumes:
-      - ./mosquitto.conf:/mosquitto-no-auth.conf
 
   server:
     build:

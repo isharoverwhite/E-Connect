@@ -95,10 +95,10 @@ pipeline {
 
         stage('Build Active Images') {
             steps {
-                echo 'Building active release services: server + webapp'
+                echo 'Building active release services: mqtt + server + webapp'
                 sh '''
                     set -eu
-                    docker compose build server webapp
+                    docker compose build mqtt server webapp
                 '''
             }
         }

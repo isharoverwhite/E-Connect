@@ -19,4 +19,5 @@ The Jenkins pipeline now requires a successful Docker-based build gate before CD
 - `server`: Docker `test` target runs `python -m pytest tests/`
 
 The gate uses Docker build targets instead of bind-mounting the Jenkins workspace into ad-hoc containers, so it works when Jenkins itself runs inside a container.
+The MQTT broker now follows the same rule: its Mosquitto config is baked into the `mqtt` image instead of bind-mounting a workspace file at deploy time.
 Only after that gate passes does Jenkins build the release Docker images, deploy with Docker Compose, and run the smoke checks.
