@@ -159,10 +159,6 @@ async def database_error_handler(request: Request, exc: OperationalError):
         },
     )
 
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to E-Connect Server"}
-
 @app.get("/health")
 def health_check(request: Request):
     firmware_network_state = _serialize_firmware_network_state(request.app)

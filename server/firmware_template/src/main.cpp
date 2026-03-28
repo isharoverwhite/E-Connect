@@ -8,7 +8,14 @@
 #if __has_include("generated_firmware_config.h")
 #include "generated_firmware_config.h"
 #endif
+#if __has_include("firmware_revision.h")
+#include "firmware_revision.h"
+#endif
 #include "secrets.h"
+
+#ifndef ECONNECT_FIRMWARE_REVISION
+#define ECONNECT_FIRMWARE_REVISION "1.0.0"
+#endif
 
 #ifndef ECONNECT_HAS_PIN_CONFIGS
 struct EConnectPinConfig {
@@ -360,6 +367,7 @@ bool performSecureHandshake() {
   doc["ip_address"] = WiFi.localIP().toString();
   doc["name"] = ECONNECT_DEVICE_NAME;
   doc["mode"] = "no-code";
+  doc["firmware_revision"] = ECONNECT_FIRMWARE_REVISION;
   doc["firmware_version"] = ECONNECT_FIRMWARE_VERSION;
   appendEmbeddedNetworkTargets(doc);
 
@@ -857,6 +865,7 @@ void publishState(bool applied) {
   doc["kind"] = "state";
   doc["device_id"] = deviceId;
   doc["applied"] = applied;
+  doc["firmware_revision"] = ECONNECT_FIRMWARE_REVISION;
   doc["firmware_version"] = ECONNECT_FIRMWARE_VERSION;
   doc["ip_address"] = WiFi.localIP().toString();
   appendEmbeddedNetworkTargets(doc);

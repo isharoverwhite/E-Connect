@@ -63,9 +63,15 @@
   - A successful confirmation must persist the updated pin mapping to the managed DIY project and the linked device record, then start a new firmware rebuild for that device.
   - The OTA dialog must stay blocked until the rebuild reaches `artifact_ready`, then allow the admin to send the OTA command for that exact build job.
   - The OTA dialog must show `building`, `artifact_ready`, `flashing`, `flashed`, and `flash_failed` states, plus a clear close path when the build itself fails.
-  - After the OTA job reaches `flashed`, the dialog must wait for the board to report `online` again before showing the final success state, then return the admin to the dashboard automatically.
+  - After the OTA job reaches `flashed`, the dialog must wait for the board to report `online` again on the expected firmware version for that exact build before showing the final success state, then return the admin to the dashboard automatically.
 
 ## Dashboard And Discovery
+- **Device Management screen**:
+  - The page header must keep the title block readable while preserving the admin action set `SVG Builder`, `Discover New`, and `Refresh`.
+  - Action labels must stay on a single line inside each button; when horizontal space becomes tight, the action group wraps beneath the title or onto a new row as whole buttons instead of compressing text inside the buttons.
+  - On narrow widths, button tap targets, icon alignment, and vertical rhythm must remain consistent even when the action group spans multiple rows.
+  - Each admin device card must show both the developer-managed `firmware revision` and the runtime `firmware version` built from the current user configuration.
+  - If a board has not reported either firmware field yet, the card must show a clear fallback such as `Unknown` instead of leaving the value blank.
 - **Dashboard notifications**:
   - The pairing notification card only appears when the server has at least one active board-initiated pairing request.
   - A device that was merely unpaired from the dashboard must not create a pairing notification by itself.

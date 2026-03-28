@@ -395,6 +395,45 @@ def test_unpair_stays_hidden_until_board_requests_pairing_again():
     assert pending_devices[0]["pairing_requested_at"] is not None
 
 
+def test_secure_handshake_persists_firmware_revision_for_device_directory():
+    household, admin, _member, _observer = _seed_household(prefix="firmwarerev")
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+
+    room = _create_room(admin_headers, name="Firmware Lab")
+    project = _insert_diy_project(user_id=admin["user_id"], room_id=room["room_id"])
+
+    handshake_payload = {
+        "device_id": project["device_id"],
+        "project_id": project["project_id"],
+        "secret_key": project["secret_key"],
+        "mac_address": "AA:BB:CC:77:88:99",
+        "name": "Revision Board",
+        "mode": "no-code",
+        "firmware_revision": "1.0.0",
+        "firmware_version": "build-a1b2c3d4",
+        "pins": [],
+    }
+
+    response = client.post("/api/v1/config", json=handshake_payload)
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["firmware_revision"] == "1.0.0"
+    assert payload["firmware_version"] == "build-a1b2c3d4"
+
+    devices_response = client.get("/api/v1/devices", headers=admin_headers)
+    assert devices_response.status_code == 200, devices_response.text
+    devices = devices_response.json()
+    assert len(devices) == 1
+    assert devices[0]["device_id"] == project["device_id"]
+    assert devices[0]["firmware_revision"] == "1.0.0"
+    assert devices[0]["firmware_version"] == "build-a1b2c3d4"
+
+
 def test_approve_device_broadcasts_pairing_queue_refresh(monkeypatch):
     household, admin, _member, _observer = _seed_household(prefix="approvews")
     admin_headers = _auth_headers(
@@ -604,6 +643,7 @@ def test_force_pairing_request_keeps_unknown_secure_device_pending():
     pending_devices = pending_after_recovery.json()
     assert len(pending_devices) == 1
     assert pending_devices[0]["device_id"] == project["device_id"]
+
 
 
 def test_same_household_admin_can_manage_project_and_build_job():

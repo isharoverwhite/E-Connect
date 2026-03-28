@@ -51,6 +51,7 @@ from .auth import (
     verify_password,
 )
 from .services.builder import (
+    build_job_firmware_version,
     build_firmware_task,
     describe_network_target_change,
     get_durable_artifact_path,
@@ -1944,6 +1945,7 @@ async def get_build_job(job_id: str, db: Session = Depends(get_db), current_user
 
     # Inject an ephemeral OTA token upon successful access by owner
     job.ota_token = create_ota_token(job.id)
+    job.expected_firmware_version = build_job_firmware_version(job.id)
     return job
 
 @router.get("/diy/build/{job_id}/artifact")
