@@ -1,5 +1,9 @@
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { getToken } from "@/lib/auth";
+import {
+  resolvePublicWebSocketBaseUrl,
+  resolveSameOriginWebSocketBaseUrl,
+} from "@/lib/secure-origin";
 
 type WebSocketPayload = Record<string, unknown> | null;
 
@@ -57,16 +61,15 @@ export function useWebSocket(onEvent: (event: WebSocketEvent) => void) {
         return;
       }
 
-      let wsUrl = "";
-      if (process.env.NEXT_PUBLIC_WS_URL) {
-        // Remove trailing slash if accidentally added
-        const baseUrl = process.env.NEXT_PUBLIC_WS_URL.replace(/\/$/, "");
-        wsUrl = `${baseUrl}?token=${encodeURIComponent(token)}`;
-      } else {
-        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const host = window.location.host;
-        wsUrl = `${protocol}//${host}/api/v1/ws?token=${encodeURIComponent(token)}`;
+      const baseUrl =
+        resolvePublicWebSocketBaseUrl(process.env.NEXT_PUBLIC_WS_URL) ??
+        resolveSameOriginWebSocketBaseUrl();
+
+      if (!baseUrl) {
+        return;
       }
+
+      const wsUrl = `${baseUrl}?token=${encodeURIComponent(token)}`;
 
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;

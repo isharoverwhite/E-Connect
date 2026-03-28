@@ -539,7 +539,11 @@ export function Step2Pins({
                                             <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-800 dark:bg-slate-900/60">
                                                 <div className="flex flex-col gap-3">
                                                     <p className="text-xs font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-                                                        PWM Range (0-255)
+                                                        PWM Range / Output Map (0-255)
+                                                    </p>
+                                                    <p className="text-[11px] leading-5 text-slate-500 dark:text-slate-400">
+                                                        Use ascending values for normal dimming, or descending values such as <span className="font-mono">255 -&gt; 0</span> to invert
+                                                        the on/off duty output for active-low hardware.
                                                     </p>
                                                     <div className="grid grid-cols-2 gap-4">
                                                         <div className="flex flex-col gap-1">

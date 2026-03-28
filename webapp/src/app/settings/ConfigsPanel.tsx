@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
+import { useAuth } from "@/components/AuthProvider";
 import { getToken } from "@/lib/auth";
 import { API_URL } from "@/lib/api";
 import { resolveBoardProfileId } from "@/features/diy/board-profiles";
@@ -33,12 +34,16 @@ export interface DiyProjectUsageResponse {
 }
 
 export function ConfigsPanel() {
+    const { user } = useAuth();
     const [configs, setConfigs] = useState<DiyProjectUsageResponse[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
     const [selectedConfig, setSelectedConfig] = useState<DiyProjectUsageResponse | null>(null);
     const [deletingId, setDeletingId] = useState<string | null>(null);
+    const [deleteTarget, setDeleteTarget] = useState<DiyProjectUsageResponse | null>(null);
+    const [deletePassword, setDeletePassword] = useState("");
+    const [deleteModalError, setDeleteModalError] = useState("");
 
     const [searchQuery, setSearchQuery] = useState("");
     const [filterType, setFilterType] = useState<"all" | "in_use" | "unused">("all");
@@ -74,23 +79,54 @@ export function ConfigsPanel() {
         loadConfigs();
     }, []);
 
-    async function handleDelete(config: DiyProjectUsageResponse) {
+    function openDeleteModal(config: DiyProjectUsageResponse) {
         if (config.usage_state === "in_use") {
             setError(`Cannot delete ${config.name} because it is in use.`);
             return;
         }
-        
+
+        setDeleteTarget(config);
+        setDeletePassword("");
+        setDeleteModalError("");
+        setError("");
+        setNotice("");
+    }
+
+    function closeDeleteModal(force = false) {
+        if (deletingId && !force) {
+            return;
+        }
+
+        setDeleteTarget(null);
+        setDeletePassword("");
+        setDeleteModalError("");
+    }
+
+    async function handleDelete() {
+        const config = deleteTarget;
+        if (!config) {
+            return;
+        }
+
+        if (!deletePassword.trim()) {
+            setDeleteModalError("Enter your account password before deleting this board config.");
+            return;
+        }
+
         const token = getToken();
         if (!token) return;
 
         setDeletingId(config.id);
-        setError("");
-        setNotice("");
+        setDeleteModalError("");
 
         try {
             const response = await fetch(`${API_URL}/diy/projects/${config.id}`, {
                 method: "DELETE",
-                headers: { Authorization: `Bearer ${token}` },
+                headers: {
+                    Authorization: `Bearer ${token}`,
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ password: deletePassword }),
             });
             if (!response.ok) {
                 const errData = await response.json().catch(() => null);
@@ -102,8 +138,9 @@ export function ConfigsPanel() {
             if (selectedConfig?.id === config.id) {
                 setSelectedConfig(null);
             }
+            closeDeleteModal(true);
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Delete failed");
+            setDeleteModalError(err instanceof Error ? err.message : "Delete failed");
         } finally {
             setDeletingId(null);
         }
@@ -150,7 +187,10 @@ export function ConfigsPanel() {
                 <div className="w-full md:max-w-md relative">
                     <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-[20px]">search</span>
                     <input 
+                        autoComplete="off"
                         className="w-full pl-10 pr-4 py-2 bg-slate-100 dark:bg-slate-800 border-none rounded-lg focus:ring-2 focus:ring-primary text-sm dark:text-slate-100" 
+                        id="config-search"
+                        name="config-search"
                         placeholder="Search configurations..." 
                         type="text"
                         value={searchQuery}
@@ -202,7 +242,7 @@ export function ConfigsPanel() {
                                     </p>
                                 </div>
                                 <button 
-                                    onClick={(e) => { e.stopPropagation(); handleDelete(config); }}
+                                    onClick={(e) => { e.stopPropagation(); openDeleteModal(config); }}
                                     disabled={config.usage_state === "in_use" || deletingId === config.id}
                                     className={config.usage_state === "in_use" ? "text-slate-300 dark:text-slate-700 cursor-not-allowed group/info relative shrink-0 p-1" : "text-slate-400 hover:text-rose-500 transition-colors shrink-0 p-1 bg-transparent border-0 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-full"} 
                                     title={config.usage_state === "in_use" ? "Active configurations cannot be deleted" : "Delete unused config"}>
@@ -295,6 +335,89 @@ export function ConfigsPanel() {
                         </div>
                     </div>
                 </section>
+            )}
+
+            {deleteTarget && (
+                <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4">
+                    <div
+                        className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm"
+                        onClick={() => closeDeleteModal()}
+                    />
+
+                    <form
+                        className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+                        onSubmit={(event) => {
+                            event.preventDefault();
+                            void handleDelete();
+                        }}
+                    >
+                        <input
+                            autoComplete="username"
+                            className="sr-only"
+                            name="delete-config-username"
+                            readOnly
+                            tabIndex={-1}
+                            type="text"
+                            value={user?.username ?? ""}
+                        />
+
+                        <div className="flex items-start gap-4">
+                            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-rose-50 text-rose-500 dark:bg-rose-500/10">
+                                <span className="material-symbols-outlined text-[24px]">shield_lock</span>
+                            </div>
+                            <div className="space-y-2">
+                                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Confirm board deletion</h3>
+                                <p className="text-sm leading-relaxed text-slate-500 dark:text-slate-400">
+                                    Enter the password for <span className="font-semibold text-slate-700 dark:text-slate-200">{user?.username ?? "the signed-in account"}</span> to delete <span className="font-semibold text-slate-700 dark:text-slate-200">{deleteTarget.name}</span>.
+                                </p>
+                            </div>
+                        </div>
+
+                        {deleteModalError && (
+                            <div className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+                                {deleteModalError}
+                            </div>
+                        )}
+
+                        <label className="mt-6 block text-sm font-medium text-slate-700 dark:text-slate-200">
+                            Account password
+                            <input
+                                autoFocus
+                                autoComplete="current-password"
+                                className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                                id="delete-config-password"
+                                name="delete-config-password"
+                                onChange={(event) => {
+                                    setDeletePassword(event.target.value);
+                                    if (deleteModalError) {
+                                        setDeleteModalError("");
+                                    }
+                                }}
+                                placeholder="Enter your password"
+                                type="password"
+                                value={deletePassword}
+                            />
+                        </label>
+
+                        <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+                            <button
+                                className="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                                disabled={deletingId === deleteTarget.id}
+                                onClick={() => closeDeleteModal()}
+                                type="button"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                className="rounded-xl bg-rose-500 px-5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-rose-500/20 transition hover:bg-rose-600 disabled:opacity-50"
+                                disabled={deletingId === deleteTarget.id}
+                                type="submit"
+                            >
+                                {deletingId === deleteTarget.id ? "Deleting..." : "Delete config"}
+                            </button>
+                        </div>
+                    </form>
+                </div>
             )}
         </div>
     );

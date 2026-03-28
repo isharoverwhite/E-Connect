@@ -1,7 +1,8 @@
 import pytest
+from datetime import datetime
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import close_all_sessions, sessionmaker
 import json
 import uuid
 
@@ -32,9 +33,11 @@ client = TestClient(app, base_url=LAN_BASE_URL)
 
 @pytest.fixture(autouse=True)
 def setup_db():
+    close_all_sessions()
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     yield
+    close_all_sessions()
 
 def create_test_data(db):
     user = User(
@@ -124,7 +127,9 @@ def test_put_device_config_success():
     db.refresh(project)
     assert project.config["advertised_host"] == "192.168.1.25"
     assert project.config["api_base_url"] == "http://192.168.1.25:3000/api/v1"
-    assert "mqtt_broker" not in project.config
+    assert project.config["mqtt_broker"] == "192.168.1.25"
+    assert project.config["mqtt_port"] == 1883
+    assert project.config["target_key"] == "192.168.1.25|http://192.168.1.25:3000/api/v1|192.168.1.25|1883"
 
 def test_put_device_config_prefers_forwarded_host_for_firmware_target():
     db = TestingSessionLocal()
@@ -154,6 +159,39 @@ def test_put_device_config_prefers_forwarded_host_for_firmware_target():
     db.refresh(project)
     assert project.config["advertised_host"] == "smart-home.local"
     assert project.config["api_base_url"] == "https://smart-home.local:8443/api/v1"
+    assert project.config["mqtt_broker"] == "smart-home.local"
+    assert project.config["mqtt_port"] == 1883
+
+def test_put_device_config_prefers_browser_origin_header_over_internal_proxy_host():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    payload = {
+        "pins": [
+            {"gpio": 2, "mode": "OUTPUT", "label": "LED"}
+        ]
+    }
+
+    with patch("app.api.build_firmware_task", return_value=None):
+        res = client.put(
+            f"/api/v1/device/{device.device_id}/config",
+            json=payload,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Host": "server:8000",
+                "X-EConnect-Origin": "https://192.168.8.4:3000",
+            },
+        )
+
+    assert res.status_code == 200, res.text
+    db.refresh(project)
+    assert project.config["advertised_host"] == "192.168.8.4"
+    assert project.config["api_base_url"] == "https://192.168.8.4:3000/api/v1"
+    assert project.config["mqtt_broker"] == "192.168.8.4"
+    assert project.config["mqtt_port"] == 1883
 
 def test_put_device_config_rejects_docker_local_host():
     db = TestingSessionLocal()
@@ -415,6 +453,55 @@ def test_mqtt_process_ota_status():
     assert job2.error_message == "HTTP error"
 
 
+def test_mqtt_state_multi_pin_payload_acknowledges_pending_command():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    mgr = MQTTClientManager()
+    mgr.pending_commands["cmd-1"] = {
+        "device_id": device.device_id,
+        "pin": 2,
+        "value": 1,
+        "brightness": None,
+        "timestamp": datetime.utcnow().timestamp(),
+        "command_id": "cmd-1",
+    }
+
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps(
+        {
+            "kind": "state",
+            "device_id": device.device_id,
+            "applied": True,
+            "pins": [
+                {"pin": 2, "mode": "OUTPUT", "label": "LED", "value": 1},
+                {"pin": 8, "mode": "PWM", "label": "Dimmer", "value": 0, "brightness": 0},
+            ],
+        }
+    )
+
+    with patch("app.mqtt.SessionLocal", return_value=db_mock), \
+         patch("app.mqtt.ws_manager.broadcast_device_event_sync") as broadcast_sync:
+        mgr.process_state_message(device.device_id, payload)
+
+    assert "cmd-1" not in mgr.pending_commands
+    broadcast_sync.assert_any_call(
+        "command_delivery",
+        device.device_id,
+        None,
+        {
+            "command_id": "cmd-1",
+            "status": "acknowledged",
+            "reason": "state_match",
+        },
+    )
+
+
 def test_mqtt_state_unknown_device_requests_repair():
     from app.mqtt import MQTTClientManager
     from unittest.mock import MagicMock
@@ -436,7 +523,7 @@ def test_mqtt_state_unknown_device_requests_repair():
     assert ack_payload["reason"] == "unknown_device"
 
 
-def test_mqtt_state_pending_device_requests_repair():
+def test_mqtt_state_hidden_pending_device_requests_repair():
     from app.mqtt import MQTTClientManager
     from unittest.mock import MagicMock
 
@@ -461,6 +548,84 @@ def test_mqtt_state_pending_device_requests_repair():
     assert ack_payload["status"] == "re_pair_required"
     assert ack_payload["reason"] == "not_approved"
     assert ack_payload["auth_status"] == "pending"
+
+
+def test_mqtt_state_active_pending_device_stays_waiting_for_approval():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+    device.auth_status = AuthStatus.pending
+    device.pairing_requested_at = datetime.utcnow()
+    db.commit()
+
+    mgr = MQTTClientManager()
+    mgr.publish_json = MagicMock(return_value=True)
+
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps({"kind": "state", "device_id": device.device_id})
+    with patch('app.mqtt.SessionLocal', return_value=db_mock):
+        mgr.process_state_message(device.device_id, payload)
+
+    mgr.publish_json.assert_called_once()
+    topic, ack_payload = mgr.publish_json.call_args.args[:2]
+    assert topic == mgr.state_ack_topic(device.device_id)
+    assert ack_payload["status"] == "awaiting_approval"
+    assert ack_payload["reason"] == "active_pairing_request"
+    assert ack_payload["auth_status"] == "pending"
+    assert ack_payload["pairing_requested_at"] is not None
+
+
+def test_mqtt_state_firmware_network_mismatch_requires_manual_reflash():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    _user, _room, _project, device = create_test_data(db)
+
+    mgr = MQTTClientManager()
+    mgr.publish_json = MagicMock(return_value=True)
+    mgr.set_runtime_network_state(
+        {
+            "source": "startup_auto",
+            "targets": {
+                "advertised_host": "192.168.8.4",
+                "api_base_url": "https://192.168.8.4:3000/api/v1",
+                "mqtt_broker": "mqtt-lan.local",
+                "mqtt_port": 2883,
+            },
+            "error": None,
+        }
+    )
+
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps(
+        {
+            "kind": "state",
+            "device_id": device.device_id,
+            "firmware_network": {
+                "api_base_url": "https://192.168.2.16:3000/api/v1",
+                "mqtt_broker": "192.168.2.16",
+                "mqtt_port": 1883,
+            },
+        }
+    )
+    with patch("app.mqtt.SessionLocal", return_value=db_mock):
+        mgr.process_state_message(device.device_id, payload)
+
+    mgr.publish_json.assert_called_once()
+    topic, ack_payload = mgr.publish_json.call_args.args[:2]
+    assert topic == mgr.state_ack_topic(device.device_id)
+    assert ack_payload["status"] == "manual_reflash_required"
+    assert ack_payload["reason"] == "firmware_network_mismatch"
+    assert ack_payload["runtime_network"]["mqtt_broker"] == "mqtt-lan.local"
+    assert ack_payload["runtime_network"]["mqtt_port"] == 2883
+    assert "Manual reflash is required" in ack_payload["message"]
 
 
 def test_mqtt_state_rejected_device_reports_pairing_rejected():
@@ -488,6 +653,55 @@ def test_mqtt_state_rejected_device_reports_pairing_rejected():
     assert ack_payload["status"] == "pairing_rejected"
     assert ack_payload["reason"] == "admin_rejected"
     assert ack_payload["auth_status"] == "rejected"
+
+
+def test_mqtt_register_firmware_network_mismatch_requires_manual_reflash():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    _user, _room, _project, device = create_test_data(db)
+
+    mgr = MQTTClientManager()
+    mgr.publish_json = MagicMock(return_value=True)
+    mgr.set_runtime_network_state(
+        {
+            "source": "startup_auto",
+            "targets": {
+                "advertised_host": "192.168.8.4",
+                "api_base_url": "https://192.168.8.4:3000/api/v1",
+                "mqtt_broker": "mqtt-lan.local",
+                "mqtt_port": 2883,
+            },
+            "error": None,
+        }
+    )
+
+    payload = json.dumps(
+        {
+            "device_id": device.device_id,
+            "mac_address": device.mac_address,
+            "name": device.name,
+            "mode": "no-code",
+            "firmware_version": "build-old1234",
+            "firmware_network": {
+                "api_base_url": "https://192.168.2.16:3000/api/v1",
+                "mqtt_broker": "192.168.2.16",
+                "mqtt_port": 1883,
+            },
+        }
+    )
+
+    ack_payload = mgr.process_registration_message(device.device_id, payload)
+
+    mgr.publish_json.assert_called_once()
+    topic, published_payload = mgr.publish_json.call_args.args[:2]
+    assert topic == mgr.registration_ack_topic(device.device_id)
+    assert ack_payload == published_payload
+    assert ack_payload["status"] == "manual_reflash_required"
+    assert ack_payload["reason"] == "firmware_network_mismatch"
+    assert ack_payload["runtime_network"]["advertised_host"] == "192.168.8.4"
+    assert ack_payload["runtime_network"]["mqtt_broker"] == "mqtt-lan.local"
 
 
 def test_mqtt_reconcile_ota_success():

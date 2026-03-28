@@ -218,6 +218,8 @@
 [2026-03-24 18:37:50] Planner -> Main | Keep source/config/tests/postman baseline; drop cache, logs, DBs, manual server artifacts
 [2026-03-24 18:38:20] Planner -> Coder | Delete server clutter and ignore tracked manual artifacts not tied to operation
 [2026-03-24 18:39:10] Coder -> Tester | Server cleanup applied; verify inventory and deleted-artifact references
+[2026-03-28 10:00:00] Main -> Planner | Scope fake-board jitter verification with connect/disconnect and dimmer coverage
+[2026-03-28 10:01:00] Planner -> Main | In-scope test slice locked; design likely unchanged unless harness lacks repeatable controls
 [2026-03-24 18:39:51] Tester -> Main | PASS; server tree reduced to source/config/tests and ignore rules cover deleted artifacts
 [2026-03-24 18:41:45] Main -> Planner | Scope empty/unused directories from repo root downward
 [2026-03-24 18:42:15] Planner -> Main | Drop screens, server/server, empty webapp/public; keep empty design/flows as baseline path
@@ -276,3 +278,147 @@
 [2026-03-25 00:58:26] Planner -> Coder | Stamp validated advertised host during build and remove env dependency
 [2026-03-25 00:58:26] Coder -> Tester | Host inference patch ready; verify Docker-targeted backend tests
 [2026-03-25 00:58:26] Tester -> Main | PASS; 6 targeted Docker tests green, MariaDB MCP unconfigured
+[2026-03-25 01:29:07] Main -> Planner | Scope local DB reset to restore a fresh-start instance state
+[2026-03-25 01:38:48] Main -> Planner | Standardize Mac dev runtime around Docker MariaDB and local app processes
+[2026-03-25 01:38:48] Planner -> Coder | Align compose, backend defaults, and docs to one Docker DB contract
+[2026-03-25 01:38:48] Coder -> Tester | Dev DB runtime patch ready; verify tests and local uvicorn against Docker DB
+[2026-03-25 01:38:48] Tester -> Main | PASS; 15 pytest green, local uvicorn healthy on Docker DB, 3306 collision noted
+[2026-03-25 02:29:56] Main -> Planner | Scope pending/re-pair regression and Web Serial secure-context messaging
+[2026-03-25 02:29:56] Planner -> Coder | Keep pending requests out of re-pair loop; fix Web Serial lock reason
+[2026-03-25 02:36:46] Debug -> Coder | Keep active pending requests awaiting approval; separate insecure-context warning
+[2026-03-25 02:36:46] Coder -> Tester | Pairing/Web Serial patch ready; verify MQTT tests and DIY flasher warning
+[2026-03-25 02:36:46] Tester -> Main | PASS; MQTT tests green, lint clean, LAN HTTP shows secure-context warning
+[2026-03-25 02:46:00] Tester -> Main | PASS; localhost exposes Web Serial, simulated no-serial fallback works, MariaDB MCP connected
+[2026-03-25 02:50:01] Tester -> Debug | Fake-board on stale :8000 still returned re_pair_required for pending device
+[2026-03-25 02:51:05] Debug -> Tester | Re-run fake-board on fresh :18000 with isolated MQTT namespace verifyc9
+[2026-03-25 02:53:46] Tester -> Main | PASS; fake-board heartbeat kept pending row stable and acked awaiting_approval
+[2026-03-25 02:59:05] Main -> Planner | Scope real-board reject loop after pair causes dashboard flicker and re-pair
+[2026-03-25 02:59:05] Planner -> Debug | Reproduce reject flow on live :8000/:3000 with USB board and isolate backend/board cause
+[2026-03-25 03:13:54] Debug -> Coder | ESP32 reject lock is stateless; USB reset reboots clear rejection and re-pair
+[2026-03-25 03:13:54] Coder -> Tester | ESP32 RTC reject-lock patch flashed to real C3 board; verify reject no longer re-pairs
+[2026-03-25 03:15:13] Tester -> Main | PASS; real C3 board keeps reject lock across USB reset and stays out of discovery
+[2026-03-25 03:28:44] Main -> Planner | Prepare WebUI E2E task packet and verification plan
+[2026-03-25 03:28:44] Planner -> Tester | WebUI E2E: build, flash, pair, reject, verify no re-pair
+[2026-03-25 03:36:55] Tester -> Main | PASS WebUI E2E build+browser flash+reject+USB reset verified
+[2026-03-25 03:44:39] Main -> Planner | Scope auth refresh, 4h idle session, and keep-login flow
+[2026-03-25 03:44:39] Planner -> Coder | Approved in-scope auth/session slice for backend and webapp
+[2026-03-25 03:47:09] Main -> Planner | Scope dashboard switch loading until confirmed device state
+[2026-03-25 03:47:09] Planner -> Coder | Keep switch pending animation until real state matches requested toggle
+[2026-03-25 03:53:55] Coder -> Tester | Switch loading patch ready; verify lint, build, and browser pending state
+[2026-03-25 03:53:55] Tester -> Main | PASS; build+lint green, browser shows inline spinner, ack clear unverified
+[2026-03-25 11:38:21] Coder -> Tester | Make switch loading unmistakable with CSS spinner and Syncing label
+[2026-03-25 11:38:21] Tester -> Main | PASS; browser now shows visible SYNCING label and busy switch on click
+[2026-03-25 03:56:14] Coder -> Tester | Auth refresh, 4h idle session, and keep-login implementation ready
+[2026-03-25 03:56:14] Tester -> Main | PASS: pytest, lint/build, and browser login/session checks completed
+[2026-03-25 11:38:40] Main -> Planner | Scope live board control mismatch across dashboard, MQTT state, and command ack
+[2026-03-25 11:39:12] Planner -> Debug | Compare real firmware state payloads vs UI/backend control expectations
+[2026-03-25 11:47:05] Debug -> Coder | Real board publishes pins[] state; dashboard and ack path still expect flat pin/value
+[2026-03-25 11:52:31] Coder -> Tester | Multi-pin state parsing patch ready; verify pytest, lint/build, and browser control
+[2026-03-25 12:02:20] Tester -> Main | PASS; targeted pytest green, webapp lint/build green, dashboard reload shows checked live state
+[2026-03-25 12:06:35] Main -> Coder | Restart local uvicorn on :8000 to load MQTT ack patch
+[2026-03-25 12:06:35] Coder -> Tester | Backend restart requested; verify health and MQTT connectivity
+[2026-03-25 12:07:10] Debug -> Coder | Detached uvicorn restart exited unexpectedly; relaunch in persistent PTY
+[2026-03-25 12:12:24] Main -> Planner | Scope heartbeat every 5s and offline timeout after 15s
+[2026-03-25 12:12:24] Planner -> Coder | Approved FR-28 timing change; firmware 5s heartbeat and server 15s timeout
+[2026-03-25 12:14:12] Coder -> Tester | Heartbeat timing patch ready; verify constants, syntax, and timeout behavior
+[2026-03-25 12:14:12] Tester -> Main | PASS; syntax and constant checks green, runtime import blocked by missing dotenv
+[2026-03-25 12:23:54] Main -> Planner | Scope live rollout for 5s heartbeat and 15s offline timeout
+[2026-03-25 12:23:54] Planner -> Coder | Restart backend and rebuild/reflash active ESP32-C3 USB board
+[2026-03-25 12:29:43] Coder -> Tester | Backend restarted; build 42d7e491 flashed to active ESP32-C3 USB board
+[2026-03-25 12:29:43] Tester -> Main | PASS with risk; health OK, board publishes build-42d7e491 at ~5s, DB row stale
+[2026-03-25 13:16:29] Main -> Planner | Scope reversed PWM ranges for active-low output mapping
+[2026-03-25 13:16:29] Planner -> Coder | Allow descending PWM min/max and fix value-to-duty runtime mapping
+[2026-03-25 13:21:30] Coder -> Tester | Reversed PWM patch ready; verify pytest, lint/build, and browser path
+[2026-03-25 13:21:30] Tester -> Main | PASS with risk; pytest/lint/build green, chrome-devtools unavailable
+[2026-03-25 13:25:03] Debug -> Coder | Live uvicorn on :8000 predates PWM patch; restart stale backend for WebUI
+[2026-03-25 13:25:36] Coder -> Tester | Restarted uvicorn on :8000; verify health and stale PWM validation cleared
+[2026-03-25 13:25:36] Tester -> Main | PASS with risk; /health OK on new backend, browser MCP still unavailable
+[2026-03-25 13:37:05] Planner -> Coder | Implement local TLS bootstrap, HTTPS-only runtime, and HTTP shutdown for webapp
+[2026-03-25 13:37:05] Main -> Planner | Scope HTTPS-only frontend access and local TLS for WebFlasher
+[2026-03-25 13:47:58] Coder -> Tester | HTTPS-only webapp patch ready; verify lint/build, HTTPS smoke, and Docker build
+[2026-03-25 13:49:13] Tester -> Main | PASS with risk; lint/build and HTTPS smoke green, chrome-devtools unavailable, trust-store risk remains
+[2026-03-25 13:53:28] Main -> Planner | Extend HTTPS-only scope to Playwright E2E config and Jenkins smoke path
+[2026-03-25 13:53:28] Planner -> Coder | Replace E2E HTTP baseURL/hardcodes with HTTPS-safe config and self-signed tolerance
+[2026-03-25 13:55:16] Coder -> Tester | Playwright HTTPS config and E2E URL hardcodes updated; verify list/smoke
+[2026-03-25 13:55:17] Tester -> Main | PASS with risk; Playwright list green on HTTPS config, live E2E execution still depends on seeded creds/services
+[2026-03-25 13:57:59] Main -> Planner | Tighten runtime config so dev and production reject insecure frontend API/WS URLs
+[2026-03-25 13:57:59] Planner -> Coder | Enforce HTTPS-safe public env handling for API and WebSocket clients
+[2026-03-25 14:07:01] Coder -> Tester | Added allowedDevOrigins and generic HTTPS host/IP envs for remote dev access
+[2026-03-25 14:07:01] Tester -> Main | PASS with risk; build green, remote dev hosts now configurable via Next allowedDevOrigins
+[2026-03-25 14:09:25] Main -> Planner | Auto-allow detected LAN IPs like 192.168.x.x for HTTPS dev access
+[2026-03-25 14:09:25] Planner -> Coder | Add detected non-internal IPv4 addresses to Next allowedDevOrigins
+[2026-03-25 14:19:30] Coder -> Tester | Added FIRMWARE_PUBLIC_BASE_URL fallback for provisioning host inference
+[2026-03-25 14:19:30] Tester -> Main | PASS; targeted pytest green for localhost rejection and public-base fallback
+[2026-03-25 14:29:34] Main -> Planner | Scope DIY flash auto-release after server build to avoid busy SerialPort
+[2026-03-25 14:29:34] Planner -> Coder | Close stale web flasher session and auto-unlock serial on artifact_ready
+[2026-03-25 15:21:21] Coder -> Tester | Flash auto-release patch ready; verify lint/build and serial release evidence
+[2026-03-25 15:21:21] Tester -> Main | FAIL G4; lint/build green, build log frees serial, browser flow blocked
+[2026-03-25 23:48:55] Main -> Planner | Scope Jenkins pipeline optimization for faster validation-only runs and earlier deploy gate
+[2026-03-25 23:48:55] Planner -> Coder | Gate release-image build on DEPLOY and fail blocked non-main deploys before CD build
+[2026-03-25 23:50:42] Coder -> Tester | Jenkinsfile optimization ready; verify compose config and available syntax checks
+[2026-03-25 23:50:42] Tester -> Main | PASS with risk; compose config OK, Docker daemon off, no Jenkins linter/run
+[2026-03-27 21:16:56] Main -> Planner | Scope shared server/MQTT host stamping and stale-build detection for IP moves
+[2026-03-27 21:16:56] Planner -> Coder | Use one advertised host for firmware MQTT/API and block stale artifacts after IP change
+[2026-03-27 21:31:32] Coder -> Tester | Shared host stamping + stale-build guard ready; verify backend tests and webapp lint
+[2026-03-27 21:31:32] Tester -> Main | PASS with risk; targeted pytest + eslint green, full pytest selection hung beyond initial cases
+[2026-03-27 21:35:00] Main -> Planner | Scope startup IP detection for firmware targets and Docker host-network guidance
+[2026-03-27 21:35:00] Planner -> Coder | Add startup firmware host cache and warn when Docker auto-detect sees bridge IP
+[2026-03-27 21:49:00] Coder -> Tester | Startup IP runtime patch ready; verify DIY network-target and OTA host tests
+[2026-03-27 21:51:49] Tester -> Main | PASS with risk; targeted pytest green, no live Docker host-network/browser verification
+[2026-03-28 10:00:00] Main -> Planner | Scope fake-board jitter verification with connect/disconnect and dimmer coverage
+[2026-03-28 10:01:00] Planner -> Main | In-scope test slice locked; design unchanged, temp local runtime acceptable
+[2026-03-28 10:05:00] Main -> Tester | Run fake-board MQTT and dashboard verification for jitter, on/off, and dimmer
+[2026-03-28 10:32:00] Tester -> Main | Transport PASS, UI defects found: offline requires reload and dimmer OFF stays stale
+[2026-03-28 13:25:30] Main -> Planner | Scope dashboard fix for live offline expiry and stale PWM OFF state
+[2026-03-28 13:25:30] Planner -> Coder | Add stale-device watchdog and clear dimmer optimistic state on OFF
+[2026-03-28 13:29:21] Coder -> Tester | Heartbeat watchdog and dimmer OFF reconciliation ready; verify fake-board flow
+[2026-03-28 13:37:35] Tester -> Main | PASS with temp-env risk; offline flips live and OFF now clears brightness
+[2026-03-28 14:22:54] Main -> Planner | Scope live ESP32-C3 Mini flash, Wi-Fi join, and pairing validation on real hardware
+[2026-03-28 14:22:54] Planner -> Main | In-scope hardware validation locked; design unchanged, use temp runtime only if Docker/MariaDB unavailable
+[2026-03-28 14:27:59] Main -> Tester | Build ready; flash real ESP32-C3 Mini and verify boot, MQTT pair, dashboard state
+[2026-03-28 14:33:17] Tester -> Main | PASS with temp-runtime risk; board flashed, joined Wi-Fi, paired, and control path echoed
+[2026-03-28 14:34:47] Main -> Tester | Re-run live control from WebUI and capture ESP32-C3 serial debug response in parallel
+[2026-03-28 14:38:10] Main -> Planner | Scope Settings panel visibility for runtime server and MQTT broker host/IP
+[2026-03-28 14:38:10] Planner -> Coder | Add runtime-network card in Settings and expose current network target to signed-in users
+[2026-03-28 14:45:00] Coder -> Tester | Restrict runtime-network card/API to admin-only and verify role-based visibility
+[2026-03-28 14:48:58] Tester -> Main | PASS with temp-env risk; admin sees targets, non-admin UI/API blocked as required
+[2026-03-28 14:49:30] Main -> Planner | Scope live WebUI server-build and browser-flash verification on ESP32-C3 Mini
+[2026-03-28 14:49:30] Planner -> Tester | Verify DIY config load, WebUI build, flasher handoff, and artifact boot on real board
+[2026-03-28 14:56:09] Tester -> Main | PASS with chooser risk; WebUI build OK, flasher reached chooser, UI artifact flashed and booted
+[2026-03-28 15:00:34] Main -> Planner | Scope DIY flash step to website-only sources and remove custom upload
+[2026-03-28 15:00:34] Planner -> Main | In-scope UI delta locked; legacy upload configs should fall back to server
+[2026-03-28 15:03:03] Main -> Planner | Scope Devices-tab WS delay for pair, approve, and offline transitions on real ESP32-C3
+[2026-03-28 15:03:04] Planner -> Tester | Measure WS-to-DOM delay on Devices page using live pair, approve, and offline events
+[2026-03-28 15:03:05] Tester -> Main | PASS with temp-env risk; Devices WS delays captured, mariadb_nas unavailable so SQLite used
+[2026-03-28 15:07:46] Main -> Planner | Scope Settings entry tab so admin lands on General first
+[2026-03-28 15:07:47] Planner -> Coder | Keep Settings tabs unchanged except default entry/reset panel becomes general
+[2026-03-28 15:07:48] Coder -> Tester | Settings default-tab patch ready; verify admin browser entry and targeted lint
+[2026-03-28 15:07:49] Tester -> Main | PASS with temp-env risk; admin lands on General and network card still loads
+[2026-03-28 15:08:12] Planner -> Coder | Remove DIY upload source; keep website-managed server/demo flash paths
+[2026-03-28 15:08:12] Coder -> Tester | DIY flash source patch ready; verify browser flow and frontend compile
+[2026-03-28 15:08:12] Tester -> Main | PASS with temp-env risk; upload source gone and web flash path still ready
+[2026-03-28 15:08:12] Main -> Main | PROJECT_STATUS switched to another task concurrently; skipped overwrite
+[2026-03-28 15:11:49] User -> Main | Prior task finished; project tracker can be restored to DIY flash task
+[2026-03-28 15:11:49] Main -> Main | PROJECT_STATUS restored to UI-DIY-FLASH-WEBSITE-ONLY-001 after conflict cleared
+[2026-03-28 15:17:29] Main -> Planner | Scope live pair retest after full circuit removal on connected ESP32-C3 board
+[2026-03-28 15:17:29] Planner -> Main | In-scope retest locked; design unchanged, verify serial, UI discovery, and DB state
+[2026-03-28 15:17:29] Main -> Tester | Reboot detached board and verify pair flow with serial, browser, and DB evidence
+[2026-03-28 15:21:59] Tester -> Main | PASS; detached board re-paired via discovery, browser/API green, runtime DB confirmed
+[2026-03-28 15:23:36] Main -> Planner | Scope built-in LED hardware slice: unpair, new C3 config, rebuild, flash, pair, jitter
+[2026-03-28 15:23:36] Planner -> Main | In-scope hardware workflow locked; design unchanged, use esp32-c3-super-mini GPIO8
+[2026-03-28 15:23:36] Main -> Tester | Execute live rebuild/reflash and measure server-to-board command jitter on built-in LED
+[2026-03-28 15:28:34] Tester -> Debug | New secure project handshake loops with server error after reflash to same MAC
+[2026-03-28 15:29:54] Debug -> Main | Old runtime device row blocked reused MAC; SQLite cleanup allowed new secure pair
+[2026-03-28 15:31:20] Tester -> Main | PASS with defect; GPIO8 config flashed, control loop green, jitter captured
+[2026-03-28 17:53:51] Main -> Planner | Scope runtime server/MQTT IP audit, correct firmware targets, and stale-firmware guard
+[2026-03-28 17:53:51] Planner -> Main | In-scope network slice locked; update design doc if API or warning contract changes
+[2026-03-28 18:10:10] Main -> Planner | Scope board-config deletion re-auth in Settings
+[2026-03-28 18:10:10] Planner -> Coder | Require current-user password before deleting DIY project
+[2026-03-28 18:12:41] Coder -> Tester | Password-confirmed DIY config deletion ready for verification
+[2026-03-28 18:19:18] Coder -> Tester | Verify runtime server/MQTT target mismatch flow and legacy host-only audit
+[2026-03-28 18:20:45] Tester -> Main | PASS; delete re-auth verified by pytest, build/lint, and browser flow
+[2026-03-28 18:23:27] Tester -> Debug | Pytest hit SQLAlchemy pool timeout in test_diy_api session setup
+[2026-03-28 18:23:27] Debug -> Coder | Close leaked SQLAlchemy test sessions between API tests
+[2026-03-28 18:25:26] Debug -> Coder | Close leaked SQLAlchemy test sessions between OTA config tests
+[2026-03-28 18:30:27] Tester -> Main | PASS; runtime target audit/mismatch verified by pytest, lint, and settings browser check
+[2026-03-28 18:31:38] Tester -> Main | mariadb_nas unavailable; DB verify used pytest plus temporary SQLite runtime

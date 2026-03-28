@@ -15,6 +15,11 @@ This file documents the baseline schema for E-Connect.
 9. `rooms`: Physical or logical grouping within a household (`household_id`).
 10. `build_jobs`: Server-side firmware compilation tracking (`finished_at`, `error_message`).
 
+## Auth Session Note
+
+- The refresh-token session flow remains stateless in the current baseline: no new auth-session table is introduced for this slice.
+- User approval and revocation checks remain anchored to the existing `users.approval_status` contract during login, refresh, and authenticated access.
+
 **Persistence Rules (from PRD):**
 1. Do not assume enum/table/column without inspecting the real DB.
 2. Must verify before/after state for any persistence-affecting changes.

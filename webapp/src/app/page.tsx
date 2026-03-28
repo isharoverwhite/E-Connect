@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchDashboardDevices, fetchDevices, sendDeviceCommand, rejectDiscoveredDevice } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
-import { DeviceConfig } from "@/types/device";
+import { DeviceConfig, DeviceStatePin, DeviceStateSnapshot } from "@/types/device";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
 export default function Dashboard() {
@@ -433,6 +433,142 @@ export default function Dashboard() {
   );
 }
 
+function DeviceToggle({
+  id,
+  checked,
+  disabled,
+  loading,
+  onChange,
+}: {
+  id: string;
+  checked: boolean;
+  disabled: boolean;
+  loading: boolean;
+  onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
+}) {
+  const trackClass = loading
+    ? "bg-sky-100 border-sky-400 dark:bg-sky-900/40 dark:border-sky-600"
+    : checked
+      ? "bg-primary border-primary/70"
+      : "bg-slate-300 border-slate-300 dark:bg-slate-600 dark:border-slate-600";
+
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <label
+        className={`relative inline-flex h-6 w-11 items-center ${
+          disabled ? "cursor-not-allowed opacity-70" : "cursor-pointer"
+        }`}
+        htmlFor={id}
+      >
+        <input
+          checked={checked}
+          className="sr-only"
+          disabled={disabled}
+          id={id}
+          onChange={onChange}
+          type="checkbox"
+          aria-busy={loading}
+        />
+        <span
+          className={`absolute inset-0 rounded-full border transition-colors duration-300 ${
+            loading ? "animate-pulse" : ""
+          } ${trackClass}`}
+        />
+        <span
+          className={`absolute left-0.5 top-0.5 h-5 w-5 rounded-full border border-slate-200 bg-white shadow-sm transition-all duration-300 ${
+            checked ? "translate-x-5" : "translate-x-0"
+          } ${loading ? "opacity-0" : ""}`}
+        />
+        {loading ? (
+          <span className="absolute inset-0 flex items-center justify-center">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-sky-600 border-t-transparent dark:border-sky-300" />
+          </span>
+        ) : null}
+      </label>
+      {loading ? (
+        <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300">
+          Syncing...
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+function getStatePins(state: DeviceStateSnapshot | null | undefined): DeviceStatePin[] {
+  if (!Array.isArray(state?.pins)) {
+    return [];
+  }
+
+  return state.pins.filter((pin): pin is DeviceStatePin => typeof pin?.pin === "number");
+}
+
+function getStatePin(state: DeviceStateSnapshot | null | undefined, gpioPin?: number | null): DeviceStatePin | null {
+  if (!state) {
+    return null;
+  }
+
+  if (typeof gpioPin === "number") {
+    const matchedPin = getStatePins(state).find((pin) => pin.pin === gpioPin);
+    if (matchedPin) {
+      return matchedPin;
+    }
+  }
+
+  if (typeof state.pin === "number" && (gpioPin == null || state.pin === gpioPin)) {
+    return {
+      pin: state.pin,
+      value: state.value,
+      brightness: state.brightness,
+      trend: state.trend,
+      unit: state.unit,
+    };
+  }
+
+  if (gpioPin == null) {
+    return getStatePins(state)[0] ?? null;
+  }
+
+  return null;
+}
+
+function getNumericStateValue(value: number | boolean | undefined): number | null {
+  if (typeof value === "boolean") {
+    return value ? 1 : 0;
+  }
+  if (typeof value === "number") {
+    return value;
+  }
+  return null;
+}
+
+function getBinaryState(state: DeviceStateSnapshot | null | undefined, gpioPin?: number | null): boolean {
+  const pinState = getStatePin(state, gpioPin);
+  const numericValue = getNumericStateValue(pinState?.value);
+  if (numericValue !== null) {
+    return numericValue !== 0;
+  }
+  if (typeof pinState?.brightness === "number") {
+    return pinState.brightness > 0;
+  }
+  return false;
+}
+
+function getBrightnessState(
+  state: DeviceStateSnapshot | null | undefined,
+  gpioPin: number | null | undefined,
+  fallback: number,
+): number {
+  const pinState = getStatePin(state, gpioPin);
+  if (typeof pinState?.brightness === "number") {
+    return pinState.brightness;
+  }
+  const numericValue = getNumericStateValue(pinState?.value);
+  if (numericValue !== null) {
+    return numericValue;
+  }
+  return fallback;
+}
+
 function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
   const [requestPending, setRequestPending] = useState(false);
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
@@ -446,25 +582,34 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
 
   const pwmMin = pwmPin?.extra_params?.min_value ?? 0;
   const pwmMax = pwmPin?.extra_params?.max_value ?? 255;
-  const baselineToggleState = Boolean(config.last_state?.value);
-  const baselineSliderValue = Number(config.last_state?.brightness ?? pwmMin);
+  const pwmRangeMin = Math.min(pwmMin, pwmMax);
+  const pwmRangeMax = Math.max(pwmMin, pwmMax);
+  const pwmRangeLabel = pwmMin > pwmMax ? `${pwmMin} -> ${pwmMax}` : `${pwmMin}-${pwmMax}`;
+  const pwmSliderStyle = pwmMin > pwmMax ? { direction: "rtl" as const } : undefined;
+  const controlPin = outputPin ?? pwmPin;
+  const primaryState = getStatePin(config.last_state);
+  const analogState = getStatePin(config.last_state, analogPin?.gpio_pin);
+  const baselineToggleState = getBinaryState(config.last_state, controlPin?.gpio_pin);
+  const baselineSliderValue = getBrightnessState(config.last_state, pwmPin?.gpio_pin, pwmMin);
   const deliveryForPendingCommand = Boolean(
     config.last_delivery && pendingCmdId && config.last_delivery.command_id === pendingCmdId
   );
   const failedPendingCommand =
     deliveryForPendingCommand && config.last_delivery?.status === "failed";
-  const acknowledgedPendingCommand =
-    deliveryForPendingCommand && config.last_delivery?.status === "acknowledged";
+  const toggleTargetMatched =
+    optimisticToggleState !== null && baselineToggleState === optimisticToggleState;
+  const sliderTargetMatched =
+    optimisticSliderValue !== null && baselineSliderValue === optimisticSliderValue;
   const commandStateSynced =
-    acknowledgedPendingCommand &&
-    (optimisticToggleState === null || baselineToggleState === optimisticToggleState) &&
-    (optimisticSliderValue === null || baselineSliderValue === optimisticSliderValue);
+    (optimisticToggleState === null || toggleTargetMatched) &&
+    (optimisticSliderValue === null || sliderTargetMatched);
   const keepOptimisticState =
     pendingCmdId !== null && !failedPendingCommand && !commandStateSynced;
-  const pending = requestPending || (pendingCmdId !== null && !deliveryForPendingCommand);
-  const toggleState = keepOptimisticState
-    ? optimisticToggleState ?? baselineToggleState
-    : baselineToggleState;
+  const pending =
+    requestPending || (pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced);
+  const toggleLoading =
+    optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
+  const toggleState = baselineToggleState;
   const sliderValue = keepOptimisticState
     ? optimisticSliderValue ?? baselineSliderValue
     : baselineSliderValue;
@@ -477,18 +622,21 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
     setRequestPending(true);
     setPendingCmdId(null);
     setOptimisticToggleState(isChecked);
+    setOptimisticSliderValue(!isChecked && (pwmPin || config.provider) ? 0 : null);
     try {
       const payload = { kind: "action", pin: targetPin.gpio_pin, value: isChecked ? 1 : 0 };
       const response = await sendDeviceCommand(config.device_id, payload);
       setRequestPending(false);
       if (response && response.status === "failed") {
         setOptimisticToggleState(null);
+        setOptimisticSliderValue(null);
       } else {
         setPendingCmdId(response?.command_id || null);
       }
     } catch {
       setRequestPending(false);
       setOptimisticToggleState(null);
+      setOptimisticSliderValue(null);
     }
   };
 
@@ -498,6 +646,7 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
 
     setRequestPending(true);
     setPendingCmdId(null);
+    setOptimisticToggleState(null);
     setOptimisticSliderValue(rawValue);
     try {
       const payload = { kind: "action", pin: targetPin?.gpio_pin || 0, brightness: rawValue };
@@ -537,8 +686,10 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
 
         <div className="flex items-center gap-4">
           <div className="flex-1">
-             <span className="text-2xl font-bold text-slate-800 dark:text-white">{config.last_state?.value ?? '--'}</span>
-             <span className="text-sm text-slate-500 ml-1">{config.last_state?.unit || ''}</span>
+             <span className="text-2xl font-bold text-slate-800 dark:text-white">
+               {getNumericStateValue(primaryState?.value) ?? "--"}
+             </span>
+             <span className="text-sm text-slate-500 ml-1">{primaryState?.unit || ''}</span>
           </div>
           {isOnline && <span className="text-[10px] text-green-500 font-medium bg-green-500/10 px-2 py-0.5 rounded-full">Live</span>}
         </div>
@@ -566,10 +717,13 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
           <div className="h-10 w-10 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
             <span className="material-icons-round">wb_incandescent</span>
           </div>
-          <div className="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in mt-1">
-            <input checked={toggleState} onChange={handleToggle} disabled={pending || !isOnline} className="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer checked:right-0 checked:bg-primary right-5 border-slate-300 transition-all duration-300" id={`ext-${config.device_id}`} type="checkbox" />
-            <label className="toggle-label block overflow-hidden h-5 rounded-full bg-slate-300 cursor-pointer checked:bg-primary" htmlFor={`ext-${config.device_id}`}></label>
-          </div>
+          <DeviceToggle
+            checked={toggleState}
+            disabled={pending || !isOnline}
+            id={`ext-${config.device_id}`}
+            loading={toggleLoading}
+            onChange={handleToggle}
+          />
         </div>
         <div className="mb-5">
           <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
@@ -583,10 +737,11 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
           <input
             type="range"
             className="w-full accent-primary h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
-            min={pwmMin}
-            max={pwmMax}
+            min={pwmRangeMin}
+            max={pwmRangeMax}
             value={sliderValue}
             disabled={pending || !isOnline}
+            style={pwmSliderStyle}
             onChange={(e) => setOptimisticSliderValue(parseInt(e.target.value))}
             onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
             onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
@@ -613,12 +768,14 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
         <h3 className="text-base font-semibold text-slate-900 dark:text-white mt-2 truncate" title={config.name}>{config.name}</h3>
         <p className="text-xs text-slate-500 mb-3 truncate" title={config.board || 'Multi-sensor Node'}>{config.board || 'Multi-sensor Node'}</p>
         <div className="flex items-baseline space-x-1">
-          <span className="text-3xl font-bold text-slate-800 dark:text-white">{config.last_state?.value ?? '--'}</span>
+          <span className="text-3xl font-bold text-slate-800 dark:text-white">
+            {getNumericStateValue(analogState?.value) ?? getNumericStateValue(primaryState?.value) ?? '--'}
+          </span>
           <span className="text-lg font-medium text-slate-500">{isTemp ? '°C' : '%'}</span>
         </div>
         <div className={`mt-3 text-xs flex items-center ${isTemp ? 'text-green-600 dark:text-green-400' : 'text-slate-500 dark:text-slate-400'}`}>
           <span className="material-icons-round text-sm mr-1">{isTemp ? 'arrow_drop_up' : 'remove'}</span>
-          {config.last_state?.trend || 'Stable'}
+          {analogState?.trend || primaryState?.trend || 'Stable'}
         </div>
       </div>
     );
@@ -652,10 +809,13 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
           <div className="h-10 w-10 rounded-full bg-yellow-100 dark:bg-yellow-900/30 flex items-center justify-center text-yellow-600 dark:text-yellow-400">
             <span className="material-icons-round">lightbulb</span>
           </div>
-          <div className="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
-            <input checked={toggleState} onChange={handleToggle} disabled={pending || !isOnline} className="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer checked:right-0 checked:bg-primary right-5 border-slate-300 transition-all duration-300" id={`dim-${config.device_id}`} type="checkbox" />
-            <label className="toggle-label block overflow-hidden h-5 rounded-full bg-slate-300 cursor-pointer checked:bg-primary" htmlFor={`dim-${config.device_id}`}></label>
-          </div>
+          <DeviceToggle
+            checked={toggleState}
+            disabled={pending || !isOnline}
+            id={`dim-${config.device_id}`}
+            loading={toggleLoading}
+            onChange={handleToggle}
+          />
         </div>
         <div className="mb-5">
           <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
@@ -663,16 +823,17 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
         </div>
         <div className="mb-4">
           <div className="flex justify-between items-end mb-2">
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Brightness ({pwmMin}-{pwmMax})</label>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Brightness ({pwmRangeLabel})</label>
             <span className="text-xs font-bold text-primary">{sliderValue}</span>
           </div>
           <input
             type="range"
             className="w-full accent-primary h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
-            min={pwmMin}
-            max={pwmMax}
+            min={pwmRangeMin}
+            max={pwmRangeMax}
             value={sliderValue}
             disabled={pending || !isOnline}
+            style={pwmSliderStyle}
             onChange={(e) => setOptimisticSliderValue(parseInt(e.target.value))}
             onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
             onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
@@ -692,7 +853,11 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
   // SWITCH / DEFAULT
   const Icon = nameLower.includes('lock') ? 'lock' : 'wb_incandescent';
   const colorClass = nameLower.includes('lock') ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400';
-  const statusRight = nameLower.includes('lock') ? (toggleState ? 'Locked' : 'Unlocked') : (toggleState ? 'On' : 'Off');
+  const statusRight = toggleLoading
+    ? 'Updating...'
+    : nameLower.includes('lock')
+      ? (toggleState ? 'Locked' : 'Unlocked')
+      : (toggleState ? 'On' : 'Off');
 
   return (
     <div className={`bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow ${nameLower.includes('lock') ? '' : 'opacity-90'}`}>
@@ -700,10 +865,13 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
         <div className={`h-10 w-10 rounded-full flex items-center justify-center ${colorClass}`}>
           <span className="material-icons-round">{Icon}</span>
         </div>
-        <div className="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
-          <input checked={toggleState} onChange={handleToggle} disabled={pending || !isOnline} className="toggle-checkbox absolute block w-5 h-5 rounded-full bg-white border-4 appearance-none cursor-pointer checked:right-0 checked:bg-primary right-5 border-slate-300 transition-all duration-300" id={`sw-${config.device_id}`} type="checkbox" />
-          <label className="toggle-label block overflow-hidden h-5 rounded-full bg-slate-300 cursor-pointer checked:bg-primary" htmlFor={`sw-${config.device_id}`}></label>
-        </div>
+        <DeviceToggle
+          checked={toggleState}
+          disabled={pending || !isOnline}
+          id={`sw-${config.device_id}`}
+          loading={toggleLoading}
+          onChange={handleToggle}
+        />
       </div>
       <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
       <p className="text-xs text-slate-500 mb-4 truncate" title={config.board || 'Device'}>{config.board || 'Device'}</p>

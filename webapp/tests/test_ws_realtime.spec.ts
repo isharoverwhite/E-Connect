@@ -4,7 +4,7 @@ test.describe('WebSocket Realtime Dashboard', () => {
 
   test('Happy Path: State change via MQTT reflects on UI via WS', async ({ page }) => {
     // Navigate to dashboard and login if needed
-    await page.goto('http://localhost:3000/login');
+    await page.goto('/login');
     
     // Login as Admin
     await page.getByPlaceholder('Enter your username').fill(process.env.TEST_USERNAME || 'admin');
@@ -12,7 +12,7 @@ test.describe('WebSocket Realtime Dashboard', () => {
     await page.getByRole('button', { name: 'Sign In' }).click();
     
     // Wait for redirect to dashboard
-    await page.waitForURL('http://localhost:3000/');
+    await page.waitForURL(/\/$/);
     
     // Wait for WS connection
     const wsPromise = page.waitForEvent('websocket', ws => ws.url().includes('/api/v1/ws'));

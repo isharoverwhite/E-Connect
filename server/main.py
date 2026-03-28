@@ -3,27 +3,94 @@ from fastapi import Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
+import asyncio
+from contextlib import asynccontextmanager, suppress
 import logging
 from pathlib import Path
-from app.api import router as device_router
+from app.api import DEVICE_HEARTBEAT_TIMEOUT_SECONDS, expire_stale_online_devices_once, router as device_router
 from sqlalchemy.exc import OperationalError
 
 from app.database import SessionLocal, check_database_connection, get_db, initialize_database
 from app.mqtt import mqtt_manager
+from app.services.builder import (
+    audit_runtime_firmware_target_mismatches,
+    extract_runtime_firmware_network_targets,
+    resolve_runtime_firmware_network_state,
+)
 from app.services.user_management import ensure_temp_support_account
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+STALE_DEVICE_SWEEP_INTERVAL_SECONDS = max(1, min(DEVICE_HEARTBEAT_TIMEOUT_SECONDS, 2))
 
 def _using_overridden_database(app: FastAPI) -> bool:
     return get_db in app.dependency_overrides
 
+
+def _serialize_firmware_network_state(app: FastAPI) -> dict[str, str] | None:
+    runtime_state = getattr(app.state, "firmware_network_state", None)
+    if not isinstance(runtime_state, dict):
+        return None
+
+    payload: dict[str, str] = {}
+    source = runtime_state.get("source")
+    if isinstance(source, str) and source.strip():
+        payload["source"] = source
+
+    targets = extract_runtime_firmware_network_targets(runtime_state)
+    if isinstance(targets, dict):
+        for key in ("advertised_host", "api_base_url", "mqtt_broker", "target_key"):
+            value = targets.get(key)
+            if isinstance(value, str) and value.strip():
+                payload[key] = value
+        mqtt_port = targets.get("mqtt_port")
+        if mqtt_port is not None:
+            payload["mqtt_port"] = str(mqtt_port)
+
+    error = runtime_state.get("error")
+    if isinstance(error, str) and error.strip():
+        payload["error"] = error
+
+    audit = getattr(app.state, "firmware_network_audit", None)
+    if isinstance(audit, dict):
+        warning = audit.get("warning")
+        if isinstance(warning, str) and warning.strip():
+            payload["warning"] = warning
+        for key in ("stale_project_count", "stale_device_count"):
+            value = audit.get(key)
+            if value is not None:
+                payload[key] = str(value)
+
+    return payload or None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    stale_device_watchdog_task: asyncio.Task[None] | None = None
+
+    async def stale_device_watchdog() -> None:
+        while True:
+            await asyncio.sleep(STALE_DEVICE_SWEEP_INTERVAL_SECONDS)
+            try:
+                expire_stale_online_devices_once()
+            except Exception:
+                logger.exception("Stale-device watchdog sweep failed")
+
     app.state.database_ready = False
     app.state.database_error = None
     app.state.mqtt_started = False
+    app.state.firmware_network_state = resolve_runtime_firmware_network_state()
+    app.state.firmware_network_audit = None
+    mqtt_manager.set_runtime_network_state(app.state.firmware_network_state)
+    firmware_network_state = _serialize_firmware_network_state(app)
+    if firmware_network_state and "advertised_host" in firmware_network_state:
+        logger.info(
+            "Firmware provisioning host resolved at startup via %s: %s",
+            firmware_network_state.get("source", "unknown"),
+            firmware_network_state["advertised_host"],
+        )
+    elif firmware_network_state and "error" in firmware_network_state:
+        logger.warning("Firmware provisioning host auto-detect unavailable: %s", firmware_network_state["error"])
 
     if _using_overridden_database(app):
         logger.info("Skipping startup database initialization because get_db is overridden")
@@ -39,15 +106,28 @@ async def lifespan(app: FastAPI):
         db = SessionLocal()
         try:
             ensure_temp_support_account(db)
+            app.state.firmware_network_audit = audit_runtime_firmware_target_mismatches(
+                db,
+                app.state.firmware_network_state,
+            )
         finally:
             db.close()
+        audit_warning = getattr(app.state, "firmware_network_audit", {}).get("warning")
+        if isinstance(audit_warning, str) and audit_warning.strip():
+            logger.warning(audit_warning)
 
     mqtt_manager.start()
     app.state.mqtt_started = True
+    stale_device_watchdog_task = asyncio.create_task(stale_device_watchdog())
+    app.state.stale_device_watchdog_started = True
 
     try:
         yield
     finally:
+        if stale_device_watchdog_task is not None:
+            stale_device_watchdog_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await stale_device_watchdog_task
         if app.state.mqtt_started:
             mqtt_manager.stop()
 
@@ -85,26 +165,34 @@ def read_root():
 
 @app.get("/health")
 def health_check(request: Request):
+    firmware_network_state = _serialize_firmware_network_state(request.app)
     if _using_overridden_database(request.app):
-        return {"status": "ok", "database": "overridden", "mqtt": "skipped"}
+        payload = {"status": "ok", "database": "overridden", "mqtt": "skipped"}
+        if firmware_network_state is not None:
+            payload["firmware_network"] = firmware_network_state
+        return payload
 
     database_ready, database_error = check_database_connection()
     request.app.state.database_ready = database_ready
     request.app.state.database_error = database_error
 
     if database_ready:
-        return {
+        payload = {
             "status": "ok",
             "database": "ok",
             "mqtt": "connected" if mqtt_manager.connected else "disconnected",
         }
+        if firmware_network_state is not None:
+            payload["firmware_network"] = firmware_network_state
+        return payload
 
-    return JSONResponse(
-        status_code=503,
-        content={
-            "status": "degraded",
-            "database": "unavailable",
-            "mqtt": "connected" if mqtt_manager.connected else "disconnected",
-            "error": database_error,
-        },
-    )
+    payload = {
+        "status": "degraded",
+        "database": "unavailable",
+        "mqtt": "connected" if mqtt_manager.connected else "disconnected",
+        "error": database_error,
+    }
+    if firmware_network_state is not None:
+        payload["firmware_network"] = firmware_network_state
+
+    return JSONResponse(status_code=503, content=payload)
