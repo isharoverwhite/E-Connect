@@ -10,6 +10,7 @@ import type { BoardProfile } from "@/features/diy/board-profiles";
 import { getBoardProfile, resolveBoardProfileId } from "@/features/diy/board-profiles";
 import type { BuildJobStatus, PinMapping } from "@/features/diy/types";
 import { validatePinMappings } from "@/features/diy/validation";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import type { DeviceConfig, PinConfig } from "@/types/device";
 
 interface DiyProjectResponse {
@@ -35,6 +36,9 @@ const OTA_POLL_FINAL_STATUSES = new Set<BuildJobStatus>([
   "flash_failed",
   "cancelled",
 ]);
+const OTA_DEVICE_POLL_INTERVAL_MS = 2000;
+const OTA_REDIRECT_DELAY_MS = 1800;
+const OTA_ONLINE_FRESHNESS_GRACE_MS = 2000;
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -66,6 +70,28 @@ function normalizePins(pins: PinMapping[]): PinMapping[] {
 
 function serializePins(pins: PinMapping[]): string {
   return JSON.stringify(normalizePins(pins));
+}
+
+function parseTimestamp(value?: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function isDeviceBackOnlineAfterOta(device: DeviceConfig | null, flashedAt: number | null): boolean {
+  if (!device || device.conn_status !== "online" || flashedAt === null) {
+    return false;
+  }
+
+  const lastSeenAt = parseTimestamp(device.last_seen);
+  if (lastSeenAt === null) {
+    return false;
+  }
+
+  return lastSeenAt >= flashedAt - OTA_ONLINE_FRESHNESS_GRACE_MS;
 }
 
 async function fetchBuildJob(jobId: string): Promise<BuildJobSnapshot> {
@@ -109,6 +135,66 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   const [jobError, setJobError] = useState<string | null>(null);
   const [otaModalOpen, setOtaModalOpen] = useState(false);
   const [sendingOta, setSendingOta] = useState(false);
+  const [flashCompletedAt, setFlashCompletedAt] = useState<number | null>(null);
+  const [boardOnlineAfterOta, setBoardOnlineAfterOta] = useState(false);
+
+  useWebSocket((event) => {
+    if (event.device_id !== deviceId) {
+      return;
+    }
+
+    const reportedAt =
+      typeof event.payload?.reported_at === "string" ? event.payload.reported_at : null;
+
+    setDevice((current) => {
+      if (!current || current.device_id !== event.device_id) {
+        return current;
+      }
+
+      if (event.type === "device_online") {
+        return {
+          ...current,
+          conn_status: "online",
+          last_seen: reportedAt ?? new Date().toISOString(),
+        };
+      }
+
+      if (event.type === "device_offline") {
+        return {
+          ...current,
+          conn_status: "offline",
+        };
+      }
+
+      if (event.type === "device_state") {
+        return {
+          ...current,
+          conn_status: "online",
+          last_state: (event.payload ?? null) as DeviceConfig["last_state"],
+          last_seen: reportedAt ?? new Date().toISOString(),
+        };
+      }
+
+      if (event.type === "command_delivery") {
+        return {
+          ...current,
+          last_delivery: (event.payload ?? null) as DeviceConfig["last_delivery"],
+        };
+      }
+
+      return current;
+    });
+
+    if (
+      flashCompletedAt !== null &&
+      (event.type === "device_online" || event.type === "device_state")
+    ) {
+      const observedAt = reportedAt ? parseTimestamp(reportedAt) : Date.now();
+      if (observedAt !== null && observedAt >= flashCompletedAt - OTA_ONLINE_FRESHNESS_GRACE_MS) {
+        setBoardOnlineAfterOta(true);
+      }
+    }
+  });
 
   useEffect(() => {
     if (!isAdmin) {
@@ -223,6 +309,95 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
     };
   }, [jobId, otaModalOpen]);
 
+  useEffect(() => {
+    if (jobStatus !== "flashed") {
+      return;
+    }
+
+    setFlashCompletedAt((current) => current ?? Date.now());
+  }, [jobStatus]);
+
+  useEffect(() => {
+    if (jobStatus !== "flashed" || boardOnlineAfterOta) {
+      return;
+    }
+
+    if (isDeviceBackOnlineAfterOta(device, flashCompletedAt)) {
+      setBoardOnlineAfterOta(true);
+    }
+  }, [boardOnlineAfterOta, device, flashCompletedAt, jobStatus]);
+
+  useEffect(() => {
+    if (
+      !otaModalOpen ||
+      jobStatus !== "flashed" ||
+      flashCompletedAt === null ||
+      boardOnlineAfterOta
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    let interval: number | null = null;
+
+    const pollDeviceStatus = async () => {
+      const snapshot = await fetchDevice(deviceId);
+      if (cancelled || !snapshot) {
+        return;
+      }
+
+      setDevice(snapshot);
+      if (isDeviceBackOnlineAfterOta(snapshot, flashCompletedAt)) {
+        setBoardOnlineAfterOta(true);
+        if (interval !== null) {
+          window.clearInterval(interval);
+          interval = null;
+        }
+      }
+    };
+
+    void pollDeviceStatus();
+    interval = window.setInterval(() => {
+      void pollDeviceStatus();
+    }, OTA_DEVICE_POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      if (interval !== null) {
+        window.clearInterval(interval);
+      }
+    };
+  }, [boardOnlineAfterOta, deviceId, flashCompletedAt, jobStatus, otaModalOpen]);
+
+  useEffect(() => {
+    if (!otaModalOpen || jobStatus !== "flashed") {
+      return;
+    }
+
+    if (boardOnlineAfterOta) {
+      setStatusMessage("The board is back online. Returning to the dashboard...");
+      return;
+    }
+
+    setStatusMessage(
+      "OTA update completed. Waiting for the board to reconnect and report online before returning to the dashboard.",
+    );
+  }, [boardOnlineAfterOta, jobStatus, otaModalOpen]);
+
+  useEffect(() => {
+    if (!boardOnlineAfterOta) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      router.push("/");
+    }, OTA_REDIRECT_DELAY_MS);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [boardOnlineAfterOta, router]);
+
   if (!isAdmin) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6 dark:bg-slate-950">
@@ -309,6 +484,10 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
     : hasChanges
       ? "Unsaved GPIO edits require password confirmation before the server accepts them."
       : "Device and project pin mapping are in sync.";
+  const statusMessageClassName =
+    jobStatus === "flashed" && !boardOnlineAfterOta
+      ? "rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm text-blue-800 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200"
+      : "rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200";
 
   const openConfirmModal = () => {
     if (isSaving || !hasChanges || validation.errors.length > 0) {
@@ -383,6 +562,8 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       setJobStatus("queued");
       setJobError(null);
       setOtaModalOpen(true);
+      setFlashCompletedAt(null);
+      setBoardOnlineAfterOta(false);
       setStatusMessage(
         "Pin mapping saved. The server started a new firmware rebuild. You can trigger OTA after the artifact becomes ready.",
       );
@@ -401,6 +582,8 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
     setSendingOta(true);
     setJobError(null);
     setStatusMessage(null);
+    setFlashCompletedAt(null);
+    setBoardOnlineAfterOta(false);
 
     try {
       const snapshot = await fetchBuildJob(jobId);
@@ -503,7 +686,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
 
       <main className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-6">
         {statusMessage && (
-          <section className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-800 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200">
+          <section className={statusMessageClassName}>
             {statusMessage}
           </section>
         )}
@@ -704,9 +887,13 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
 
             <div className="mt-6 space-y-4">
               {jobStatus === "queued" && (
-                <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
-                  <span className="material-icons-round animate-spin text-blue-500">progress_activity</span>
-                  Build job queued. The server will start compiling shortly.
+                <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                  <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center text-blue-500">
+                    <span className="material-icons-round animate-spin text-[20px] leading-none">autorenew</span>
+                  </span>
+                  <p className="min-w-0 flex-1 leading-6 text-left">
+                    Build job queued. The server will start compiling shortly.
+                  </p>
                 </div>
               )}
 
@@ -732,10 +919,26 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
               )}
 
               {jobStatus === "flashed" && (
-                <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200">
-                  <span className="material-icons-round">task_alt</span>
-                  OTA update completed successfully. The board should reboot with the new pin map.
-                </div>
+                boardOnlineAfterOta ? (
+                  <div className="flex items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200">
+                    <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center">
+                      <span className="material-icons-round text-[20px] leading-none">task_alt</span>
+                    </span>
+                    <p className="min-w-0 flex-1 leading-6 text-left">
+                      The board is back online with the new pin map. Returning to the dashboard now.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex items-start gap-3 rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200">
+                    <span className="inline-flex h-6 w-6 shrink-0 items-center justify-center">
+                      <span className="material-icons-round animate-spin text-[20px] leading-none">autorenew</span>
+                    </span>
+                    <p className="min-w-0 flex-1 leading-6 text-left">
+                      OTA finished. Waiting for the board to reconnect and report online before leaving
+                      this page.
+                    </p>
+                  </div>
+                )
               )}
 
               {jobStatus === "build_failed" && (
@@ -763,10 +966,17 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
             <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button
                 className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
-                onClick={() => setOtaModalOpen(false)}
+                onClick={() => {
+                  if (boardOnlineAfterOta) {
+                    router.push("/");
+                    return;
+                  }
+
+                  setOtaModalOpen(false);
+                }}
                 type="button"
               >
-                Close
+                {boardOnlineAfterOta ? "Open dashboard now" : "Close"}
               </button>
               <button
                 className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
@@ -781,6 +991,12 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
             {jobStatus && !OTA_TERMINAL_STATUSES.has(jobStatus) && (
               <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
                 Keep this dialog open to monitor the current build and OTA handoff status.
+              </p>
+            )}
+
+            {jobStatus === "flashed" && !boardOnlineAfterOta && (
+              <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
+                The dashboard redirect starts automatically as soon as the board reports back online.
               </p>
             )}
           </div>
