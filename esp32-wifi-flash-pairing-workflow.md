@@ -102,8 +102,13 @@ Ngay sau khi reboot lần đầu sau flash:
 
 1. ESP32 đọc thông tin `SSID` và `Password` đã được nhúng trong config hoặc firmware.
 2. ESP32 kết nối vào mạng Wi-Fi tương ứng.
-3. Sau khi có mạng, ESP32 khởi tạo kết nối về server.
-4. ESP32 gửi yêu cầu handshake hoặc pair lên server qua API onboarding.
+3. Firmware station layer phải ưu tiên compatibility trước:
+   - thử `WiFi.begin(ssid, pass)` chuẩn trước để driver tự chọn BSSID phù hợp
+   - nếu scan thấy đúng SSID mà lần thử chuẩn fail, thử lại với `channel` gợi ý
+   - chỉ khi scan thấy đúng một BSSID ứng viên mới được lock thêm `BSSID`
+   - firmware không được hard reject AP chỉ vì security mode thấp hơn `WPA2_PSK`; tầng Wi-Fi phải để driver xét mọi auth mode 2.4 GHz mà SoC hỗ trợ
+4. Sau khi có mạng, ESP32 khởi tạo kết nối về server.
+5. ESP32 gửi yêu cầu handshake hoặc pair lên server qua API onboarding.
 
 Nếu máy chủ được chuyển từ IP cũ sang IP mới, ví dụ từ `192.168.2.16` sang `192.168.8.4`:
 

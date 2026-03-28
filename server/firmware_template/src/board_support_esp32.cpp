@@ -2,6 +2,7 @@
 
 #if !defined(ESP8266)
 #include <esp_attr.h>
+#include <WiFiClientSecure.h>
 
 namespace {
 constexpr uint32_t kRuntimeFlagsMagic = 0x45434E54;  // "ECNT"
@@ -122,7 +123,9 @@ void prepareBoardForWifiConnection() {
   WiFi.mode(WIFI_STA);
   WiFi.persistent(false);
   WiFi.setSleep(false);
-  WiFi.setMinSecurity(WIFI_AUTH_WPA_PSK);
+  // Allow the driver to consider any 2.4 GHz AP security mode it supports.
+  // The provisioning layer still controls what credentials the product accepts.
+  WiFi.setMinSecurity(WIFI_AUTH_OPEN);
   WiFi.disconnect(false, true);
 }
 
@@ -151,10 +154,26 @@ const char *boardAuthModeName(int32_t authMode) {
   }
 }
 
-OtaUpdateResult runBoardOtaUpdate(const String &url) {
-  WiFiClient client;
+OtaUpdateResult runBoardOtaUpdate(const String &url, const String &expectedMd5) {
+  const bool isHttps = url.startsWith("https://");
   httpUpdate.rebootOnUpdate(false);
-  const t_httpUpdate_return ret = httpUpdate.update(client, url);
+  if (expectedMd5.length() > 0 && !Update.setMD5(expectedMd5.c_str())) {
+    return {
+        "failed",
+        "INVALID_EXPECTED_MD5",
+        false,
+    };
+  }
+  t_httpUpdate_return ret;
+  if (isHttps) {
+    WiFiClientSecure client;
+    // Dev and LAN OTA currently use a self-signed certificate.
+    client.setInsecure();
+    ret = httpUpdate.update(client, url);
+  } else {
+    WiFiClient client;
+    ret = httpUpdate.update(client, url);
+  }
 
   switch (ret) {
     case HTTP_UPDATE_FAILED:

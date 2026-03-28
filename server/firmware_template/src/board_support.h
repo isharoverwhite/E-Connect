@@ -12,6 +12,7 @@
 
 struct WifiTarget {
   bool found;
+  int32_t candidateCount;
   int32_t channel;
   int32_t rssi;
   int32_t authMode;
@@ -28,7 +29,7 @@ void initializeBoardNetworking();
 void prepareBoardForWifiConnection();
 int32_t defaultBoardAuthMode();
 const char *boardAuthModeName(int32_t authMode);
-OtaUpdateResult runBoardOtaUpdate(const String &url);
+OtaUpdateResult runBoardOtaUpdate(const String &url, const String &expectedMd5);
 bool restoreRejectedPairingLock();
 void persistRejectedPairingLock(bool rejected);
 String boardResetReasonSummary();
