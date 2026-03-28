@@ -97,6 +97,12 @@ def _ensure_additive_columns():
         ),
         (
             "devices",
+            "firmware_revision",
+            "VARCHAR(50)",
+            "VARCHAR(50) NULL COMMENT 'Developer-managed firmware revision reported by the device'",
+        ),
+        (
+            "devices",
             "pairing_requested_at",
             "DATETIME",
             "DATETIME NULL COMMENT 'UTC timestamp of the latest board-initiated pairing request awaiting admin action'",

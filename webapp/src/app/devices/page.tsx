@@ -10,6 +10,15 @@ import { useToast } from "@/components/ToastContext";
 import ConfirmModal from "@/components/ConfirmModal";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
+function readTrimmedString(value: unknown): string | null {
+    if (typeof value !== "string") {
+        return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+}
+
 export default function DevicesPage() {
     const { user, logout } = useAuth();
     const { showToast } = useToast();
@@ -23,6 +32,11 @@ export default function DevicesPage() {
     }>({ isOpen: false, deviceId: "", deviceName: "" });
     
     const isAdmin = user?.account_type === "admin";
+    const primaryActionButtonClassName =
+        "inline-flex min-h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:bg-blue-600 hover:shadow-lg";
+    const secondaryActionButtonClassName =
+        "inline-flex min-h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700";
+
     async function loadDevices() {
         const data = await fetchDevices();
         setDevices(data);
@@ -66,7 +80,22 @@ export default function DevicesPage() {
                         return { ...device, conn_status: "offline" };
                     }
                     if (event.type === "device_state") {
-                        return { ...device, conn_status: "online", last_seen: event.payload?.reported_at || new Date().toISOString() };
+                        const reportedAt = readTrimmedString(event.payload?.["reported_at"]) || new Date().toISOString();
+                        const reportedIp = readTrimmedString(event.payload?.["ip_address"]);
+                        const reportedFirmwareRevision = readTrimmedString(event.payload?.["firmware_revision"]);
+                        const reportedFirmwareVersion = readTrimmedString(event.payload?.["firmware_version"]);
+                        const currentIpAddress = "ip_address" in device ? device.ip_address : undefined;
+                        const currentFirmwareRevision = "firmware_revision" in device ? device.firmware_revision : undefined;
+                        const currentFirmwareVersion = "firmware_version" in device ? device.firmware_version : undefined;
+
+                        return {
+                            ...device,
+                            conn_status: "online",
+                            last_seen: reportedAt,
+                            ip_address: reportedIp || currentIpAddress,
+                            firmware_revision: reportedFirmwareRevision || currentFirmwareRevision,
+                            firmware_version: reportedFirmwareVersion || currentFirmwareVersion,
+                        };
                     }
                 }
                 return device;
@@ -186,34 +215,34 @@ export default function DevicesPage() {
             </aside>
 
             <main className="relative flex min-w-0 flex-1 flex-col">
-                <header className="z-30 flex h-16 items-center justify-between border-b border-slate-200 bg-surface-light px-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
-                    <div>
+                <header className="z-30 flex min-h-16 flex-wrap items-start justify-between gap-x-4 gap-y-3 border-b border-slate-200 bg-surface-light px-6 py-4 shadow-sm dark:border-slate-700 dark:bg-surface-dark lg:items-center">
+                    <div className="min-w-0 flex-1">
                         <h1 className="text-lg font-semibold text-slate-800 dark:text-white">
                             {isAdmin ? "Device Management" : "Device Availability"}
                         </h1>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                        <p className="max-w-2xl text-xs text-slate-500 dark:text-slate-400">
                             {isAdmin
                                 ? "Pair, assign rooms, and manage the lifecycle of household devices."
                                 : "Your account can only monitor whether assigned-room devices are online."}
                         </p>
                     </div>
 
-                    <div className="flex gap-3">
+                    <div className="flex w-full flex-wrap items-center justify-start gap-3 sm:w-auto sm:justify-end">
                         {isAdmin ? (
                             <>
-                                <Link href="/devices/diy" className="flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:bg-blue-600 hover:shadow-lg">
-                                    <span className="material-icons-round mr-2 text-sm">hardware</span>
-                                    SVG Builder
+                                <Link href="/devices/diy" className={primaryActionButtonClassName}>
+                                    <span className="material-icons-round text-sm">hardware</span>
+                                    <span>SVG Builder</span>
                                 </Link>
-                                <Link href="/devices/discovery" className="flex items-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
-                                    <span className="material-icons-round mr-2 text-sm">wifi_tethering</span>
-                                    Discover New
+                                <Link href="/devices/discovery" className={secondaryActionButtonClassName}>
+                                    <span className="material-icons-round text-sm">wifi_tethering</span>
+                                    <span>Discover New</span>
                                 </Link>
                             </>
                         ) : null}
-                        <button onClick={handleRefresh} className="flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:bg-blue-600 hover:shadow-lg">
-                            <span className="material-icons-round mr-2 text-sm">refresh</span>
-                            Refresh
+                        <button onClick={handleRefresh} className={primaryActionButtonClassName}>
+                            <span className="material-icons-round text-sm">refresh</span>
+                            <span>Refresh</span>
                         </button>
                     </div>
                 </header>
@@ -278,6 +307,8 @@ export default function DevicesPage() {
                                         ? "border-purple-200 bg-purple-50 text-purple-500 dark:border-purple-500/20 dark:bg-purple-500/10"
                                         : "border-blue-200 bg-blue-50 text-blue-500 dark:border-blue-500/20 dark:bg-blue-500/10";
                                     const deviceIp = device.ip_address || device.last_state?.ip_address;
+                                    const firmwareRevision = readTrimmedString(device.firmware_revision) || readTrimmedString(device.last_state?.firmware_revision);
+                                    const firmwareVersion = readTrimmedString(device.firmware_version) || readTrimmedString(device.last_state?.firmware_version);
 
                                     return (
                                         <div key={device.device_id} className="group flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-surface-light transition-shadow hover:shadow-md dark:border-slate-700 dark:bg-surface-dark">
@@ -309,6 +340,24 @@ export default function DevicesPage() {
                                                     <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">settings_ethernet</span> Mode</span>
                                                     <span className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${modeColor}`}>
                                                         {device.mode}
+                                                    </span>
+                                                </div>
+                                                <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
+                                                    <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">sell</span> FW Revision</span>
+                                                    <span
+                                                        className="max-w-[10rem] truncate font-mono text-xs text-slate-700 dark:text-slate-300"
+                                                        title={firmwareRevision || "Unknown"}
+                                                    >
+                                                        {firmwareRevision || "Unknown"}
+                                                    </span>
+                                                </div>
+                                                <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
+                                                    <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">tag</span> FW Version</span>
+                                                    <span
+                                                        className="max-w-[10rem] truncate font-mono text-xs text-slate-700 dark:text-slate-300"
+                                                        title={firmwareVersion || "Unknown"}
+                                                    >
+                                                        {firmwareVersion || "Unknown"}
                                                     </span>
                                                 </div>
                                                 <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">

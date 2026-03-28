@@ -212,6 +212,7 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
             auth_status=AuthStatus.pending if should_start_pending else AuthStatus.approved,
             conn_status=ConnStatus.online,
             mode=payload.mode,
+            firmware_revision=payload.firmware_revision,
             firmware_version=payload.firmware_version,
             ip_address=payload.ip_address,
             last_seen=datetime.utcnow(),
@@ -226,6 +227,7 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
     else:
         device.mac_address = payload.mac_address
         device.name = payload.name
+        device.firmware_revision = payload.firmware_revision
         device.firmware_version = payload.firmware_version
         device.ip_address = payload.ip_address or device.ip_address
         device.mode = payload.mode

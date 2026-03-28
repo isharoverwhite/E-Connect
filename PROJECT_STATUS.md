@@ -3,10 +3,10 @@
 ## Current Phase: Complete
 
 ## Active Task
-- Task ID: UI-DEVICE-CONFIG-OTA-ONLINE-001
-- Objective: Make the managed OTA success flow wait for the board to come back online, then auto-return to the dashboard.
+- Task ID: FIND-WEBSITE-DOCKER-001
+- Objective: Containerize the public `find_website` Next.js app for server deployment.
 - Owner: Codex
-- Started At: 2026-03-29 01:02:57
+- Started At: 2026-03-29 02:31:13
 
 ## Gate Status
 - [x] G0 Task intake
@@ -17,16 +17,18 @@
 
 ## Deliverables
 - PRD: No change required.
-- Design docs: `design/screens.md` now requires the managed OTA dialog to wait for the board to report `online` again before final success and dashboard redirect.
-- Code: `webapp/src/app/devices/[id]/config/page.tsx` now tracks post-flash online recovery via WebSocket plus device polling, updates the modal copy accordingly, and redirects to `/` after the board is back online.
-- Verification: `npm run lint`, `npm run build`, and `chrome-devtools` browser verification using mocked OTA/build/device responses on the live config page all passed for the `flashed -> wait for online -> dashboard redirect` flow.
+- Design docs: Design unchanged; only packaging and deployment docs for `find_website` were updated.
+- Code: added `find_website/Dockerfile`, `find_website/.dockerignore`, enabled standalone output in `find_website/next.config.ts`, and replaced the default app README with concrete deploy/run instructions.
+- Verification: `npm run lint`, `npm run build`, `docker build -t find-website:test .`, an HTTP smoke check against `http://127.0.0.1:19123`, and Docker health status `healthy` all passed.
 
 ## Risks / Blockers
-- Browser verification used mocked frontend fetch responses to avoid issuing another real rebuild/OTA command to hardware while validating the new UI flow. The next live OTA run should still spot-check the exact copy timing on a real board.
-- The worktree still contains an unrelated unstaged change in `server/tests/test_diy_ota_config.py`; it was intentionally left untouched by this UI slice.
+- Working tree still contains unrelated in-progress edits elsewhere in the repo, so commit/push for this slice should stage only `find_website` plus any explicitly approved tracking artifacts.
+- Public exposure still needs server-side TLS/reverse proxy configuration outside this repository.
+- Process deviation approved by user: batch commit/push may include mixed extension-scope changes on `main`.
+- Fresh end-to-end verification was not rerun for every staged file before publish; evidence remains uneven across the combined batch.
 
 ## Next Action
-- Optional follow-up: rerun one live managed OTA to confirm the post-flash `waiting for online` and `board online` copy against real device timing.
+- Stage current extension-scope worktree, create one bracket-tag commit, and push `main` to `origin/main`.
 
 ## Last Updated
-2026-03-29 01:11:32
+2026-03-29 03:02:09

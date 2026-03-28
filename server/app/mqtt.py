@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 import paho.mqtt.client as mqtt
@@ -16,13 +16,18 @@ from sqlalchemy.orm import Session
 import asyncio
 from app.database import SessionLocal
 from app.models import DeviceRegister
-from app.services.builder import describe_runtime_firmware_mismatch, extract_runtime_firmware_network_targets
+from app.services.builder import (
+    build_job_firmware_version,
+    describe_runtime_firmware_mismatch,
+    extract_runtime_firmware_network_targets,
+)
 from app.services.device_registration import (
     build_pairing_request_event_payload,
     build_registration_ack_payload,
     register_device_payload,
+    sync_user_dashboard_widgets,
 )
-from app.sql_models import AuthStatus, ConnStatus, Device, DeviceHistory, EventType
+from app.sql_models import AuthStatus, ConnStatus, Device, DeviceHistory, EventType, JobStatus, PinConfiguration, User
 from app.ws_manager import manager as ws_manager
 
 load_dotenv()
@@ -35,26 +40,82 @@ MQTT_NAMESPACE = os.getenv("MQTT_NAMESPACE", "local")
 
 STATE_TOPIC_SUBSCRIPTION = f"econnect/{MQTT_NAMESPACE}/device/+/state"
 REGISTER_TOPIC_SUBSCRIPTION = f"econnect/{MQTT_NAMESPACE}/device/+/register"
+OTA_FLASHING_RECONCILIATION_TIMEOUT = timedelta(
+    seconds=max(60, int(os.getenv("OTA_FLASHING_RECONCILIATION_TIMEOUT_SECONDS", "60")))
+)
+OTA_RECENT_FLASH_CONFIRMATION_WINDOW = timedelta(
+    seconds=max(120, int(os.getenv("OTA_RECENT_FLASH_CONFIRMATION_WINDOW_SECONDS", "180")))
+)
 
 
-def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> None:
-    if not device.provisioning_project_id or not reported_version:
+def _job_reference_time(job) -> datetime:
+    return job.finished_at or job.updated_at or job.created_at or datetime.utcnow()
+
+
+def _mark_ota_job_failed(job, *, now: datetime, message: str) -> None:
+    job.status = JobStatus.flash_failed
+    job.error_message = message
+    job.finished_at = now
+    job.updated_at = now
+
+
+def _snapshot_pin_configurations(device: Device | None) -> list[dict[str, Any]]:
+    if not device:
+        return []
+
+    return [
+        {
+            "gpio_pin": pin.gpio_pin,
+            "mode": pin.mode,
+            "function": pin.function,
+            "label": pin.label,
+            "v_pin": pin.v_pin,
+            "extra_params": pin.extra_params,
+        }
+        for pin in device.pin_configurations
+    ]
+
+
+def _restore_pin_configurations(db: Session, device: Device, pin_snapshot: list[dict[str, Any]]) -> None:
+    db.query(PinConfiguration).filter(PinConfiguration.device_id == device.device_id).delete()
+    for pin in pin_snapshot:
+        db.add(
+            PinConfiguration(
+                device_id=device.device_id,
+                gpio_pin=pin["gpio_pin"],
+                mode=pin["mode"],
+                function=pin.get("function"),
+                label=pin.get("label"),
+                v_pin=pin.get("v_pin"),
+                extra_params=pin.get("extra_params"),
+            )
+        )
+    db.flush()
+    db.refresh(device)
+
+
+def _sync_owner_dashboard_widgets(db: Session, device: Device) -> None:
+    owner = db.query(User).filter(User.user_id == device.owner_id).first()
+    if not owner:
         return
+
+    sync_user_dashboard_widgets(owner, device)
+
+
+def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> str:
+    if not device.provisioning_project_id or not reported_version:
+        return "noop"
 
     from app.sql_models import BuildJob, JobStatus
 
+    now = datetime.utcnow()
     flashing_jobs = db.query(BuildJob).filter(
         BuildJob.project_id == device.provisioning_project_id,
         BuildJob.status == JobStatus.flashing
     ).all()
-
-    if not flashing_jobs:
-        return
-
-    now = datetime.utcnow()
     matched_job = None
     for job in flashing_jobs:
-        expected_version = f"build-{job.id[:8]}"
+        expected_version = build_job_firmware_version(job.id)
         if reported_version == expected_version:
             matched_job = job
             break
@@ -62,29 +123,75 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> N
     if matched_job:
         matched_job.status = JobStatus.flashed
         matched_job.finished_at = now
+        matched_job.updated_at = now
         logger.info("Reconciled OTA job %s to flashed via firmware_version match.", matched_job.id)
-        return
+        return "confirmed"
 
-    if len(flashing_jobs) > 1:
-        logger.warning(
-            "Skipping OTA mismatch reconciliation for device %s because %s flashing jobs are active.",
-            device.device_id,
-            len(flashing_jobs),
-        )
-        return
+    if flashing_jobs:
+        if len(flashing_jobs) > 1:
+            logger.warning(
+                "Skipping OTA mismatch reconciliation for device %s because %s flashing jobs are active.",
+                device.device_id,
+                len(flashing_jobs),
+            )
+            return "noop"
 
-    job = flashing_jobs[0]
-    delta = now - (job.updated_at or job.created_at or now)
-    # Only fail if it's been active for > 60 seconds to avoid race conditions with pre-OTA buffered messages
-    if delta.total_seconds() > 60:
-        expected_version = f"build-{job.id[:8]}"
-        job.status = JobStatus.flash_failed
-        job.error_message = (
-            f"OTA timeout/reconciliation: device reported version '{reported_version}' "
-            f"after reboot, expected '{expected_version}'"
+        job = flashing_jobs[0]
+        delta = now - _job_reference_time(job)
+        if delta > OTA_FLASHING_RECONCILIATION_TIMEOUT:
+            expected_version = build_job_firmware_version(job.id)
+            _mark_ota_job_failed(
+                job,
+                now=now,
+                message=(
+                    f"OTA timeout/reconciliation: device reported version '{reported_version}' "
+                    f"after reboot, expected '{expected_version}'"
+                ),
+            )
+            logger.warning("Reconciled OTA job %s to flash_failed (version mismatch).", job.id)
+            return "timeout_mismatch"
+
+        return "pending"
+
+    recent_flashed_jobs = sorted(
+        db.query(BuildJob)
+        .filter(
+            BuildJob.project_id == device.provisioning_project_id,
+            BuildJob.status == JobStatus.flashed,
         )
-        job.finished_at = now
-        logger.warning("Reconciled OTA job %s to flash_failed (version mismatch).", job.id)
+        .all(),
+        key=_job_reference_time,
+        reverse=True,
+    )
+    recent_flashed_job = next(
+        (
+            job
+            for job in recent_flashed_jobs
+            if now - _job_reference_time(job) <= OTA_RECENT_FLASH_CONFIRMATION_WINDOW
+        ),
+        None,
+    )
+    if not recent_flashed_job:
+        return "noop"
+
+    expected_version = build_job_firmware_version(recent_flashed_job.id)
+    if reported_version == expected_version:
+        return "confirmed"
+
+    _mark_ota_job_failed(
+        recent_flashed_job,
+        now=now,
+        message=(
+            f"OTA verification failed: device came back reporting firmware '{reported_version}' "
+            f"after OTA success, expected '{expected_version}'."
+        ),
+    )
+    logger.warning(
+        "Downgraded OTA job %s to flash_failed after reboot version mismatch for device %s.",
+        recent_flashed_job.id,
+        device.device_id,
+    )
+    return "post_flash_mismatch"
 
 
 def build_pairing_rejected_ack_payload(device: Device) -> dict[str, Any]:
@@ -348,6 +455,10 @@ class MQTTClientManager:
                 if isinstance(reported_ip, str) and reported_ip.strip():
                     device.ip_address = reported_ip.strip()
 
+                reported_revision = payload_json.get("firmware_revision")
+                if isinstance(reported_revision, str) and reported_revision.strip():
+                    device.firmware_revision = reported_revision.strip()
+
                 reported_fw = payload_json.get("firmware_version")
                 if isinstance(reported_fw, str) and reported_fw.strip():
                     device.firmware_version = reported_fw.strip()
@@ -544,6 +655,9 @@ class MQTTClientManager:
 
         db = SessionLocal()
         try:
+            existing_device = db.query(Device).filter(Device.device_id == device_id).first()
+            previous_pins = _snapshot_pin_configurations(existing_device)
+
             result = register_device_payload(db, payload)
             db.commit()
             db.refresh(result.device)
@@ -557,7 +671,10 @@ class MQTTClientManager:
                 )
 
             if result.device.firmware_version:
-                _reconcile_ota_jobs(db, result.device, result.device.firmware_version)
+                reconcile_outcome = _reconcile_ota_jobs(db, result.device, result.device.firmware_version)
+                if reconcile_outcome in {"post_flash_mismatch", "timeout_mismatch"} and previous_pins:
+                    _restore_pin_configurations(db, result.device, previous_pins)
+                    _sync_owner_dashboard_widgets(db, result.device)
                 db.commit()
 
             ack_payload = self._attach_runtime_network(

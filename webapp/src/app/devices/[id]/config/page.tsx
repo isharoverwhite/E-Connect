@@ -3,7 +3,13 @@
 import { use, useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
-import { API_URL, fetchDevice, saveDeviceConfig, sendDeviceCommand } from "@/lib/api";
+import {
+  API_URL,
+  fetchDevice,
+  fetchRuntimeNetworkInfo,
+  saveDeviceConfig,
+  sendDeviceCommand,
+} from "@/lib/api";
 import { getToken } from "@/lib/auth";
 import { Step2Pins } from "@/features/diy/components/Step2Pins";
 import type { BoardProfile } from "@/features/diy/board-profiles";
@@ -21,6 +27,7 @@ interface BuildJobSnapshot {
   status: BuildJobStatus;
   ota_token?: string | null;
   error_message?: string | null;
+  expected_firmware_version?: string | null;
 }
 
 const OTA_TERMINAL_STATUSES = new Set<BuildJobStatus>([
@@ -81,7 +88,22 @@ function parseTimestamp(value?: string | null): number | null {
   return Number.isNaN(parsed) ? null : parsed;
 }
 
-function isDeviceBackOnlineAfterOta(device: DeviceConfig | null, flashedAt: number | null): boolean {
+function isExpectedFirmwareVersion(
+  device: DeviceConfig | null,
+  expectedFirmwareVersion: string | null,
+): boolean {
+  if (!expectedFirmwareVersion) {
+    return true;
+  }
+
+  return device?.firmware_version?.trim() === expectedFirmwareVersion;
+}
+
+function isDeviceBackOnlineAfterOta(
+  device: DeviceConfig | null,
+  flashedAt: number | null,
+  expectedFirmwareVersion: string | null,
+): boolean {
   if (!device || device.conn_status !== "online" || flashedAt === null) {
     return false;
   }
@@ -91,7 +113,10 @@ function isDeviceBackOnlineAfterOta(device: DeviceConfig | null, flashedAt: numb
     return false;
   }
 
-  return lastSeenAt >= flashedAt - OTA_ONLINE_FRESHNESS_GRACE_MS;
+  return (
+    lastSeenAt >= flashedAt - OTA_ONLINE_FRESHNESS_GRACE_MS &&
+    isExpectedFirmwareVersion(device, expectedFirmwareVersion)
+  );
 }
 
 async function fetchBuildJob(jobId: string): Promise<BuildJobSnapshot> {
@@ -108,6 +133,13 @@ async function fetchBuildJob(jobId: string): Promise<BuildJobSnapshot> {
   }
 
   return response.json();
+}
+
+function buildReachableOtaUrl(apiBaseUrl: string, jobId: string, token: string): string {
+  const otaUrl = new URL(apiBaseUrl);
+  otaUrl.pathname = `/api/v1/diy/ota/download/${jobId}/firmware.bin`;
+  otaUrl.search = new URLSearchParams({ token }).toString();
+  return otaUrl.toString();
 }
 
 export default function DevicePinConfigurator({ params }: { params: Promise<{ id: string }> }) {
@@ -133,6 +165,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<BuildJobStatus | null>(null);
   const [jobError, setJobError] = useState<string | null>(null);
+  const [expectedFirmwareVersion, setExpectedFirmwareVersion] = useState<string | null>(null);
   const [otaModalOpen, setOtaModalOpen] = useState(false);
   const [sendingOta, setSendingOta] = useState(false);
   const [flashCompletedAt, setFlashCompletedAt] = useState<number | null>(null);
@@ -145,6 +178,12 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
 
     const reportedAt =
       typeof event.payload?.reported_at === "string" ? event.payload.reported_at : null;
+    const reportedFirmwareVersion =
+      typeof event.payload?.firmware_version === "string" ? event.payload.firmware_version : null;
+    const reportedFirmwareRevision =
+      typeof event.payload?.firmware_revision === "string"
+        ? event.payload.firmware_revision
+        : null;
 
     setDevice((current) => {
       if (!current || current.device_id !== event.device_id) {
@@ -155,6 +194,8 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         return {
           ...current,
           conn_status: "online",
+          firmware_revision: reportedFirmwareRevision ?? current.firmware_revision,
+          firmware_version: reportedFirmwareVersion ?? current.firmware_version,
           last_seen: reportedAt ?? new Date().toISOString(),
         };
       }
@@ -170,6 +211,8 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         return {
           ...current,
           conn_status: "online",
+          firmware_revision: reportedFirmwareRevision ?? current.firmware_revision,
+          firmware_version: reportedFirmwareVersion ?? current.firmware_version,
           last_state: (event.payload ?? null) as DeviceConfig["last_state"],
           last_seen: reportedAt ?? new Date().toISOString(),
         };
@@ -184,16 +227,6 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
 
       return current;
     });
-
-    if (
-      flashCompletedAt !== null &&
-      (event.type === "device_online" || event.type === "device_state")
-    ) {
-      const observedAt = reportedAt ? parseTimestamp(reportedAt) : Date.now();
-      if (observedAt !== null && observedAt >= flashCompletedAt - OTA_ONLINE_FRESHNESS_GRACE_MS) {
-        setBoardOnlineAfterOta(true);
-      }
-    }
   });
 
   useEffect(() => {
@@ -285,6 +318,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
 
         setJobStatus(snapshot.status);
         setJobError(snapshot.error_message?.trim() || null);
+        setExpectedFirmwareVersion(snapshot.expected_firmware_version?.trim() || null);
         if (OTA_POLL_FINAL_STATUSES.has(snapshot.status) && interval !== null) {
           window.clearInterval(interval);
           interval = null;
@@ -322,10 +356,10 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       return;
     }
 
-    if (isDeviceBackOnlineAfterOta(device, flashCompletedAt)) {
+    if (isDeviceBackOnlineAfterOta(device, flashCompletedAt, expectedFirmwareVersion)) {
       setBoardOnlineAfterOta(true);
     }
-  }, [boardOnlineAfterOta, device, flashCompletedAt, jobStatus]);
+  }, [boardOnlineAfterOta, device, expectedFirmwareVersion, flashCompletedAt, jobStatus]);
 
   useEffect(() => {
     if (
@@ -347,7 +381,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       }
 
       setDevice(snapshot);
-      if (isDeviceBackOnlineAfterOta(snapshot, flashCompletedAt)) {
+      if (isDeviceBackOnlineAfterOta(snapshot, flashCompletedAt, expectedFirmwareVersion)) {
         setBoardOnlineAfterOta(true);
         if (interval !== null) {
           window.clearInterval(interval);
@@ -367,7 +401,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         window.clearInterval(interval);
       }
     };
-  }, [boardOnlineAfterOta, deviceId, flashCompletedAt, jobStatus, otaModalOpen]);
+  }, [boardOnlineAfterOta, deviceId, expectedFirmwareVersion, flashCompletedAt, jobStatus, otaModalOpen]);
 
   useEffect(() => {
     if (!otaModalOpen || jobStatus !== "flashed") {
@@ -379,10 +413,24 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       return;
     }
 
+    if (
+      device?.conn_status === "online" &&
+      expectedFirmwareVersion &&
+      device.firmware_version &&
+      device.firmware_version !== expectedFirmwareVersion
+    ) {
+      setStatusMessage(
+        `The board is online again but still reports firmware ${device.firmware_version}. Waiting for ${expectedFirmwareVersion} before leaving this page.`,
+      );
+      return;
+    }
+
     setStatusMessage(
-      "OTA update completed. Waiting for the board to reconnect and report online before returning to the dashboard.",
+      expectedFirmwareVersion
+        ? `OTA update completed. Waiting for the board to reconnect on firmware ${expectedFirmwareVersion} before returning to the dashboard.`
+        : "OTA update completed. Waiting for the board to reconnect and report online before returning to the dashboard.",
     );
-  }, [boardOnlineAfterOta, jobStatus, otaModalOpen]);
+  }, [boardOnlineAfterOta, device, expectedFirmwareVersion, jobStatus, otaModalOpen]);
 
   useEffect(() => {
     if (!boardOnlineAfterOta) {
@@ -561,6 +609,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       setJobId(result.job_id);
       setJobStatus("queued");
       setJobError(null);
+      setExpectedFirmwareVersion(null);
       setOtaModalOpen(true);
       setFlashCompletedAt(null);
       setBoardOnlineAfterOta(false);
@@ -591,7 +640,12 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         throw new Error("Server did not provide an OTA token for this firmware build");
       }
 
-      const firmwareUrl = `${window.location.protocol}//${window.location.host}/api/v1/diy/ota/download/${jobId}/firmware.bin?token=${snapshot.ota_token}`;
+      const runtimeNetwork = await fetchRuntimeNetworkInfo();
+      const firmwareUrl = buildReachableOtaUrl(
+        runtimeNetwork.api_base_url,
+        jobId,
+        snapshot.ota_token,
+      );
       const commandResult = await sendDeviceCommand(device.device_id, {
         kind: "system",
         action: "ota",
@@ -885,6 +939,27 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
               </div>
             </div>
 
+            {(expectedFirmwareVersion || device?.firmware_version) && (
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                    Expected firmware
+                  </p>
+                  <p className="mt-2 break-all font-mono text-sm text-slate-700 dark:text-slate-200">
+                    {expectedFirmwareVersion ?? "pending"}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                    Device-reported firmware
+                  </p>
+                  <p className="mt-2 break-all font-mono text-sm text-slate-700 dark:text-slate-200">
+                    {device?.firmware_version ?? "unknown"}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="mt-6 space-y-4">
               {jobStatus === "queued" && (
                 <div className="flex items-start gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
@@ -934,8 +1009,9 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                       <span className="material-icons-round animate-spin text-[20px] leading-none">autorenew</span>
                     </span>
                     <p className="min-w-0 flex-1 leading-6 text-left">
-                      OTA finished. Waiting for the board to reconnect and report online before leaving
-                      this page.
+                      {expectedFirmwareVersion
+                        ? `OTA finished. Waiting for the board to reconnect on ${expectedFirmwareVersion} before leaving this page.`
+                        : "OTA finished. Waiting for the board to reconnect and report online before leaving this page."}
                     </p>
                   </div>
                 )
@@ -996,7 +1072,9 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
 
             {jobStatus === "flashed" && !boardOnlineAfterOta && (
               <p className="mt-4 text-xs text-slate-500 dark:text-slate-400">
-                The dashboard redirect starts automatically as soon as the board reports back online.
+                {expectedFirmwareVersion
+                  ? `The dashboard redirect starts automatically after the board reports back online on ${expectedFirmwareVersion}.`
+                  : "The dashboard redirect starts automatically as soon as the board reports back online."}
               </p>
             )}
           </div>

@@ -32,6 +32,10 @@ for path in (BUILD_BASE_DIR, JOBS_DIR, ARTIFACTS_DIR, LOGS_DIR, PLATFORMIO_CORE_
     os.makedirs(path, exist_ok=True)
 
 
+def build_job_firmware_version(job_id: str) -> str:
+    return f"build-{job_id[:8]}"
+
+
 _BLOCKED_ADVERTISED_HOSTNAMES = {
     "localhost",
     "server",
@@ -870,7 +874,7 @@ def write_generated_firmware_config(project, job_id: str, project_dir: str):
 
     device_id, secret_key = build_project_firmware_identity(project.id)
     project_name = str(config_json.get("project_name") or project.name or "E-Connect Node").strip()
-    firmware_version = f"build-{job_id[:8]}"
+    firmware_version = build_job_firmware_version(job_id)
     wifi_ssid = str(config_json.get("wifi_ssid") or "")
     wifi_password = str(config_json.get("wifi_password") or "")
     mqtt_broker = _resolve_mqtt_broker(config_json)

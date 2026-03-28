@@ -8,7 +8,7 @@ import uuid
 
 from app.api import router
 from app.database import Base, get_db
-from app.sql_models import AuthStatus, User, Household, HouseholdMembership, HouseholdRole, UserApprovalStatus, Room, DiyProject, BuildJob, JobStatus, Device, DeviceMode
+from app.sql_models import AuthStatus, User, Household, HouseholdMembership, HouseholdRole, UserApprovalStatus, Room, DiyProject, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration
 from app.auth import get_password_hash, create_ota_token
 
 # Setup test DB
@@ -233,6 +233,29 @@ def test_put_device_config_rejects_docker_local_host():
     payload = res.json()["detail"]
     assert payload["error"] == "validation"
     assert "reachable host" in payload["message"]
+
+
+def test_get_build_job_includes_expected_firmware_version():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.artifact_ready)
+    db.add(job)
+    db.commit()
+
+    res = client.get(
+        f"/api/v1/diy/build/{job_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["id"] == job_id
+    assert payload["expected_firmware_version"] == f"build-{job_id[:8]}"
 
 def test_put_device_config_invalid_not_diy():
     db = TestingSessionLocal()
@@ -870,6 +893,32 @@ def test_mqtt_reconcile_ota_success():
     assert job.status == JobStatus.flashed
 
 
+def test_mqtt_state_persists_reported_firmware_revision():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    _user, _room, _project, device = create_test_data(db)
+
+    mgr = MQTTClientManager()
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps(
+        {
+            "firmware_revision": "1.0.0",
+            "firmware_version": "build-new1234",
+        }
+    )
+
+    with patch("app.mqtt.SessionLocal", return_value=db_mock):
+        mgr.process_state_message(device.device_id, payload)
+
+    db.refresh(device)
+    assert device.firmware_revision == "1.0.0"
+    assert device.firmware_version == "build-new1234"
+
+
 def test_mqtt_reconcile_ota_mismatch_recent():
     from app.mqtt import MQTTClientManager
     import json
@@ -929,6 +978,37 @@ def test_mqtt_reconcile_ota_mismatch_stale():
     # Should be rolled back to flash_failed because 90s > 60s threshold
     assert job.status == JobStatus.flash_failed
     assert "OTA timeout/reconciliation" in job.error_message
+
+
+def test_mqtt_state_recent_flashed_job_mismatch_fails_immediately():
+    from app.mqtt import MQTTClientManager
+    import json
+    from unittest.mock import MagicMock
+    from datetime import datetime, timedelta
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashed)
+    job.finished_at = datetime.utcnow() - timedelta(seconds=5)
+    job.updated_at = job.finished_at
+    db.add(job)
+    device.provisioning_project_id = project.id
+    db.commit()
+
+    mgr = MQTTClientManager()
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps({"firmware_version": "build-old1234"})
+
+    with patch('app.mqtt.SessionLocal', return_value=db_mock):
+        mgr.process_state_message(device.device_id, payload)
+
+    db.refresh(job)
+    assert job.status == JobStatus.flash_failed
+    assert "OTA verification failed" in job.error_message
 
 
 def test_mqtt_register_reconcile_ota_success():
@@ -1034,3 +1114,57 @@ def test_mqtt_register_reconcile_ota_mismatch_stale():
     db.refresh(job)
     assert job.status == JobStatus.flash_failed
     assert "OTA timeout/reconciliation" in job.error_message
+
+
+def test_mqtt_register_recent_flashed_job_preserves_saved_pin_map_on_old_firmware():
+    from app.mqtt import MQTTClientManager
+    import json
+    from unittest.mock import MagicMock
+    from datetime import datetime, timedelta
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    db.add(
+        PinConfiguration(
+            device_id=device.device_id,
+            gpio_pin=8,
+            mode="PWM",
+            label="Desired Dimmer",
+            extra_params={"min_value": 0, "max_value": 255},
+        )
+    )
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashed)
+    job.finished_at = datetime.utcnow() - timedelta(seconds=5)
+    job.updated_at = job.finished_at
+    db.add(job)
+    device.provisioning_project_id = project.id
+    db.commit()
+
+    mgr = MQTTClientManager()
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps({
+        "device_id": device.device_id,
+        "mac_address": device.mac_address,
+        "name": device.name,
+        "mode": "no-code",
+        "firmware_version": "build-old1234",
+        "pins": [{"gpio_pin": 2, "mode": "OUTPUT", "label": "Old Relay"}],
+    })
+
+    with patch('app.mqtt.SessionLocal', return_value=db_mock), \
+         patch('app.services.device_registration.verify_project_secret', return_value=True):
+        mgr.process_registration_message(device.device_id, payload)
+
+    db.refresh(job)
+    db.refresh(device)
+    assert job.status == JobStatus.flash_failed
+    assert "OTA verification failed" in job.error_message
+    assert len(device.pin_configurations) == 1
+    assert device.pin_configurations[0].gpio_pin == 8
+    assert device.pin_configurations[0].mode == "PWM"
+    assert device.pin_configurations[0].label == "Desired Dimmer"
