@@ -63,6 +63,7 @@
   - A successful confirmation must persist the updated pin mapping to the managed DIY project and the linked device record, then start a new firmware rebuild for that device.
   - The OTA dialog must stay blocked until the rebuild reaches `artifact_ready`, then allow the admin to send the OTA command for that exact build job.
   - The OTA dialog must show `building`, `artifact_ready`, `flashing`, `flashed`, and `flash_failed` states, plus a clear close path when the build itself fails.
+  - After the OTA job reaches `flashed`, the dialog must wait for the board to report `online` again before showing the final success state, then return the admin to the dashboard automatically.
 
 ## Dashboard And Discovery
 - **Dashboard notifications**:
