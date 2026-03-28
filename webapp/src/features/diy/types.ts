@@ -27,7 +27,7 @@ export interface PinMapping {
     } | null;
 }
 
-export type FlashSource = "server" | "demo" | "upload";
+export type FlashSource = "server" | "demo";
 
 export type ProjectSyncState = "idle" | "loading" | "saving" | "saved" | "error";
 
@@ -42,12 +42,6 @@ export type BuildJobStatus =
     | "build_failed"
     | "flash_failed"
     | "cancelled";
-
-export interface FirmwareUploadState {
-    bootloader: File | null;
-    partitions: File | null;
-    firmware: File | null;
-}
 
 export interface ValidationResult {
     errors: string[];

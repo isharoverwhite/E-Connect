@@ -365,6 +365,9 @@ export default function DeviceDiscovery() {
                             <div className="py-8 text-center">
                                 <span className="material-icons-round mb-4 text-5xl text-slate-300 dark:text-slate-600">search_off</span>
                                 <h3 className="mb-2 text-lg font-semibold text-slate-800 dark:text-slate-200">No New Devices</h3>
+                                <p className="mx-auto mb-4 max-w-md text-sm text-slate-500 dark:text-slate-400">
+                                    Discovery only shows boards that successfully reached this server. If you moved the server to a new IP, rebuild and reflash the board so its embedded MQTT/server host matches the new machine.
+                                </p>
                                 <div className="mt-4 flex w-full flex-col gap-3">
                                     <button onClick={() => setScanState("scanning")} className="flex w-full items-center justify-center rounded-lg bg-blue-100 px-6 py-3 font-medium text-blue-700 shadow-sm transition-colors hover:bg-blue-200">
                                         <span className="material-icons-round mr-2">search</span> Rescan Network

@@ -14,20 +14,15 @@ server_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 env_path = os.path.join(server_root, '.env')
 load_dotenv(dotenv_path=env_path)
 
-DEFAULT_SQLITE_PATH = os.getenv(
-    "LOCAL_DATABASE_PATH",
-    os.path.join(server_root, "db.sqlite3"),
-)
-DEFAULT_DATABASE_URL = f"sqlite:///{DEFAULT_SQLITE_PATH}"
+DEFAULT_DATABASE_URL = "mysql+pymysql://econnect:root_password@127.0.0.1:3306/e_connect_db"
 
 configured_database_url = os.getenv("DATABASE_URL")
 DATABASE_URL = configured_database_url.strip() if configured_database_url else DEFAULT_DATABASE_URL
 
 if DATABASE_URL == DEFAULT_DATABASE_URL:
-    default_sqlite_dir = os.path.dirname(DEFAULT_SQLITE_PATH)
-    if default_sqlite_dir:
-        os.makedirs(default_sqlite_dir, exist_ok=True)
-    logger.info("DATABASE_URL is not configured. Falling back to local SQLite at %s", DEFAULT_SQLITE_PATH)
+    logger.info(
+        "DATABASE_URL is not configured. Defaulting to Docker-backed local MariaDB at 127.0.0.1:3306/e_connect_db"
+    )
 
 engine_options = {"pool_pre_ping": True}
 

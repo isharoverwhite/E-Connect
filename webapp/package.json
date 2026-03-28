@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node ./scripts/dev-https.mjs",
     "build": "next build",
-    "start": "next start",
+    "start": "node ./scripts/serve-standalone-https.mjs",
     "lint": "eslint"
   },
   "dependencies": {

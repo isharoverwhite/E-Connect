@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 export default function LoginPage() {
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
+    const [keepLogin, setKeepLogin] = useState(false);
     const [error, setError] = useState("");
     const [isLoading, setIsLoading] = useState(false);
 
@@ -23,9 +24,10 @@ export default function LoginPage() {
             const formData = new FormData();
             formData.append("username", username);
             formData.append("password", password);
+            formData.append("keep_login", keepLogin ? "true" : "false");
 
             const data = await loginUser(formData);
-            setToken(data.access_token);
+            setToken(data);
             await refreshProfile();
             router.push("/");
         } catch (error: unknown) {
@@ -85,6 +87,21 @@ export default function LoginPage() {
                             />
                         </div>
                     </div>
+
+                    <label className="flex items-start gap-3 rounded-xl border border-slate-200 dark:border-slate-700/60 bg-slate-50/80 dark:bg-black/20 px-4 py-3 cursor-pointer">
+                        <input
+                            type="checkbox"
+                            checked={keepLogin}
+                            onChange={(e) => setKeepLogin(e.target.checked)}
+                            className="mt-1 h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
+                        />
+                        <span className="text-sm text-slate-600 dark:text-slate-300">
+                            <span className="block font-medium text-slate-800 dark:text-slate-100">Keep login</span>
+                            <span className="block text-xs text-slate-500 dark:text-slate-400">
+                                Leave this unchecked to auto-logout after 4 hours without interaction.
+                            </span>
+                        </span>
+                    </label>
 
                     <button
                         type="submit"

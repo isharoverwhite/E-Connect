@@ -2,8 +2,11 @@ pipeline {
     agent any
 
     options {
+        buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '10'))
         disableConcurrentBuilds()
         skipDefaultCheckout(true)
+        timeout(time: 60, unit: 'MINUTES')
+        timestamps()
     }
 
     parameters {
@@ -93,7 +96,23 @@ pipeline {
             }
         }
 
+        stage('Deploy Gate') {
+            when {
+                expression { return params.DEPLOY }
+            }
+            steps {
+                script {
+                    if (!(params.ALLOW_NON_MAIN_DEPLOY || ['main', 'master'].contains(env.RESOLVED_BRANCH))) {
+                        error("Refusing to deploy branch '${env.RESOLVED_BRANCH}'. Set ALLOW_NON_MAIN_DEPLOY=true to override.")
+                    }
+                }
+            }
+        }
+
         stage('Build Active Images') {
+            when {
+                expression { return params.DEPLOY }
+            }
             steps {
                 echo 'Building active release services: mqtt + server + webapp'
                 sh '''
@@ -108,12 +127,6 @@ pipeline {
                 expression { return params.DEPLOY }
             }
             steps {
-                script {
-                    if (!(params.ALLOW_NON_MAIN_DEPLOY || ['main', 'master'].contains(env.RESOLVED_BRANCH))) {
-                        error("Refusing to deploy branch '${env.RESOLVED_BRANCH}'. Set ALLOW_NON_MAIN_DEPLOY=true to override.")
-                    }
-                }
-
                 sh '''
                     set -eu
                     docker compose up -d --wait --wait-timeout 120 --remove-orphans
@@ -150,7 +163,7 @@ pipeline {
                     }
 
                     retry 30 2 docker compose exec -T server python -c "import json, urllib.request; data = json.loads(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read().decode()); assert data.get('status') == 'ok'"
-                    retry 30 2 docker compose exec -T webapp node -e "const main = async () => { const res = await fetch('http://127.0.0.1:3000/login'); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))"
+                    retry 30 2 docker compose exec -T webapp node -e "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; const main = async () => { const res = await fetch('https://127.0.0.1:3000/login'); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))"
                 '''
             }
         }

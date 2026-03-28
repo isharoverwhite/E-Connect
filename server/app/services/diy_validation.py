@@ -386,8 +386,10 @@ def validate_diy_config(board_profile: str, config: dict[str, Any] | None) -> tu
             if not isinstance(max_val, int) or not (0 <= max_val <= 255):
                 errors.append(f"Invalid config: GPIO {raw_gpio} PWM max_value must be 0-255, got {max_val}")
                 
-            if isinstance(min_val, int) and isinstance(max_val, int) and min_val >= max_val:
-                errors.append(f"Invalid config: GPIO {raw_gpio} PWM min_value ({min_val}) must be less than max_value ({max_val})")
+            if isinstance(min_val, int) and isinstance(max_val, int) and min_val == max_val:
+                errors.append(
+                    f"Invalid config: GPIO {raw_gpio} PWM min_value ({min_val}) must differ from max_value ({max_val})"
+                )
 
         if mode == "I2C":
             role = extra_params.get("i2c_role")

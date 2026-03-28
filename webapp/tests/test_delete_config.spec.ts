@@ -5,7 +5,7 @@ test.describe('Config management', () => {
     test.skip(!process.env.TEST_USERNAME || !process.env.TEST_PASSWORD, 'Requires TEST_USERNAME and TEST_PASSWORD');
 
     // Navigate to dashboard
-    await page.goto('http://localhost:3000/login');
+    await page.goto('/login');
     
     // Login as Temporary Support Admin
     await page.getByPlaceholder('Enter your username').fill(process.env.TEST_USERNAME!);
@@ -13,7 +13,7 @@ test.describe('Config management', () => {
     await page.getByRole('button', { name: 'Sign In' }).click();
     
     // Wait for redirect to dashboard
-    await page.waitForURL('http://localhost:3000/settings');
+    await page.waitForURL(/\/settings$/);
     
     // Go to Configs
     await page.getByText('Configs').click();

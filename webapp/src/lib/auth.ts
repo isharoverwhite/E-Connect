@@ -3,6 +3,9 @@ import { API_URL } from "./api";
 export type UserApprovalStatus = "pending" | "approved" | "revoked";
 export type ManagedHouseholdRole = "owner" | "admin" | "member" | "guest";
 
+const TOKEN_STORAGE_KEY = "econnect_token";
+const SESSION_STORAGE_KEY = "econnect_session";
+
 export interface ManagedUser {
     user_id: number;
     fullname: string;
@@ -14,31 +17,120 @@ export interface ManagedUser {
     ui_layout?: unknown;
 }
 
+export interface AuthSession {
+    access_token: string;
+    refresh_token?: string | null;
+    token_type: string;
+    access_token_expires_at?: string | null;
+    refresh_token_expires_at?: string | null;
+    keep_login: boolean;
+}
+
+function isBrowser(): boolean {
+    return typeof window !== "undefined";
+}
+
+function normalizeSession(session: AuthSession): AuthSession {
+    return {
+        access_token: session.access_token,
+        refresh_token: session.refresh_token ?? null,
+        token_type: session.token_type || "bearer",
+        access_token_expires_at: session.access_token_expires_at ?? null,
+        refresh_token_expires_at: session.refresh_token_expires_at ?? null,
+        keep_login: Boolean(session.keep_login),
+    };
+}
+
 // --- Token Management ---
 
-export const setToken = (token: string) => {
-    if (typeof window !== "undefined") {
-        localStorage.setItem("econnect_token", token);
+export const setToken = (value: string | AuthSession) => {
+    if (!isBrowser()) {
+        return;
     }
+
+    if (typeof value === "string") {
+        localStorage.setItem(TOKEN_STORAGE_KEY, value);
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+        return;
+    }
+
+    const session = normalizeSession(value);
+    localStorage.setItem(TOKEN_STORAGE_KEY, session.access_token);
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(session));
+};
+
+export const getSession = (): AuthSession | null => {
+    if (!isBrowser()) {
+        return null;
+    }
+
+    const rawSession = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (rawSession) {
+        try {
+            const parsed = JSON.parse(rawSession) as Partial<AuthSession>;
+            if (typeof parsed.access_token === "string" && parsed.access_token.length > 0) {
+                return normalizeSession(parsed as AuthSession);
+            }
+        } catch {
+            localStorage.removeItem(SESSION_STORAGE_KEY);
+        }
+    }
+
+    const legacyToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (!legacyToken) {
+        return null;
+    }
+
+    return {
+        access_token: legacyToken,
+        refresh_token: null,
+        token_type: "bearer",
+        access_token_expires_at: null,
+        refresh_token_expires_at: null,
+        keep_login: false,
+    };
 };
 
 export const getToken = (): string | null => {
-    if (typeof window !== "undefined") {
-        return localStorage.getItem("econnect_token");
-    }
-    return null;
+    return getSession()?.access_token ?? null;
 };
 
 export const removeToken = () => {
-    if (typeof window !== "undefined") {
-        localStorage.removeItem("econnect_token");
+    if (!isBrowser()) {
+        return;
     }
+
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(SESSION_STORAGE_KEY);
 };
 
+export async function refreshSession(): Promise<AuthSession | null> {
+    const currentSession = getSession();
+    if (!currentSession?.refresh_token) {
+        return null;
+    }
+
+    const res = await fetch(`${API_URL}/auth/refresh`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ refresh_token: currentSession.refresh_token }),
+    });
+
+    if (!res.ok) {
+        removeToken();
+        return null;
+    }
+
+    const nextSession = normalizeSession(await res.json() as AuthSession);
+    setToken(nextSession);
+    return nextSession;
+}
 
 // --- Auth API Calls ---
 
-export async function loginUser(credentials: FormData) {
+export async function loginUser(credentials: FormData): Promise<AuthSession> {
     const res = await fetch(`${API_URL}/auth/token`, {
         method: "POST",
         body: credentials,
@@ -56,7 +148,7 @@ export async function loginUser(credentials: FormData) {
         throw new Error("Incorrect username or password");
     }
 
-    return res.json();
+    return normalizeSession(await res.json() as AuthSession);
 }
 
 export async function initializeServer(data: object) {
@@ -75,10 +167,10 @@ export async function initializeServer(data: object) {
             errorMessage = errorData.detail[0].msg;
         } else if (errorData.detail?.message) {
             errorMessage = errorData.detail.message;
-        } else if (typeof errorData.detail === 'string') {
+        } else if (typeof errorData.detail === "string") {
             errorMessage = errorData.detail;
         } else if (errorData.detail?.error) {
-            errorMessage = errorData.detail.error; // Custom errors like {"error": "system_initialized"}
+            errorMessage = errorData.detail.error;
         }
         throw new Error(errorMessage);
     }
@@ -87,7 +179,6 @@ export async function initializeServer(data: object) {
 }
 
 export async function adminCreateUser(data: object, token: string): Promise<ManagedUser> {
-    console.log("SENDING DATA", data);
     const res = await fetch(`${API_URL}/users`, {
         method: "POST",
         headers: {
@@ -169,7 +260,9 @@ export async function promoteManagedUser(userId: number, token: string): Promise
 
 export async function fetchMyProfile() {
     const token = getToken();
-    if (!token) throw new Error("No token available");
+    if (!token) {
+        throw new Error("No token available");
+    }
 
     const res = await fetch(`${API_URL}/users/me`, {
         headers: {
@@ -179,7 +272,7 @@ export async function fetchMyProfile() {
 
     if (!res.ok) {
         if (res.status === 401) {
-            removeToken(); // Invalid token, cleanup
+            removeToken();
         }
         throw new Error("Failed to fetch profile");
     }
@@ -189,6 +282,8 @@ export async function fetchMyProfile() {
 
 export async function fetchSystemStatus() {
     const res = await fetch(`${API_URL}/system/status`);
-    if (!res.ok) throw new Error("Failed to check system status");
+    if (!res.ok) {
+        throw new Error("Failed to check system status");
+    }
     return res.json();
 }

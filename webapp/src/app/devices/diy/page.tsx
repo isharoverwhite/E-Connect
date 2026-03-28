@@ -6,6 +6,7 @@ import { useAuth } from "@/components/AuthProvider";
 import { getToken, removeToken } from "@/lib/auth";
 import { API_URL } from "@/lib/api";
 import { createRoom, fetchRooms, type RoomRecord } from "@/lib/rooms";
+import { buildProvisioningHeaders } from "@/lib/secure-origin";
 import {
   BOARD_PROFILES,
   MODE_METADATA,
@@ -18,7 +19,6 @@ import {
 } from "@/features/diy/board-profiles";
 import {
   type BuildJobStatus,
-  type FirmwareUploadState,
   type FlashManifest,
   type FlashSource,
   type PinMapping,
@@ -74,7 +74,7 @@ interface SerializedDraft {
   family?: ChipFamily;
   boardId?: string;
   pins?: PinMapping[];
-  flashSource?: FlashSource;
+  flashSource?: string;
   serialPort?: string;
   wifiSsid?: string;
   wifiPassword?: string;
@@ -110,6 +110,17 @@ interface BuildLogsRecord {
   logs: string;
 }
 
+interface FirmwareNetworkTargetRecord {
+  advertised_host: string;
+  api_base_url: string;
+  mqtt_broker: string;
+  mqtt_port: number;
+  target_key: string;
+  warning?: string | null;
+  stale_project_count?: number;
+  stale_device_count?: number;
+}
+
 type ServerArtifactKind = "firmware" | "bootloader" | "partitions";
 
 interface SerialStatusRecord {
@@ -119,6 +130,27 @@ interface SerialStatusRecord {
   user_id?: number | null;
   job_id?: string | null;
 }
+
+type BrowserSerialPortHandle = {
+  close?: () => Promise<void>;
+};
+
+type BrowserSerialApi = {
+  getPorts?: () => Promise<BrowserSerialPortHandle[]>;
+};
+
+type BrowserSerialNavigator = Navigator & {
+  serial?: BrowserSerialApi;
+};
+
+type EspWebInstallButtonElement = HTMLElement & {
+  shadowRoot: ShadowRoot | null;
+};
+
+type EspWebInstallDialogElement = HTMLElement & {
+  _closeDialog?: () => void;
+  port?: BrowserSerialPortHandle;
+};
 
 function createEmptyBuildState(): ServerBuildState {
   return {
@@ -205,6 +237,7 @@ function buildConfigKey({
   cpuMhz,
   flashSize,
   psramSize,
+  networkTargetKey,
 }: {
   boardId: string;
   projectName: string;
@@ -215,11 +248,13 @@ function buildConfigKey({
   cpuMhz: number | null;
   flashSize: string | null;
   psramSize: string | null;
+  networkTargetKey: string;
 }) {
   return JSON.stringify({
     boardId,
     cpuMhz,
     flashSize,
+    networkTargetKey,
     psramSize,
     projectName: projectName.trim(),
     roomId,
@@ -333,6 +368,14 @@ function restoreDraftSnapshot(rawDraft: string | null) {
   }
 }
 
+function normalizeFlashSource(source: unknown, hasDemoFirmware: boolean): FlashSource {
+  if (source === "demo" && hasDemoFirmware) {
+    return "demo";
+  }
+
+  return "server";
+}
+
 export default function DIYBuilderPage() {
   const router = useRouter();
   const { user, logout } = useAuth();
@@ -362,11 +405,6 @@ export default function DIYBuilderPage() {
   const [pins, setPins] = useState<PinMapping[]>([]);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [flashSource, setFlashSource] = useState<FlashSource>("server");
-  const [uploadState, setUploadState] = useState<FirmwareUploadState>({
-    bootloader: null,
-    partitions: null,
-    firmware: null,
-  });
   const [manifestUrl, setManifestUrl] = useState<string | null>(null);
   const [browserSupportsSerial, setBrowserSupportsSerial] = useState(false);
   const [eraseFirst, setEraseFirst] = useState(false);
@@ -374,11 +412,15 @@ export default function DIYBuilderPage() {
   const [projectHydrated, setProjectHydrated] = useState(false);
   const hasHydratedRef = useRef(false);
   const serialArtifactRefreshRef = useRef<string | null>(null);
+  const artifactSerialReleaseRef = useRef<string | null>(null);
+  const webFlasherElementRef = useRef<EspWebInstallButtonElement | null>(null);
+  const [browserIsSecureContext, setBrowserIsSecureContext] = useState(false);
   const [configBusy, setConfigBusy] = useState(false);
   const [projectSyncState, setProjectSyncState] = useState<ProjectSyncState>("loading");
   const [projectSyncMessage, setProjectSyncMessage] = useState("Loading server draft...");
   const [buildBusy, setBuildBusy] = useState(false);
   const [serverBuild, setServerBuild] = useState<ServerBuildState>(() => createEmptyBuildState());
+  const [firmwareNetworkTarget, setFirmwareNetworkTarget] = useState<FirmwareNetworkTargetRecord | null>(null);
   const [serialPort, setSerialPort] = useState(DEFAULT_SERIAL_PORT);
   const [serialBusy, setSerialBusy] = useState(false);
   const [serialLocked, setSerialLocked] = useState(false);
@@ -387,6 +429,7 @@ export default function DIYBuilderPage() {
     "Successful server builds release this port automatically. Flash becomes available when the port is free.",
   );
   const [serialError, setSerialError] = useState<string | null>(null);
+  const [webFlasherResetKey, setWebFlasherResetKey] = useState(0);
 
   const familyOptions = useMemo(
     () => BOARD_PROFILES.filter((profile) => profile.family === family),
@@ -395,6 +438,25 @@ export default function DIYBuilderPage() {
   const board = getBoardProfile(boardId) ?? familyOptions[0] ?? BOARD_PROFILES[0];
   const boardPins = useMemo(() => [...board.leftPins, ...board.rightPins], [board]);
   const validation = validateMappings(board, pins, wifiSsid, wifiPassword);
+  const fallbackFirmwareTargetKey = useMemo(() => {
+    if (typeof window === "undefined") {
+      return "browser-origin:unknown";
+    }
+
+    return `browser-origin:${window.location.origin}`;
+  }, []);
+  const currentFirmwareTargetKey = firmwareNetworkTarget?.target_key ?? fallbackFirmwareTargetKey;
+  const currentFirmwareTargetHost = useMemo(() => {
+    if (firmwareNetworkTarget?.advertised_host) {
+      return firmwareNetworkTarget.advertised_host;
+    }
+    if (typeof window === "undefined") {
+      return null;
+    }
+    return window.location.hostname || null;
+  }, [firmwareNetworkTarget]);
+  const currentFirmwareTargetMqttBroker = firmwareNetworkTarget?.mqtt_broker ?? currentFirmwareTargetHost;
+  const currentFirmwareTargetMqttPort = firmwareNetworkTarget?.mqtt_port ?? null;
   const currentBuildConfigKey = useMemo(
     () =>
       buildConfigKey({
@@ -407,8 +469,9 @@ export default function DIYBuilderPage() {
         cpuMhz,
         flashSize,
         psramSize,
+        networkTargetKey: currentFirmwareTargetKey,
       }),
-    [board.id, pins, projectName, roomId, wifiPassword, wifiSsid, cpuMhz, flashSize, psramSize],
+    [board.id, currentFirmwareTargetKey, pins, projectName, roomId, wifiPassword, wifiSsid, cpuMhz, flashSize, psramSize],
   );
   const activeBuildJobId =
     serverBuild.configKey === currentBuildConfigKey ? serverBuild.jobId : null;
@@ -719,6 +782,29 @@ export default function DIYBuilderPage() {
     }
   }, [handleBuildAuthFailure, newRoomName]);
 
+  const refreshFirmwareNetworkTargets = useCallback(async () => {
+    const token = getToken();
+    if (!token) {
+      return null;
+    }
+
+    const response = await fetch(`${API_URL}/diy/network-targets`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...buildProvisioningHeaders(),
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw await createApiRequestError(response);
+    }
+
+    const payload = (await response.json()) as FirmwareNetworkTargetRecord;
+    setFirmwareNetworkTarget(payload);
+    return payload;
+  }, []);
+
   async function fetchBuildLogs(jobId: string, token: string) {
     const response = await fetch(`${API_URL}/diy/build/${jobId}/logs`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -873,6 +959,52 @@ export default function DIYBuilderPage() {
     }
   }, [isAdmin, serialPort]);
 
+  const cleanupExistingWebFlasherSessions = useCallback(async () => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const dialogs = Array.from(
+      document.querySelectorAll("ewt-install-dialog"),
+    ) as EspWebInstallDialogElement[];
+
+    for (const dialog of dialogs) {
+      try {
+        dialog._closeDialog?.();
+      } catch {
+        // Ignore stale dialog close failures and continue best-effort cleanup.
+      }
+
+      try {
+        await dialog.port?.close?.();
+      } catch {
+        // Ignore already-closed or externally-held ports.
+      }
+
+      if (dialog.isConnected) {
+        dialog.remove();
+      }
+    }
+
+    const browserSerial = (navigator as BrowserSerialNavigator).serial;
+    if (!browserSerial?.getPorts) {
+      return;
+    }
+
+    try {
+      const grantedPorts = await browserSerial.getPorts();
+      for (const port of grantedPorts) {
+        try {
+          await port.close?.();
+        } catch {
+          // Ignore ports this page does not currently own.
+        }
+      }
+    } catch {
+      // Ignore browser serial cleanup failures; DB unlock still provides the main guardrail.
+    }
+  }, []);
+
   const loadServerProject = useCallback(async (project: DiyProjectRecord) => {
     const config = (project.config ?? {}) as Record<string, unknown>;
     const rawBoardId =
@@ -894,34 +1026,12 @@ export default function DIYBuilderPage() {
       typeof config.project_name === "string" && config.project_name.trim()
         ? config.project_name
         : project.name;
-    const nextBuildKey = buildConfigKey({
-      boardId: nextBoard.id,
-      projectName: nextProjectName,
-      roomId:
-        typeof project.room_id === "number"
-          ? project.room_id
-          : typeof config.room_id === "number"
-            ? config.room_id
-            : null,
-      pins: nextPins,
-      wifiSsid: nextWifiSsid,
-      wifiPassword: nextWifiPassword,
-      cpuMhz: nextCpuMhz,
-      flashSize: nextFlashSize,
-      psramSize: nextPsramSize,
-    });
     const savedBuildKey =
       typeof config.latest_build_config_key === "string" ? config.latest_build_config_key : null;
     const savedBuildJobId =
-      typeof config.latest_build_job_id === "string" && savedBuildKey === nextBuildKey
-        ? config.latest_build_job_id
-        : null;
-    const savedFlashSource =
-      config.flash_source === "demo" || config.flash_source === "upload" || config.flash_source === "server"
-        ? config.flash_source
-        : "server";
-    const nextFlashSource =
-      savedFlashSource === "demo" && !nextBoard.demoFirmware ? "server" : savedFlashSource;
+      typeof config.latest_build_job_id === "string" ? config.latest_build_job_id : null;
+    const nextFlashSource = normalizeFlashSource(config.flash_source, Boolean(nextBoard.demoFirmware));
+    const shouldRewriteFlashSource = nextFlashSource !== config.flash_source;
 
     setProjectId(project.id);
     setProjectName(nextProjectName);
@@ -953,7 +1063,7 @@ export default function DIYBuilderPage() {
       status: savedBuildJobId ? "queued" : "idle",
       configKey: savedBuildJobId ? savedBuildKey : null,
     });
-    lastSavedPayloadRef.current = JSON.stringify(
+    const normalizedPayload = JSON.stringify(
       createProjectPayload({
         board: nextBoard,
         projectName: nextProjectName,
@@ -978,6 +1088,7 @@ export default function DIYBuilderPage() {
         psramSize: nextPsramSize,
       }),
     );
+    lastSavedPayloadRef.current = shouldRewriteFlashSource ? null : normalizedPayload;
     setProjectSyncState("saved");
     setProjectSyncMessage(`Loaded saved config ${project.name}.`);
     setBoardConfigsError("");
@@ -1011,6 +1122,16 @@ export default function DIYBuilderPage() {
   loadServerProjectRef.current = loadServerProject;
 
   useEffect(() => {
+    if (!isAdmin) {
+      return;
+    }
+
+    void refreshFirmwareNetworkTargets().catch((error) => {
+      console.warn("Failed to resolve firmware network targets:", error);
+    });
+  }, [isAdmin, refreshFirmwareNetworkTargets]);
+
+  useEffect(() => {
     let cancelled = false;
 
     async function hydrateDraft() {
@@ -1030,6 +1151,7 @@ export default function DIYBuilderPage() {
         return;
       }
 
+      setBrowserIsSecureContext(window.isSecureContext);
       setBrowserSupportsSerial("serial" in navigator);
 
       const savedDraft = restoreDraftSnapshot(window.localStorage.getItem(DRAFT_STORAGE_KEY));
@@ -1053,11 +1175,7 @@ export default function DIYBuilderPage() {
         setFlashSize(typeof savedDraft.flashSize === "string" ? savedDraft.flashSize : null);
         setPsramSize(typeof savedDraft.psramSize === "string" ? savedDraft.psramSize : null);
         setPins(Array.isArray(savedDraft.pins) ? sanitizePins(savedDraft.pins, MODE_METADATA) : []);
-        setFlashSource(
-          savedDraft.flashSource === "demo" && !nextBoard.demoFirmware
-            ? "server"
-            : savedDraft.flashSource ?? "server",
-        );
+        setFlashSource(normalizeFlashSource(savedDraft.flashSource, Boolean(nextBoard.demoFirmware)));
         setSerialPort(savedDraft.serialPort || DEFAULT_SERIAL_PORT);
         setWifiSsid(savedDraft.wifiSsid || "");
         setWifiPassword(savedDraft.wifiPassword || "");
@@ -1212,13 +1330,11 @@ export default function DIYBuilderPage() {
 
   useEffect(() => {
     let manifestObjectUrl: string | null = null;
-    const uploadObjectUrls: string[] = [];
 
     const manifest = buildFlashManifest({
       board,
       projectName,
       flashSource,
-      uploadState,
       serverArtifactUrls: serverBuildIsStale
         ? null
         : {
@@ -1226,11 +1342,6 @@ export default function DIYBuilderPage() {
             bootloader: serverBuild.bootloaderUrl,
             partitions: serverBuild.partitionsUrl,
           },
-      createFileUrl: (file) => {
-        const url = URL.createObjectURL(file);
-        uploadObjectUrls.push(url);
-        return url;
-      },
     });
 
     if (manifest) {
@@ -1246,7 +1357,6 @@ export default function DIYBuilderPage() {
       if (manifestObjectUrl) {
         URL.revokeObjectURL(manifestObjectUrl);
       }
-      uploadObjectUrls.forEach((url) => URL.revokeObjectURL(url));
     };
   }, [
     board,
@@ -1256,7 +1366,6 @@ export default function DIYBuilderPage() {
     serverBuild.bootloaderUrl,
     serverBuild.partitionsUrl,
     serverBuildIsStale,
-    uploadState,
   ]);
 
   useEffect(() => {
@@ -1392,6 +1501,57 @@ export default function DIYBuilderPage() {
     };
   }, [draftLoaded, projectHydrated, refreshSerialStatus, serialPort]);
 
+  const releaseSerialLock = useCallback(
+    async (options?: { silent?: boolean; nextMessage?: string; resetFlasher?: boolean }) => {
+      if (!serialPort.trim()) {
+        return;
+      }
+
+      const token = getToken();
+      if (!token) {
+        return;
+      }
+
+      if (!options?.silent) {
+        setSerialBusy(true);
+      }
+      setSerialError(null);
+
+      try {
+        const response = await fetch(
+          `${API_URL}/serial/unlock?port=${encodeURIComponent(serialPort.trim())}`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(await parseApiError(response));
+        }
+
+        await cleanupExistingWebFlasherSessions();
+
+        setSerialLocked(false);
+        setSerialJobId(null);
+        setSerialMessage(
+          options?.nextMessage ?? `Released ${serialPort.trim()}. The browser flasher can claim it now.`,
+        );
+
+        if (options?.resetFlasher !== false) {
+          setWebFlasherResetKey((previous) => previous + 1);
+        }
+      } catch (error) {
+        setSerialError(getErrorMessage(error));
+      } finally {
+        if (!options?.silent) {
+          setSerialBusy(false);
+        }
+      }
+    },
+    [cleanupExistingWebFlasherSessions, serialPort],
+  );
+
   useEffect(() => {
     if (
       serverBuild.status !== "artifact_ready" ||
@@ -1402,12 +1562,37 @@ export default function DIYBuilderPage() {
       return;
     }
 
+    const freeMessage = `Build ${shortId(serverBuild.jobId)} is ready. Port ${serialPort.trim()} is free for browser flashing.`;
     serialArtifactRefreshRef.current = serverBuild.jobId;
     void refreshSerialStatus({
       silent: true,
-      freeMessage: `Build ${shortId(serverBuild.jobId)} is ready. Port ${serialPort.trim()} is free for browser flashing.`,
+      freeMessage,
     });
   }, [refreshSerialStatus, serialPort, serverBuild.jobId, serverBuild.status]);
+
+  useEffect(() => {
+    if (
+      serverBuild.status !== "artifact_ready" ||
+      !serverBuild.jobId ||
+      artifactSerialReleaseRef.current === serverBuild.jobId ||
+      !serialPort.trim()
+    ) {
+      return;
+    }
+
+    const freeMessage = `Build ${shortId(serverBuild.jobId)} is ready. Port ${serialPort.trim()} is free for browser flashing.`;
+    artifactSerialReleaseRef.current = serverBuild.jobId;
+    void (async () => {
+      await releaseSerialLock({
+        silent: true,
+        nextMessage: freeMessage,
+      });
+      await refreshSerialStatus({
+        silent: true,
+        freeMessage,
+      });
+    })();
+  }, [refreshSerialStatus, releaseSerialLock, serialPort, serverBuild.jobId, serverBuild.status]);
 
   const generateConfig = async () => {
     setConfigBusy(true);
@@ -1487,11 +1672,28 @@ export default function DIYBuilderPage() {
     }));
 
     try {
+      const latestNetworkTarget = await refreshFirmwareNetworkTargets().catch(() => null);
+      const buildTargetKey = latestNetworkTarget?.target_key ?? currentFirmwareTargetKey;
+      const nextBuildConfigKey = buildConfigKey({
+        boardId: board.id,
+        projectName,
+        roomId,
+        pins,
+        wifiSsid,
+        wifiPassword,
+        cpuMhz,
+        flashSize,
+        psramSize,
+        networkTargetKey: buildTargetKey,
+      });
       const response = await fetch(
         `${API_URL}/diy/build?project_id=${encodeURIComponent(ensuredProjectId)}`,
         {
           method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
+          headers: {
+            Authorization: `Bearer ${token}`,
+            ...buildProvisioningHeaders(),
+          },
         },
       );
 
@@ -1505,7 +1707,7 @@ export default function DIYBuilderPage() {
         jobId: job.id,
         status: job.status,
         warnings: validation.warnings,
-        configKey: currentBuildConfigKey,
+        configKey: nextBuildConfigKey,
         updatedAt: job.updated_at,
       });
       setProjectSyncState("saving");
@@ -1513,7 +1715,7 @@ export default function DIYBuilderPage() {
       setSerialMessage(
         `Build ${shortId(job.id)} queued. Port ${serialPort.trim() || DEFAULT_SERIAL_PORT} will be released automatically when the artifact is ready.`,
       );
-      await refreshBuildJob(job.id, currentBuildConfigKey);
+      await refreshBuildJob(job.id, nextBuildConfigKey);
       await persistProject(
         JSON.stringify(
           createProjectPayload({
@@ -1524,7 +1726,7 @@ export default function DIYBuilderPage() {
             pins,
             serialPort,
             buildJobId: job.id,
-            buildKey: currentBuildConfigKey,
+            buildKey: nextBuildConfigKey,
             wifiSsid,
             wifiPassword,
             cpuMhz,
@@ -1559,40 +1761,20 @@ export default function DIYBuilderPage() {
     link.click();
   };
 
-  const releaseSerialLock = async () => {
-    if (!serialPort.trim()) {
+  const openWebFlasher = () => {
+    if (flashLockedReason) {
       return;
     }
 
-    const token = getToken();
-    if (!token) {
+    const installButton = webFlasherElementRef.current;
+    const nativeButton = installButton?.shadowRoot?.querySelector("button");
+    if (!(nativeButton instanceof HTMLButtonElement)) {
+      setSerialError("Web flasher is still initializing. Refresh the page and try again.");
       return;
     }
 
-    setSerialBusy(true);
     setSerialError(null);
-
-    try {
-      const response = await fetch(
-        `${API_URL}/serial/unlock?port=${encodeURIComponent(serialPort.trim())}`,
-        {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-
-      if (!response.ok) {
-        throw new Error(await parseApiError(response));
-      }
-
-      setSerialLocked(false);
-      setSerialJobId(null);
-      setSerialMessage(`Released ${serialPort.trim()}. The browser flasher can claim it now.`);
-    } catch (error) {
-      setSerialError(getErrorMessage(error));
-    } finally {
-      setSerialBusy(false);
-    }
+    nativeButton.click();
   };
 
   const resetDraft = () => {
@@ -1611,11 +1793,6 @@ export default function DIYBuilderPage() {
     setPins([]);
     setSelectedPinId(null);
     setFlashSource("server");
-    setUploadState({
-      bootloader: null,
-      partitions: null,
-      firmware: null,
-    });
     setServerBuild(createEmptyBuildState());
     setSerialPort(DEFAULT_SERIAL_PORT);
     setSerialLocked(false);
@@ -1633,6 +1810,7 @@ export default function DIYBuilderPage() {
 
   const flashLockedReason = getFlashLockedReason({
     validation,
+    browserIsSecureContext,
     browserSupportsSerial,
     manifestUrl,
     flashSource,
@@ -1855,8 +2033,6 @@ export default function DIYBuilderPage() {
             projectName={projectName}
             flashSource={flashSource}
             setFlashSource={setFlashSource}
-            uploadState={uploadState}
-            setUploadState={setUploadState}
             eraseFirst={eraseFirst}
             setEraseFirst={setEraseFirst}
             manifestUrl={manifestUrl}
@@ -1868,6 +2044,9 @@ export default function DIYBuilderPage() {
             projectSyncState={projectSyncState}
             projectSyncMessage={projectSyncMessage}
             serverBuild={serverBuild}
+            firmwareTargetHost={currentFirmwareTargetHost}
+            firmwareTargetMqttBroker={currentFirmwareTargetMqttBroker}
+            firmwareTargetMqttPort={currentFirmwareTargetMqttPort}
             buildBusy={buildBusy}
             hasActiveBuild={hasActiveServerBuild}
             onTriggerServerBuild={triggerServerBuild}
@@ -1880,7 +2059,12 @@ export default function DIYBuilderPage() {
             serialJobId={serialJobId}
             serialMessage={serialMessage}
             serialError={serialError}
-            onReleaseSerialLock={releaseSerialLock}
+            webFlasherResetKey={webFlasherResetKey}
+            onSetWebFlasherElement={(element) => {
+              webFlasherElementRef.current = element;
+            }}
+            onOpenWebFlasher={openWebFlasher}
+            onReleaseSerialLock={() => releaseSerialLock()}
             onRefreshSerialStatus={() => refreshSerialStatus()}
             onLogPanelRef={(el) => { logPanelRef.current = el; }}
             onBack={() => setCurrentStep(4)}
@@ -1972,23 +2156,18 @@ function buildFlashManifest({
   board,
   projectName,
   flashSource,
-  uploadState,
   serverArtifactUrls,
-  createFileUrl,
 }: {
   board: BoardProfile;
   projectName: string;
   flashSource: FlashSource;
-  uploadState: FirmwareUploadState;
   serverArtifactUrls: {
     firmware: string | null;
     bootloader: string | null;
     partitions: string | null;
   } | null;
-  createFileUrl: (file: File) => string;
 }): FlashManifest | null {
   const singleBinaryOffset = board.family === "ESP8266" ? 0 : APPLICATION_OFFSET;
-  const requiresFullBundle = board.family !== "ESP8266";
 
   if (flashSource === "server") {
     if (!serverArtifactUrls?.firmware) {
@@ -2036,35 +2215,13 @@ function buildFlashManifest({
     };
   }
 
-  if (!uploadState.firmware) {
-    return null;
-  }
-
-  if (requiresFullBundle && (!uploadState.bootloader || !uploadState.partitions)) {
-    return null;
-  }
-
-  return {
-    name: `${projectName || board.name} (${board.name})`,
-    version: "upload-bundle",
-    builds: [
-      {
-        chipFamily: board.family,
-        parts: requiresFullBundle
-          ? [
-              { path: createFileUrl(uploadState.bootloader as File), offset: 0 },
-              { path: createFileUrl(uploadState.partitions as File), offset: 32768 },
-              { path: createFileUrl(uploadState.firmware), offset: APPLICATION_OFFSET },
-            ]
-          : [{ path: createFileUrl(uploadState.firmware), offset: singleBinaryOffset }],
-      },
-    ],
-  };
+  return null;
 }
 
 function getFlashLockedReason({
   validation,
   browserSupportsSerial,
+  browserIsSecureContext,
   manifestUrl,
   flashSource,
   board,
@@ -2078,6 +2235,7 @@ function getFlashLockedReason({
 }: {
   validation: ValidationResult;
   browserSupportsSerial: boolean;
+  browserIsSecureContext: boolean;
   manifestUrl: string | null;
   flashSource: FlashSource;
   board: BoardProfile;
@@ -2091,6 +2249,10 @@ function getFlashLockedReason({
 }) {
   if (validation.errors.length > 0) {
     return "Fix the blocking GPIO validation errors before the web flasher becomes available.";
+  }
+
+  if (!browserIsSecureContext) {
+    return "Web Serial requires a secure context. This frontend is HTTPS-only, so reopen the page on its https:// origin before using the browser flasher.";
   }
 
   if (!browserSupportsSerial) {
@@ -2108,8 +2270,8 @@ function getFlashLockedReason({
 
     if (eraseFirst && !serverBuildHasFullBundle) {
       return board.family === "ESP8266"
-        ? "ESP8266 server builds expose a single firmware.bin only. Leave 'erase all flash' disabled or provide a custom full bundle."
-        : "Server builds currently expose the application binary only. Turn off 'erase all flash' or switch to a full bundled/upload bundle.";
+        ? "ESP8266 server builds expose a single firmware.bin only. Leave 'erase all flash' disabled."
+        : "Server builds currently expose the application binary only. Turn off 'erase all flash'.";
     }
 
     if (serverBuildStatus !== "artifact_ready") {
@@ -2119,12 +2281,8 @@ function getFlashLockedReason({
 
   if (!manifestUrl) {
     return flashSource === "demo"
-      ? `No demo manifest is available for ${board.name}. Switch to "Server build" or "Upload custom build".`
-      : flashSource === "server"
-        ? "The server build artifact is not ready yet."
-        : board.family === "ESP8266"
-          ? "Upload at least the firmware binary to build an ESP8266 flasher manifest."
-          : "Upload bootloader, partitions, and firmware binaries to build a flasher manifest.";
+      ? `No demo manifest is available for ${board.name}. Switch to "Server build".`
+      : "The server build artifact is not ready yet.";
   }
 
   if (serialLocked) {

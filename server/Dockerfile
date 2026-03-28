@@ -9,7 +9,6 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV BUILD_BASE_DIR=/data/builds
-ENV LOCAL_DATABASE_PATH=/data/db.sqlite3
 ENV PLATFORMIO_CORE_DIR=/data/.platformio
 
 # Install system dependencies
@@ -26,7 +25,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Create durable runtime directories for SQLite, PlatformIO cache, logs, and build artifacts
+# Create durable runtime directories for PlatformIO cache, logs, and build artifacts
 RUN mkdir -p /data/builds /data/.platformio /app/static /app/firmwares
 
 FROM base AS test

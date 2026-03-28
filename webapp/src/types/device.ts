@@ -32,6 +32,30 @@ export interface PinConfig {
     } | null;
 }
 
+export interface DeviceStatePin {
+    pin: number;
+    mode?: string;
+    label?: string;
+    value?: number | boolean;
+    brightness?: number;
+    active_level?: 0 | 1;
+    trend?: string;
+    unit?: string;
+}
+
+export interface DeviceStateSnapshot {
+    kind?: string;
+    device_id?: string;
+    pin?: number;
+    value?: number | boolean;
+    applied?: boolean;
+    brightness?: number;
+    ip_address?: string;
+    trend?: string;
+    unit?: string;
+    pins?: DeviceStatePin[];
+}
+
 export interface DeviceConfig extends DeviceAvailabilitySummary {
     mac_address: string;
     name: string;
@@ -46,16 +70,7 @@ export interface DeviceConfig extends DeviceAvailabilitySummary {
     created_at?: string;
     last_seen?: string;
     pairing_requested_at?: string | null;
-    last_state?: {
-        kind?: string;
-        pin?: number;
-        value?: number;
-        applied?: boolean;
-        brightness?: number;
-        ip_address?: string;
-        trend?: string;
-        unit?: string;
-    } | null;
+    last_state?: DeviceStateSnapshot | null;
     last_delivery?: {
         status: "acknowledged" | "failed";
         command_id?: string;
