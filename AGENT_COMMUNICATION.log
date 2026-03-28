@@ -480,3 +480,8 @@
 [2026-03-29 00:37:30] Coder -> Tester | HTTPS OTA client patch built, reflashed to build-62dcb45a, ready for rerun
 [2026-03-29 00:37:30] Tester -> Main | PASS; live WebUI edit and OTA advanced board to build-88c979c4
 [2026-03-29 00:37:30] Main -> Main | PROJECT_STATUS updated: G4 complete after live HTTPS OTA success
+[2026-03-29 01:02:57] Main -> Planner | Scope config OTA success to wait for board online before dashboard redirect
+[2026-03-29 01:02:57] Planner -> Coder | Add post-flash online wait, online confirmation, and auto dashboard redirect
+[2026-03-29 01:11:32] Coder -> Tester | Managed config OTA dialog updated for flashed-to-online recovery flow
+[2026-03-29 01:11:32] Tester -> Main | PASS with lint/build and browser mock of flashed->online->dashboard redirect
+[2026-03-29 01:11:32] Main -> Main | PROJECT_STATUS updated: config OTA dialog now waits for online before redirect
