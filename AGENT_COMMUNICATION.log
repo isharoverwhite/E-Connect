@@ -434,3 +434,49 @@
 [2026-03-28 19:13:14] Main -> Planner | Scope AGENTS workflow update for one-commit-per-feature and tagged commit messages
 [2026-03-28 19:13:14] Planner -> Coder | Add Git commit policy section, keep push opt-in, and codify approved tag format
 [2026-03-28 19:14:15] Coder -> Main | AGENTS commit policy update applied and reviewed for numbering and workflow fit
+[2026-03-28 19:30:46] Antigravity -> Codex | Implement secure OTA via HMAC MD5 signature, verification failed due to ERR_CERT_AUTHORITY_INVALID, handing back for G4 decision
+[2026-03-28 19:34:42] Main -> Planner | Scope secure OTA G4 test via WebUI, network/console traces, and ESP32-C3 serial
+[2026-03-28 19:34:42] Planner -> Main | In-scope G4 verification locked; design unchanged, collect browser and serial evidence
+[2026-03-28 19:34:42] Main -> Tester | Execute managed-device save/build/OTA flow and capture HMAC/signature logs
+[2026-03-28 19:36:02] Tester -> Debug | Existing local backend and HTTPS webapp were hung; replace stale runtimes before G4 verify
+[2026-03-28 19:36:02] Debug -> Main | Stale uvicorn/next-dev processes blocked health and HTTPS wrapper; clean restart required
+[2026-03-28 19:36:39] Main -> Main | Local port 8000 remained blocked after stale-process cleanup; using backend 8001 with web proxy override for G4
+[2026-03-28 19:43:59] Tester -> Main | FAIL; UI/network verified, but board stayed offline on Wi-Fi so no discovery or OTA receive path
+[2026-03-28 19:43:59] Main -> Main | PROJECT_STATUS updated with G4 blocker: board offline, device not approved, OTA verify incomplete
+[2026-03-28 19:52:11] Debug -> Coder | ESP32 build failed on HTTPUpdate.setMD5; switch to supported Update.setMD5 API
+[2026-03-28 19:56:57] Debug -> Coder | Add temporary Wi-Fi scan detail logging to identify reachable 2.4GHz SSID for live board
+[2026-03-28 20:02:25] Main -> Planner | Scope secure re-pair recovery via DIY build, USB flash, and approval before OTA verify
+[2026-03-28 20:02:25] Planner -> Main | Re-pair recovery is in-scope; design unchanged, rebuild repair project and confirm pairing
+[2026-03-28 20:02:25] Main -> Tester | Execute repair build/flash, validate pairing, then resume managed OTA G4 flow
+[2026-03-28 20:10:17] Tester -> Debug | Clean reflash still hits WPA handshake timeout on parkytown before pairing starts
+[2026-03-28 20:10:17] Debug -> Coder | Add broadcast Wi-Fi fallback after locked BSSID connect failure on ESP32-C3
+[2026-03-28 20:13:06] Tester -> Main | FAIL; parkytown still times out after erase_flash and broadcast fallback, no pairing queued
+[2026-03-28 20:13:06] Main -> Main | PROJECT_STATUS updated: OTA verify blocked by AP/environment before board pairing
+[2026-03-28 22:03:08] Tester -> Main | Host Wi-Fi reconnect brought board back as approved once, but serial still flaps auth/timeout
+[2026-03-28 22:03:08] Main -> Main | PROJECT_STATUS updated: board regained transient approval, still offline for OTA verify
+[2026-03-28 22:07:18] Main -> Planner | Scope firmware Wi-Fi compatibility rework for broad 2.4 GHz AP interoperability
+[2026-03-28 22:07:18] Planner -> Coder | Replace ESP32 connect strategy with compatibility-first retries and relax min security
+[2026-03-28 22:11:10] Coder -> Tester | ESP32 Wi-Fi compatibility patch built and flashed for live parkytown validation
+[2026-03-28 22:11:10] Tester -> Main | FAIL; broadcast, channel, and BSSID retries still hit AUTH_EXPIRE on parkytown
+[2026-03-28 22:52:50] Main -> Tester | Re-run live parkytown/thisismyserver validation on flashed compatibility firmware
+[2026-03-28 22:52:50] Tester -> Main | FAIL; fresh reboot still hits AUTH_EXPIRE on all Wi-Fi retry strategies, device stays offline
+[2026-03-28 23:45:24] Main -> Planner | Scope full WebUI config, flash, managed edit, and OTA rerun with live traces
+[2026-03-28 23:45:24] Planner -> Main | Full validation flow is in-scope; reuse current repair project unless UI requires a fresh draft
+[2026-03-28 23:45:24] Main -> Tester | Execute WebUI build/flash/edit/OTA flow with browser, DB, and serial evidence
+[2026-03-28 23:52:18] Tester -> Main | FAIL; WebUI save/build/OTA command passed, but device kept old firmware and flash_failed
+[2026-03-28 23:52:18] Main -> Main | PROJECT_STATUS updated: OTA dispatch works, device-side handshake blocks apply/verify
+[2026-03-28 23:54:40] Main -> Tester | USB reflash stable build with live serial to restore board online before pin edits
+[2026-03-28 23:58:35] Tester -> Main | PASS partial; USB flash restored board online on build-1f34c1a1, handshake parse bug remains
+[2026-03-28 23:56:52] Main -> Tester | Prioritize USB flash with live serial to restore online board before pin edits
+[2026-03-29 00:04:22] Main -> Planner | Scope MQTT register/ack parse failure blocking secure handshake re-pair
+[2026-03-29 00:04:22] Planner -> Coder | Replace fixed 512-byte MQTT ack parser with payload-sized JSON parsing
+[2026-03-29 00:07:29] Coder -> Tester | Firmware MQTT ack parser fix and ESP8266 MD5 API correction ready for verify
+[2026-03-29 00:07:29] Tester -> Main | PASS partial; pytest plus ESP32/ESP8266 builds pass, live board rerun still pending
+[2026-03-29 00:07:29] Main -> Main | PROJECT_STATUS updated: parser root cause fixed locally, hardware confirmation pending
+[2026-03-29 00:17:11] Main -> Tester | Flash repaired board, then rerun WebUI edit and OTA on live hardware
+[2026-03-29 00:17:11] Tester -> Debug | Live hardware verify starting with USB erase/flash of build-8411a873
+[2026-03-29 00:17:11] Debug -> Main | Handshake fix passed; OTA failed because WebUI emitted 127.0.0.1 download URL, board got connection refused
+[2026-03-29 00:37:30] Debug -> Coder | OTA HTTPS path uses plain WiFiClient; switch to secure client for https URLs
+[2026-03-29 00:37:30] Coder -> Tester | HTTPS OTA client patch built, reflashed to build-62dcb45a, ready for rerun
+[2026-03-29 00:37:30] Tester -> Main | PASS; live WebUI edit and OTA advanced board to build-88c979c4
+[2026-03-29 00:37:30] Main -> Main | PROJECT_STATUS updated: G4 complete after live HTTPS OTA success

@@ -761,6 +761,69 @@ def test_mqtt_register_firmware_network_mismatch_requires_manual_reflash():
     assert ack_payload["runtime_network"]["mqtt_broker"] == "mqtt-lan.local"
 
 
+def test_mqtt_register_success_ack_can_exceed_legacy_512_byte_parser_budget():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    _user, _room, project, device = create_test_data(db)
+
+    mgr = MQTTClientManager()
+    mgr.publish_json = MagicMock(return_value=True)
+    long_host = "smart-home-lab-bridge-bridge-bridge-bridge-bridge-bridge-gateway.local"
+    long_mqtt_broker = f"mqtt-{long_host}"
+    long_api_base = f"https://{long_host}:3000/api/v1"
+    mgr.set_runtime_network_state(
+        {
+            "source": "startup_auto",
+            "targets": {
+                "advertised_host": long_host,
+                "api_base_url": long_api_base,
+                "mqtt_broker": long_mqtt_broker,
+                "mqtt_port": 2883,
+                "target_key": f"{long_host}|{long_api_base}|{long_mqtt_broker}|2883",
+            },
+            "error": None,
+        }
+    )
+
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+    payload = json.dumps(
+        {
+            "device_id": device.device_id,
+            "project_id": project.id,
+            "secret_key": "test-secret",
+            "mac_address": device.mac_address,
+            "name": device.name,
+            "mode": "no-code",
+            "firmware_version": "build-ack51201",
+            "pins": [],
+            "firmware_network": {
+                "api_base_url": long_api_base,
+                "mqtt_broker": long_mqtt_broker,
+                "mqtt_port": 2883,
+            },
+        }
+    )
+
+    with patch("app.mqtt.SessionLocal", return_value=db_mock), patch(
+        "app.services.device_registration.verify_project_secret",
+        return_value=True,
+    ):
+        ack_payload = mgr.process_registration_message(device.device_id, payload)
+
+    serialized_ack = json.dumps(ack_payload)
+    mgr.publish_json.assert_called_once()
+    topic, published_payload = mgr.publish_json.call_args.args[:2]
+    assert topic == mgr.registration_ack_topic(device.device_id)
+    assert ack_payload == published_payload
+    assert ack_payload["status"] == "ok"
+    assert ack_payload["secret_verified"] is True
+    assert ack_payload["runtime_network"]["advertised_host"] == long_host
+    assert len(serialized_ack) > 512
+
+
 def test_mqtt_reconcile_ota_success():
     from app.mqtt import MQTTClientManager
     import json

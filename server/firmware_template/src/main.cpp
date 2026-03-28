@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <MD5Builder.h>
 #include <PubSubClient.h>
 #include <Wire.h>
 #include "board_support.h"
@@ -95,6 +96,7 @@ int resolvePhysicalLevel(const PinRuntimeState &pinState, int logicalValue);
 WifiTarget scanWifiTarget();
 void logVisibleWifiTargets(const WifiTarget &target);
 void formatBssid(const uint8_t *bssid, char *buffer, size_t bufferSize);
+const char *wifiPassphrase();
 template <typename TDocument>
 void appendEmbeddedNetworkTargets(TDocument &doc);
 bool runtimeNetworkDiffers(JsonVariantConst runtimeNetwork);
@@ -187,30 +189,61 @@ bool connectToWiFi() {
   const WifiTarget target = scanWifiTarget();
   logVisibleWifiTargets(target);
 
-  Serial.printf("Connecting to Wi-Fi SSID: %s ", WIFI_SSID);
-  if (target.found) {
-    char bssidBuffer[18];
-    formatBssid(target.bssid, bssidBuffer, sizeof(bssidBuffer));
-    Serial.printf(
-        "(locked channel=%d bssid=%s auth=%s rssi=%d) ",
-        target.channel,
-        bssidBuffer,
-        boardAuthModeName(target.authMode),
-        target.rssi);
-    WiFi.begin(WIFI_SSID, WIFI_PASS, target.channel, target.bssid, true);
-  } else {
+  auto awaitWifiConnection = []() {
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < WIFI_RETRY_LIMIT) {
+      delay(500);
+      Serial.print(".");
+      attempts++;
+    }
+    return WiFi.status() == WL_CONNECTED;
+  };
+
+  auto beginWifiConnection = [&](bool useLockedTarget, bool useChannelHint) {
+    Serial.printf("Connecting to Wi-Fi SSID: %s ", WIFI_SSID);
+    if (useLockedTarget && target.found) {
+      char bssidBuffer[18];
+      formatBssid(target.bssid, bssidBuffer, sizeof(bssidBuffer));
+      Serial.printf(
+          "(locked channel=%d bssid=%s auth=%s rssi=%d) ",
+          target.channel,
+          bssidBuffer,
+          boardAuthModeName(target.authMode),
+          target.rssi);
+      WiFi.begin(WIFI_SSID, wifiPassphrase(), target.channel, target.bssid, true);
+      return awaitWifiConnection();
+    }
+
+    if (useChannelHint && target.found) {
+      Serial.printf("(channel-hint=%d) ", target.channel);
+      WiFi.begin(WIFI_SSID, wifiPassphrase(), target.channel);
+      return awaitWifiConnection();
+    }
+
     Serial.print("(broadcast lookup) ");
-    WiFi.begin(WIFI_SSID, WIFI_PASS);
-  }
+    WiFi.begin(WIFI_SSID, wifiPassphrase());
+    return awaitWifiConnection();
+  };
 
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < WIFI_RETRY_LIMIT) {
+  bool connected = beginWifiConnection(false, false);
+  if (!connected && target.found) {
+    Serial.println(" failed");
+    Serial.printf("Wi-Fi status code: %d\n", static_cast<int>(WiFi.status()));
+    Serial.println("Generic connect failed. Retrying with matched channel hint.");
+    WiFi.disconnect(false, true);
     delay(500);
-    Serial.print(".");
-    attempts++;
+    connected = beginWifiConnection(false, true);
+  }
+  if (!connected && target.found && target.candidateCount == 1) {
+    Serial.println(" failed");
+    Serial.printf("Wi-Fi status code: %d\n", static_cast<int>(WiFi.status()));
+    Serial.println("Channel-hint connect failed. Retrying with exact BSSID lock.");
+    WiFi.disconnect(false, true);
+    delay(500);
+    connected = beginWifiConnection(true, true);
   }
 
-  if (WiFi.status() == WL_CONNECTED) {
+  if (connected) {
     Serial.println(" connected");
     Serial.printf("IP Address: %s\n", WiFi.localIP().toString().c_str());
     return true;
@@ -224,6 +257,7 @@ bool connectToWiFi() {
 WifiTarget scanWifiTarget() {
   WifiTarget target = {
       false,
+      0,
       0,
       -127,
       defaultBoardAuthMode(),
@@ -241,6 +275,7 @@ WifiTarget scanWifiTarget() {
       continue;
     }
 
+    target.candidateCount++;
     const int32_t rssi = WiFi.RSSI(index);
     if (target.found && rssi <= target.rssi) {
       continue;
@@ -264,18 +299,24 @@ void logVisibleWifiTargets(const WifiTarget &target) {
   }
 
   if (!target.found) {
+    Serial.println("Target SSID not found in scan. Falling back to broadcast lookup.");
     return;
   }
 
   char bssidBuffer[18];
   formatBssid(target.bssid, bssidBuffer, sizeof(bssidBuffer));
   Serial.printf(
-      "Matched AP: ssid=%s channel=%d rssi=%d auth=%s bssid=%s\n",
+      "Matched AP: ssid=%s candidates=%d channel=%d rssi=%d auth=%s bssid=%s\n",
       WIFI_SSID,
+      target.candidateCount,
       target.channel,
       target.rssi,
       boardAuthModeName(target.authMode),
       bssidBuffer);
+}
+
+const char *wifiPassphrase() {
+  return strlen(WIFI_PASS) > 0 ? WIFI_PASS : nullptr;
 }
 
 void formatBssid(const uint8_t *bssid, char *buffer, size_t bufferSize) {
@@ -446,15 +487,18 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
   Serial.print("MQTT message received on topic: ");
   Serial.println(topic);
 
-  String message = "";
-  for (unsigned int index = 0; index < length; index++) {
-    message += static_cast<char>(payload[index]);
-  }
-
-  StaticJsonDocument<512> doc;
-  const DeserializationError error = deserializeJson(doc, message);
+  const size_t jsonCapacity = static_cast<size_t>(length) + 768;
+  DynamicJsonDocument doc(jsonCapacity);
+  const DeserializationError error = deserializeJson(
+      doc,
+      reinterpret_cast<const char *>(payload),
+      length);
   if (error) {
-    Serial.println("Failed to parse MQTT JSON.");
+    Serial.printf(
+        "Failed to parse MQTT JSON (len=%u, capacity=%u): %s\n",
+        length,
+        static_cast<unsigned int>(jsonCapacity),
+        error.c_str());
     return;
   }
 
@@ -542,9 +586,32 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
     if (String(doc["action"] | "") == "ota") {
       const String url = doc["url"] | "";
       const String jobId = doc["job_id"] | "";
+      const String expectedMd5 = doc["md5"] | "";
+      const String expectedSignature = doc["signature"] | "";
+
       if (url.length() > 0) {
         Serial.printf("Received OTA command for URL: %s\n", url.c_str());
-        const OtaUpdateResult otaResult = runBoardOtaUpdate(url);
+
+        bool signatureValid = false;
+        if (expectedMd5.length() > 0 && expectedSignature.length() > 0) {
+          MD5Builder md5;
+          md5.begin();
+          md5.add(expectedMd5 + String(ECONNECT_SECRET_KEY));
+          md5.calculate();
+          String calculatedSignature = md5.toString();
+          signatureValid = (calculatedSignature == expectedSignature);
+        }
+
+        OtaUpdateResult otaResult;
+
+        if (!signatureValid) {
+          Serial.println("OTA Error: Invalid signature or missing MD5. Update rejected.");
+          otaResult.status = "failed";
+          otaResult.message = "Invalid OTA signature";
+          otaResult.shouldRestart = false;
+        } else {
+          otaResult = runBoardOtaUpdate(url, expectedMd5);
+        }
 
         StaticJsonDocument<512> statusDoc;
         statusDoc["event"] = "ota_status";
