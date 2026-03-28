@@ -53,6 +53,17 @@
   - The browser flasher becomes available only when the artifact/manifest is ready and the configured serial port is free; if any serial session still holds the port, the screen must show a release-first blocking message.
   - When Web Serial is unavailable because the page is not in a secure context, the lock message must explain that only the HTTPS origin is supported for the frontend and plain HTTP is intentionally blocked.
 
+## Managed Device Reconfiguration
+- **`/devices/[id]/config`**:
+  - Only `admin` users may open the managed-device reconfiguration screen.
+  - The screen must load the linked DIY project board profile and the device's current persisted GPIO mapping, then let the admin edit pins on that same board.
+  - The screen must surface inline `validation error`, `warning`, and `success` feedback for pin edits instead of relying on browser alerts alone.
+  - Saving a changed pin map is safety-sensitive because an invalid wiring or GPIO role can damage hardware; the save action must open a confirmation modal that requires the password of the signed-in account before the backend accepts the change.
+  - A wrong or missing password must keep the device config unchanged and show an inline error inside that confirmation modal.
+  - A successful confirmation must persist the updated pin mapping to the managed DIY project and the linked device record, then start a new firmware rebuild for that device.
+  - The OTA dialog must stay blocked until the rebuild reaches `artifact_ready`, then allow the admin to send the OTA command for that exact build job.
+  - The OTA dialog must show `building`, `artifact_ready`, `flashing`, `flashed`, and `flash_failed` states, plus a clear close path when the build itself fails.
+
 ## Dashboard And Discovery
 - **Dashboard notifications**:
   - The pairing notification card only appears when the server has at least one active board-initiated pairing request.

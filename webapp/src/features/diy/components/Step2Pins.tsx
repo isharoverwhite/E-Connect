@@ -19,6 +19,9 @@ export interface Step2PinsProps {
     onExportConfig: () => Promise<void>;
     onNext: () => void;
     onBack: () => void;
+    nextLabel?: string;
+    backLabel?: string;
+    exportLabel?: string;
 }
 
 export function Step2Pins({
@@ -36,6 +39,9 @@ export function Step2Pins({
     onExportConfig,
     onNext,
     onBack,
+    nextLabel = "Validate Wiring",
+    backLabel = "Back",
+    exportLabel = "Save JSON",
 }: Step2PinsProps) {
     const [i2cCatalog, setI2cCatalog] = useState<I2CLibrary[]>([]);
     const [catalogLoading, setCatalogLoading] = useState(false);
@@ -412,9 +418,9 @@ export function Step2Pins({
                                 return (
                                     <div key={pin.id} className={`flex flex-col gap-2 p-2 rounded-lg transition-colors ${isSelected ? 'bg-primary/5 border border-primary/20' : ''}`} onClick={() => setSelectedPinId(pin.id)}>
                                         <div className="flex justify-between items-center px-1">
-                                            <label className={`text-xs font-bold uppercase tracking-widest ${isSelected ? 'text-primary' : 'text-slate-500 dark:text-slate-400'}`}>
+                                            <p className={`text-xs font-bold uppercase tracking-widest ${isSelected ? 'text-primary' : 'text-slate-500 dark:text-slate-400'}`}>
                                                 {pin.label} (GPIO {pin.gpio})
-                                            </label>
+                                            </p>
                                             {pin.bootSensitive && (
                                                 <span className="text-[10px] text-amber-500 font-bold uppercase tracking-widest bg-amber-500/10 px-2 py-0.5 rounded">Boot</span>
                                             )}
@@ -422,6 +428,9 @@ export function Step2Pins({
 
                                         <div className="flex gap-2">
                                             <div className="relative flex-1">
+                                                <label htmlFor={`pin-mode-${pin.gpio}`} className="sr-only">
+                                                    {pin.label} mode
+                                                </label>
                                                 <select
                                                     id={`pin-mode-${pin.gpio}`}
                                                     name={`pin-mode-${pin.gpio}`}
@@ -446,6 +455,9 @@ export function Step2Pins({
 
                                             {assignment && (
                                                 <div className="relative flex-1">
+                                                    <label htmlFor={`pin-function-${pin.gpio}`} className="sr-only">
+                                                        {pin.label} function
+                                                    </label>
                                                     <input
                                                         id={`pin-function-${pin.gpio}`}
                                                         name={`pin-function-${pin.gpio}`}
@@ -547,8 +559,10 @@ export function Step2Pins({
                                                     </p>
                                                     <div className="grid grid-cols-2 gap-4">
                                                         <div className="flex flex-col gap-1">
-                                                            <label className="text-[10px] text-slate-400 font-medium">Min</label>
+                                                            <label htmlFor={`pin-pwm-min-${pin.gpio}`} className="text-[10px] text-slate-400 font-medium">Min</label>
                                                             <input 
+                                                                id={`pin-pwm-min-${pin.gpio}`}
+                                                                name={`pin-pwm-min-${pin.gpio}`}
                                                                 type="number"
                                                                 min="0"
                                                                 max="255"
@@ -558,8 +572,10 @@ export function Step2Pins({
                                                             />
                                                         </div>
                                                         <div className="flex flex-col gap-1">
-                                                            <label className="text-[10px] text-slate-400 font-medium">Max</label>
+                                                            <label htmlFor={`pin-pwm-max-${pin.gpio}`} className="text-[10px] text-slate-400 font-medium">Max</label>
                                                             <input 
+                                                                id={`pin-pwm-max-${pin.gpio}`}
+                                                                name={`pin-pwm-max-${pin.gpio}`}
                                                                 type="number"
                                                                 min="0"
                                                                 max="255"
@@ -601,8 +617,10 @@ export function Step2Pins({
 
                                                 <div className="grid grid-cols-2 gap-4">
                                                     <div className="flex flex-col gap-1">
-                                                        <label className="text-[10px] text-slate-400 font-medium tracking-tight">Hex Address</label>
+                                                        <label htmlFor={`pin-i2c-address-${pin.gpio}`} className="text-[10px] text-slate-400 font-medium tracking-tight">Hex Address</label>
                                                         <input 
+                                                            id={`pin-i2c-address-${pin.gpio}`}
+                                                            name={`pin-i2c-address-${pin.gpio}`}
                                                             type="text"
                                                             placeholder="0x3C"
                                                             value={assignment.extra_params?.i2c_address ?? ""}
@@ -611,8 +629,10 @@ export function Step2Pins({
                                                         />
                                                     </div>
                                                     <div className="flex flex-col gap-1">
-                                                        <label className="text-[10px] text-slate-400 font-medium tracking-tight text-right">Adafruit Library</label>
+                                                        <label htmlFor={`pin-i2c-library-${pin.gpio}`} className="text-[10px] text-slate-400 font-medium tracking-tight text-right">Adafruit Library</label>
                                                         <select 
+                                                            id={`pin-i2c-library-${pin.gpio}`}
+                                                            name={`pin-i2c-library-${pin.gpio}`}
                                                             value={assignment.extra_params?.i2c_library ?? ""}
                                                             onChange={(e) => {
                                                                 const lib = i2cCatalog.find(l => l.name === e.target.value);
@@ -666,7 +686,7 @@ export function Step2Pins({
                                 className="w-full flex items-center justify-center gap-2 bg-primary hover:bg-primary/90 text-white py-3 rounded-lg font-medium transition-all shadow-md shadow-blue-500/20"
                             >
                                 <span className="material-symbols-rounded">checklist</span>
-                                Validate Wiring
+                                {nextLabel}
                             </button>
                             <div className="grid grid-cols-2 gap-3">
                                 <button
@@ -675,14 +695,14 @@ export function Step2Pins({
                                     className="flex items-center justify-center gap-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                                 >
                                     <span className="material-symbols-rounded text-sm">save</span>
-                                    {configBusy ? "Exporting..." : "Save JSON"}
+                                    {configBusy ? "Exporting..." : exportLabel}
                                 </button>
                                 <button
                                     onClick={onBack}
                                     className="flex items-center justify-center gap-2 bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 py-2.5 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-600 transition-colors"
                                 >
                                     <span className="material-symbols-rounded text-sm">arrow_back</span>
-                                    Back
+                                    {backLabel}
                                 </button>
                             </div>
                         </div>

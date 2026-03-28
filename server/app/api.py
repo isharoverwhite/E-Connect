@@ -31,7 +31,7 @@ from .models import (
 from .sql_models import (
     User, Device, Automation, DeviceHistory,
     Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
-    AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, BuildJob, SerialSession, SerialSessionStatus,
+    AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, BuildJob, PinConfiguration, SerialSession, SerialSessionStatus,
     UserApprovalStatus as SqlUserApprovalStatus
 )
 from .database import SessionLocal, get_db
@@ -139,6 +139,33 @@ def _issue_user_session_tokens(
         refresh_token_expires_at=refresh_expires_at,
         keep_login=keep_login,
     )
+
+
+def _require_current_user_password(
+    current_user: User,
+    password: Optional[str],
+    *,
+    missing_action: str,
+    invalid_action: str,
+) -> None:
+    normalized_password = password.strip() if isinstance(password, str) else ""
+    if not normalized_password:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "validation",
+                "message": f"Enter your account password before {missing_action}.",
+            },
+        )
+
+    if not verify_password(normalized_password, current_user.authentication):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "invalid_password",
+                "message": f"Incorrect password. Enter the password for the signed-in account to {invalid_action}.",
+            },
+        )
 
 
 def _background_session_factory(db: Session) -> sessionmaker:
@@ -1295,8 +1322,16 @@ async def update_device_config(
     if not isinstance(project.config, dict):
         project.config = {}
 
+    _require_current_user_password(
+        current_user,
+        config.get("password") if isinstance(config, dict) else None,
+        missing_action="updating this board config",
+        invalid_action="update this board config",
+    )
+
+    requested_pins = config.get("pins", []) if isinstance(config, dict) else []
     current_config = dict(project.config)
-    current_config["pins"] = config.get("pins", [])
+    current_config["pins"] = requested_pins
 
     validation_warnings = []
     try:
@@ -1340,6 +1375,33 @@ async def update_device_config(
     if network_target_warning:
         validation_warnings.append(network_target_warning)
     project.config = _stamp_project_network_targets(current_config, targets)
+
+    next_pin_configurations: list[PinConfiguration] = []
+    for pin in requested_pins:
+        if not isinstance(pin, dict):
+            continue
+
+        raw_gpio = pin.get("gpio_pin", pin.get("gpio"))
+        mode = pin.get("mode")
+        if not isinstance(raw_gpio, int) or not isinstance(mode, str):
+            continue
+
+        extra_params = pin.get("extra_params")
+        next_pin_configurations.append(
+            PinConfiguration(
+                device_id=device.device_id,
+                gpio_pin=raw_gpio,
+                mode=mode,
+                function=pin.get("function"),
+                label=pin.get("label"),
+                extra_params=extra_params if isinstance(extra_params, dict) else None,
+            )
+        )
+
+    device.pin_configurations = next_pin_configurations
+    owner = db.query(User).filter(User.user_id == device.owner_id).first()
+    if owner:
+        _sync_user_dashboard_widgets(owner, device)
 
     # Trigger rebuild only after validation passes and no active job exists.
     job = BuildJob(id=str(uuid.uuid4()), project_id=project.id, status=JobStatus.queued)
@@ -1712,23 +1774,12 @@ async def delete_diy_project(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
-    password = delete_request.password if delete_request is not None and delete_request.password is not None else ""
-    if not password.strip():
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": "validation",
-                "message": "Enter your account password before deleting this board config.",
-            },
-        )
-    if not verify_password(password, current_user.authentication):
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "invalid_password",
-                "message": "Incorrect password. Enter the password for the signed-in account to delete this board config.",
-            },
-        )
+    _require_current_user_password(
+        current_user,
+        delete_request.password if delete_request is not None else None,
+        missing_action="deleting this board config",
+        invalid_action="delete this board config",
+    )
 
     project = _get_project_in_household_or_404(db, current_user, project_id)
 
