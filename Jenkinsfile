@@ -77,7 +77,7 @@ pipeline {
 
         stage('Build Gate') {
             steps {
-                echo 'Running webapp build and server tests before CD.'
+                echo 'Running webapp build, server tests, and find_website Docker validation before CD.'
                 sh '''
                     set -eu
 
@@ -92,6 +92,11 @@ pipeline {
                         --target test \
                         --tag econnect-server-test \
                         ./server
+
+                    docker build \
+                        --file find_website/Dockerfile \
+                        --tag econnect-find-website-check \
+                        ./find_website
                 '''
             }
         }
@@ -114,10 +119,15 @@ pipeline {
                 expression { return params.DEPLOY }
             }
             steps {
-                echo 'Building active release services: mqtt + server + webapp'
+                echo 'Building active release services plus find_website image'
                 sh '''
                     set -eu
                     docker compose build mqtt server webapp
+
+                    docker build \
+                        --file find_website/Dockerfile \
+                        --tag econnect-find-website:${BUILD_NUMBER:-local} \
+                        ./find_website
                 '''
             }
         }
