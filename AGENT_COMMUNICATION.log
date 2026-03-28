@@ -422,3 +422,15 @@
 [2026-03-28 18:25:26] Debug -> Coder | Close leaked SQLAlchemy test sessions between OTA config tests
 [2026-03-28 18:30:27] Tester -> Main | PASS; runtime target audit/mismatch verified by pytest, lint, and settings browser check
 [2026-03-28 18:31:38] Tester -> Main | mariadb_nas unavailable; DB verify used pytest plus temporary SQLite runtime
+[2026-03-28 18:44:15] Main -> Planner | Scope managed device pin edit, password confirm, and OTA update handoff
+[2026-03-28 18:44:15] Planner -> Main | In-scope UI/API delta locked; update design docs and keep OTA flow
+[2026-03-28 19:01:07] Planner -> Coder | Require re-auth for managed config save, sync device pins, preserve OTA flow
+[2026-03-28 19:01:07] Coder -> Tester | Managed device config safety patch ready for browser, DB, and OTA verification
+[2026-03-28 19:01:07] Tester -> Main | PASS with residual UI a11y debt; re-auth, save, DB sync, and OTA handoff verified
+[2026-03-28 19:04:17] Main -> Planner | Scope pin-editor accessibility cleanup for remaining unlabeled form fields
+[2026-03-28 19:04:17] Planner -> Coder | Replace decorative labels and bind ids/htmlFor in shared Step2Pins form fields
+[2026-03-28 19:06:34] Coder -> Tester | Pin editor a11y patch ready for lint and browser verification
+[2026-03-28 19:06:34] Tester -> Main | PASS; unlabeled field issue cleared, remaining a11y debt is contrast and heading order
+[2026-03-28 19:13:14] Main -> Planner | Scope AGENTS workflow update for one-commit-per-feature and tagged commit messages
+[2026-03-28 19:13:14] Planner -> Coder | Add Git commit policy section, keep push opt-in, and codify approved tag format
+[2026-03-28 19:14:15] Coder -> Main | AGENTS commit policy update applied and reviewed for numbering and workflow fit
