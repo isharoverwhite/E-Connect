@@ -99,6 +99,7 @@ def test_put_device_config_success():
     token = response.json()["access_token"]
 
     payload = {
+        "password": "password",
         "pins": [
             {"gpio": 2, "mode": "OUTPUT", "label": "LED"}
         ]
@@ -130,6 +131,17 @@ def test_put_device_config_success():
     assert project.config["mqtt_broker"] == "192.168.1.25"
     assert project.config["mqtt_port"] == 1883
     assert project.config["target_key"] == "192.168.1.25|http://192.168.1.25:3000/api/v1|192.168.1.25|1883"
+    assert project.config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}]
+
+    db.refresh(device)
+    assert len(device.pin_configurations) == 1
+    assert device.pin_configurations[0].gpio_pin == 2
+    assert device.pin_configurations[0].label == "LED"
+
+    db.refresh(user)
+    assert user.ui_layout is not None
+    assert user.ui_layout[0]["deviceId"] == device.device_id
+    assert user.ui_layout[0]["pin"] == 2
 
 def test_put_device_config_prefers_forwarded_host_for_firmware_target():
     db = TestingSessionLocal()
@@ -139,6 +151,7 @@ def test_put_device_config_prefers_forwarded_host_for_firmware_target():
     token = response.json()["access_token"]
 
     payload = {
+        "password": "password",
         "pins": [
             {"gpio": 2, "mode": "OUTPUT", "label": "LED"}
         ]
@@ -170,6 +183,7 @@ def test_put_device_config_prefers_browser_origin_header_over_internal_proxy_hos
     token = response.json()["access_token"]
 
     payload = {
+        "password": "password",
         "pins": [
             {"gpio": 2, "mode": "OUTPUT", "label": "LED"}
         ]
@@ -202,7 +216,7 @@ def test_put_device_config_rejects_docker_local_host():
 
     res = client.put(
         f"/api/v1/device/{device.device_id}/config",
-        json={"pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}]},
+        json={"password": "password", "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}]},
         headers={
             "Authorization": f"Bearer {token}",
             "Host": "server:8000",
@@ -227,12 +241,54 @@ def test_put_device_config_invalid_not_diy():
 
     res = client.put(
         f"/api/v1/device/{device.device_id}/config",
-        json={"pins": []},
+        json={"password": "password", "pins": []},
         headers={"Authorization": f"Bearer {token}"}
     )
 
     assert res.status_code == 400
     assert "Not a managed DIY device" in res.json()["detail"]
+
+def test_put_device_config_requires_account_password():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    res = client.put(
+        f"/api/v1/device/{device.device_id}/config",
+        json={"pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 400
+    assert res.json()["detail"]["error"] == "validation"
+    assert res.json()["detail"]["message"] == "Enter your account password before updating this board config."
+    assert db.query(BuildJob).filter(BuildJob.project_id == project.id).count() == 0
+
+def test_put_device_config_rejects_wrong_account_password():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    res = client.put(
+        f"/api/v1/device/{device.device_id}/config",
+        json={
+            "password": "wrong-password",
+            "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}],
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 403
+    assert res.json()["detail"]["error"] == "invalid_password"
+    assert (
+        res.json()["detail"]["message"]
+        == "Incorrect password. Enter the password for the signed-in account to update this board config."
+    )
+    assert db.query(BuildJob).filter(BuildJob.project_id == project.id).count() == 0
 
 def test_put_device_config_invalid_payload_does_not_persist_or_create_job():
     db = TestingSessionLocal()
@@ -244,7 +300,7 @@ def test_put_device_config_invalid_payload_does_not_persist_or_create_job():
     original_config = dict(project.config or {})
     res = client.put(
         f"/api/v1/device/{device.device_id}/config",
-        json={"pins": []},
+        json={"password": "password", "pins": []},
         headers={"Authorization": f"Bearer {token}"}
     )
 
@@ -266,6 +322,7 @@ def test_put_device_config_conflicts_with_active_job():
     token = response.json()["access_token"]
 
     payload = {
+        "password": "password",
         "pins": [
             {"gpio": 2, "mode": "OUTPUT", "label": "LED"}
         ]

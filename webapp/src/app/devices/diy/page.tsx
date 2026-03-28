@@ -13,7 +13,6 @@ import {
   getBoardFamily,
   getBoardProfile,
   resolveBoardProfileId,
-  type BoardPin,
   type BoardProfile,
   type ChipFamily,
 } from "@/features/diy/board-profiles";
@@ -32,6 +31,7 @@ import { Step2Configs, type SavedBoardConfigOption } from "@/features/diy/compon
 import { Step2Pins } from "@/features/diy/components/Step2Pins";
 import { Step3Validate } from "@/features/diy/components/Step3Validate";
 import { Step4Flash } from "@/features/diy/components/Step4Flash";
+import { validatePinMappings } from "@/features/diy/validation";
 
 const FLASHER_SCRIPT =
   "https://unpkg.com/esp-web-tools@10.1.0/dist/web/install-button.js?module";
@@ -437,7 +437,11 @@ export default function DIYBuilderPage() {
   );
   const board = getBoardProfile(boardId) ?? familyOptions[0] ?? BOARD_PROFILES[0];
   const boardPins = useMemo(() => [...board.leftPins, ...board.rightPins], [board]);
-  const validation = validateMappings(board, pins, wifiSsid, wifiPassword);
+  const validation = validatePinMappings(board, pins, {
+    requireWifiCredentials: true,
+    wifiSsid,
+    wifiPassword,
+  });
   const fallbackFirmwareTargetKey = useMemo(() => {
     if (typeof window === "undefined") {
       return "browser-origin:unknown";
@@ -2073,83 +2077,6 @@ export default function DIYBuilderPage() {
       </main>
     </div>
   );
-}
-
-function validateMappings(
-  board: BoardProfile,
-  pins: PinMapping[],
-  wifiSsid: string,
-  wifiPassword: string,
-): ValidationResult {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-  const knownPins = new Map<number, BoardPin>(
-    [...board.leftPins, ...board.rightPins].map((pin) => [pin.gpio, pin]),
-  );
-  const usedLabels = new Map<string, number>();
-  let i2cPins = 0;
-
-  if (!wifiSsid.trim()) {
-    errors.push("Enter the Wi-Fi SSID before building or flashing firmware.");
-  }
-
-  if (!wifiPassword.trim()) {
-    errors.push("Enter the Wi-Fi password before building or flashing firmware.");
-  }
-
-  if (pins.length === 0) {
-    errors.push("Map at least one GPIO before generating config or flashing firmware.");
-  }
-
-  for (const mapping of pins) {
-    const boardPin = knownPins.get(mapping.gpio_pin);
-
-    if (!boardPin) {
-      errors.push(`GPIO ${mapping.gpio_pin} is not exposed by the selected board profile.`);
-      continue;
-    }
-
-    if (!boardPin.capabilities.includes(mapping.mode)) {
-      errors.push(`GPIO ${mapping.gpio_pin} does not support ${mapping.mode} on ${board.name}.`);
-    }
-
-    if (boardPin.inputOnly && mapping.mode !== "INPUT" && mapping.mode !== "ADC") {
-      errors.push(`GPIO ${mapping.gpio_pin} is input-only and cannot drive outputs.`);
-    }
-
-    if (boardPin.reserved) {
-      errors.push(
-        `GPIO ${mapping.gpio_pin} is reserved or tightly coupled to boot / USB functions on ${board.name}.`,
-      );
-    }
-
-    if (boardPin.bootSensitive && (mapping.mode === "OUTPUT" || mapping.mode === "PWM")) {
-      warnings.push(
-        `GPIO ${mapping.gpio_pin} is boot-sensitive. Confirm the connected circuit will not pull the line during reset.`,
-      );
-    }
-
-    if (mapping.mode === "I2C") {
-      i2cPins += 1;
-    }
-
-    const normalizedLabel = (mapping.label || "").trim().toLowerCase();
-    if (normalizedLabel) {
-      usedLabels.set(normalizedLabel, (usedLabels.get(normalizedLabel) ?? 0) + 1);
-    }
-  }
-
-  if (i2cPins === 1) {
-    errors.push("I2C needs both SDA and SCL. Map two I2C-capable pins before flashing.");
-  }
-
-  for (const [label, count] of usedLabels.entries()) {
-    if (count > 1) {
-      warnings.push(`The label "${label}" is used on multiple GPIOs. Rename them to avoid widget confusion.`);
-    }
-  }
-
-  return { errors, warnings };
 }
 
 function buildFlashManifest({
