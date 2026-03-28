@@ -207,7 +207,7 @@ export async function sendDeviceCommand(
         });
 
         if (!res.ok) {
-            return { status: "failed", message: "HTTP Error" };
+            return { status: "failed", message: await parseApiError(res, "Failed to send device command") };
         }
         return res.json();
     } catch (error) {
@@ -218,7 +218,7 @@ export async function sendDeviceCommand(
 
 export async function saveDeviceConfig(
     uuid: string,
-    config: { pins: unknown[] }
+    config: { pins: unknown[]; password: string }
 ): Promise<{ status: string; job_id?: string; message?: string }> {
     try {
         const token = getToken();
@@ -235,8 +235,7 @@ export async function saveDeviceConfig(
         });
 
         if (!res.ok) {
-            const errorData = await res.json().catch(() => ({}));
-            return { status: "failed", message: errorData.detail || "HTTP Error" };
+            return { status: "failed", message: await parseApiError(res, "Failed to save device config") };
         }
         return res.json();
     } catch (error) {
