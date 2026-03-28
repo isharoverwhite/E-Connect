@@ -31,6 +31,12 @@ app.dependency_overrides[get_db] = override_get_db
 LAN_BASE_URL = "http://192.168.1.25:3000"
 client = TestClient(app, base_url=LAN_BASE_URL)
 
+
+def _write_test_artifact(tmp_path, job_id: str) -> str:
+    artifact_path = tmp_path / f"{job_id}.bin"
+    artifact_path.write_bytes(b"test-firmware-image")
+    return str(artifact_path)
+
 @pytest.fixture(autouse=True)
 def setup_db():
     close_all_sessions()
@@ -382,12 +388,17 @@ def test_legacy_ota_endpoints_are_locked():
     assert download_res.status_code == 410
     assert download_res.json()["detail"]["error"] == "disabled"
 
-def test_send_command_ota_publish_success():
+def test_send_command_ota_publish_success(tmp_path):
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
     
     job_id = str(uuid.uuid4())
-    job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.artifact_ready)
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.artifact_ready,
+        artifact_path=_write_test_artifact(tmp_path, job_id),
+    )
     db.add(job)
     db.commit()
 
@@ -407,12 +418,17 @@ def test_send_command_ota_publish_success():
     db.refresh(job)
     assert job.status == JobStatus.flashing
 
-def test_send_command_ota_publish_failure():
+def test_send_command_ota_publish_failure(tmp_path):
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
     
     job_id = str(uuid.uuid4())
-    job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.artifact_ready)
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.artifact_ready,
+        artifact_path=_write_test_artifact(tmp_path, job_id),
+    )
     db.add(job)
     db.commit()
 
