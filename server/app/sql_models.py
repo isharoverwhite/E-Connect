@@ -140,6 +140,7 @@ class Device(Base):
     conn_status = Column(Enum(ConnStatus), default=ConnStatus.offline, comment='Realtime MQTT heartbeat state')
     
     mode = Column(Enum(DeviceMode), default=DeviceMode.library)
+    firmware_revision = Column(String(50), nullable=True, comment='Developer-managed firmware revision reported by the device')
     firmware_version = Column(String(50))
     ip_address = Column(String(64), nullable=True, comment='Current LAN IP reported by the device')
     last_seen = Column(DateTime, nullable=True)

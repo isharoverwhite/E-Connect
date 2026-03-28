@@ -42,7 +42,7 @@ curl -k https://127.0.0.1:3000/login
 
 Mặc định:
 
-- API backend: [http://127.0.0.1:8000](http://127.0.0.1:8000/)
+- API base URL: [http://127.0.0.1:8000/api/v1](http://127.0.0.1:8000/api/v1)
 - WebUI: [https://127.0.0.1:3000](https://127.0.0.1:3000/)
 
 Nếu cần tắt:
@@ -130,7 +130,7 @@ uvicorn main:app --host 0.0.0.0 --port 8000
 
 Sau khi chạy thành công:
 
-- API root: [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+- API base URL: [http://127.0.0.1:8000/api/v1](http://127.0.0.1:8000/api/v1)
 - Health check: [http://127.0.0.1:8000/health](http://127.0.0.1:8000/health)
 
 Kiểm tra nhanh:

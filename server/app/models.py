@@ -146,6 +146,7 @@ class DeviceBase(BaseModel):
     mac_address: str
     name: str
     mode: DeviceMode = DeviceMode.library
+    firmware_revision: Optional[str] = None
     firmware_version: Optional[str] = None
     ip_address: Optional[str] = None
     topic_pub: Optional[str] = None
@@ -164,6 +165,7 @@ class DeviceRegister(BaseModel):
     mac_address: Optional[str] = None
     name: Optional[str] = None
     mode: DeviceMode = DeviceMode.library
+    firmware_revision: Optional[str] = None
     firmware_version: Optional[str] = None
     ip_address: Optional[str] = None
     pins: List[PinConfigCreate] = []
@@ -346,6 +348,7 @@ class BuildJobResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     ota_token: Optional[str] = None
+    expected_firmware_version: Optional[str] = None
 
     class Config:
         from_attributes = True

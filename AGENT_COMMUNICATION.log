@@ -485,3 +485,41 @@
 [2026-03-29 01:11:32] Coder -> Tester | Managed config OTA dialog updated for flashed-to-online recovery flow
 [2026-03-29 01:11:32] Tester -> Main | PASS with lint/build and browser mock of flashed->online->dashboard redirect
 [2026-03-29 01:11:32] Main -> Main | PROJECT_STATUS updated: config OTA dialog now waits for online before redirect
+[2026-03-29 01:37:33] Main -> Planner | Investigate config edit + OTA suspicion: dashboard reverts and board may boot old firmware
+[2026-03-29 01:37:33] Planner -> Debug | Trace save-config, OTA status, firmware_version, and dashboard sync paths
+[2026-03-29 01:37:33] Debug -> Coder | Fail OTA on old firmware_version after reconnect; gate redirect on expected build
+[2026-03-29 01:44:50] Main -> Planner | Scope Device Management header button wrap regression and responsive fix
+[2026-03-29 01:44:50] Planner -> Coder | Implement responsive header action layout; keep labels single-line
+[2026-03-29 01:44:50] Coder -> Tester | Device header UI fix ready for lint/build/browser verification
+[2026-03-29 01:44:50] Tester -> Main | PASS; widths 1672/936/620 verified, console clean, devices API 200
+[2026-03-29 01:52:45] Coder -> Tester | OTA mismatch guard, pin restore, and expected-build redirect gate ready for verification
+[2026-03-29 01:52:45] Tester -> Main | PASS with pytest/lint/build and browser mocks for old-fw mismatch and expected-build success
+[2026-03-29 01:52:45] Main -> Main | PROJECT_STATUS updated: stale OTA firmware now fails verification and preserves saved config
+[2026-03-29 01:55:34] Debug -> Coder | WebSocket reconnect can bypass expected-build gate; remove timestamp-only success path
+[2026-03-29 01:55:34] Coder -> Tester | Frontend OTA reconnect gate tightened to expected firmware snapshot
+[2026-03-29 01:55:34] Tester -> Main | PASS with post-fix webapp lint/build; residual risk is live hardware rerun only
+[2026-03-29 01:42:58] Main -> Planner | Scope admin /devices change for firmware revision and firmware version visibility
+[2026-03-29 01:42:58] Planner -> Coder | Add developer-managed firmware_revision and show both firmware identity fields
+[2026-03-29 01:56:20] Coder -> Tester | Firmware revision/version flow ready for pytest, lint/build, and browser verification
+[2026-03-29 01:56:20] Tester -> Main | PASS; code/tests green, mocked /devices browser verify passed, live /system/status hangs
+[2026-03-29 02:01:45] Main -> Tester | Restart local backend and rerun live config-edit OTA on hardware board
+[2026-03-29 02:03:33] Debug -> Tester | Backend recovered after DB metadata lock; proceed with live board OTA verification
+[2026-03-29 02:07:39] Tester -> Debug | Live OTA failed: board got 127.0.0.1 firmware URL and returned connection refused
+[2026-03-29 02:07:39] Debug -> Coder | Replace browser-origin OTA URL with server-resolved reachable host for live device download
+[2026-03-29 02:07:39] Main -> Planner | Scope live OTA blocker: config UI publishes localhost download URL to board
+[2026-03-29 02:08:55] Coder -> Tester | OTA URL host fix applied; rerun live rebuild and OTA with reachable runtime host
+[2026-03-29 02:25:17] Main -> Planner | Scope backend root welcome JSON removal on port 8000
+[2026-03-29 02:25:17] Planner -> Coder | Remove custom GET / handler; keep /api/v1 and /health behavior unchanged
+[2026-03-29 02:26:52] Coder -> Tester | Root route removal ready for pytest verification of / and /health
+[2026-03-29 02:26:52] Tester -> Main | PASS; pytest confirms / returns 404 and /health stays available
+[2026-03-29 02:26:52] Main -> Main | PROJECT_STATUS updated: backend root welcome JSON removed
+[2026-03-29 02:31:13] Main -> Planner | Scope public Docker packaging for find_website Next.js LAN discovery site
+[2026-03-29 02:31:13] Planner -> Coder | Add standalone Dockerfile, ignore rules, and deployment README for find_website
+[2026-03-29 02:33:16] Coder -> Tester | find_website Docker packaging ready for lint, build, image build, and smoke check
+[2026-03-29 02:33:16] Tester -> Main | PASS; npm lint/build, docker build, and HTTP 200 smoke check passed
+[2026-03-29 02:33:16] Main -> Main | PROJECT_STATUS updated: find_website container packaging verified
+[2026-03-29 02:35:03] Coder -> Tester | Final Dockerfile adds lint gate and healthcheck; rerun full image verify
+[2026-03-29 02:35:03] Tester -> Main | PASS; rebuilt image served 200 OK and Docker healthcheck reached healthy
+[2026-03-29 02:35:03] Main -> Main | PROJECT_STATUS updated: final find_website image verified after healthcheck
+[2026-03-29 03:02:09] Main -> Main | User approved extension-scope batch commit/push on main despite mixed worktree scope
+[2026-03-29 03:02:09] Main -> Main | Publish deviation records skipped fresh full-stack verification for all staged changes

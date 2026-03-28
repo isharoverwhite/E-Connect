@@ -49,6 +49,8 @@ export interface DeviceStateSnapshot {
     pin?: number;
     value?: number | boolean;
     applied?: boolean;
+    firmware_revision?: string;
+    firmware_version?: string;
     brightness?: number;
     ip_address?: string;
     trend?: string;
@@ -62,6 +64,7 @@ export interface DeviceConfig extends DeviceAvailabilitySummary {
     mode: DeviceMode;
     board?: string;
     provider?: string;
+    firmware_revision?: string;
     firmware_version?: string;
     ip_address?: string;
     topic_pub?: string;

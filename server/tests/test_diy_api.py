@@ -1065,6 +1065,13 @@ def test_builder_generates_correct_config(tmp_path):
     assert '#define API_BASE_URL "http://192.168.1.50:3000/api/v1"' in content
 
 
+def test_firmware_template_declares_developer_managed_revision():
+    header_path = Path(__file__).resolve().parents[1] / "firmware_template" / "include" / "firmware_revision.h"
+    content = header_path.read_text()
+
+    assert '#define ECONNECT_FIRMWARE_REVISION "1.0.0"' in content
+
+
 def test_builder_uses_distinct_stamped_public_mqtt_target(tmp_path):
     from app.services.builder import write_generated_firmware_config
 
