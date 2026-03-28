@@ -3,10 +3,10 @@
 ## Current Phase: Complete
 
 ## Active Task
-- Task ID: FIND-WEBSITE-DOCKER-001
-- Objective: Containerize the public `find_website` Next.js app for server deployment.
+- Task ID: FIND-WEBSITE-CICD-001
+- Objective: Automate `find_website` Docker image builds in Jenkins and GitHub Actions.
 - Owner: Codex
-- Started At: 2026-03-29 02:31:13
+- Started At: 2026-03-29 03:05:52
 
 ## Gate Status
 - [x] G0 Task intake
@@ -17,18 +17,17 @@
 
 ## Deliverables
 - PRD: No change required.
-- Design docs: Design unchanged; only packaging and deployment docs for `find_website` were updated.
-- Code: added `find_website/Dockerfile`, `find_website/.dockerignore`, enabled standalone output in `find_website/next.config.ts`, and replaced the default app README with concrete deploy/run instructions.
-- Verification: `npm run lint`, `npm run build`, `docker build -t find-website:test .`, an HTTP smoke check against `http://127.0.0.1:19123`, and Docker health status `healthy` all passed.
+- Design docs: Design unchanged; repository delivery docs were updated instead of product design artifacts.
+- Code: updated `Jenkinsfile`, added `.github/workflows/find-website-image.yml`, and documented the new automation in `README.md`.
+- Verification: `docker build --file find_website/Dockerfile --tag econnect-find-website-check ./find_website`, workflow YAML parsing, HTTP smoke check against `http://127.0.0.1:19123/`, and Docker health status `healthy` all passed.
 
 ## Risks / Blockers
-- Working tree still contains unrelated in-progress edits elsewhere in the repo, so commit/push for this slice should stage only `find_website` plus any explicitly approved tracking artifacts.
-- Public exposure still needs server-side TLS/reverse proxy configuration outside this repository.
-- Process deviation approved by user: batch commit/push may include mixed extension-scope changes on `main`.
-- Fresh end-to-end verification was not rerun for every staged file before publish; evidence remains uneven across the combined batch.
+- `find_website` was already published inside mixed commit `3f20b66`, so making its earlier packaging history become one isolated commit now would require rewriting pushed history.
+- This CI slice can still be delivered cleanly as one new commit without rewriting `main`.
+- The new GitHub Actions workflow only builds and smoke-checks the image; it does not publish to GHCR or deploy to any server yet.
 
 ## Next Action
-- Stage current extension-scope worktree, create one bracket-tag commit, and push `main` to `origin/main`.
+- Stage only the CI/CD slice files, create one bracket-tag commit, and push it without rewriting the earlier mixed commit.
 
 ## Last Updated
-2026-03-29 03:02:09
+2026-03-29 03:08:27
