@@ -528,3 +528,13 @@
 [2026-03-29 03:08:27] Coder -> Tester | Jenkins and GitHub Actions updates ready for Docker build and smoke verification
 [2026-03-29 03:08:27] Tester -> Main | PASS; Jenkins build command, workflow YAML, HTTP smoke, and Docker healthcheck passed
 [2026-03-29 03:08:27] Main -> Main | PROJECT_STATUS updated: find_website CI/CD automation verified
+[2026-03-29 03:13:01] Main -> Planner | Scope Jenkins server inspection for 192.168.2.55:8080 using provided credentials
+[2026-03-29 03:13:01] Planner -> Tester | Verify Jenkins login, reachable jobs, and current build state for repo automation
+[2026-03-29 03:13:01] Tester -> Main | PASS; Jenkins login worked, E-Connect-CD #18 is running from commit 3f20b66, latest local CI commit not on server
+[2026-03-29 03:13:01] Main -> Main | PROJECT_STATUS updated: Jenkins inspection completed with current job/build findings
+[2026-03-29 03:23:12] Main -> Debug | Investigate Jenkins E-Connect-CD DB auth failure on live deploy stack
+[2026-03-29 03:23:12] Debug -> Main | DB volume kept legacy smart_home credentials (root/root, user/password), mismatching new compose defaults
+[2026-03-29 03:23:12] Main -> Debug | Apply non-destructive DB compatibility fix on Jenkins host and verify a fresh build
+[2026-03-29 03:23:12] Debug -> Tester | Backed up smart_home, created econnect/e_connect_db compatibility layer, restarted services
+[2026-03-29 03:23:12] Tester -> Main | PASS; server health recovered and Jenkins build #20 completed SUCCESS on commit 88da152
+[2026-03-29 03:23:12] Main -> Main | PROJECT_STATUS updated: Jenkins DB deployment failure resolved on live server
