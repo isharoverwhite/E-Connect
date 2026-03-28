@@ -59,6 +59,9 @@ Process rules:
 - `Antigravity` -> `Coder`
 5. One implementation session may perform multiple roles, but role outputs, evidence, and handoffs must remain distinct.
 6. If [PROJECT_STATUS.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PROJECT_STATUS.md) or [AGENT_COMMUNICATION.log](/Users/kiendinhtrung/Documents/GitHub/Final-Project/AGENT_COMMUNICATION.log) does not exist, `Main` must create it before claiming the first non-trivial task is complete.
+7. When a completed feature slice is ready to be committed, agents must package that slice into exactly one product-facing Git commit unless the user explicitly approves a different history shape.
+8. That final commit must cover exactly one objective plus its required tests, docs, or design updates; do not mix multiple product goals into one commit.
+9. `git push` to GitHub remains opt-in and must not happen unless the user explicitly requests it, even when the final single commit is ready.
 
 ### Delegation Language For Antigravity
 
@@ -343,14 +346,59 @@ echo "[$(date '+%Y-%m-%d %H:%M:%S')] SENDER -> RECEIVER | REQUEST_BRIEF" >> /Use
 
 ---
 
-## 13. MCP Usage Policy
+## 13. Git Commit And GitHub Publish Policy
+
+### 13.1 Single-Commit Rule Per Feature
+
+1. After one feature, bug fix, or approved product slice reaches `G4` and is ready for handoff, the repository should have exactly one final commit for that slice.
+2. Do not create multiple final commits for one completed feature unless the user explicitly asks for a split history.
+3. Do not batch unrelated work from multiple features into the same final commit.
+4. Supporting tests, docs, and design deltas for the same objective belong in that same single final commit.
+5. If the user explicitly asks to publish the completed slice to GitHub, push that same final commit instead of creating extra cleanup commits after `G4` unless the user approves the deviation.
+
+### 13.2 Commit Message Format
+
+1. Every product-facing commit message must start with exactly one bracketed tag.
+2. Allowed tags are only:
+   - `[init]`
+   - `[start]`
+   - `[update]`
+   - `[feat]`
+   - `[bug]`
+   - `[finish]`
+3. Required format:
+   - `[tag] short, clear description for exactly one objective`
+4. Do not use `fix:`, `feat:`, `chore:`, or `ci:` when the commit message is intended for product-facing delivery.
+5. Prefer `[bug]` over any `fix` wording.
+6. Do not describe multiple goals in one commit message.
+7. If the user asks the agent to generate a commit message only, the response must contain only the final commit message line and nothing else.
+
+### 13.3 Tag Meaning
+
+- `[init]`: initialize or bootstrap work
+- `[start]`: begin an approved implementation slice that is not yet feature-complete
+- `[update]`: refine or improve an existing feature without changing the primary product goal
+- `[feat]`: add one new feature
+- `[bug]`: fix one bug
+- `[finish]`: mark one feature or release slice as complete and ready for handoff or release
+
+### 13.4 Approved Examples
+
+- `[feat] add github release sync for private repos`
+- `[bug] hide private repo links in project cards`
+- `[update] refine article editor toolbar`
+- `[finish] ship inbox notification flow`
+
+---
+
+## 14. MCP Usage Policy
 
 The following MCP capabilities are available and must be used in the correct context:
 - `chrome-devtools`
 - `mariadb_nas`
 - `stitch`
 
-### 13.1 `chrome-devtools`
+### 14.1 `chrome-devtools`
 
 Use `chrome-devtools` for:
 - UI regressions
@@ -370,7 +418,7 @@ Minimum required actions:
 
 Agents must not claim that the UI works based only on static code inspection.
 
-### 13.2 `mariadb_nas`
+### 14.2 `mariadb_nas`
 
 Use `mariadb_nas` whenever a task affects:
 - create, update, delete, migration, import, restore, or synchronization flows
@@ -388,7 +436,7 @@ Minimum required actions:
 
 Agents must not guess table names, column names, or relationships without checking the actual database.
 
-### 13.3 `stitch`
+### 14.3 `stitch`
 
 Use `stitch` for:
 - implementing a new screen from an approved design
@@ -402,7 +450,7 @@ Minimum required actions:
 
 Agents must not deliver one-off markup that conflicts with the established design language when a Stitch reference exists.
 
-### 13.4 MCP Unavailability
+### 14.4 MCP Unavailability
 
 If an MCP capability is unavailable, the agent must explicitly state:
 1. which MCP was unavailable
@@ -412,7 +460,7 @@ If an MCP capability is unavailable, the agent must explicitly state:
 
 ---
 
-## 14. Reporting, Checklist, And Definition Of Done
+## 15. Reporting, Checklist, And Definition Of Done
 
 Every completed task report must follow this reasoning chain:
 1. `Claim`: what is now true or false
@@ -443,6 +491,7 @@ A task is only considered done when all applicable conditions are true:
 6. evidence is concrete and reproducible, not speculative
 7. `Tester` issued a `PASS` or `FAIL` conclusion
 8. the final task report includes a checklist report and gate decision
+9. if the user requested or approved a commit for the completed slice, that slice is represented by exactly one final commit message that follows Section 13
 
 ### Required Task Report Format
 
@@ -488,7 +537,7 @@ Gate Decision: PASS / FAIL
 
 ---
 
-## 15. Working Principles And Exception Handling
+## 16. Working Principles And Exception Handling
 
 Working principles:
 1. prefer the smallest correct implementation slice
@@ -510,10 +559,11 @@ Exception and deviation handling:
 - residual risk introduced by that decision
 3. If an environment dependency blocks verification, the report must state the exact blocker, affected scope, substitute evidence, and residual risk.
 4. If unexpected repo changes conflict with the active task, stop and ask for direction instead of silently overwriting them.
+5. If the user explicitly asks for multiple commits, history rewriting, or a commit format outside Section 13, `Main` must treat that as a workflow deviation and record it before proceeding.
 
 ---
 
-## 16. End-To-End Example Workflow
+## 17. End-To-End Example Workflow
 
 1. The user requests a dashboard persistence fix.
 2. `Main` logs the task in [PROJECT_STATUS.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PROJECT_STATUS.md) and records the first role assignment in [AGENT_COMMUNICATION.log](/Users/kiendinhtrung/Documents/GitHub/Final-Project/AGENT_COMMUNICATION.log).
@@ -524,3 +574,4 @@ Exception and deviation handling:
 7. `Tester` runs the required code checks, verifies the browser flow through `chrome-devtools`, verifies database before/after state through `mariadb_nas`, and records at least one failure path.
 8. If verification fails or the task is explicitly a bug/debug request, `Codex` acting as `Debug` reproduces the issue, records the likely root cause, and hands a rework brief back to `Antigravity`.
 9. After rework passes, `Tester` issues `PASS` or `FAIL`, `Main` updates [PROJECT_STATUS.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PROJECT_STATUS.md), and the final task report is delivered with the mandatory Checklist Report.
+10. If the completed slice is being committed, `Main` uses exactly one final commit for that slice and the commit message must follow Section 13 before any optional GitHub push.
