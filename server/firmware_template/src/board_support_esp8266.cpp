@@ -2,6 +2,7 @@
 
 #if defined(ESP8266)
 #include <user_interface.h>
+#include <WiFiClientSecureBearSSL.h>
 
 namespace {
 constexpr uint32_t kRuntimeFlagsMagic = 0x45434E54;  // "ECNT"
@@ -86,10 +87,22 @@ const char *boardAuthModeName(int32_t authMode) {
   return "SECURED";
 }
 
-OtaUpdateResult runBoardOtaUpdate(const String &url) {
-  WiFiClient client;
+OtaUpdateResult runBoardOtaUpdate(const String &url, const String &expectedMd5) {
+  const bool isHttps = url.startsWith("https://");
   ESPhttpUpdate.rebootOnUpdate(false);
-  const t_httpUpdate_return ret = ESPhttpUpdate.update(client, url);
+  if (expectedMd5.length() > 0) {
+    ESPhttpUpdate.setMD5sum(expectedMd5);
+  }
+  t_httpUpdate_return ret;
+  if (isHttps) {
+    BearSSL::WiFiClientSecure client;
+    // Dev and LAN OTA currently use a self-signed certificate.
+    client.setInsecure();
+    ret = ESPhttpUpdate.update(client, url);
+  } else {
+    WiFiClient client;
+    ret = ESPhttpUpdate.update(client, url);
+  }
 
   switch (ret) {
     case HTTP_UPDATE_FAILED:

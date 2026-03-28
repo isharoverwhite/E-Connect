@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 import anyio
 import asyncio
+import hashlib
 
 from .mqtt import build_pairing_rejected_ack_payload, mqtt_manager
 from .ws_manager import manager as ws_manager
@@ -64,6 +65,7 @@ from .services.device_registration import (
 )
 from .services.diy_validation import resolve_board_definition, validate_diy_config
 from .services.user_management import ensure_temp_support_account, resolve_household_id_for_user
+from .services.provisioning import derive_project_secret
 from .services.i2c_registry import I2CLibrary, get_i2c_catalog
 
 router = APIRouter()
@@ -1456,6 +1458,22 @@ async def send_command(device_id: str, command: dict, db: Session = Depends(get_
                 status_code=409,
                 detail={"error": "conflict", "message": "Artifact is not ready for flashing"},
             )
+
+        # Security: Inject artifact MD5 and server signature into the OTA command
+        try:
+            with open(ota_job.artifact_path, "rb") as f:
+                firmware_bytes = f.read()
+            firmware_md5 = hashlib.md5(firmware_bytes).hexdigest()
+        except Exception:
+            raise HTTPException(status_code=500, detail="Failed to read firmware artifact to generate signature.")
+
+        secret_key = derive_project_secret(device.provisioning_project_id, device.device_id)
+        signature_payload = (firmware_md5 + secret_key).encode("utf-8")
+        signature = hashlib.md5(signature_payload).hexdigest()
+
+        command["md5"] = firmware_md5
+        command["signature"] = signature
+
         ota_job.status = JobStatus.flashing
         db.commit()
 
