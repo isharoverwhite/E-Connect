@@ -33,14 +33,18 @@ Khi user cấu hình một thiết bị ESP32 mới trên WebUI, form phải yê
 - `GPIO / pin mapping`
 - `Wi-Fi SSID`
 - `Wi-Fi Password`
-- `Server endpoint` hoặc `MQTT broker` theo profile firmware đang dùng
 
 Quy tắc bắt buộc:
 
 - Không cho phép build hoặc flash nếu thiếu `SSID`.
 - Không cho phép build hoặc flash nếu thiếu `Password` cho lần cấu hình đầu tiên.
 - `SSID` và `Password` phải được đưa vào config hoặc artifact để ESP32 dùng ngay sau lần boot đầu tiên.
+- WebUI không được yêu cầu user nhập riêng `server endpoint` hay `MQTT broker` cho no-code firmware.
+- Backend phải tự xử lý `advertised host` ngay từ lúc server startup. Thứ tự ưu tiên là: cấu hình public override rõ ràng -> IP/hostname auto-detect lúc startup -> host suy ra từ request hiện tại như fallback cuối.
+- Nếu backend chạy trong Docker và startup chỉ nhìn thấy IP bridge/container, hệ thống phải coi đó là không hợp lệ cho firmware provisioning và yêu cầu operator chuyển sang `network_mode: host` hoặc cấu hình public override rõ ràng.
+- Trong deployment hiện tại, `server` và `MQTT broker` chạy cùng một máy nên firmware phải coi chúng là dùng chung một IP/hostname.
 - Nếu user thay đổi cấu hình pin hoặc cấu hình mạng sau lần build gần nhất thì phải yêu cầu build lại trước khi flash.
+- Nếu `advertised host` thay đổi, artifact build cũ phải bị coi là stale và phải build lại trước khi flash.
 
 ## Workflow chi tiết
 
@@ -52,7 +56,6 @@ User vào luồng DIY Builder trên WebUI để:
 - cấu hình pin mapping
 - nhập `Wi-Fi SSID`
 - nhập `Wi-Fi Password`
-- nhập thông tin server hoặc broker cần dùng cho kết nối từ xa
 
 Tại bước này, WebUI phải validate dữ liệu đầu vào và chặn luồng nếu còn lỗi.
 
@@ -62,6 +65,8 @@ Sau khi user submit:
 
 - WebUI gửi draft cấu hình lên server
 - Server validate dữ liệu
+- Server ưu tiên host đã xác định sẵn từ startup làm source of truth cho cả API và MQTT trong firmware
+- Chỉ khi startup auto-detect không usable thì server mới fallback sang host suy ra từ browser/request hiện tại
 - Nếu hợp lệ, server tạo config hoặc build job
 - Server lưu trạng thái job để WebUI có thể theo dõi
 
@@ -81,6 +86,7 @@ Khi artifact đã sẵn sàng:
 
 - WebUI mở web flasher
 - User chọn cổng serial tương ứng với ESP32
+- Nếu server vừa đổi IP hoặc máy cài đặt, WebUI phải yêu cầu build lại trước khi flash để artifact mang IP mới thay vì IP cũ
 - Nếu build flow đã tạo serial reservation cho cùng `serial_port`, hệ thống phải tự release reservation đó khi job chuyển sang `artifact_ready`
 - WebUI chỉ cho phép bấm flash khi cổng serial đã rảnh; nếu còn serial session đang giữ cổng thì phải block và yêu cầu release trước
 - Firmware được flash xuống thiết bị
@@ -99,12 +105,20 @@ Ngay sau khi reboot lần đầu sau flash:
 3. Sau khi có mạng, ESP32 khởi tạo kết nối về server.
 4. ESP32 gửi yêu cầu handshake hoặc pair lên server qua API onboarding.
 
+Nếu máy chủ được chuyển từ IP cũ sang IP mới, ví dụ từ `192.168.2.16` sang `192.168.8.4`:
+
+- firmware cũ vẫn giữ `MQTT_BROKER` và `API_BASE_URL` theo artifact cũ
+- board sẽ tiếp tục cố kết nối về IP cũ
+- server mới sẽ không nhận được heartbeat/register từ board đó
+- discovery / nearby pair sẽ không thấy thiết bị cho tới khi board được rebuild + reflash bằng artifact sinh từ server mới
+
 Sau khi đã được approve và chạy bình thường:
 
-5. ESP32 tiếp tục gửi heartbeat định kỳ lên server qua MQTT state topic.
+5. ESP32 tiếp tục gửi heartbeat định kỳ lên server qua MQTT state topic, mặc định mỗi 5 giây.
 6. Nếu server phản hồi rằng `device_id` không còn hợp lệ hoặc không còn ở trạng thái managed/approved vì board đã bị unpair hoặc không còn tồn tại trên server, ESP32 phải coi đó là yêu cầu pair lại.
 7. Nếu server phản hồi rằng pairing đã bị admin `reject/ignore`, ESP32 phải dừng mọi lần pair lại tự động trong runtime hiện tại.
 8. Board chỉ được xin pair lại sau lần boot hoặc power cycle kế tiếp.
+9. Nếu server không nhận heartbeat mới trong 15 giây thì board phải bị hiển thị là `offline` cho tới khi heartbeat kế tiếp tới.
 
 Theo baseline PRD, yêu cầu pair ban đầu đi qua command path:
 

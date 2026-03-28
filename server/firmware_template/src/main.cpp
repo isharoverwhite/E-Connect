@@ -28,7 +28,7 @@ static const EConnectPinConfig ECONNECT_PIN_CONFIGS[] = {
 };
 #endif
 
-constexpr unsigned long HEARTBEAT_INTERVAL_MS = 30000;
+constexpr unsigned long HEARTBEAT_INTERVAL_MS = 5000;
 constexpr unsigned long HANDSHAKE_RETRY_DELAY_MS = 5000;
 constexpr unsigned long HANDSHAKE_ACK_TIMEOUT_MS = 5000;
 constexpr int WIFI_RETRY_LIMIT = 40;
@@ -58,6 +58,7 @@ unsigned long lastHeartbeatAt = 0;
 bool securePairingVerified = false;
 bool forcePairingRequestOnNextHandshake = false;
 bool pairingRejectedUntilPowerCycle = false;
+bool manualReflashRequired = false;
 unsigned long lastReconnectAttemptAt = 0;
 
 bool connectToWiFi();
@@ -80,6 +81,13 @@ bool modeEquals(const char *left, const char *right);
 bool isOutputMode(const char *mode);
 bool isPwmMode(const char *mode);
 bool isReadableMode(const char *mode);
+bool isPwmInverted(const PinRuntimeState &pinState);
+int pwmLowerBound(const PinRuntimeState &pinState);
+int pwmUpperBound(const PinRuntimeState &pinState);
+int pwmOffOutputValue(const PinRuntimeState &pinState);
+int pwmOnOutputValue(const PinRuntimeState &pinState);
+int clampPwmBrightness(const PinRuntimeState &pinState, int brightness);
+int resolvePwmLogicalValue(const PinRuntimeState &pinState, int brightness);
 int readRuntimeValue(PinRuntimeState &pinState);
 int readRuntimeBrightness(PinRuntimeState &pinState);
 bool applyCommandToPin(PinRuntimeState &pinState, int value, int brightness);
@@ -87,6 +95,10 @@ int resolvePhysicalLevel(const PinRuntimeState &pinState, int logicalValue);
 WifiTarget scanWifiTarget();
 void logVisibleWifiTargets(const WifiTarget &target);
 void formatBssid(const uint8_t *bssid, char *buffer, size_t bufferSize);
+template <typename TDocument>
+void appendEmbeddedNetworkTargets(TDocument &doc);
+bool runtimeNetworkDiffers(JsonVariantConst runtimeNetwork);
+void requireManualReflash(JsonVariantConst runtimeNetwork, const String &message);
 
 void setup() {
   Serial.begin(115200);
@@ -107,6 +119,8 @@ void setup() {
 
   initializePinStates();
   initializeI2CBus();
+  Serial.printf("Provisioned MQTT broker: %s:%d\n", MQTT_BROKER, MQTT_PORT);
+  Serial.printf("Provisioned API base URL: %s\n", API_BASE_URL);
 
   while (!connectToWiFi()) {
     Serial.println("Wi-Fi provisioning failed. Retrying...");
@@ -115,11 +129,12 @@ void setup() {
 
   setupMQTT();
 
-  while (!securePairingVerified && !pairingRejectedUntilPowerCycle) {
+  while (!securePairingVerified && !pairingRejectedUntilPowerCycle &&
+         !manualReflashRequired) {
     if (performSecureHandshake()) {
       break;
     }
-    if (pairingRejectedUntilPowerCycle) {
+    if (pairingRejectedUntilPowerCycle || manualReflashRequired) {
       break;
     }
     Serial.println("Secure handshake failed. Retrying...");
@@ -128,7 +143,7 @@ void setup() {
 }
 
 void loop() {
-  if (pairingRejectedUntilPowerCycle) {
+  if (pairingRejectedUntilPowerCycle || manualReflashRequired) {
     delay(HANDSHAKE_RETRY_DELAY_MS);
     return;
   }
@@ -305,6 +320,7 @@ bool performSecureHandshake() {
   doc["name"] = ECONNECT_DEVICE_NAME;
   doc["mode"] = "no-code";
   doc["firmware_version"] = ECONNECT_FIRMWARE_VERSION;
+  appendEmbeddedNetworkTargets(doc);
 
   JsonArray pins = doc.createNestedArray("pins");
   for (size_t index = 0; index < PIN_CONFIG_COUNT; index++) {
@@ -339,6 +355,11 @@ bool performSecureHandshake() {
 
   if (pairingRejectedUntilPowerCycle) {
     Serial.println("Pairing was rejected by the server. Waiting for reboot before retrying.");
+    return false;
+  }
+
+  if (manualReflashRequired) {
+    Serial.println("Manual reflash is required before this board can resume pairing.");
     return false;
   }
 
@@ -417,6 +438,7 @@ void reconnectMQTT() {
   } else {
     Serial.print(" failed, rc=");
     Serial.println(mqttClient.state());
+    Serial.println("If the server was moved to a new IP, rebuild and reflash this board so the embedded server/MQTT host is updated.");
   }
 }
 
@@ -438,6 +460,14 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
 
   const String incomingTopic = String(topic);
   if (incomingTopic == registerAckTopic()) {
+    if (String(doc["status"] | "") == "manual_reflash_required" ||
+        runtimeNetworkDiffers(doc["runtime_network"])) {
+      requireManualReflash(
+          doc["runtime_network"],
+          String(doc["message"] | "Server reports the current firmware network target is stale."));
+      return;
+    }
+
     const bool verified = doc["secret_verified"] | false;
     if (!verified || String(doc["status"] | "") != "ok") {
       Serial.printf(
@@ -466,6 +496,13 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
 
   if (incomingTopic == stateAckTopic()) {
     const String status = doc["status"] | "";
+    if (status == "manual_reflash_required" ||
+        runtimeNetworkDiffers(doc["runtime_network"])) {
+      requireManualReflash(
+          doc["runtime_network"],
+          String(doc["message"] | "Server reports the current firmware network target is stale."));
+      return;
+    }
     if (status == "pairing_rejected") {
       pairingRejectedUntilPowerCycle = true;
       forcePairingRequestOnNextHandshake = false;
@@ -566,11 +603,15 @@ void initializePinStates() {
     pinStates[index].pwmMin = ECONNECT_PIN_CONFIGS[index].pwm_min;
     pinStates[index].pwmMax = ECONNECT_PIN_CONFIGS[index].pwm_max;
 
-    if (isOutputMode(pinStates[index].mode) || isPwmMode(pinStates[index].mode)) {
+    if (isOutputMode(pinStates[index].mode)) {
       pinMode(pinStates[index].gpio, OUTPUT);
       digitalWrite(
           pinStates[index].gpio,
           resolvePhysicalLevel(pinStates[index], 0) == 1 ? HIGH : LOW);
+    } else if (isPwmMode(pinStates[index].mode)) {
+      pinStates[index].brightness = pwmOffOutputValue(pinStates[index]);
+      pinMode(pinStates[index].gpio, OUTPUT);
+      analogWrite(pinStates[index].gpio, pinStates[index].brightness);
     } else if (isReadableMode(pinStates[index].mode)) {
       pinMode(pinStates[index].gpio, INPUT);
     }
@@ -641,9 +682,37 @@ bool isReadableMode(const char *mode) {
          modeEquals(mode, "I2C");
 }
 
+bool isPwmInverted(const PinRuntimeState &pinState) {
+  return pinState.pwmMin > pinState.pwmMax;
+}
+
+int pwmLowerBound(const PinRuntimeState &pinState) {
+  return pinState.pwmMin < pinState.pwmMax ? pinState.pwmMin : pinState.pwmMax;
+}
+
+int pwmUpperBound(const PinRuntimeState &pinState) {
+  return pinState.pwmMin > pinState.pwmMax ? pinState.pwmMin : pinState.pwmMax;
+}
+
+int pwmOffOutputValue(const PinRuntimeState &pinState) {
+  return isPwmInverted(pinState) ? pinState.pwmMin : 0;
+}
+
+int pwmOnOutputValue(const PinRuntimeState &pinState) {
+  return pinState.pwmMax;
+}
+
+int clampPwmBrightness(const PinRuntimeState &pinState, int brightness) {
+  return constrain(brightness, pwmLowerBound(pinState), pwmUpperBound(pinState));
+}
+
+int resolvePwmLogicalValue(const PinRuntimeState &pinState, int brightness) {
+  return brightness == pwmOffOutputValue(pinState) ? 0 : 1;
+}
+
 int readRuntimeValue(PinRuntimeState &pinState) {
   if (isPwmMode(pinState.mode)) {
-    pinState.value = pinState.brightness > 0 ? 1 : 0;
+    pinState.value = resolvePwmLogicalValue(pinState, pinState.brightness);
     return pinState.value;
   }
 
@@ -679,23 +748,23 @@ bool applyCommandToPin(PinRuntimeState &pinState, int value, int brightness) {
 
   if (isPwmMode(pinState.mode)) {
     int nextBrightness = brightness;
-    if (nextBrightness < 0 && value != -1) {
-      nextBrightness = value == 0 ? 0 : pinState.pwmMax;
+    if (value == 0) {
+      nextBrightness = pwmOffOutputValue(pinState);
+    } else if (nextBrightness < 0 && value != -1) {
+      nextBrightness = pwmOnOutputValue(pinState);
     }
 
     if (nextBrightness < 0) {
       return false;
     }
 
-    // Treat brightness as a raw analog output value clamped to the configured boundaries.
-    if (value == 0) {
-       nextBrightness = 0; // Turn off immediately if value=0 was sent
-    } else {
-       nextBrightness = constrain(nextBrightness, pinState.pwmMin, pinState.pwmMax);
+    if (value != 0) {
+      // Treat brightness as a raw analog output value clamped to the configured boundaries.
+      nextBrightness = clampPwmBrightness(pinState, nextBrightness);
     }
-    
+
     pinState.brightness = nextBrightness;
-    pinState.value = nextBrightness > 0 ? 1 : 0;
+    pinState.value = resolvePwmLogicalValue(pinState, nextBrightness);
     analogWrite(pinState.gpio, nextBrightness);
     return true;
   }
@@ -723,6 +792,7 @@ void publishState(bool applied) {
   doc["applied"] = applied;
   doc["firmware_version"] = ECONNECT_FIRMWARE_VERSION;
   doc["ip_address"] = WiFi.localIP().toString();
+  appendEmbeddedNetworkTargets(doc);
 
   JsonArray pins = doc.createNestedArray("pins");
   for (size_t index = 0; index < PIN_CONFIG_COUNT; index++) {
@@ -759,5 +829,61 @@ void publishState(bool applied) {
     Serial.println(payload);
   } else {
     Serial.println("Failed to publish state payload.");
+  }
+}
+
+template <typename TDocument>
+void appendEmbeddedNetworkTargets(TDocument &doc) {
+  JsonObject firmwareNetwork = doc.createNestedObject("firmware_network");
+  firmwareNetwork["api_base_url"] = API_BASE_URL;
+  firmwareNetwork["mqtt_broker"] = MQTT_BROKER;
+  firmwareNetwork["mqtt_port"] = MQTT_PORT;
+}
+
+bool runtimeNetworkDiffers(JsonVariantConst runtimeNetwork) {
+  if (runtimeNetwork.isNull()) {
+    return false;
+  }
+
+  const String runtimeApiBaseUrl = String(runtimeNetwork["api_base_url"] | "");
+  const String runtimeMqttBroker = String(runtimeNetwork["mqtt_broker"] | "");
+  const int runtimeMqttPort = runtimeNetwork["mqtt_port"] | MQTT_PORT;
+  if (runtimeApiBaseUrl.length() == 0 || runtimeMqttBroker.length() == 0) {
+    return false;
+  }
+
+  return runtimeApiBaseUrl != String(API_BASE_URL) ||
+         runtimeMqttBroker != String(MQTT_BROKER) ||
+         runtimeMqttPort != MQTT_PORT;
+}
+
+void requireManualReflash(JsonVariantConst runtimeNetwork, const String &message) {
+  manualReflashRequired = true;
+  securePairingVerified = false;
+  forcePairingRequestOnNextHandshake = false;
+
+  if (mqttClient.connected()) {
+    mqttClient.disconnect();
+  }
+
+  Serial.println("MANUAL REFLASH REQUIRED.");
+  if (message.length() > 0) {
+    Serial.println(message.c_str());
+  }
+  Serial.printf(
+      "Embedded target in this firmware: API %s | MQTT %s:%d\n",
+      API_BASE_URL,
+      MQTT_BROKER,
+      MQTT_PORT);
+
+  const String runtimeApiBaseUrl = String(runtimeNetwork["api_base_url"] | "");
+  const String runtimeMqttBroker = String(runtimeNetwork["mqtt_broker"] | "");
+  const int runtimeMqttPort = runtimeNetwork["mqtt_port"] | MQTT_PORT;
+  if (runtimeApiBaseUrl.length() > 0 || runtimeMqttBroker.length() > 0) {
+    Serial.printf(
+        "Current server target: API %s | MQTT %s:%d\n",
+        runtimeApiBaseUrl.length() > 0 ? runtimeApiBaseUrl.c_str() : "(unknown)",
+        runtimeMqttBroker.length() > 0 ? runtimeMqttBroker.c_str() : "(unknown)",
+        runtimeMqttPort);
   }
 }

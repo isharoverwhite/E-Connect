@@ -26,7 +26,7 @@ test.describe('DIY Flasher Infinite Loop Regression Tests', () => {
       return;
     }
 
-    const loginRes = await request.post('http://localhost:3000/api/v1/auth/token', {
+    const loginRes = await request.post('/api/v1/auth/token', {
       form: { username, password }
     });
     
@@ -41,10 +41,7 @@ test.describe('DIY Flasher Infinite Loop Regression Tests', () => {
     // before Next.js and React execute. This prevents the race condition 
     // where AuthProvider redirects to /login and /login clears the token.
     await context.addInitScript((token) => {
-      // Run only on our origin
-      if (window.location.hostname === 'localhost') {
-        window.localStorage.setItem('econnect_token', token);
-      }
+      window.localStorage.setItem('econnect_token', token);
     }, authToken);
   });
 
@@ -62,7 +59,7 @@ test.describe('DIY Flasher Infinite Loop Regression Tests', () => {
     });
 
     // 1. Visit Flasher page
-    await page.goto('http://localhost:3000/devices/diy');
+    await page.goto('/devices/diy');
 
     // Verify we remain on the correct route and don't bounce to login
     await expect(page).toHaveURL(/.*\/devices\/diy$/, { timeout: 5000 });
@@ -101,9 +98,7 @@ test.describe('DIY Flasher Infinite Loop Regression Tests', () => {
   test('Should correctly reload with a saved ESP8266 draft without permanently wedging early returns', async ({ page }) => {
     // 1. Inject the draft BEFORE visiting the page so component hydrates it immediately
     await page.addInitScript((draftData) => {
-      if (window.location.hostname === 'localhost') {
-        window.localStorage.setItem('econnect:diy-svg-builder:v2', JSON.stringify(draftData));
-      }
+      window.localStorage.setItem('econnect:diy-svg-builder:v2', JSON.stringify(draftData));
     }, ESP8266_SAVED_DRAFT);
 
     const errors: string[] = [];
@@ -113,7 +108,7 @@ test.describe('DIY Flasher Infinite Loop Regression Tests', () => {
     });
 
     // 2. Open Flasher natively and let it hydrate
-    await page.goto('http://localhost:3000/devices/diy');
+    await page.goto('/devices/diy');
     
     await expect(page).toHaveURL(/.*\/devices\/diy$/, { timeout: 5000 });
 

@@ -13,6 +13,7 @@ import {
     deleteManagedUser,
     promoteManagedUser,
 } from "@/lib/auth";
+import { RuntimeNetworkInfo, fetchRuntimeNetworkInfo } from "@/lib/api";
 import {
     RoomRecord,
     createRoom,
@@ -37,13 +38,16 @@ export default function SettingsPage() {
     const { showToast } = useToast();
     const isAdmin = user?.account_type === "admin";
 
-    const [activePanel, setActivePanel] = useState<SettingsPanel>(isAdmin ? "users" : "general");
+    const [activePanel, setActivePanel] = useState<SettingsPanel>("general");
     const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
     const [usersLoading, setUsersLoading] = useState(true);
     const [usersError, setUsersError] = useState("");
     const [rooms, setRooms] = useState<RoomRecord[]>([]);
     const [roomsLoading, setRoomsLoading] = useState(true);
     const [roomsError, setRoomsError] = useState("");
+    const [runtimeNetwork, setRuntimeNetwork] = useState<RuntimeNetworkInfo | null>(null);
+    const [networkLoading, setNetworkLoading] = useState(true);
+    const [networkError, setNetworkError] = useState("");
     const [roomFormName, setRoomFormName] = useState("");
     const [editingRoomId, setEditingRoomId] = useState<number | null>(null);
     const [editingRoomName, setEditingRoomName] = useState("");
@@ -63,7 +67,7 @@ export default function SettingsPage() {
     });
 
     useEffect(() => {
-        setActivePanel(isAdmin ? "users" : "general");
+        setActivePanel("general");
     }, [isAdmin]);
 
     async function loadManagedUsers() {
@@ -122,6 +126,38 @@ export default function SettingsPage() {
         }
     }
 
+    async function loadRuntimeNetworkInfo() {
+        if (!isAdmin) {
+            setRuntimeNetwork(null);
+            setNetworkError("");
+            setNetworkLoading(false);
+            return;
+        }
+
+        const token = getToken();
+        if (!token) {
+            setRuntimeNetwork(null);
+            setNetworkError("Missing session token. Please sign in again.");
+            setNetworkLoading(false);
+            return;
+        }
+
+        setNetworkLoading(true);
+        setNetworkError("");
+
+        try {
+            const data = await fetchRuntimeNetworkInfo(token);
+            setRuntimeNetwork(data);
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : "Failed to load runtime network targets";
+            setRuntimeNetwork(null);
+            setNetworkError(message);
+        } finally {
+            setNetworkLoading(false);
+        }
+    }
+
     const loadManagedUsersForEffect = useEffectEvent(() => {
         void loadManagedUsers();
     });
@@ -130,7 +166,15 @@ export default function SettingsPage() {
         void loadRooms();
     });
 
+    const loadRuntimeNetworkForEffect = useEffectEvent(() => {
+        void loadRuntimeNetworkInfo();
+    });
+
     useEffect(() => {
+        if (isAdmin && activePanel === "general") {
+            loadRuntimeNetworkForEffect();
+        }
+
         if (activePanel === "users" || activePanel === "rooms") {
             loadManagedUsersForEffect();
             loadRoomsForEffect();
@@ -534,6 +578,68 @@ export default function SettingsPage() {
                                         </div>
                                     </div>
                                 </section>
+
+                                {isAdmin ? (
+                                    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                            <div>
+                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Runtime Network</p>
+                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Current provisioning targets</h2>
+                                                <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
+                                                    These are the live server and MQTT addresses the backend is currently advertising for firmware generation and troubleshooting.
+                                                </p>
+                                            </div>
+                                            {runtimeNetwork ? (
+                                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-900/80">
+                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Provisioning key</p>
+                                                    <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{runtimeNetwork.target_key}</p>
+                                                </div>
+                                            ) : null}
+                                        </div>
+
+                                        {networkError ? (
+                                            <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                                                {networkError}
+                                            </div>
+                                        ) : null}
+
+                                        {!networkError && runtimeNetwork?.warning ? (
+                                            <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                                                <p className="font-semibold">Manual reflash attention</p>
+                                                <p className="mt-1">{runtimeNetwork.warning}</p>
+                                            </div>
+                                        ) : null}
+
+                                        {networkLoading ? (
+                                            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-400">
+                                                Loading active runtime network targets...
+                                            </div>
+                                        ) : runtimeNetwork ? (
+                                            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
+                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Server Host / IP</p>
+                                                    <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{runtimeNetwork.advertised_host}</p>
+                                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">This is the host the backend currently stamps into new firmware builds.</p>
+                                                </div>
+                                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
+                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">MQTT Broker Host / IP</p>
+                                                    <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{runtimeNetwork.mqtt_broker}</p>
+                                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Boards use this host for MQTT transport after flashing.</p>
+                                                </div>
+                                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
+                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">MQTT Port</p>
+                                                    <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{runtimeNetwork.mqtt_port}</p>
+                                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use this together with the broker host when checking runtime connectivity.</p>
+                                                </div>
+                                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
+                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">API Base URL</p>
+                                                    <p className="mt-2 break-all text-sm font-semibold text-slate-900 dark:text-white">{runtimeNetwork.api_base_url}</p>
+                                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Nearby provisioning and firmware diagnostics should resolve back to this API endpoint.</p>
+                                                </div>
+                                            </div>
+                                        ) : null}
+                                    </section>
+                                ) : null}
                             </div>
                         ) : null}
 

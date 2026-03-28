@@ -109,7 +109,15 @@ class InitialServerRequest(UserCreate):
 
 class Token(BaseModel):
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str
+    access_token_expires_at: Optional[datetime] = None
+    refresh_token_expires_at: Optional[datetime] = None
+    keep_login: bool = False
+
+
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
 class TokenData(BaseModel):
     username: Optional[str] = None
@@ -281,6 +289,16 @@ class GenerateConfigResponse(BaseModel):
     status: str
     config: Dict[str, Any]
 
+class FirmwareNetworkTargetsResponse(BaseModel):
+    advertised_host: str
+    api_base_url: str
+    mqtt_broker: str
+    mqtt_port: int
+    target_key: str
+    warning: Optional[str] = None
+    stale_project_count: int = 0
+    stale_device_count: int = 0
+
 class DiyProjectBase(BaseModel):
     name: str
     board_profile: str
@@ -289,6 +307,9 @@ class DiyProjectBase(BaseModel):
 
 class DiyProjectCreate(DiyProjectBase):
     pass
+
+class DiyProjectDeleteRequest(BaseModel):
+    password: Optional[str] = None
 
 class DiyProjectResponse(DiyProjectBase):
     id: str

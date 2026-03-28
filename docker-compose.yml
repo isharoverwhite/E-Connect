@@ -4,10 +4,10 @@ services:
     container_name: e-connect-db
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:-root}
-      MYSQL_DATABASE: ${DB_NAME:-smart_home}
-      MYSQL_USER: ${DB_USER:-user}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-password}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_password}
+      MYSQL_DATABASE: ${DB_NAME:-e_connect_db}
+      MYSQL_USER: ${DB_USER:-econnect}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-root_password}
     ports:
       - "3306:3306"
     volumes:
@@ -37,12 +37,13 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: mysql+pymysql://${DB_USER:-user}:${DB_PASSWORD:-password}@${DB_HOST:-db}:3306/${DB_NAME:-smart_home}
+      DATABASE_URL: mysql+pymysql://${DB_USER:-econnect}:${DB_PASSWORD:-root_password}@${DB_HOST:-db}:3306/${DB_NAME:-e_connect_db}
       SECRET_KEY: ${SECRET_KEY:-supersecretkey}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-43200}
       MQTT_BROKER: ${MQTT_BROKER:-mqtt}
       MQTT_PORT: ${MQTT_PORT:-1883}
       MQTT_NAMESPACE: ${MQTT_NAMESPACE:-local}
+      FIRMWARE_PUBLIC_BASE_URL: ${FIRMWARE_PUBLIC_BASE_URL:-}
     volumes:
       - server_data:/data
     depends_on:
@@ -72,6 +73,8 @@ services:
     restart: always
     ports:
       - "3000:3000"
+    volumes:
+      - webapp_tls:/app/.local-https
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
       BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://server:8000}
@@ -83,7 +86,7 @@ services:
         - CMD
         - node
         - -e
-        - const main = async () => { const res = await fetch("http://127.0.0.1:3000/login"); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))
+        - process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; const main = async () => { const res = await fetch("https://127.0.0.1:3000/login"); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))
       interval: 5s
       timeout: 5s
       retries: 24
@@ -92,3 +95,4 @@ services:
 volumes:
   db_data:
   server_data:
+  webapp_tls:

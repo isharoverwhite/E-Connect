@@ -2,6 +2,7 @@ import os
 import shutil
 import subprocess
 import ipaddress
+import socket
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.services.diy_validation import resolve_board_definition
 from app.services.provisioning import build_project_firmware_identity
-from app.sql_models import BuildJob, JobStatus, SerialSession, SerialSessionStatus
+from app.sql_models import AuthStatus, BuildJob, Device, DiyProject, JobStatus, SerialSession, SerialSessionStatus
 from app.services.i2c_registry import find_library_by_name
 
 BUILD_BASE_DIR = os.getenv("BUILD_BASE_DIR", "/tmp/econnect_builds")
@@ -38,6 +39,35 @@ _BLOCKED_ADVERTISED_HOSTNAMES = {
     "db",
     "webapp",
 }
+_FIRMWARE_PUBLIC_BASE_URL_ENV = "FIRMWARE_PUBLIC_BASE_URL"
+_FIRMWARE_PUBLIC_PORT_ENV = "FIRMWARE_PUBLIC_PORT"
+_FIRMWARE_PUBLIC_SCHEME_ENV = "FIRMWARE_PUBLIC_SCHEME"
+_FIRMWARE_MQTT_BROKER_ENV = "FIRMWARE_MQTT_BROKER"
+_FIRMWARE_MQTT_PORT_ENV = "FIRMWARE_MQTT_PORT"
+_DEFAULT_FIRMWARE_PUBLIC_PORT = "3000"
+_DEFAULT_FIRMWARE_PUBLIC_SCHEME = "https"
+_DEFAULT_MQTT_PORT = "1883"
+_COMMON_DOCKER_BRIDGE_SUBNETS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "172.17.0.0/16",
+        "172.18.0.0/16",
+        "172.19.0.0/16",
+        "172.20.0.0/16",
+        "172.21.0.0/16",
+        "172.22.0.0/16",
+        "172.23.0.0/16",
+        "172.24.0.0/16",
+        "172.25.0.0/16",
+        "172.26.0.0/16",
+        "172.27.0.0/16",
+        "172.28.0.0/16",
+        "172.29.0.0/16",
+        "172.30.0.0/16",
+        "172.31.0.0/16",
+        "192.168.65.0/24",
+    )
+)
 
 
 def _first_header_value(value: str | None) -> str | None:
@@ -101,9 +131,426 @@ def _validate_advertised_hostname(hostname: str) -> None:
         raise ValueError(f"Host '{hostname}' is multicast and cannot be used as the server address.")
 
 
-def infer_firmware_network_targets(headers: Mapping[str, str], request_scheme: str) -> dict[str, str]:
+def _resolve_configured_public_network_targets() -> dict[str, str] | None:
+    configured_base_url = os.getenv(_FIRMWARE_PUBLIC_BASE_URL_ENV)
+    if not configured_base_url or not configured_base_url.strip():
+        return None
+
+    raw_value = configured_base_url.strip()
+    netloc, hostname, scheme = _parse_host_candidate(raw_value, default_scheme="https")
+    _validate_advertised_hostname(hostname)
+    return build_firmware_network_targets(
+        hostname,
+        f"{scheme}://{netloc.rstrip('/')}/api/v1",
+        mqtt_broker=_resolve_runtime_mqtt_broker(hostname),
+        mqtt_port=_resolve_runtime_mqtt_port(),
+    )
+
+
+def _normalize_firmware_public_scheme() -> str:
+    candidate = os.getenv(_FIRMWARE_PUBLIC_SCHEME_ENV, _DEFAULT_FIRMWARE_PUBLIC_SCHEME).strip().lower()
+    if candidate not in {"http", "https"}:
+        raise ValueError(
+            f"{_FIRMWARE_PUBLIC_SCHEME_ENV} must be http or https when {_FIRMWARE_PUBLIC_BASE_URL_ENV} is unset."
+        )
+    return candidate
+
+
+def _resolve_firmware_public_port() -> int:
+    raw_value = os.getenv(_FIRMWARE_PUBLIC_PORT_ENV, _DEFAULT_FIRMWARE_PUBLIC_PORT).strip()
+    try:
+        port = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{_FIRMWARE_PUBLIC_PORT_ENV} must be a valid TCP port number.") from exc
+
+    if port <= 0 or port > 65535:
+        raise ValueError(f"{_FIRMWARE_PUBLIC_PORT_ENV} must be between 1 and 65535.")
+
+    return port
+
+
+def _normalize_tcp_port(raw_value: object, *, env_name: str) -> int:
+    candidate = str(raw_value).strip()
+    try:
+        port = int(candidate)
+    except ValueError as exc:
+        raise ValueError(f"{env_name} must be a valid TCP port number.") from exc
+
+    if port <= 0 or port > 65535:
+        raise ValueError(f"{env_name} must be between 1 and 65535.")
+
+    return port
+
+
+def _resolve_runtime_mqtt_port() -> int:
+    raw_value = os.getenv(_FIRMWARE_MQTT_PORT_ENV, os.getenv("MQTT_PORT", _DEFAULT_MQTT_PORT))
+    return _normalize_tcp_port(raw_value, env_name=_FIRMWARE_MQTT_PORT_ENV)
+
+
+def _format_runtime_netloc(hostname: str, port: int) -> str:
+    if ":" in hostname and not hostname.startswith("["):
+        return f"[{hostname}]:{port}"
+    return f"{hostname}:{port}"
+
+
+def _format_runtime_host(hostname: str) -> str:
+    if ":" in hostname and not hostname.startswith("["):
+        return f"[{hostname}]"
+    return hostname
+
+
+def _resolve_runtime_mqtt_broker(advertised_host: str) -> str:
+    for candidate in (
+        os.getenv(_FIRMWARE_MQTT_BROKER_ENV),
+        os.getenv("MQTT_BROKER"),
+    ):
+        if not candidate or not candidate.strip():
+            continue
+        try:
+            _, hostname, _ = _parse_host_candidate(candidate.strip(), default_scheme="mqtt")
+            _validate_advertised_hostname(hostname)
+            return hostname
+        except ValueError:
+            continue
+
+    return advertised_host
+
+
+def build_firmware_target_key(targets: Mapping[str, object]) -> str:
+    return "|".join(
+        [
+            str(targets.get("advertised_host", "")).strip(),
+            str(targets.get("api_base_url", "")).strip(),
+            str(targets.get("mqtt_broker", "")).strip(),
+            str(targets.get("mqtt_port", "")).strip(),
+        ]
+    )
+
+
+def build_firmware_network_targets(
+    advertised_host: str,
+    api_base_url: str,
+    *,
+    mqtt_broker: str | None = None,
+    mqtt_port: int | None = None,
+) -> dict[str, object]:
+    normalized_host = advertised_host.strip().lower()
+    _validate_advertised_hostname(normalized_host)
+
+    normalized_api_base_url = api_base_url.strip().rstrip("/")
+    _, parsed_api_host, _ = _parse_host_candidate(normalized_api_base_url, default_scheme="http")
+    _validate_advertised_hostname(parsed_api_host)
+
+    normalized_mqtt_broker = (mqtt_broker or "").strip().lower() or normalized_host
+    _validate_advertised_hostname(normalized_mqtt_broker)
+
+    normalized_mqtt_port = mqtt_port if mqtt_port is not None else _resolve_runtime_mqtt_port()
+    normalized_mqtt_port = _normalize_tcp_port(normalized_mqtt_port, env_name=_FIRMWARE_MQTT_PORT_ENV)
+
+    targets: dict[str, object] = {
+        "advertised_host": normalized_host,
+        "api_base_url": normalized_api_base_url,
+        "mqtt_broker": normalized_mqtt_broker,
+        "mqtt_port": normalized_mqtt_port,
+    }
+    targets["target_key"] = build_firmware_target_key(targets)
+    return targets
+
+
+def coerce_firmware_network_targets(raw_targets: Mapping[str, object] | None) -> dict[str, object] | None:
+    if not isinstance(raw_targets, Mapping):
+        return None
+
+    api_base_url = raw_targets.get("api_base_url")
+    if not isinstance(api_base_url, str) or not api_base_url.strip():
+        return None
+
+    normalized_api_base_url = api_base_url.strip().rstrip("/")
+    _, parsed_api_host, _ = _parse_host_candidate(normalized_api_base_url, default_scheme="http")
+    _validate_advertised_hostname(parsed_api_host)
+
+    advertised_host = raw_targets.get("advertised_host")
+    if isinstance(advertised_host, str) and advertised_host.strip():
+        normalized_host = advertised_host.strip().lower()
+        _validate_advertised_hostname(normalized_host)
+    else:
+        normalized_host = parsed_api_host
+
+    mqtt_broker = raw_targets.get("mqtt_broker")
+    normalized_mqtt_broker = normalized_host
+    if isinstance(mqtt_broker, str) and mqtt_broker.strip():
+        normalized_mqtt_broker = mqtt_broker.strip().lower()
+        _validate_advertised_hostname(normalized_mqtt_broker)
+
+    raw_mqtt_port = raw_targets.get("mqtt_port", _resolve_runtime_mqtt_port())
+    normalized_mqtt_port = _normalize_tcp_port(raw_mqtt_port, env_name=_FIRMWARE_MQTT_PORT_ENV)
+
+    return build_firmware_network_targets(
+        normalized_host,
+        normalized_api_base_url,
+        mqtt_broker=normalized_mqtt_broker,
+        mqtt_port=normalized_mqtt_port,
+    )
+
+
+def extract_runtime_firmware_network_targets(
+    runtime_state: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    if not isinstance(runtime_state, Mapping):
+        return None
+
+    raw_targets = runtime_state.get("targets")
+    if not isinstance(raw_targets, Mapping):
+        return None
+
+    return coerce_firmware_network_targets(raw_targets)
+
+
+def _format_firmware_target_summary(targets: Mapping[str, object]) -> str:
+    advertised_host = str(targets.get("advertised_host", "")).strip()
+    mqtt_broker = str(targets.get("mqtt_broker", "")).strip()
+    mqtt_port = str(targets.get("mqtt_port", "")).strip()
+    return f"server {advertised_host} / MQTT {mqtt_broker}:{mqtt_port}"
+
+
+def _collect_runtime_ip_candidates() -> list[str]:
+    candidates: list[str] = []
+
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+            sock.connect(("8.8.8.8", 80))
+            candidate = sock.getsockname()[0]
+            if candidate:
+                candidates.append(candidate)
+    except OSError:
+        pass
+
+    try:
+        hostname = socket.gethostname().strip()
+        infos = socket.getaddrinfo(hostname or None, None, type=socket.SOCK_STREAM)
+    except OSError:
+        infos = []
+
+    for family, _, _, _, sockaddr in infos:
+        if family not in {socket.AF_INET, socket.AF_INET6}:
+            continue
+        candidate = sockaddr[0]
+        if candidate:
+            candidates.append(candidate)
+
+    unique_candidates: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        normalized = candidate.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique_candidates.append(normalized)
+
+    return unique_candidates
+
+
+def _detect_runtime_advertised_host() -> str | None:
+    for candidate in _collect_runtime_ip_candidates():
+        try:
+            _validate_advertised_hostname(candidate)
+        except ValueError:
+            continue
+        return candidate
+
+    return None
+
+
+def _is_running_in_docker() -> bool:
+    if Path("/.dockerenv").exists():
+        return True
+
+    try:
+        cgroup = Path("/proc/1/cgroup").read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+    return "docker" in cgroup or "containerd" in cgroup
+
+
+def _looks_like_docker_bridge_ip(hostname: str) -> bool:
+    try:
+        parsed = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+
+    if not isinstance(parsed, ipaddress.IPv4Address):
+        return False
+
+    return any(parsed in subnet for subnet in _COMMON_DOCKER_BRIDGE_SUBNETS)
+
+
+def resolve_runtime_firmware_network_state() -> dict[str, object]:
+    configured_targets = _resolve_configured_public_network_targets()
+    if configured_targets is not None:
+        return {
+            "source": "configured_env",
+            "targets": configured_targets,
+            "error": None,
+        }
+
+    detected_host = _detect_runtime_advertised_host()
+    if not detected_host:
+        return {
+            "source": "startup_auto",
+            "targets": None,
+            "error": (
+                "Server startup could not auto-detect a reachable LAN host for firmware provisioning. "
+                f"Open the Web UI from the server LAN/public origin or set {_FIRMWARE_PUBLIC_BASE_URL_ENV} explicitly."
+            ),
+        }
+
+    if _is_running_in_docker() and _looks_like_docker_bridge_ip(detected_host):
+        return {
+            "source": "startup_auto",
+            "targets": None,
+            "error": (
+                f"Server startup detected container address {detected_host}, not the host LAN IP. "
+                "If you run Docker and want automatic firmware IP handling on startup, configure the relevant containers "
+                "with `network_mode: host` so the server sees the real host interfaces, or set "
+                f"{_FIRMWARE_PUBLIC_BASE_URL_ENV} explicitly."
+            ),
+        }
+
+    try:
+        scheme = _normalize_firmware_public_scheme()
+        port = _resolve_firmware_public_port()
+    except ValueError as exc:
+        return {
+            "source": "startup_auto",
+            "targets": None,
+            "error": str(exc),
+        }
+
+    netloc = _format_runtime_netloc(detected_host, port)
+    return {
+        "source": "startup_auto",
+        "targets": build_firmware_network_targets(
+            detected_host,
+            f"{scheme}://{netloc}/api/v1",
+            mqtt_broker=_resolve_runtime_mqtt_broker(detected_host),
+            mqtt_port=_resolve_runtime_mqtt_port(),
+        ),
+        "error": None,
+    }
+
+
+def _extract_runtime_network_error(runtime_state: Mapping[str, object] | None) -> str | None:
+    if not isinstance(runtime_state, Mapping):
+        return None
+
+    raw_error = runtime_state.get("error")
+    if isinstance(raw_error, str) and raw_error.strip():
+        return raw_error.strip()
+
+    return None
+
+
+def _extract_previous_advertised_host(config: Mapping[str, object] | None) -> str | None:
+    if not isinstance(config, Mapping):
+        return None
+
+    candidate = config.get("advertised_host")
+    if isinstance(candidate, str) and candidate.strip():
+        return candidate.strip()
+
+    api_base_url = config.get("api_base_url")
+    if isinstance(api_base_url, str) and api_base_url.strip():
+        try:
+            _, hostname, _ = _parse_host_candidate(api_base_url.strip(), default_scheme="http")
+        except ValueError:
+            return None
+        return hostname
+
+    return None
+
+
+def _coerce_legacy_firmware_network_targets(
+    raw_targets: Mapping[str, object] | None,
+    reference_targets: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    if not isinstance(raw_targets, Mapping):
+        return None
+
+    legacy_host = _extract_previous_advertised_host(raw_targets)
+    normalized_reference_targets = coerce_firmware_network_targets(reference_targets)
+    if legacy_host is None or normalized_reference_targets is None:
+        return None
+
+    reference_api_base_url = str(normalized_reference_targets["api_base_url"]).strip()
+    parsed_reference = urlsplit(reference_api_base_url)
+    api_scheme = parsed_reference.scheme or "http"
+    api_path = parsed_reference.path.rstrip("/") or "/api/v1"
+    if parsed_reference.port is not None:
+        api_netloc = _format_runtime_netloc(legacy_host, parsed_reference.port)
+    else:
+        api_netloc = _format_runtime_host(legacy_host)
+    api_base_url = f"{api_scheme}://{api_netloc}{api_path}"
+
+    mqtt_broker = legacy_host
+    raw_mqtt_broker = raw_targets.get("mqtt_broker")
+    if isinstance(raw_mqtt_broker, str) and raw_mqtt_broker.strip():
+        mqtt_broker = raw_mqtt_broker.strip()
+
+    raw_mqtt_port = raw_targets.get("mqtt_port", normalized_reference_targets["mqtt_port"])
+    mqtt_port = _normalize_tcp_port(raw_mqtt_port, env_name=_FIRMWARE_MQTT_PORT_ENV)
+
+    return build_firmware_network_targets(
+        legacy_host,
+        api_base_url,
+        mqtt_broker=mqtt_broker,
+        mqtt_port=mqtt_port,
+    )
+
+
+def describe_network_target_change(
+    config: Mapping[str, object] | None,
+    next_targets: Mapping[str, object],
+) -> str | None:
+    previous_targets = coerce_firmware_network_targets(config)
+    normalized_next_targets = coerce_firmware_network_targets(next_targets)
+    if previous_targets is None:
+        previous_targets = _coerce_legacy_firmware_network_targets(config, normalized_next_targets)
+    if previous_targets is None or normalized_next_targets is None:
+        return None
+
+    if previous_targets["target_key"] == normalized_next_targets["target_key"]:
+        return None
+
+    return (
+        "Firmware network target changed from "
+        f"{_format_firmware_target_summary(previous_targets)} to "
+        f"{_format_firmware_target_summary(normalized_next_targets)}. "
+        "Boards flashed with older artifacts keep using the old server/MQTT target and will not appear in Discovery "
+        "until they are rebuilt and reflashed from this server."
+    )
+
+
+def infer_firmware_network_targets(
+    headers: Mapping[str, str],
+    request_scheme: str,
+    runtime_state: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    configured_targets = _resolve_configured_public_network_targets()
+    if configured_targets is not None:
+        return configured_targets
+
+    runtime_targets = extract_runtime_firmware_network_targets(runtime_state)
+    if runtime_targets is not None:
+        return runtime_targets
+
     forwarded_host, forwarded_proto = _parse_forwarded_header(headers.get("forwarded"))
     candidates = [
+        (
+            "X-EConnect-Origin",
+            _first_header_value(headers.get("x-econnect-origin")),
+            request_scheme,
+        ),
         (
             "X-Forwarded-Host",
             _first_header_value(headers.get("x-forwarded-host")),
@@ -139,21 +586,124 @@ def infer_firmware_network_targets(headers: Mapping[str, str], request_scheme: s
         try:
             netloc, hostname, scheme = _parse_host_candidate(raw_value, default_scheme=default_scheme)
             _validate_advertised_hostname(hostname)
-            return {
-                "advertised_host": hostname,
-                "api_base_url": f"{scheme}://{netloc.rstrip('/')}/api/v1",
-            }
+            return build_firmware_network_targets(
+                hostname,
+                f"{scheme}://{netloc.rstrip('/')}/api/v1",
+                mqtt_broker=_resolve_runtime_mqtt_broker(hostname),
+                mqtt_port=_resolve_runtime_mqtt_port(),
+            )
         except ValueError as exc:
             errors.append(f"{source}: {exc}")
 
     detail = (
         "Server could not infer a reachable host for firmware provisioning from the current request. "
         "Open the Web UI using the server LAN IP or a trusted reverse-proxy hostname, not localhost, "
-        "127.0.0.1, or Docker-only names."
+        "127.0.0.1, or Docker-only names. If operators must access the Web UI through localhost, "
+        f"set {_FIRMWARE_PUBLIC_BASE_URL_ENV} to the server LAN/public origin so firmware builds keep a reachable host."
     )
+    runtime_error = _extract_runtime_network_error(runtime_state)
+    if runtime_error:
+        detail = f"{runtime_error} {detail}"
     if errors:
         detail = f"{detail} Checked headers: {' | '.join(errors)}"
     raise ValueError(detail)
+
+
+def extract_reported_firmware_network_targets(
+    payload: Mapping[str, object] | None,
+) -> dict[str, object] | None:
+    if not isinstance(payload, Mapping):
+        return None
+
+    raw_network = payload.get("firmware_network")
+    if not isinstance(raw_network, Mapping):
+        return None
+
+    return coerce_firmware_network_targets(raw_network)
+
+
+def describe_runtime_firmware_mismatch(
+    payload: Mapping[str, object] | None,
+    current_targets: Mapping[str, object] | None,
+) -> str | None:
+    reported_targets = extract_reported_firmware_network_targets(payload)
+    normalized_current_targets = coerce_firmware_network_targets(current_targets)
+    if reported_targets is None or normalized_current_targets is None:
+        return None
+
+    if reported_targets["target_key"] == normalized_current_targets["target_key"]:
+        return None
+
+    return (
+        "Firmware network target mismatch. Board still reports "
+        f"{_format_firmware_target_summary(reported_targets)}, but the running backend now advertises "
+        f"{_format_firmware_target_summary(normalized_current_targets)}. Manual reflash is required."
+    )
+
+
+def audit_runtime_firmware_target_mismatches(
+    db: Session,
+    runtime_state: Mapping[str, object] | None,
+) -> dict[str, object]:
+    current_targets = extract_runtime_firmware_network_targets(runtime_state)
+    audit: dict[str, object] = {
+        "current_targets": current_targets,
+        "stale_projects": [],
+        "stale_project_count": 0,
+        "stale_device_count": 0,
+        "warning": None,
+    }
+    if current_targets is None:
+        return audit
+
+    stale_projects: list[dict[str, object]] = []
+    stale_device_count = 0
+
+    for project in db.query(DiyProject).order_by(DiyProject.name.asc(), DiyProject.id.asc()).all():
+        project_config = project.config if isinstance(project.config, Mapping) else None
+        previous_targets = coerce_firmware_network_targets(project_config)
+        if previous_targets is None:
+            previous_targets = _coerce_legacy_firmware_network_targets(project_config, current_targets)
+        if previous_targets is None:
+            continue
+        if previous_targets["target_key"] == current_targets["target_key"]:
+            continue
+
+        linked_devices = (
+            db.query(Device)
+            .filter(Device.provisioning_project_id == project.id)
+            .order_by(Device.name.asc(), Device.device_id.asc())
+            .all()
+        )
+        device_ids = [device.device_id for device in linked_devices]
+        approved_device_ids = [
+            device.device_id
+            for device in linked_devices
+            if device.auth_status == AuthStatus.approved
+        ]
+        stale_device_count += len(device_ids)
+        stale_projects.append(
+            {
+                "project_id": project.id,
+                "project_name": project.name,
+                "previous_targets": previous_targets,
+                "current_targets": current_targets,
+                "device_ids": device_ids,
+                "approved_device_ids": approved_device_ids,
+                "device_count": len(device_ids),
+            }
+        )
+
+    audit["stale_projects"] = stale_projects
+    audit["stale_project_count"] = len(stale_projects)
+    audit["stale_device_count"] = stale_device_count
+    if stale_projects:
+        audit["warning"] = (
+            f"Server startup found {len(stale_projects)} DIY project(s) and {stale_device_count} linked board(s) "
+            "with stale server/MQTT firmware targets. Manual reflash is required before those boards can pair "
+            "against the current runtime target."
+        )
+    return audit
 
 
 def release_project_serial_reservation(project, db: Session) -> str | None:
@@ -281,15 +831,15 @@ def _resolve_api_base_url(config_json: dict) -> str | None:
 
 def _resolve_mqtt_broker(config_json: dict) -> str:
     if isinstance(config_json, dict):
-        advertised_host = config_json.get("advertised_host")
-        if isinstance(advertised_host, str) and advertised_host.strip():
-            normalized = advertised_host.strip()
+        candidate = config_json.get("mqtt_broker")
+        if isinstance(candidate, str) and candidate.strip():
+            normalized = candidate.strip().lower()
             _validate_advertised_hostname(normalized)
             return normalized
 
-        candidate = config_json.get("mqtt_broker")
-        if isinstance(candidate, str) and candidate.strip():
-            normalized = candidate.strip()
+        advertised_host = config_json.get("advertised_host")
+        if isinstance(advertised_host, str) and advertised_host.strip():
+            normalized = advertised_host.strip().lower()
             _validate_advertised_hostname(normalized)
             return normalized
 
@@ -304,6 +854,15 @@ def _resolve_mqtt_broker(config_json: dict) -> str:
     )
 
 
+def _resolve_mqtt_port(config_json: dict) -> int:
+    if isinstance(config_json, dict):
+        candidate = config_json.get("mqtt_port")
+        if candidate is not None:
+            return _normalize_tcp_port(candidate, env_name=_FIRMWARE_MQTT_PORT_ENV)
+
+    return _resolve_runtime_mqtt_port()
+
+
 def write_generated_firmware_config(project, job_id: str, project_dir: str):
     config_json = project.config if isinstance(project.config, dict) else {}
     include_dir = os.path.join(project_dir, "include")
@@ -315,7 +874,7 @@ def write_generated_firmware_config(project, job_id: str, project_dir: str):
     wifi_ssid = str(config_json.get("wifi_ssid") or "")
     wifi_password = str(config_json.get("wifi_password") or "")
     mqtt_broker = _resolve_mqtt_broker(config_json)
-    mqtt_port = int(os.getenv("FIRMWARE_MQTT_PORT", os.getenv("MQTT_PORT", "1883")))
+    mqtt_port = _resolve_mqtt_port(config_json)
     mqtt_namespace = str(os.getenv("FIRMWARE_MQTT_NAMESPACE", os.getenv("MQTT_NAMESPACE", "local")))
     api_base_url = _resolve_api_base_url(config_json)
 

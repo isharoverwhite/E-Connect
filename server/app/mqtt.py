@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 import asyncio
 from app.database import SessionLocal
 from app.models import DeviceRegister
+from app.services.builder import describe_runtime_firmware_mismatch, extract_runtime_firmware_network_targets
 from app.services.device_registration import (
     build_pairing_request_event_payload,
     build_registration_ack_payload,
@@ -102,6 +103,48 @@ def build_pairing_rejected_ack_payload(device: Device) -> dict[str, Any]:
     }
 
 
+def build_pairing_awaiting_approval_ack_payload(device: Device) -> dict[str, Any]:
+    auth_status = device.auth_status.value if hasattr(device.auth_status, "value") else str(device.auth_status)
+    return {
+        "status": "awaiting_approval",
+        "device_id": device.device_id,
+        "reason": "active_pairing_request",
+        "auth_status": auth_status,
+        "pairing_requested_at": (
+            device.pairing_requested_at.isoformat() if device.pairing_requested_at else None
+        ),
+        "message": "Device is already pending admin approval. Keep the current pairing request active.",
+    }
+
+
+def _normalize_state_scalar(value: Any) -> Any:
+    if isinstance(value, bool):
+        return 1 if value else 0
+    return value
+
+
+def _extract_state_pin_rows(state_payload: dict[str, Any]) -> list[dict[str, Any]]:
+    pins = state_payload.get("pins")
+    if not isinstance(pins, list):
+        return []
+    return [row for row in pins if isinstance(row, dict)]
+
+
+def _state_row_matches_command(command: dict[str, Any], state_row: dict[str, Any]) -> bool:
+    command_value = _normalize_state_scalar(command.get("value"))
+    state_value = _normalize_state_scalar(state_row.get("value"))
+    command_brightness = command.get("brightness")
+    state_brightness = state_row.get("brightness")
+
+    value_matches = state_value is not None and command_value is not None and state_value == command_value
+    brightness_matches = (
+        state_brightness is not None
+        and command_brightness is not None
+        and state_brightness == command_brightness
+    )
+    return value_matches or brightness_matches
+
+
 class MQTTClientManager:
     def __init__(self):
         self.client_id = f"econnect_server_{MQTT_NAMESPACE}_{uuid.uuid4().hex[:8]}"
@@ -114,6 +157,7 @@ class MQTTClientManager:
         self.client.on_disconnect = self.on_disconnect
         self.connected = False
         self.pending_commands = {}
+        self.runtime_network_state: dict[str, object] | None = None
 
     def start(self):
         try:
@@ -133,6 +177,9 @@ class MQTTClientManager:
             self.client.loop_stop()
             self.client.disconnect()
 
+    def set_runtime_network_state(self, runtime_state: dict[str, object] | None) -> None:
+        self.runtime_network_state = runtime_state if isinstance(runtime_state, dict) else None
+
     def registration_ack_topic(self, device_id: str) -> str:
         return f"econnect/{MQTT_NAMESPACE}/device/{device_id}/register/ack"
 
@@ -141,6 +188,30 @@ class MQTTClientManager:
 
     def state_ack_topic(self, device_id: str) -> str:
         return f"econnect/{MQTT_NAMESPACE}/device/{device_id}/state/ack"
+
+    def _runtime_network_targets(self) -> dict[str, object] | None:
+        return extract_runtime_firmware_network_targets(self.runtime_network_state)
+
+    def _attach_runtime_network(self, payload: dict[str, Any]) -> dict[str, Any]:
+        runtime_targets = self._runtime_network_targets()
+        if runtime_targets is not None:
+            payload["runtime_network"] = runtime_targets
+        return payload
+
+    def _build_manual_reflash_required_payload(
+        self,
+        device_id: str,
+        *,
+        message: str,
+    ) -> dict[str, Any]:
+        return self._attach_runtime_network(
+            {
+                "status": "manual_reflash_required",
+                "device_id": device_id,
+                "reason": "firmware_network_mismatch",
+                "message": message,
+            }
+        )
 
     def on_connect(self, client, userdata, flags, reason_code, properties=None):
         if reason_code.is_failure:
@@ -202,12 +273,30 @@ class MQTTClientManager:
                 )
                 self.publish_json(
                     self.state_ack_topic(device_id),
-                    {
+                    self._attach_runtime_network(
+                        {
                         "status": "re_pair_required",
                         "device_id": device_id,
                         "reason": "unknown_device",
                         "message": "Device UUID is not registered on the server.",
-                    },
+                        }
+                    ),
+                    wait_for_publish=False,
+                )
+                return
+
+            mismatch_message = describe_runtime_firmware_mismatch(
+                payload_json,
+                self._runtime_network_targets(),
+            )
+            if mismatch_message:
+                logger.warning("Rejecting MQTT state for %s: %s", device_id, mismatch_message)
+                self.publish_json(
+                    self.state_ack_topic(device_id),
+                    self._build_manual_reflash_required_payload(
+                        device_id,
+                        message=mismatch_message,
+                    ),
                     wait_for_publish=False,
                 )
                 return
@@ -222,6 +311,12 @@ class MQTTClientManager:
                         device_id,
                     )
                     ack_payload = build_pairing_rejected_ack_payload(device)
+                elif device.auth_status == AuthStatus.pending and device.pairing_requested_at is not None:
+                    logger.info(
+                        "Device %s is already awaiting approval; preserving the current pairing request.",
+                        device_id,
+                    )
+                    ack_payload = build_pairing_awaiting_approval_ack_payload(device)
                 else:
                     logger.info(
                         "Requesting re-pair for device %s because auth_status=%s",
@@ -237,7 +332,7 @@ class MQTTClientManager:
                     }
                 self.publish_json(
                     self.state_ack_topic(device_id),
-                    ack_payload,
+                    self._attach_runtime_network(ack_payload),
                     wait_for_publish=False,
                 )
                 return
@@ -357,6 +452,25 @@ class MQTTClientManager:
                         matched_cmd_id = cid
                         break
 
+            if not matched_cmd_id:
+                pin_rows = _extract_state_pin_rows(state_payload)
+                for cid, cmd in list(self.pending_commands.items()):
+                    if cmd["device_id"] != device_id:
+                        continue
+
+                    state_row = next(
+                        (
+                            row
+                            for row in pin_rows
+                            if row.get("pin") == cmd.get("pin")
+                            and _state_row_matches_command(cmd, row)
+                        ),
+                        None,
+                    )
+                    if state_row:
+                        matched_cmd_id = cid
+                        break
+
         if matched_cmd_id:
             cmd = self.pending_commands.pop(matched_cmd_id, None)
             if cmd:
@@ -404,12 +518,26 @@ class MQTTClientManager:
                 raise ValueError("Device id in payload does not match MQTT topic.")
             payload = DeviceRegister.model_validate(raw_payload)
         except (json.JSONDecodeError, ValidationError, ValueError) as exc:
-            ack_payload = build_registration_ack_payload(
-                status="error",
-                device_id=device_id,
-                secret_verified=False,
-                error="validation",
-                message=str(exc),
+            ack_payload = self._attach_runtime_network(
+                build_registration_ack_payload(
+                    status="error",
+                    device_id=device_id,
+                    secret_verified=False,
+                    error="validation",
+                    message=str(exc),
+                )
+            )
+            self.publish_json(ack_topic, ack_payload, wait_for_publish=False)
+            return ack_payload
+
+        mismatch_message = describe_runtime_firmware_mismatch(
+            raw_payload,
+            self._runtime_network_targets(),
+        )
+        if mismatch_message:
+            ack_payload = self._build_manual_reflash_required_payload(
+                device_id,
+                message=mismatch_message,
             )
             self.publish_json(ack_topic, ack_payload, wait_for_publish=False)
             return ack_payload
@@ -432,38 +560,44 @@ class MQTTClientManager:
                 _reconcile_ota_jobs(db, result.device, result.device.firmware_version)
                 db.commit()
 
-            ack_payload = build_registration_ack_payload(
-                status="ok",
-                device_id=result.device.device_id,
-                secret_verified=result.secret_verified,
-                project_id=result.project_id,
-                auth_status=(
-                    result.device.auth_status.value
-                    if hasattr(result.device.auth_status, "value")
-                    else str(result.device.auth_status)
-                ),
-                topic_pub=result.device.topic_pub,
-                topic_sub=result.device.topic_sub,
+            ack_payload = self._attach_runtime_network(
+                build_registration_ack_payload(
+                    status="ok",
+                    device_id=result.device.device_id,
+                    secret_verified=result.secret_verified,
+                    project_id=result.project_id,
+                    auth_status=(
+                        result.device.auth_status.value
+                        if hasattr(result.device.auth_status, "value")
+                        else str(result.device.auth_status)
+                    ),
+                    topic_pub=result.device.topic_pub,
+                    topic_sub=result.device.topic_sub,
+                )
             )
         except HTTPException as exc:
             db.rollback()
             detail = exc.detail if isinstance(exc.detail, dict) else {}
-            ack_payload = build_registration_ack_payload(
-                status="error",
-                device_id=device_id,
-                secret_verified=False,
-                error=detail.get("error", "server"),
-                message=detail.get("message", str(exc.detail)),
+            ack_payload = self._attach_runtime_network(
+                build_registration_ack_payload(
+                    status="error",
+                    device_id=device_id,
+                    secret_verified=False,
+                    error=detail.get("error", "server"),
+                    message=detail.get("message", str(exc.detail)),
+                )
             )
         except Exception:
             db.rollback()
             logger.exception("Unhandled MQTT registration error for device %s", device_id)
-            ack_payload = build_registration_ack_payload(
-                status="error",
-                device_id=device_id,
-                secret_verified=False,
-                error="server",
-                message="Server failed to process MQTT registration.",
+            ack_payload = self._attach_runtime_network(
+                build_registration_ack_payload(
+                    status="error",
+                    device_id=device_id,
+                    secret_verified=False,
+                    error="server",
+                    message="Server failed to process MQTT registration.",
+                )
             )
         finally:
             db.close()

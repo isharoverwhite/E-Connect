@@ -5,7 +5,15 @@ from jose import jwt
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from app.auth import ACCESS_TOKEN_EXPIRE_MINUTES, ALGORITHM, SECRET_KEY, create_access_token
+from app.auth import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    ACCESS_TOKEN_TYPE,
+    ALGORITHM,
+    REFRESH_TOKEN_EXPIRE_MINUTES,
+    REFRESH_TOKEN_TYPE,
+    SECRET_KEY,
+    create_access_token,
+)
 from main import app
 from app.database import Base, get_db
 from app.services.user_management import TEMP_SUPPORT_USERNAME
@@ -322,6 +330,155 @@ def test_login_token_uses_self_hosted_friendly_expiry():
     expected = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
     assert expected - timedelta(minutes=1) <= remaining <= expected + timedelta(minutes=1)
+
+
+def test_login_returns_refresh_token_and_expiry_metadata():
+    client.post(
+        "/api/v1/auth/initialserver",
+        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+    )
+
+    login_resp = client.post(
+        "/api/v1/auth/token",
+        data={"username": "admin", "password": "password"}
+    )
+
+    assert login_resp.status_code == 200
+    payload = login_resp.json()
+    assert payload["token_type"] == "bearer"
+    assert payload["keep_login"] is False
+    assert payload["refresh_token"]
+    assert payload["access_token_expires_at"] is not None
+    assert payload["refresh_token_expires_at"] is not None
+
+    access_claims = jwt.decode(payload["access_token"], SECRET_KEY, algorithms=[ALGORITHM])
+    refresh_claims = jwt.decode(payload["refresh_token"], SECRET_KEY, algorithms=[ALGORITHM])
+
+    assert access_claims["type"] == ACCESS_TOKEN_TYPE
+    assert refresh_claims["type"] == REFRESH_TOKEN_TYPE
+
+    access_expires_at = datetime.fromisoformat(payload["access_token_expires_at"].replace("Z", "+00:00"))
+    refresh_expires_at = datetime.fromisoformat(payload["refresh_token_expires_at"].replace("Z", "+00:00"))
+    now = datetime.now(timezone.utc)
+
+    assert timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES - 1) <= (access_expires_at - now) <= timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES + 1)
+    assert timedelta(minutes=REFRESH_TOKEN_EXPIRE_MINUTES - 1) <= (refresh_expires_at - now) <= timedelta(minutes=REFRESH_TOKEN_EXPIRE_MINUTES + 1)
+
+
+def test_refresh_endpoint_rotates_non_persistent_session():
+    client.post(
+        "/api/v1/auth/initialserver",
+        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+    )
+
+    login_resp = client.post(
+        "/api/v1/auth/token",
+        data={"username": "admin", "password": "password"}
+    )
+    session = login_resp.json()
+
+    refresh_resp = client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": session["refresh_token"]},
+    )
+
+    assert refresh_resp.status_code == 200
+    rotated = refresh_resp.json()
+    assert rotated["keep_login"] is False
+    assert rotated["access_token"] != session["access_token"]
+    assert rotated["refresh_token"] != session["refresh_token"]
+
+    me_resp = client.get(
+        "/api/v1/users/me",
+        headers={"Authorization": f"Bearer {rotated['access_token']}"},
+    )
+    assert me_resp.status_code == 200
+    assert me_resp.json()["username"] == "admin"
+
+
+def test_refresh_endpoint_rejects_access_token_payload():
+    client.post(
+        "/api/v1/auth/initialserver",
+        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+    )
+
+    login_resp = client.post(
+        "/api/v1/auth/token",
+        data={"username": "admin", "password": "password"}
+    )
+
+    refresh_resp = client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": login_resp.json()["access_token"]},
+    )
+
+    assert refresh_resp.status_code == 401
+    assert refresh_resp.json()["detail"]["error"] == "invalid_refresh_token"
+
+
+def test_keep_login_returns_persistent_session_tokens():
+    client.post(
+        "/api/v1/auth/initialserver",
+        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+    )
+
+    login_resp = client.post(
+        "/api/v1/auth/token",
+        data={"username": "admin", "password": "password", "keep_login": "true"}
+    )
+
+    assert login_resp.status_code == 200
+    payload = login_resp.json()
+    assert payload["keep_login"] is True
+    assert payload["access_token_expires_at"] is None
+    assert payload["refresh_token_expires_at"] is None
+
+    access_claims = jwt.get_unverified_claims(payload["access_token"])
+    refresh_claims = jwt.get_unverified_claims(payload["refresh_token"])
+
+    assert access_claims["type"] == ACCESS_TOKEN_TYPE
+    assert refresh_claims["type"] == REFRESH_TOKEN_TYPE
+    assert "exp" not in access_claims
+    assert "exp" not in refresh_claims
+
+
+def test_revoked_user_cannot_refresh_existing_session():
+    client.post(
+        "/api/v1/auth/initialserver",
+        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+    )
+    token_admin = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"}).json()["access_token"]
+
+    create_resp = client.post(
+        "/api/v1/users",
+        headers={"Authorization": f"Bearer {token_admin}"},
+        json={"fullname": "Revoked User", "username": "revoked2", "password": "password123", "account_type": "parent"}
+    )
+    created = create_resp.json()
+
+    client.post(
+        f"/api/v1/users/{created['user_id']}/approve",
+        headers={"Authorization": f"Bearer {token_admin}"},
+    )
+
+    user_login = client.post(
+        "/api/v1/auth/token",
+        data={"username": "revoked2", "password": "password123"},
+    )
+    assert user_login.status_code == 200
+
+    revoke_resp = client.delete(
+        f"/api/v1/users/{created['user_id']}",
+        headers={"Authorization": f"Bearer {token_admin}"},
+    )
+    assert revoke_resp.status_code == 200
+
+    refresh_resp = client.post(
+        "/api/v1/auth/refresh",
+        json={"refresh_token": user_login.json()["refresh_token"]},
+    )
+    assert refresh_resp.status_code == 403
+    assert refresh_resp.json()["detail"]["error"] == "account_revoked"
 
 
 def test_create_access_token_still_honors_explicit_override():

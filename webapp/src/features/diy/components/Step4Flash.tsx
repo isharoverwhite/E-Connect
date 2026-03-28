@@ -1,6 +1,5 @@
 import type { BoardProfile } from "../board-profiles";
 import type {
-    FirmwareUploadState,
     FlashSource,
     ProjectSyncState,
     ServerBuildState,
@@ -12,8 +11,6 @@ export interface Step4FlashProps {
     projectName: string;
     flashSource: FlashSource;
     setFlashSource: React.Dispatch<React.SetStateAction<FlashSource>>;
-    uploadState: FirmwareUploadState;
-    setUploadState: React.Dispatch<React.SetStateAction<FirmwareUploadState>>;
     eraseFirst: boolean;
     setEraseFirst: React.Dispatch<React.SetStateAction<boolean>>;
     manifestUrl: string | null;
@@ -26,6 +23,9 @@ export interface Step4FlashProps {
     projectSyncState: ProjectSyncState;
     projectSyncMessage: string;
     serverBuild: ServerBuildState;
+    firmwareTargetHost: string | null;
+    firmwareTargetMqttBroker: string | null;
+    firmwareTargetMqttPort: number | null;
     buildBusy: boolean;
     hasActiveBuild: boolean;
     onTriggerServerBuild: () => Promise<void>;
@@ -38,6 +38,9 @@ export interface Step4FlashProps {
     serialJobId: string | null;
     serialMessage: string;
     serialError: string | null;
+    webFlasherResetKey: number;
+    onSetWebFlasherElement: (element: HTMLElement | null) => void;
+    onOpenWebFlasher: () => void;
     onReleaseSerialLock: () => Promise<void>;
     onRefreshSerialStatus: () => Promise<void>;
     onLogPanelRef?: (element: HTMLDivElement | null) => void;
@@ -49,10 +52,6 @@ function toHex(value: number) {
 
 function getSingleBinaryOffset(board: BoardProfile) {
     return board.family === "ESP8266" ? 0 : 65536;
-}
-
-function requiresFullFlashBundle(board: BoardProfile) {
-    return board.family !== "ESP8266";
 }
 
 function formatStatusLabel(value: ProjectSyncState | ServerBuildState["status"]) {
@@ -80,39 +79,6 @@ function getPillStyles(value: ProjectSyncState | ServerBuildState["status"]) {
         default:
             return "border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-800/70 dark:text-slate-300";
     }
-}
-
-function FirmwareFileInput({
-    label,
-    file,
-    onChange,
-}: {
-    label: string;
-    file: File | null;
-    onChange: (file: File | null) => void;
-}) {
-    const inputId = `firmware-file-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
-
-    return (
-        <div className="flex flex-col gap-2">
-            <label htmlFor={inputId} className="text-sm font-semibold text-slate-700 dark:text-slate-300">
-                {label}
-            </label>
-            <div className="relative">
-                <input
-                    id={inputId}
-                    name={inputId}
-                    type="file"
-                    accept=".bin"
-                    onChange={(event) => onChange(event.target.files?.[0] ?? null)}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 p-2 text-sm text-slate-500 transition-all file:mr-4 file:rounded-full file:border-0 file:bg-primary/10 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-primary hover:file:bg-primary/20 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-400 dark:file:bg-primary/20 dark:file:text-primary/90"
-                />
-                <div className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-xs text-slate-400">
-                    {file ? `${(file.size / 1024).toFixed(1)} KB` : "Max 4MB"}
-                </div>
-            </div>
-        </div>
-    );
 }
 
 function SourceButton({
@@ -144,8 +110,6 @@ export function Step4Flash({
     projectName,
     flashSource,
     setFlashSource,
-    uploadState,
-    setUploadState,
     eraseFirst,
     setEraseFirst,
     manifestUrl,
@@ -158,6 +122,9 @@ export function Step4Flash({
     projectSyncState,
     projectSyncMessage,
     serverBuild,
+    firmwareTargetHost,
+    firmwareTargetMqttBroker,
+    firmwareTargetMqttPort,
     buildBusy,
     hasActiveBuild,
     onTriggerServerBuild,
@@ -170,6 +137,9 @@ export function Step4Flash({
     serialJobId,
     serialMessage,
     serialError,
+    webFlasherResetKey,
+    onSetWebFlasherElement,
+    onOpenWebFlasher,
     onReleaseSerialLock,
     onRefreshSerialStatus,
     onLogPanelRef,
@@ -265,7 +235,7 @@ export function Step4Flash({
                                 <div>
                                     <h3 className="text-lg font-bold text-slate-900 dark:text-white">Firmware Source</h3>
                                     <p className="mt-1 text-sm text-slate-600 dark:text-slate-400">
-                                        Choose how this project should supply firmware to the Web Serial handoff.
+                                        Choose which website-managed firmware source should supply the Web Serial handoff.
                                     </p>
                                 </div>
                                 <button
@@ -287,9 +257,6 @@ export function Step4Flash({
                                         Bundled Demo
                                     </SourceButton>
                                 )}
-                                <SourceButton active={flashSource === "upload"} onClick={() => setFlashSource("upload")}>
-                                    Upload Custom Build
-                                </SourceButton>
                             </div>
                         </div>
 
@@ -301,7 +268,35 @@ export function Step4Flash({
                                             Build the current GPIO mapping on the server
                                         </p>
                                         <p className="text-sm text-slate-600 dark:text-slate-400">
-                                            The server compiles the current SVG mapping into a `.bin` artifact and exposes logs plus a traceable job id.
+                                            The server compiles the current SVG mapping into a `.bin` artifact and exposes logs plus a traceable job id. Custom local firmware uploads are intentionally disabled here so the website remains the source of truth for build and flash readiness.
+                                        </p>
+                                    </div>
+
+                                    <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-800 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-200">
+                                        <p className="font-semibold">
+                                            Current runtime targets for the next firmware build
+                                        </p>
+                                        <div className="mt-2 grid gap-3 md:grid-cols-2">
+                                            <div>
+                                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700 dark:text-sky-300">
+                                                    Server / API host
+                                                </p>
+                                                <p className="mt-1 font-mono text-xs uppercase tracking-[0.18em]">
+                                                    {firmwareTargetHost ?? "detecting..."}
+                                                </p>
+                                            </div>
+                                            <div>
+                                                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700 dark:text-sky-300">
+                                                    MQTT broker
+                                                </p>
+                                                <p className="mt-1 font-mono text-xs uppercase tracking-[0.18em]">
+                                                    {firmwareTargetMqttBroker ?? firmwareTargetHost ?? "detecting..."}
+                                                    {firmwareTargetMqttPort ? `:${firmwareTargetMqttPort}` : ""}
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <p className="mt-2">
+                                            If the server host or MQTT broker changed, rebuild before flashing. Older artifacts keep the previous targets and the board will not reappear in Discovery until you reflash it.
                                         </p>
                                     </div>
 
@@ -384,34 +379,6 @@ export function Step4Flash({
                                 </div>
                             )}
 
-                            {flashSource === "upload" && (
-                                <div className="flex flex-col gap-5 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-950">
-                                    <p className="text-sm text-slate-600 dark:text-slate-400">
-                                        {requiresFullFlashBundle(board)
-                                            ? "Upload the full bootloader + partitions + firmware bundle for this board family."
-                                            : "ESP8266 custom upload only needs the firmware binary. The generated manifest will flash it at 0x0."}
-                                    </p>
-                                    {requiresFullFlashBundle(board) ? (
-                                        <>
-                                            <FirmwareFileInput
-                                                label="Bootloader (.bin)"
-                                                file={uploadState.bootloader}
-                                                onChange={(file) => setUploadState((previous) => ({ ...previous, bootloader: file }))}
-                                            />
-                                            <FirmwareFileInput
-                                                label="Partitions (.bin)"
-                                                file={uploadState.partitions}
-                                                onChange={(file) => setUploadState((previous) => ({ ...previous, partitions: file }))}
-                                            />
-                                        </>
-                                    ) : null}
-                                    <FirmwareFileInput
-                                        label={requiresFullFlashBundle(board) ? "Firmware App (.bin)" : "Firmware (.bin)"}
-                                        file={uploadState.firmware}
-                                        onChange={(file) => setUploadState((previous) => ({ ...previous, firmware: file }))}
-                                    />
-                                </div>
-                            )}
                         </div>
                     </div>
 
@@ -419,7 +386,7 @@ export function Step4Flash({
                         <div className="flex flex-col gap-2">
                             <h3 className="text-lg font-bold text-slate-900 dark:text-white">Serial Coordination</h3>
                             <p className="text-sm text-slate-600 dark:text-slate-400">
-                                Successful server builds release the saved serial reservation automatically. If another serial session still holds this port, release it here before flashing.
+                                Successful server builds release the saved serial reservation automatically and close any stale in-page flasher session. If another serial session still holds this port, release it here before flashing.
                             </p>
                         </div>
 
@@ -508,11 +475,25 @@ export function Step4Flash({
                             </div>
                         ) : (
                             <div className="mt-4 flex flex-col gap-4">
-                                <div className="flex items-center justify-center rounded-xl border border-emerald-200 bg-emerald-50 p-6 dark:border-emerald-500/20 dark:bg-emerald-500/10">
-                                    <esp-web-install-button
-                                        manifest={manifestUrl ?? undefined}
-                                        erase-first={eraseFirst ? "true" : undefined}
-                                    />
+                                <div className="flex flex-col items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 p-6 dark:border-emerald-500/20 dark:bg-emerald-500/10">
+                                    <button
+                                        onClick={onOpenWebFlasher}
+                                        className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500"
+                                    >
+                                        <span className="material-symbols-outlined text-base">usb</span>
+                                        Open Web Flasher
+                                    </button>
+                                    <p className="text-center text-xs text-emerald-800 dark:text-emerald-200">
+                                        The hidden ESP Web Tools element is remounted after each successful server build so the next flash starts from a fresh browser session.
+                                    </p>
+                                    <div className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0" aria-hidden="true">
+                                        <esp-web-install-button
+                                            key={webFlasherResetKey}
+                                            ref={onSetWebFlasherElement}
+                                            manifest={manifestUrl ?? undefined}
+                                            erase-first={eraseFirst ? "true" : undefined}
+                                        />
+                                    </div>
                                 </div>
                                 {manifestUrl && (
                                     <a
@@ -724,7 +705,7 @@ function getReadinessModel({
     return {
         progress: 22,
         headline: "Prepare the firmware bundle",
-        detail: flashLockedReason || "Choose a source, export the config if needed, then build or upload firmware.",
+        detail: flashLockedReason || "Choose a website-managed source, export the config if needed, then prepare a flashable manifest.",
         subline: "No flashable manifest yet",
     };
 }

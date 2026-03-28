@@ -2,6 +2,7 @@ FROM node:20-alpine AS base
 
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
+RUN apk add --no-cache openssl
 
 FROM base AS deps
 
@@ -33,7 +34,8 @@ ENV BACKEND_INTERNAL_URL=http://server:8000
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+COPY --from=builder /app/scripts ./scripts
 
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+CMD ["node", "scripts/serve-standalone-https.mjs"]

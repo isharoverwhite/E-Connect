@@ -2,8 +2,12 @@ import serial
 import time
 import sys
 
+port = '/dev/cu.usbmodem11401'
+if len(sys.argv) > 2 and sys.argv[1] == '--port':
+    port = sys.argv[2]
+
 try:
-    with serial.Serial('/dev/cu.usbmodem21401', 115200, timeout=1) as ser:
+    with serial.Serial(port, 115200, timeout=1) as ser:
         print("Connected to serial port")
         
         # Reset ESP32-C3 via DTR/RTS (USB JTAG/Serial)
@@ -18,7 +22,7 @@ try:
         print("Board reset sent, waiting for logs...")
         
         start_time = time.time()
-        while time.time() - start_time < 30: # Read for 30 seconds
+        while time.time() - start_time < 60: # Read for 60 seconds
             line = ser.readline()
             if line:
                 try:

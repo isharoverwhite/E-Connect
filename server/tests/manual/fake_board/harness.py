@@ -245,7 +245,11 @@ class FakeBoardHarness:
                 "value": 0,
                 "brightness": 0,
                 "active_level": int(extra.get("active_level", 1)),
+                "pwm_min": int(extra.get("min_value", 0)),
+                "pwm_max": int(extra.get("max_value", 255)),
             }
+            if str(pin.get("mode", "OUTPUT")).upper() == "PWM" and runtime[gpio]["pwm_min"] > runtime[gpio]["pwm_max"]:
+                runtime[gpio]["brightness"] = runtime[gpio]["pwm_min"]
         self._runtime_pins = runtime
 
     def _mqtt_topic(self, *suffix: str, device_id: str | None = None) -> str:
@@ -394,14 +398,19 @@ class FakeBoardHarness:
                     pin_state["brightness"] = 255 if pin_state["value"] else 0
                     applied = True
                 elif mode == "PWM":
+                    pwm_min = int(pin_state.get("pwm_min", 0))
+                    pwm_max = int(pin_state.get("pwm_max", 255))
+                    pwm_off = pwm_min if pwm_min > pwm_max else 0
+                    pwm_lower = min(pwm_min, pwm_max)
+                    pwm_upper = max(pwm_min, pwm_max)
                     if brightness is not None:
-                        next_brightness = max(0, min(255, int(brightness)))
+                        next_brightness = max(pwm_lower, min(pwm_upper, int(brightness)))
                         pin_state["brightness"] = next_brightness
-                        pin_state["value"] = 1 if next_brightness > 0 else 0
+                        pin_state["value"] = 0 if next_brightness == pwm_off else 1
                         applied = True
                     elif value is not None:
                         pin_state["value"] = 0 if int(value) == 0 else 1
-                        pin_state["brightness"] = 0 if pin_state["value"] == 0 else 255
+                        pin_state["brightness"] = pwm_off if pin_state["value"] == 0 else pwm_max
                         applied = True
                 elif value is not None:
                     pin_state["value"] = int(value)

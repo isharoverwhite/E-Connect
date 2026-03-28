@@ -1,17 +1,69 @@
 import { AuthStatus, DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
 import { getToken } from "./auth";
+import { buildProvisioningHeaders, resolvePublicApiBaseUrl } from "./secure-origin";
 
-const configuredApiUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
-
-export const API_URL = configuredApiUrl && configuredApiUrl.length > 0
-    ? configuredApiUrl.replace(/\/$/, "")
-    : "/api/v1";
+export const API_URL = resolvePublicApiBaseUrl(process.env.NEXT_PUBLIC_API_URL);
 
 export interface DeviceCommandResponse {
     status: string;
     message?: string;
     command_id?: string;
     command?: unknown;
+}
+
+export interface RuntimeNetworkInfo {
+    advertised_host: string;
+    api_base_url: string;
+    mqtt_broker: string;
+    mqtt_port: number;
+    target_key: string;
+    warning?: string | null;
+    stale_project_count?: number;
+    stale_device_count?: number;
+}
+
+async function parseApiError(response: Response, fallback: string) {
+    try {
+        const payload = (await response.json()) as {
+            detail?: string | { message?: string; error?: string };
+        };
+
+        if (typeof payload.detail === "string") {
+            return payload.detail;
+        }
+
+        if (payload.detail?.message) {
+            return payload.detail.message;
+        }
+
+        if (payload.detail?.error) {
+            return payload.detail.error;
+        }
+    } catch {
+        return fallback;
+    }
+
+    return fallback;
+}
+
+export async function fetchRuntimeNetworkInfo(token?: string): Promise<RuntimeNetworkInfo> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/diy/network-targets`, {
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+        cache: "no-store",
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to load runtime network targets"));
+    }
+
+    return response.json();
 }
 
 export async function approveDiscoveredDevice(uuid: string, roomId: number): Promise<boolean> {
@@ -176,7 +228,8 @@ export async function saveDeviceConfig(
             method: "PUT",
             headers: {
                 "Authorization": `Bearer ${token}`,
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                ...buildProvisioningHeaders(),
             },
             body: JSON.stringify(config)
         });

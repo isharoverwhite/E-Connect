@@ -1,7 +1,93 @@
 #include "board_support.h"
 
 #if !defined(ESP8266)
+#include <esp_attr.h>
+
 namespace {
+constexpr uint32_t kRuntimeFlagsMagic = 0x45434E54;  // "ECNT"
+constexpr uint32_t kRuntimeFlagsVersion = 1;
+
+struct RuntimeFlags {
+  uint32_t magic;
+  uint32_t version;
+  uint32_t pairingRejected;
+  uint32_t crc32;
+};
+
+// Keep the reject lock in RTC slow memory so USB/reset-button reboots preserve
+// it, while an actual power loss clears the state and allows pairing again.
+RTC_NOINIT_ATTR RuntimeFlags rtcRuntimeFlags;
+
+uint32_t calculateCRC32(const uint8_t *data, size_t length) {
+  uint32_t crc = 0xFFFFFFFF;
+  while (length--) {
+    uint8_t current = *data++;
+    for (uint32_t bit = 0x80; bit > 0; bit >>= 1) {
+      const bool mix = (crc & 0x80000000) != 0;
+      if ((current & bit) != 0) {
+        crc ^= 0x80000000;
+      }
+      crc <<= 1;
+      if (mix) {
+        crc ^= 0x04C11DB7;
+      }
+    }
+  }
+  return crc;
+}
+
+RuntimeFlags buildRuntimeFlags(bool rejected) {
+  RuntimeFlags flags = {
+      kRuntimeFlagsMagic,
+      kRuntimeFlagsVersion,
+      rejected ? 1U : 0U,
+      0U,
+  };
+  flags.crc32 =
+      calculateCRC32(reinterpret_cast<const uint8_t *>(&flags), sizeof(flags) - sizeof(flags.crc32));
+  return flags;
+}
+
+bool readRuntimeFlags(RuntimeFlags &flags) {
+  flags = rtcRuntimeFlags;
+  if (flags.magic != kRuntimeFlagsMagic || flags.version != kRuntimeFlagsVersion) {
+    return false;
+  }
+
+  const uint32_t expectedCrc = calculateCRC32(
+      reinterpret_cast<const uint8_t *>(&flags),
+      sizeof(flags) - sizeof(flags.crc32));
+  return expectedCrc == flags.crc32;
+}
+
+const char *resetReasonName(esp_reset_reason_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON:
+      return "power_on";
+    case ESP_RST_EXT:
+      return "external_reset";
+    case ESP_RST_SW:
+      return "software_reset";
+    case ESP_RST_PANIC:
+      return "panic_reset";
+    case ESP_RST_INT_WDT:
+      return "interrupt_watchdog";
+    case ESP_RST_TASK_WDT:
+      return "task_watchdog";
+    case ESP_RST_WDT:
+      return "watchdog";
+    case ESP_RST_DEEPSLEEP:
+      return "deep_sleep";
+    case ESP_RST_BROWNOUT:
+      return "brownout";
+    case ESP_RST_SDIO:
+      return "sdio_reset";
+    case ESP_RST_UNKNOWN:
+    default:
+      return "unknown";
+  }
+}
+
 void handleWiFiEvent(arduino_event_id_t event, arduino_event_info_t info) {
   if (event == ARDUINO_EVENT_WIFI_STA_CONNECTED) {
     Serial.println("Wi-Fi event: STA connected");
@@ -98,11 +184,18 @@ OtaUpdateResult runBoardOtaUpdate(const String &url) {
   };
 }
 
-bool restoreRejectedPairingLock() { return false; }
+bool restoreRejectedPairingLock() {
+  RuntimeFlags flags = {};
+  return readRuntimeFlags(flags) && flags.pairingRejected == 1U;
+}
 
-void persistRejectedPairingLock(bool rejected) { (void)rejected; }
+void persistRejectedPairingLock(bool rejected) {
+  rtcRuntimeFlags = buildRuntimeFlags(rejected);
+}
 
-String boardResetReasonSummary() { return String("stateless"); }
+String boardResetReasonSummary() {
+  return String(resetReasonName(esp_reset_reason()));
+}
 
 void shutdownBoardNetworkingAfterPairingReject() {
   WiFi.disconnect(true, true);

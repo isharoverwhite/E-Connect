@@ -1,15 +1,15 @@
-from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, BackgroundTasks, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, BackgroundTasks, Form, Query, Request, WebSocket, WebSocketDisconnect, Body
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.exc import IntegrityError
-from typing import List, Optional, Any, Literal, Union
+from typing import List, Optional, Any, Callable, Literal, Union
 import ast
 import json
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import anyio
 import asyncio
 
@@ -17,14 +17,15 @@ from .mqtt import build_pairing_rejected_ack_payload, mqtt_manager
 from .ws_manager import manager as ws_manager
 
 from .models import (
-    UserCreate, UserResponse, Token, TokenData, InitialServerRequest,
+    UserCreate, UserResponse, Token, TokenData, InitialServerRequest, RefreshTokenRequest,
     DeviceApprovalRequest, DeviceAvailabilityResponse, DeviceHandshakeResponse, DeviceRegister, DeviceResponse, PinConfigCreate,
     AutomationCreate, AutomationResponse,
     DeviceHistoryCreate, DeviceHistoryResponse,
     FirmwareResponse, DeviceMode, AccountType, EventType,
     RoomAccessUpdate, RoomUpdate, RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
+    FirmwareNetworkTargetsResponse,
     SetupResponse, HouseholdResponse, TriggerResponse, ExecutionStatus, AutomationLogResponse,
-    DiyProjectCreate, DiyProjectResponse, BuildJobResponse, JobStatus, SerialSessionResponse,
+    DiyProjectCreate, DiyProjectDeleteRequest, DiyProjectResponse, BuildJobResponse, JobStatus, SerialSessionResponse,
     ManagedUserResponse, UserApprovalStatus, DiyProjectUsageResponse, ProjectDeviceUsage
 )
 from .sql_models import (
@@ -33,10 +34,24 @@ from .sql_models import (
     AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, BuildJob, SerialSession, SerialSessionStatus,
     UserApprovalStatus as SqlUserApprovalStatus
 )
-from .database import get_db
-from .auth import verify_password, get_password_hash, create_access_token, create_ota_token, verify_ota_token, SECRET_KEY, ALGORITHM
+from .database import SessionLocal, get_db
+from .auth import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
+    ACCESS_TOKEN_TYPE,
+    ALGORITHM,
+    REFRESH_TOKEN_EXPIRE_MINUTES,
+    REFRESH_TOKEN_TYPE,
+    SECRET_KEY,
+    create_access_token,
+    create_ota_token,
+    create_refresh_token,
+    get_password_hash,
+    verify_ota_token,
+    verify_password,
+)
 from .services.builder import (
     build_firmware_task,
+    describe_network_target_change,
     get_durable_artifact_path,
     infer_firmware_network_targets,
 )
@@ -60,7 +75,7 @@ ACTIVE_BUILD_JOB_STATUSES = (
 )
 DEVICE_HEARTBEAT_TIMEOUT_SECONDS = max(
     5,
-    int(os.getenv("DEVICE_HEARTBEAT_TIMEOUT_SECONDS", "75")),
+    int(os.getenv("DEVICE_HEARTBEAT_TIMEOUT_SECONDS", "15")),
 )
 DEVICE_HEARTBEAT_TIMEOUT = timedelta(seconds=DEVICE_HEARTBEAT_TIMEOUT_SECONDS)
 AUTOMATION_SANDBOX_BLOCK_MESSAGE = (
@@ -68,16 +83,80 @@ AUTOMATION_SANDBOX_BLOCK_MESSAGE = (
 )
 
 
+def _get_primary_membership(db: Session, user: User) -> Optional[HouseholdMembership]:
+    return (
+        db.query(HouseholdMembership)
+        .filter(HouseholdMembership.user_id == user.user_id)
+        .order_by(HouseholdMembership.id.asc())
+        .first()
+    )
+
+
+def _build_user_session_payload(user: User, membership: Optional[HouseholdMembership]) -> dict[str, Any]:
+    household_role = None
+    if membership and membership.role is not None:
+        household_role = membership.role.value if hasattr(membership.role, "value") else str(membership.role)
+
+    return {
+        "sub": user.username,
+        "account_type": user.account_type.value if hasattr(user.account_type, "value") else str(user.account_type),
+        "household_id": membership.household_id if membership else None,
+        "household_role": household_role,
+    }
+
+
+def _issue_user_session_tokens(
+    user: User,
+    membership: Optional[HouseholdMembership],
+    *,
+    keep_login: bool,
+) -> Token:
+    issued_at = datetime.now(timezone.utc)
+    access_expires_at = None
+    refresh_expires_at = None
+
+    if not keep_login:
+        access_expires_at = issued_at + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        refresh_expires_at = issued_at + timedelta(minutes=REFRESH_TOKEN_EXPIRE_MINUTES)
+
+    payload = _build_user_session_payload(user, membership)
+    access_token = create_access_token(
+        data=payload,
+        expires_at=access_expires_at,
+        persistent=keep_login,
+    )
+    refresh_token = create_refresh_token(
+        data=payload,
+        expires_at=refresh_expires_at,
+        persistent=keep_login,
+    )
+
+    return Token(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        token_type="bearer",
+        access_token_expires_at=access_expires_at,
+        refresh_token_expires_at=refresh_expires_at,
+        keep_login=keep_login,
+    )
+
+
 def _background_session_factory(db: Session) -> sessionmaker:
     return sessionmaker(autocommit=False, autoflush=False, bind=db.get_bind())
 
 
-def _stamp_project_network_targets(config: dict[str, Any], request: Request) -> dict[str, Any]:
-    targets = infer_firmware_network_targets(request.headers, request.url.scheme)
+def _get_runtime_firmware_network_state(request: Request) -> dict[str, object] | None:
+    runtime_state = getattr(request.app.state, "firmware_network_state", None)
+    return runtime_state if isinstance(runtime_state, dict) else None
+
+
+def _stamp_project_network_targets(config: dict[str, Any], targets: dict[str, Any]) -> dict[str, Any]:
     stamped = dict(config)
-    stamped["advertised_host"] = targets["advertised_host"]
-    stamped["api_base_url"] = targets["api_base_url"]
-    stamped.pop("mqtt_broker", None)
+    stamped["advertised_host"] = str(targets["advertised_host"])
+    stamped["api_base_url"] = str(targets["api_base_url"])
+    stamped["mqtt_broker"] = str(targets["mqtt_broker"])
+    stamped["mqtt_port"] = int(targets["mqtt_port"])
+    stamped["target_key"] = str(targets["target_key"])
     return stamped
 
 
@@ -165,6 +244,34 @@ def _expire_stale_devices(db: Session, devices: list[Device]) -> None:
 
     if status_changed:
         db.commit()
+
+
+def expire_stale_online_devices_once(
+    *,
+    session_factory: Optional[Callable[[], Session]] = None,
+) -> int:
+    db = (session_factory or SessionLocal)()
+    try:
+        devices = db.query(Device).filter(Device.conn_status == ConnStatus.online).all()
+        if not devices:
+            return 0
+
+        reference_time = datetime.utcnow()
+        expired_count = 0
+
+        for device in devices:
+            if _expire_device_if_stale(db, device, reference_time=reference_time):
+                expired_count += 1
+
+        if expired_count:
+            db.commit()
+
+        return expired_count
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def _broadcast_pairing_queue_updated(device: Device, *, reason: str) -> None:
@@ -589,10 +696,11 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
+        token_type: Optional[str] = payload.get("type")
         account_type: str = payload.get("account_type")
         household_id: int = payload.get("household_id")
         household_role: str = payload.get("household_role")
-        if username is None:
+        if username is None or token_type not in (None, ACCESS_TOKEN_TYPE):
             raise credentials_exception
         token_data = TokenData(
             username=username,
@@ -632,7 +740,8 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
-        if not username:
+        token_type: Optional[str] = payload.get("type")
+        if not username or token_type not in (None, ACCESS_TOKEN_TYPE):
             raise ValueError("Invalid sub in token")
     except (JWTError, ValueError):
         await websocket.close(code=1008, reason="Invalid token")
@@ -814,7 +923,11 @@ async def promote_user(user_id: int, db: Session = Depends(get_db), admin: User 
     return _serialize_managed_user(membership.user, membership)
 
 @router.post("/auth/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+async def login_for_access_token(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    keep_login: bool = Form(False),
+    db: Session = Depends(get_db),
+):
     user = db.query(User).filter(User.username == form_data.username).first()
     # Check password against 'authentication' column
     if not user or not verify_password(form_data.password, user.authentication):
@@ -827,19 +940,41 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         _raise_user_approval_error(user.approval_status)
 
     # Find active household membership for context binding
-    membership = db.query(HouseholdMembership).filter(HouseholdMembership.user_id == user.user_id).first()
-    household_id = membership.household_id if membership else None
-    household_role = membership.role.value if membership else None
+    membership = _get_primary_membership(db, user)
 
-    access_token = create_access_token(
-        data={
-            "sub": user.username,
-            "account_type": user.account_type.value,
-            "household_id": household_id,
-            "household_role": household_role
-        }
+    return _issue_user_session_tokens(user, membership, keep_login=keep_login)
+
+
+@router.post("/auth/refresh", response_model=Token)
+async def refresh_access_token(payload: RefreshTokenRequest, db: Session = Depends(get_db)):
+    from jose import JWTError, jwt
+
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail={
+            "error": "invalid_refresh_token",
+            "message": "Refresh token is invalid or expired. Please sign in again.",
+        },
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+
+    try:
+        claims = jwt.decode(payload.refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: Optional[str] = claims.get("sub")
+        token_type: Optional[str] = claims.get("type")
+        keep_login = bool(claims.get("keep_login"))
+        if not username or token_type != REFRESH_TOKEN_TYPE:
+            raise credentials_exception
+    except JWTError:
+        raise credentials_exception
+
+    user = db.query(User).filter(User.username == username).first()
+    if user is None:
+        raise credentials_exception
+    if user.approval_status != SqlUserApprovalStatus.approved:
+        _raise_user_approval_error(user.approval_status)
+
+    membership = _get_primary_membership(db, user)
+    return _issue_user_session_tokens(user, membership, keep_login=keep_login)
 
 @router.get("/users/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(get_current_user)):
@@ -1191,12 +1326,20 @@ async def update_device_config(
         )
 
     try:
-        project.config = _stamp_project_network_targets(current_config, request)
+        targets = infer_firmware_network_targets(
+            request.headers,
+            request.url.scheme,
+            _get_runtime_firmware_network_state(request),
+        )
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
             detail={"error": "validation", "message": str(exc)},
         )
+    network_target_warning = describe_network_target_change(current_config, targets)
+    if network_target_warning:
+        validation_warnings.append(network_target_warning)
+    project.config = _stamp_project_network_targets(current_config, targets)
 
     # Trigger rebuild only after validation passes and no active job exists.
     job = BuildJob(id=str(uuid.uuid4()), project_id=project.id, status=JobStatus.queued)
@@ -1366,10 +1509,26 @@ async def get_latest_command(device_id: str, db: Session = Depends(get_db)):
 # --- DIY Builder ---
 
 @router.post("/diy/config/generate", response_model=GenerateConfigResponse)
-async def generate_diy_config(request: GenerateConfigRequest, user: User = Depends(get_current_user)):
+async def generate_diy_config(
+    request: GenerateConfigRequest,
+    http_request: Request,
+    _user: User = Depends(get_current_user),
+):
     """
     Generate device config JSON from board and pin mappings.
     """
+    try:
+        targets = infer_firmware_network_targets(
+            http_request.headers,
+            http_request.url.scheme,
+            _get_runtime_firmware_network_state(http_request),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": str(exc)},
+        )
+
     config = {
         "board": request.board,
         "wifi": {
@@ -1377,7 +1536,15 @@ async def generate_diy_config(request: GenerateConfigRequest, user: User = Depen
             "password": request.wifi_password or ""
         },
         "mqtt": {
-            "broker": request.mqtt_broker or ""
+            "broker": targets["mqtt_broker"],
+            "port": int(targets["mqtt_port"]),
+        },
+        "network_targets": {
+            "advertised_host": str(targets["advertised_host"]),
+            "api_base_url": str(targets["api_base_url"]),
+            "mqtt_broker": str(targets["mqtt_broker"]),
+            "mqtt_port": int(targets["mqtt_port"]),
+            "target_key": str(targets["target_key"]),
         },
         "pins": [
             {
@@ -1389,6 +1556,49 @@ async def generate_diy_config(request: GenerateConfigRequest, user: User = Depen
         ]
     }
     return {"status": "success", "config": config}
+
+@router.get("/diy/network-targets", response_model=FirmwareNetworkTargetsResponse)
+async def get_diy_network_targets(
+    request: Request,
+    _current_user: User = Depends(get_admin_user),
+):
+    try:
+        targets = infer_firmware_network_targets(
+            request.headers,
+            request.url.scheme,
+            _get_runtime_firmware_network_state(request),
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": str(exc)},
+        )
+
+    audit = getattr(request.app.state, "firmware_network_audit", None)
+    warning = None
+    stale_project_count = 0
+    stale_device_count = 0
+    if isinstance(audit, dict):
+        raw_warning = audit.get("warning")
+        if isinstance(raw_warning, str) and raw_warning.strip():
+            warning = raw_warning
+        raw_project_count = audit.get("stale_project_count")
+        raw_device_count = audit.get("stale_device_count")
+        if raw_project_count is not None:
+            stale_project_count = int(raw_project_count)
+        if raw_device_count is not None:
+            stale_device_count = int(raw_device_count)
+
+    return FirmwareNetworkTargetsResponse(
+        advertised_host=str(targets["advertised_host"]),
+        api_base_url=str(targets["api_base_url"]),
+        mqtt_broker=str(targets["mqtt_broker"]),
+        mqtt_port=int(targets["mqtt_port"]),
+        target_key=str(targets["target_key"]),
+        warning=warning,
+        stale_project_count=stale_project_count,
+        stale_device_count=stale_device_count,
+    )
 
 @router.get("/diy/i2c/libraries", response_model=List[I2CLibrary])
 async def list_i2c_libraries(current_user: User = Depends(get_current_user)):
@@ -1496,7 +1706,30 @@ async def list_diy_projects(
     return response_data
 
 @router.delete("/diy/projects/{project_id}")
-async def delete_diy_project(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
+async def delete_diy_project(
+    project_id: str,
+    delete_request: Optional[DiyProjectDeleteRequest] = Body(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    password = delete_request.password if delete_request is not None and delete_request.password is not None else ""
+    if not password.strip():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "validation",
+                "message": "Enter your account password before deleting this board config.",
+            },
+        )
+    if not verify_password(password, current_user.authentication):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "invalid_password",
+                "message": "Incorrect password. Enter the password for the signed-in account to delete this board config.",
+            },
+        )
+
     project = _get_project_in_household_or_404(db, current_user, project_id)
 
     # Check if used by any approved device
@@ -1601,16 +1834,22 @@ async def trigger_diy_build(
     if active_job:
         return active_job
 
+    current_config = project.config if isinstance(project.config, dict) else {}
     try:
-        project.config = _stamp_project_network_targets(
-            project.config if isinstance(project.config, dict) else {},
-            request,
+        targets = infer_firmware_network_targets(
+            request.headers,
+            request.url.scheme,
+            _get_runtime_firmware_network_state(request),
         )
     except ValueError as exc:
         raise HTTPException(
             status_code=400,
             detail={"error": "validation", "message": str(exc)},
         )
+    network_target_warning = describe_network_target_change(current_config, targets)
+    if network_target_warning:
+        validation_warnings.append(network_target_warning)
+    project.config = _stamp_project_network_targets(current_config, targets)
 
     job_id = str(uuid.uuid4())
     job = BuildJob(
