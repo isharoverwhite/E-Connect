@@ -17,6 +17,7 @@ The Jenkins pipeline now requires a successful Docker-based build gate before CD
 
 - `webapp`: Docker `check` target runs `npm run lint` and `npm run build`
 - `server`: Docker `test` target runs `python -m pytest tests/`
+- `find_website`: Docker image build validates the standalone Next.js public scanner app
 
 The gate uses Docker build targets instead of bind-mounting the Jenkins workspace into ad-hoc containers, so it works when Jenkins itself runs inside a container.
 The MQTT broker now follows the same rule: its Mosquitto config is baked into the `mqtt` image instead of bind-mounting a workspace file at deploy time.
@@ -25,3 +26,5 @@ The compose stack now declares healthchecks for `server` and `webapp`, and Jenki
 Validation-only runs can stop after the build gate by setting `DEPLOY=false`, which skips the release-image build, compose rollout, and smoke stages.
 When deployment is requested, Jenkins now enforces the branch policy immediately after the build gate so blocked non-main deploys fail before the release-image build starts.
 Only after that gate passes does Jenkins build the release Docker images, deploy with Docker Compose, and run the smoke checks.
+
+GitHub Actions also runs a scoped Docker workflow for `find_website` on pull requests and pushes to `main` that touch [find_website](/Users/kiendinhtrung/Documents/GitHub/Final-Project/find_website) or the workflow file itself. That workflow builds the image from [find_website/Dockerfile](/Users/kiendinhtrung/Documents/GitHub/Final-Project/find_website/Dockerfile) and smoke-checks the container over HTTP, but it does not publish the image to a registry yet.
