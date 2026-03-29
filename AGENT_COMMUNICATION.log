@@ -538,3 +538,19 @@
 [2026-03-29 03:23:12] Debug -> Tester | Backed up smart_home, created econnect/e_connect_db compatibility layer, restarted services
 [2026-03-29 03:23:12] Tester -> Main | PASS; server health recovered and Jenkins build #20 completed SUCCESS on commit 88da152
 [2026-03-29 03:23:12] Main -> Main | PROJECT_STATUS updated: Jenkins DB deployment failure resolved on live server
+[2026-03-29 03:41:36] Main -> Planner | Scope local MariaDB cleanup to one authoritative e_connect_db schema
+[2026-03-29 03:41:36] Planner -> Main | Design unchanged; normalize runtime DB state to existing e_connect_db baseline
+[2026-03-29 03:41:36] Main -> Debug | Inspect local Docker DB split and identify authoritative source before migration
+[2026-03-29 03:41:36] Debug -> Main | Compose DB is legacy empty smart_home; e-connect-db-local holds live e_connect_db data
+[2026-03-29 03:45:20] Main -> Coder | Migrate authoritative e_connect_db into compose DB and retire legacy smart_home
+[2026-03-29 03:45:20] Coder -> Tester | Migration complete; verify row parity, credentials, host port, and schema state
+[2026-03-29 03:45:20] Tester -> Main | PASS; compose DB owns 3306, e_connect_db preserved counts, smart_home retired
+[2026-03-29 03:45:20] Main -> Main | PROJECT_STATUS updated: local MariaDB normalized to one schema
+[2026-03-29 03:46:38] Tester -> Main | PASS; old rollback volume removed, only final-project_db_data remains active
+[2026-03-29 03:46:38] Main -> Main | PROJECT_STATUS updated: local DB cleanup reduced to one active volume
+[2026-03-29 12:50:20] Main -> Planner | Scope publish request plus live Jenkins cleanup on 192.168.2.55
+[2026-03-29 12:50:20] Planner -> Debug | Use SSH host access to inspect Jenkins DB drift and cleanup readiness
+[2026-03-29 12:50:20] Debug -> Main | Live Jenkins DB still had smart_home plus legacy root/user credentials
+[2026-03-29 12:50:20] Main -> Coder | Back up live DB, retire smart_home, align root credential, keep app healthy
+[2026-03-29 12:50:20] Coder -> Tester | Live Jenkins cleanup applied; verify DB schema list and service health
+[2026-03-29 12:50:20] Tester -> Main | PASS; Jenkins DB now exposes only e_connect_db and services stayed healthy
