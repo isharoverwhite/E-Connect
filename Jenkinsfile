@@ -92,12 +92,23 @@ pipeline {
                             return null
                         }
 
-                        try {
-                            def host = new java.net.URI(normalized).host?.trim()
-                            return isPrivateIpv4(host) ? host : null
-                        } catch (Exception ignored) {
+                        def matcher = normalized =~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^\/?#]+)/
+                        if (!matcher.find()) {
                             return null
                         }
+
+                        def authority = matcher.group(1)?.trim()
+                        if (!authority) {
+                            return null
+                        }
+
+                        def host = authority.tokenize('@')[-1]
+                        if (host.startsWith('[')) {
+                            return null
+                        }
+
+                        def normalizedHost = host.tokenize(':')[0]?.trim()
+                        return isPrivateIpv4(normalizedHost) ? normalizedHost : null
                     }
 
                     env.RESOLVED_BRANCH = sh(
