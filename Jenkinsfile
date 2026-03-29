@@ -320,6 +320,32 @@ pipeline {
                     retry 30 2 docker compose exec -T find_website wget -q --spider http://127.0.0.1:9123/
                     retry 30 2 sh -c "docker compose logs discovery_mdns 2>&1 | grep -q 'Published mDNS alias'"
                     retry 30 2 sh -c "docker compose logs discovery_mdns 2>&1 | grep -F \"Published mDNS alias ${DISCOVERY_MDNS_HOSTNAME} -> ${DISCOVERY_ALIAS_IP}\""
+
+                    run_browser_discovery_smoke() {
+                        label="$1"
+                        scan_url="$2"
+                        expected_any="$3"
+
+                        docker run --rm --network host \
+                            -e DISCOVERY_SCAN_LABEL="$label" \
+                            -e DISCOVERY_SCAN_URL="$scan_url" \
+                            -e DISCOVERY_EXPECT_ANY="$expected_any" \
+                            -e DISCOVERY_SCAN_TIMEOUT_MS="45000" \
+                            -v "$PWD:/workspace" \
+                            -w /workspace/webapp \
+                            mcr.microsoft.com/playwright:v1.58.2-noble \
+                            node scripts/discovery-smoke.mjs
+                    }
+
+                    retry 3 5 run_browser_discovery_smoke \
+                        "lan-hosted scanner" \
+                        "http://${DISCOVERY_ALIAS_IP}:9123/" \
+                        "${DISCOVERY_ALIAS_IP},${DISCOVERY_MDNS_HOSTNAME}"
+
+                    retry 3 5 run_browser_discovery_smoke \
+                        "public discovery page" \
+                        "https://find.isharoverwhite.com/" \
+                        "${DISCOVERY_MDNS_HOSTNAME},${DISCOVERY_ALIAS_IP}"
                 '''
             }
         }
