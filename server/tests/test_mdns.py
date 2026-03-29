@@ -1,4 +1,5 @@
 from app.services import mdns
+from zeroconf._exceptions import NonUniqueNameException
 
 
 def test_resolve_mdns_registration_config_uses_runtime_ip_targets(monkeypatch):
@@ -96,8 +97,16 @@ class DummyAsyncZeroconf:
         self.unregistered = []
         self.closed = False
 
-    async def async_register_service(self, service):
-        self.registered.append(service)
+    async def async_register_service(self, service, ttl=None, allow_name_change=False, cooperating_responders=False, strict=True):
+        self.registered.append(
+            {
+                "service": service,
+                "ttl": ttl,
+                "allow_name_change": allow_name_change,
+                "cooperating_responders": cooperating_responders,
+                "strict": strict,
+            }
+        )
 
     async def async_unregister_service(self, service):
         self.unregistered.append(service)
@@ -130,8 +139,49 @@ def test_mdns_publisher_registers_and_stops_services():
     zeroconf = publisher._zeroconf
     assert zeroconf is not None
     assert len(zeroconf.registered) == 2
+    assert all(entry["allow_name_change"] is True for entry in zeroconf.registered)
+    assert zeroconf.registered[0]["service"].server == "econnect.local."
+    assert zeroconf.registered[0]["service"].port == 8000
+    assert zeroconf.registered[1]["service"].server == "econnect.local."
+    assert zeroconf.registered[1]["service"].port == 3000
 
     asyncio.run(publisher.stop())
 
     assert len(zeroconf.unregistered) == 2
     assert zeroconf.closed is True
+
+
+class DummyAsyncZeroconfNameConflict(DummyAsyncZeroconf):
+    async def async_register_service(self, service, ttl=None, allow_name_change=False, cooperating_responders=False, strict=True):
+        if not allow_name_change:
+            raise NonUniqueNameException
+        await super().async_register_service(
+            service,
+            ttl=ttl,
+            allow_name_change=allow_name_change,
+            cooperating_responders=cooperating_responders,
+            strict=strict,
+        )
+
+
+def test_mdns_publisher_allows_service_name_change_when_name_exists():
+    publisher = mdns.MdnsPublisher(zeroconf_factory=DummyAsyncZeroconfNameConflict)
+    config = mdns.MdnsRegistrationConfig(
+        hostname="econnect.local",
+        addresses=("192.168.2.65",),
+        discovery_port=8000,
+        webapp_port=3000,
+        discovery_service_name="E-Connect Discovery",
+        webapp_service_name="E-Connect WebUI",
+    )
+
+    import asyncio
+
+    services = asyncio.run(publisher.start(config))
+
+    assert len(services) == 2
+
+    zeroconf = publisher._zeroconf
+    assert zeroconf is not None
+    assert len(zeroconf.registered) == 2
+    assert all(entry["allow_name_change"] is True for entry in zeroconf.registered)

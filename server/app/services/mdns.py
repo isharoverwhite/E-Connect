@@ -225,7 +225,7 @@ class MdnsPublisher:
         services = list(build_mdns_service_infos(config))
         try:
             for service in services:
-                await zeroconf.async_register_service(service)
+                await zeroconf.async_register_service(service, allow_name_change=True)
         except Exception:
             for service in reversed(services):
                 with suppress(Exception):
