@@ -9,3 +9,4 @@ passlib[bcrypt]
 python-jose
 paho-mqtt>=2.0.0
 platformio
+zeroconf

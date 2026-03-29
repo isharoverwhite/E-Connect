@@ -43,5 +43,5 @@ docker run -d \
 - No extra runtime environment variables are required for the current discovery flow.
 - The page probes LAN targets directly from the browser via script injection instead of `fetch`.
 - The backend must expose `http://<candidate-ip>:8000/web-assistant.js?callback=...` for the scan to work.
-- If the server LAN publishes `econnect.local` through mDNS or router DNS, the scanner will try that alias before brute-force subnet scanning.
+- If the server LAN publishes `econnect.local` through mDNS or router DNS, the scanner will try that alias before brute-force subnet scanning, and `.local` aliases now get a longer probe budget plus one retry before the wider subnet sweep begins.
 - Browser behavior is transport-dependent; the current implementation is aligned with the Synology-style pattern verified on Chrome on 2026-03-29.

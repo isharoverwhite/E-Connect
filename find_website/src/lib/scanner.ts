@@ -26,12 +26,29 @@ export const DEFAULT_WEBAPP_PORT = "3000";
 export const DISCOVERY_SCRIPT_PORT = "8000";
 export const DISCOVERY_SCRIPT_PATH = "/web-assistant.js";
 export const DISCOVERY_TIMEOUT_MS = 1500;
+export const ALIAS_DISCOVERY_TIMEOUT_MS = 4000;
+export const ALIAS_DISCOVERY_RETRY_COUNT = 2;
 export const WEBSITE_PROBE_TIMEOUT_MS = 1500;
 export const COMMON_HOST_ALIASES = [
   "econnect.local",
   "e-connect.local",
   "econnect-server.local",
 ];
+
+export function resolveDiscoveryAttemptBudget(host: string): { timeoutMs: number; attempts: number } {
+  const normalizedHost = host.trim().toLowerCase();
+  if (COMMON_HOST_ALIASES.includes(normalizedHost) || normalizedHost.endsWith(".local")) {
+    return {
+      timeoutMs: ALIAS_DISCOVERY_TIMEOUT_MS,
+      attempts: ALIAS_DISCOVERY_RETRY_COUNT,
+    };
+  }
+
+  return {
+    timeoutMs: DISCOVERY_TIMEOUT_MS,
+    attempts: 1,
+  };
+}
 
 function normalizeDiscoveryHost(value: string | null | undefined): string | null {
   if (typeof value !== "string" || !value.trim()) {
