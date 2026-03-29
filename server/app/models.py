@@ -296,6 +296,8 @@ class FirmwareNetworkTargetsResponse(BaseModel):
     api_base_url: str
     mqtt_broker: str
     mqtt_port: int
+    webapp_protocol: str
+    webapp_port: int
     target_key: str
     warning: Optional[str] = None
     stale_project_count: int = 0

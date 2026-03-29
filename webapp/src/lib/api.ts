@@ -16,6 +16,8 @@ export interface RuntimeNetworkInfo {
     api_base_url: string;
     mqtt_broker: string;
     mqtt_port: number;
+    webapp_protocol: string;
+    webapp_port: number;
     target_key: string;
     warning?: string | null;
     stale_project_count?: number;
