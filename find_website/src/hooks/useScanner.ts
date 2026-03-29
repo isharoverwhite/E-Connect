@@ -4,7 +4,13 @@ import {
   buildDiscoveryScriptUrl,
   buildWebappBaseUrl,
   COMMON_HOST_ALIASES,
+  DISCOVERY_HEALTH_PATH,
+  DISCOVERY_SCRIPT_PORT,
+  generateSubnetIps,
   isDiscoveryPayloadCandidate,
+  isLikelyPrivateDiscoveryHost,
+  normalizeDiscoveryHost,
+  resolvePrivateIpv4SubnetPrefix,
   resolveDiscoveryAttemptBudget,
   resolveDiscoveryHost,
   resolveWebappTransport,
@@ -25,6 +31,11 @@ function getDynamicWindow(): WindowWithDynamicCallbacks | null {
   }
 
   return window as unknown as WindowWithDynamicCallbacks;
+}
+
+function isSecureScannerPage(): boolean {
+  const pageWindow = getDynamicWindow();
+  return pageWindow?.location.protocol === "https:";
 }
 
 async function probeWebsite(baseUrl: string, signal: AbortSignal): Promise<DeviceInfo["websiteStatus"]> {
@@ -53,6 +64,67 @@ async function probeWebsite(baseUrl: string, signal: AbortSignal): Promise<Devic
     image.onerror = () => finalize("offline");
     image.src = `${baseUrl}/favicon.ico?_dc=${Date.now()}`;
   });
+}
+
+async function buildDeviceFromPayload(
+  host: string,
+  payload: DiscoveryScriptPayload,
+  signal: AbortSignal,
+): Promise<DeviceInfo | null> {
+  if (!isDiscoveryPayloadCandidate(payload)) {
+    return null;
+  }
+
+  const { protocol, port } = resolveWebappTransport(payload.firmware_network);
+  const resolvedHost = resolveDiscoveryHost(host, payload.firmware_network);
+  const probedHost = host.trim();
+  let launchHost = resolvedHost;
+  let websiteStatus = await probeWebsite(buildWebappBaseUrl(launchHost, protocol, port), signal);
+
+  if (launchHost !== probedHost && websiteStatus === "offline") {
+    const fallbackStatus = await probeWebsite(buildWebappBaseUrl(probedHost, protocol, port), signal);
+    launchHost = probedHost;
+    websiteStatus = fallbackStatus;
+  }
+
+  return {
+    ip: launchHost,
+    database: payload.database?.trim() || "unknown",
+    mqtt: payload.mqtt?.trim() || "unknown",
+    protocol,
+    port,
+    websiteStatus,
+  };
+}
+
+async function probeCandidateHostViaHealth(host: string, signal: AbortSignal, timeoutMs: number): Promise<DeviceInfo | null> {
+  if (isSecureScannerPage()) {
+    return null;
+  }
+
+  const pageWindow = getDynamicWindow();
+  if (!pageWindow || signal.aborted) {
+    return null;
+  }
+
+  const requestController = new AbortController();
+  const abortRequest = () => requestController.abort();
+  const timeoutId = window.setTimeout(abortRequest, timeoutMs);
+
+  signal.addEventListener("abort", abortRequest, { once: true });
+
+  try {
+    const response = await fetch(`http://${host.trim()}:${DISCOVERY_SCRIPT_PORT}${DISCOVERY_HEALTH_PATH}`, {
+      signal: requestController.signal,
+    });
+    const payload = (await response.json()) as DiscoveryScriptPayload;
+    return await buildDeviceFromPayload(host, payload, signal);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeoutId);
+    signal.removeEventListener("abort", abortRequest);
+  }
 }
 
 async function probeCandidateHostOnce(host: string, signal: AbortSignal, timeoutMs: number): Promise<DeviceInfo | null> {
@@ -85,32 +157,8 @@ async function probeCandidateHostOnce(host: string, signal: AbortSignal, timeout
     const timeoutId = window.setTimeout(() => finalize(null), timeoutMs);
 
     pageWindow[callbackName] = async (payload: DiscoveryScriptPayload) => {
-      if (!isDiscoveryPayloadCandidate(payload)) {
-        finalize(null);
-        return;
-      }
-
       clearTimeout(timeoutId);
-      const { protocol, port } = resolveWebappTransport(payload.firmware_network);
-      const resolvedHost = resolveDiscoveryHost(host, payload.firmware_network);
-      const probedHost = host.trim();
-      let launchHost = resolvedHost;
-      let websiteStatus = await probeWebsite(buildWebappBaseUrl(launchHost, protocol, port), signal);
-
-      if (launchHost !== probedHost && websiteStatus === "offline") {
-        const fallbackStatus = await probeWebsite(buildWebappBaseUrl(probedHost, protocol, port), signal);
-        launchHost = probedHost;
-        websiteStatus = fallbackStatus;
-      }
-
-      finalize({
-        ip: launchHost,
-        database: payload.database?.trim() || "unknown",
-        mqtt: payload.mqtt?.trim() || "unknown",
-        protocol,
-        port,
-        websiteStatus,
-      });
+      finalize(await buildDeviceFromPayload(host, payload, signal));
     };
 
     script.async = true;
@@ -143,11 +191,19 @@ async function waitBeforeRetry(signal: AbortSignal, delayMs: number): Promise<vo
 
 async function probeCandidateHost(host: string, signal: AbortSignal): Promise<DeviceInfo | null> {
   const { timeoutMs, attempts } = resolveDiscoveryAttemptBudget(host);
+  const secureScannerPage = isSecureScannerPage();
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const device = await probeCandidateHostOnce(host, signal, timeoutMs);
-    if (device || signal.aborted || attempt === attempts) {
-      return device;
+    if (!secureScannerPage) {
+      const directDevice = await probeCandidateHostViaHealth(host, signal, timeoutMs);
+      if (directDevice || signal.aborted || attempt === attempts) {
+        return directDevice;
+      }
+    } else {
+      const device = await probeCandidateHostOnce(host, signal, timeoutMs);
+      if (device || signal.aborted || attempt === attempts) {
+        return device;
+      }
     }
 
     await waitBeforeRetry(signal, 250);
@@ -263,13 +319,26 @@ export const useScanner = () => {
 
     const preferredHosts = Array.from(
       new Set([
+        ...(isLikelyPrivateDiscoveryHost(window.location.hostname)
+          ? [normalizeDiscoveryHost(window.location.hostname) ?? window.location.hostname]
+          : []),
         ...(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
           ? ["127.0.0.1", "localhost"]
           : []),
         ...COMMON_HOST_ALIASES,
       ]),
     );
-    const subnetHosts = buildCandidateHosts(preferredHosts);
+    const currentSubnetHosts = (() => {
+      const subnetPrefix = resolvePrivateIpv4SubnetPrefix(window.location.hostname);
+      if (!subnetPrefix) {
+        return [];
+      }
+
+      const preferredHostSet = new Set(preferredHosts);
+      return generateSubnetIps(subnetPrefix).filter((host) => !preferredHostSet.has(host));
+    })();
+    const discoveredSubnetHosts = buildCandidateHosts([...preferredHosts, ...currentSubnetHosts]);
+    const subnetHosts = [...currentSubnetHosts, ...discoveredSubnetHosts];
     const candidateHosts = [...preferredHosts, ...subnetHosts];
 
     setTotalCount(candidateHosts.length);
@@ -323,6 +392,12 @@ export const useScanner = () => {
       }
 
       await waitForScanDeadline(signal);
+
+      if (!signal.aborted && pendingDevicesRef.current.size === 0 && isSecureScannerPage()) {
+        setScanError(
+          "Your browser may be blocking local HTTP discovery from this secure page. Retry from the same LAN, or use a LAN-hosted HTTP copy of the discovery page if one is available.",
+        );
+      }
     } catch (error) {
       setScanError(error instanceof Error ? error.message : "The browser scanner failed unexpectedly.");
     } finally {
