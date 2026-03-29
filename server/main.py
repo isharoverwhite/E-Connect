@@ -22,6 +22,7 @@ from app.services.builder import (
     resolve_runtime_firmware_network_state,
     resolve_webapp_transport,
 )
+from app.services.mdns import MdnsPublisher, resolve_mdns_registration_config
 from app.services.user_management import ensure_temp_support_account
 
 logger = logging.getLogger(__name__)
@@ -121,6 +122,7 @@ async def lifespan(app: FastAPI):
 
     app.state.database_ready = False
     app.state.database_error = None
+    app.state.mdns_publisher = None
     app.state.mqtt_started = False
     app.state.firmware_network_state = resolve_runtime_firmware_network_state()
     app.state.firmware_network_audit = None
@@ -134,6 +136,31 @@ async def lifespan(app: FastAPI):
         )
     elif firmware_network_state and "error" in firmware_network_state:
         logger.warning("Firmware provisioning host auto-detect unavailable: %s", firmware_network_state["error"])
+
+    try:
+        mdns_config = resolve_mdns_registration_config(app.state.firmware_network_state)
+    except ValueError as exc:
+        logger.warning("mDNS alias publication disabled: %s", exc)
+    else:
+        if mdns_config is not None:
+            mdns_publisher = MdnsPublisher()
+            try:
+                await mdns_publisher.start(mdns_config)
+            except Exception:
+                logger.exception(
+                    "mDNS alias publication failed for %s -> %s",
+                    mdns_config.hostname,
+                    ", ".join(mdns_config.addresses),
+                )
+            else:
+                app.state.mdns_publisher = mdns_publisher
+                logger.info(
+                    "Published mDNS alias %s -> %s (discovery %s, webapp %s)",
+                    mdns_config.hostname,
+                    ", ".join(mdns_config.addresses),
+                    mdns_config.discovery_port,
+                    mdns_config.webapp_port,
+                )
 
     if _using_overridden_database(app):
         logger.info("Skipping startup database initialization because get_db is overridden")
@@ -171,6 +198,9 @@ async def lifespan(app: FastAPI):
             stale_device_watchdog_task.cancel()
             with suppress(asyncio.CancelledError):
                 await stale_device_watchdog_task
+        mdns_publisher = getattr(app.state, "mdns_publisher", None)
+        if isinstance(mdns_publisher, MdnsPublisher):
+            await mdns_publisher.stop()
         if app.state.mqtt_started:
             mqtt_manager.stop()
 

@@ -4,9 +4,9 @@ import {
   buildWebappBaseUrl,
   COMMON_HOST_ALIASES,
   COMMON_SUBNETS,
-  DISCOVERY_TIMEOUT_MS,
   generateSubnetIps,
   isDiscoveryPayloadCandidate,
+  resolveDiscoveryAttemptBudget,
   resolveDiscoveryHost,
   resolveWebappTransport,
   WEBSITE_PROBE_TIMEOUT_MS,
@@ -56,7 +56,7 @@ async function probeWebsite(baseUrl: string, signal: AbortSignal): Promise<Devic
   });
 }
 
-async function probeCandidateHost(host: string, signal: AbortSignal): Promise<DeviceInfo | null> {
+async function probeCandidateHostOnce(host: string, signal: AbortSignal, timeoutMs: number): Promise<DeviceInfo | null> {
   const pageWindow = getDynamicWindow();
   if (!pageWindow || signal.aborted) {
     return null;
@@ -83,7 +83,7 @@ async function probeCandidateHost(host: string, signal: AbortSignal): Promise<De
     };
 
     const handleAbort = () => finalize(null);
-    const timeoutId = window.setTimeout(() => finalize(null), DISCOVERY_TIMEOUT_MS);
+    const timeoutId = window.setTimeout(() => finalize(null), timeoutMs);
 
     pageWindow[callbackName] = async (payload: DiscoveryScriptPayload) => {
       if (!isDiscoveryPayloadCandidate(payload)) {
@@ -113,6 +113,40 @@ async function probeCandidateHost(host: string, signal: AbortSignal): Promise<De
     signal.addEventListener("abort", handleAbort, { once: true });
     document.body.appendChild(script);
   });
+}
+
+async function waitBeforeRetry(signal: AbortSignal, delayMs: number): Promise<void> {
+  if (signal.aborted) {
+    return;
+  }
+
+  await new Promise<void>((resolve) => {
+    const finalize = () => {
+      signal.removeEventListener("abort", handleAbort);
+      resolve();
+    };
+    const handleAbort = () => {
+      clearTimeout(timeoutId);
+      finalize();
+    };
+    const timeoutId = window.setTimeout(finalize, delayMs);
+    signal.addEventListener("abort", handleAbort, { once: true });
+  });
+}
+
+async function probeCandidateHost(host: string, signal: AbortSignal): Promise<DeviceInfo | null> {
+  const { timeoutMs, attempts } = resolveDiscoveryAttemptBudget(host);
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const device = await probeCandidateHostOnce(host, signal, timeoutMs);
+    if (device || signal.aborted || attempt === attempts) {
+      return device;
+    }
+
+    await waitBeforeRetry(signal, 250);
+  }
+
+  return null;
 }
 
 export const useScanner = () => {
