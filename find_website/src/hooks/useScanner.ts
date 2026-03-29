@@ -228,6 +228,7 @@ export const useScanner = () => {
   const pendingDevicesRef = useRef<Map<string, DeviceInfo>>(new Map());
   const hasDetectedServerRef = useRef(false);
   const hasAutoStartedRef = useRef(false);
+  const scanTimedOutRef = useRef(false);
 
   const clearGlobalTimeout = useCallback(() => {
     if (globalTimeoutRef.current !== null) {
@@ -247,6 +248,7 @@ export const useScanner = () => {
     (delayMs: number) => {
       clearGlobalTimeout();
       globalTimeoutRef.current = window.setTimeout(() => {
+        scanTimedOutRef.current = true;
         abortControllerRef.current?.abort();
       }, Math.max(0, delayMs));
     },
@@ -311,6 +313,7 @@ export const useScanner = () => {
     setProgress(0);
     setScannedCount(0);
     setScanError(null);
+    scanTimedOutRef.current = false;
     pendingDevicesRef.current = new Map();
     hasDetectedServerRef.current = false;
     scanStartedAtRef.current = Date.now();
@@ -395,7 +398,7 @@ export const useScanner = () => {
 
       await waitForScanDeadline(signal);
 
-      if (!signal.aborted && pendingDevicesRef.current.size === 0 && isSecureScannerPage()) {
+      if (pendingDevicesRef.current.size === 0 && isSecureScannerPage() && scanTimedOutRef.current) {
         setScanError(
           "This public HTTPS page scans from your current browser session on the same LAN. If the browser blocks local discovery, retry in Chrome or Edge on that LAN and keep the tab open until the scan completes.",
         );
@@ -409,6 +412,7 @@ export const useScanner = () => {
 
   const stopScan = useCallback(() => {
     clearGlobalTimeout();
+    scanTimedOutRef.current = false;
     abortControllerRef.current?.abort();
   }, [clearGlobalTimeout]);
 

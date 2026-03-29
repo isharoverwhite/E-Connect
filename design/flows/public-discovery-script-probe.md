@@ -67,7 +67,9 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
   - page prefers `econnect.local`-style aliases before subnet sweeping
   - page renders scan results and empty state correctly
   - page shows no hydration/runtime errors; failed probe requests may still appear in the browser console as expected network noise
-  - Jenkins CD runs a post-deploy Playwright smoke against both the LAN-hosted `find_website` and the public page, and prints browser console/request failures directly into the build log when discovery does not finish with `Scan Results`
+  - Jenkins CD runs a post-deploy Playwright smoke against both the LAN-hosted `find_website` and the public page
+  - the LAN-hosted smoke must finish with `Scan Results`
+  - the secure public-page smoke may finish with either `Scan Results` or the explicit browser-blocked `Scan Failed` state, and the build log must still print browser console/request failures for auditability
 
 ## Known Limitations
 

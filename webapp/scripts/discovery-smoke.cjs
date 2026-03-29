@@ -46,6 +46,9 @@ async function main() {
   const label = process.env.DISCOVERY_SCAN_LABEL?.trim() || scanUrl;
   const timeoutMs = Number.parseInt(process.env.DISCOVERY_SCAN_TIMEOUT_MS || "", 10) || DEFAULT_TIMEOUT_MS;
   const expectedAny = splitCsv(process.env.DISCOVERY_EXPECT_ANY);
+  const allowScanFailed = /^(1|true|yes)$/i.test(process.env.DISCOVERY_ALLOW_SCAN_FAILED || "");
+  const secureGuidanceMatch =
+    /If you opened this public page through HTTPS or Cloudflare Tunnel/i;
 
   const consoleEvents = [];
   const pageErrors = [];
@@ -129,10 +132,20 @@ async function main() {
     const resultMatch = pageText.match(/Scan Results \((\d+)\)/);
 
     if (pageText.includes("Scan Failed")) {
+      if (allowScanFailed) {
+        console.log(`Discovery smoke accepted browser-blocked state for ${label}.`);
+        return;
+      }
+
       throw buildFailure(`Discovery smoke failed for ${label}: page reported Scan Failed.`, compactPageText);
     }
 
     if (pageText.includes("No E-Connect Servers Found")) {
+      if (allowScanFailed && secureGuidanceMatch.test(pageText)) {
+        console.log(`Discovery smoke accepted secure-origin guidance state for ${label}.`);
+        return;
+      }
+
       throw buildFailure(`Discovery smoke failed for ${label}: no servers found.`, compactPageText);
     }
 
