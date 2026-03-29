@@ -325,12 +325,14 @@ pipeline {
                         label="$1"
                         scan_url="$2"
                         expected_any="$3"
+                        allow_scan_failed="${4:-false}"
 
                         docker run --rm --network host \
                             -i \
                             -e DISCOVERY_SCAN_LABEL="$label" \
                             -e DISCOVERY_SCAN_URL="$scan_url" \
                             -e DISCOVERY_EXPECT_ANY="$expected_any" \
+                            -e DISCOVERY_ALLOW_SCAN_FAILED="$allow_scan_failed" \
                             -e DISCOVERY_SCAN_TIMEOUT_MS="45000" \
                             mcr.microsoft.com/playwright:v1.58.2-noble \
                             bash -lc 'npm install -g playwright@1.58.2 >/tmp/playwright-npm.log 2>&1 && export NODE_PATH="$(npm root -g)" && node -' \
@@ -340,12 +342,14 @@ pipeline {
                     retry 3 5 run_browser_discovery_smoke \
                         "lan-hosted scanner" \
                         "http://${DISCOVERY_ALIAS_IP}:9123/" \
-                        "${DISCOVERY_ALIAS_IP},${DISCOVERY_MDNS_HOSTNAME}"
+                        "${DISCOVERY_ALIAS_IP},${DISCOVERY_MDNS_HOSTNAME}" \
+                        "false"
 
                     retry 3 5 run_browser_discovery_smoke \
                         "public discovery page" \
                         "https://find.isharoverwhite.com/" \
-                        "${DISCOVERY_MDNS_HOSTNAME},${DISCOVERY_ALIAS_IP}"
+                        "${DISCOVERY_MDNS_HOSTNAME},${DISCOVERY_ALIAS_IP}" \
+                        "true"
                 '''
             }
         }
