@@ -76,19 +76,21 @@ async function buildDeviceFromPayload(
   }
 
   const { protocol, port } = resolveWebappTransport(payload.firmware_network);
-  const resolvedHost = resolveDiscoveryHost(host, payload.firmware_network);
-  const probedHost = host.trim();
-  let launchHost = resolvedHost;
+  const displayHost = resolveDiscoveryHost(host, payload.firmware_network);
+  const probeHost = host.trim();
+  let launchHost = displayHost;
   let websiteStatus = await probeWebsite(buildWebappBaseUrl(launchHost, protocol, port), signal);
 
-  if (launchHost !== probedHost && websiteStatus === "offline") {
-    const fallbackStatus = await probeWebsite(buildWebappBaseUrl(probedHost, protocol, port), signal);
-    launchHost = probedHost;
+  if (launchHost !== probeHost && websiteStatus === "offline") {
+    const fallbackStatus = await probeWebsite(buildWebappBaseUrl(probeHost, protocol, port), signal);
+    launchHost = probeHost;
     websiteStatus = fallbackStatus;
   }
 
   return {
-    ip: launchHost,
+    displayHost,
+    launchHost,
+    probeHost,
     database: payload.database?.trim() || "unknown",
     mqtt: payload.mqtt?.trim() || "unknown",
     protocol,
@@ -364,7 +366,7 @@ export const useScanner = () => {
           continue;
         }
 
-        pendingDevicesRef.current.set(device.ip, device);
+        pendingDevicesRef.current.set(`${device.launchHost}:${device.port ?? ""}`, device);
         shortenScanAfterDetection();
       }
     };
@@ -395,7 +397,7 @@ export const useScanner = () => {
 
       if (!signal.aborted && pendingDevicesRef.current.size === 0 && isSecureScannerPage()) {
         setScanError(
-          "Your browser may be blocking local HTTP discovery from this secure page. Retry from the same LAN, or use a LAN-hosted HTTP copy of the discovery page if one is available.",
+          "This public HTTPS page scans from your current browser session on the same LAN. If the browser blocks local discovery, retry in Chrome or Edge on that LAN and keep the tab open until the scan completes.",
         );
       }
     } catch (error) {

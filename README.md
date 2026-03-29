@@ -1,40 +1,162 @@
 # E-Connect
 
-Self-hosted, local-first smart home platform focused on dashboard control, DIY ESP32/ESP8266 onboarding, MQTT-first communication, and durable local state.
+E-Connect la nen tang smart home `self-hosted` va `local-first`, tap trung vao dieu khien thiet bi trong LAN, onboarding DIY cho ESP32/ESP8266, giao tiep MQTT-first, va luu tru trang thai ben vung tren ha tang cua nguoi dung.
 
-## Core documents
+## Gioi thieu du an
 
-- [PRD.md](PRD.md): current product and delivery baseline
-- [Jenkinsfile](Jenkinsfile): Jenkins delivery pipeline for build-gated Docker deployment
-- [run.md](run.md): local run guide for the active `server` and `webapp` stack
-- [esp32-wifi-flash-pairing-workflow.md](esp32-wifi-flash-pairing-workflow.md): workflow yêu cầu cho cấu hình Wi-Fi lần đầu, flash ESP32, và pair với server
-- [server/tests/manual/fake_board/README.md](server/tests/manual/fake_board/README.md): manual fake-board harness for pairing, MQTT, and discovery verification
+E-Connect huong toi mo hinh nha thong minh tu host, trong do phan van hanh chinh duoc dat tren mang noi bo cua nguoi dung:
 
-## Deployment topology
+- `server`: FastAPI backend quan ly auth, device lifecycle, automation, firmware build, WebSocket va API.
+- `webapp`: Next.js 16 + React 19 cho dashboard, setup, settings, DIY builder va cac man hinh van hanh.
+- `mqtt`: Mosquitto broker lam transport layer cho command/state loop.
+- `db`: MariaDB luu user, household, device, dashboard, automation va lich su van hanh.
+- `find_website`: cong discovery public do nha phat trien host, dung de tim instance E-Connect trong cung LAN tu trinh duyet cua nguoi dung.
 
-- End-user self-hosted stack: `server`, `webapp`, `mqtt`, and `db` run on hardware controlled by the user inside their own LAN.
-- Public discovery entrypoint: `E-Connect Web Assistant` (`find_website`) is hosted only on developer-controlled infrastructure, with the approved public origin currently at [find.isharoverwhite.com](https://find.isharoverwhite.com).
-- Discovery execution model: after the user finishes setup on their home server, they open [find.isharoverwhite.com](https://find.isharoverwhite.com) from a device on the same LAN, and the browser tab performs the LAN discovery requests toward the self-hosted backend.
-- Non-goal: the developer-hosted website is not a server-side LAN scanner, and it should not be bundled into the user's normal home-server stack unless the product baseline changes.
+### Gia tri cot loi
 
-## Delivery pipeline
+- `Local-first`: mat Internet khong lam mat core LAN control.
+- `Self-hosted`: stack chinh chay tren ha tang do nguoi dung kiem soat.
+- `MQTT-first`: giao tiep thiet bi uu tien qua MQTT.
+- `DIY-friendly`: ho tro pin mapping, build firmware server-side va flash/web serial workflow.
+- `Durable state`: du lieu quan trong duoc persist thay vi chi ton tai trong UI memory.
 
-The Jenkins pipeline now requires a successful Docker-based build gate before CD continues:
+## Cau truc repo quan trong
 
-- `webapp`: Docker `check` target runs `npm run lint` and `npm run build`
-- `server`: Docker `test` target runs `python -m pytest tests/`
-- `find_website`: Docker image build validates the standalone Next.js public discovery portal
+- [PRD.md](PRD.md): baseline san pham va scope thuc thi.
+- [AGENTS.md](AGENTS.md): quy trinh lam viec, gate, role, commit/push policy.
+- [design/](design): schema, flows, change requests va tai lieu thiet ke.
+- [server/](server): backend FastAPI, SQLAlchemy, MQTT, build pipeline cho firmware.
+- [webapp/](webapp): giao dien Next.js cho setup, dashboard, settings va DIY.
+- [mqtt/](mqtt): Docker image cho Mosquitto broker.
+- [find_website/](find_website): public discovery portal.
+- [server/tests/manual/fake_board/README.md](server/tests/manual/fake_board/README.md): tai lieu test thu cong cho fake-board harness.
 
-The gate uses Docker build targets instead of bind-mounting the Jenkins workspace into ad-hoc containers, so it works when Jenkins itself runs inside a container.
-The MQTT broker now follows the same rule: its Mosquitto config is baked into the `mqtt` image instead of bind-mounting a workspace file at deploy time.
-Jenkins also uses [docker-compose.jenkins.yml](docker-compose.jenkins.yml) as an override so the database stays internal to the compose network, while the live backend keeps host port `8000` published for the browser discovery-script contract used by `find_website`.
-The approved product topology is split: the end-user home deployment is `server`, `webapp`, `mqtt`, and `db`, while `find_website` remains a separate developer-hosted service. Jenkins can still validate or build both from the same repository, but `find_website` should not be treated as part of the user's normal self-hosted compose stack.
-Validation-only runs can stop after the build gate by setting `DEPLOY=false`, which skips the release-image build, compose rollout, and smoke stages.
-When deployment is requested, Jenkins now enforces the branch policy immediately after the build gate so blocked non-main deploys fail before the release-image build starts.
-When Jenkins deploys the Docker stack, it now also auto-resolves a LAN IP for the build node, enables the `discovery-mdns` compose profile, publishes `econnect.local` through the `discovery_mdns` helper running on host networking, and aligns `FIRMWARE_PUBLIC_BASE_URL`, `FIRMWARE_MQTT_BROKER`, and `HTTPS_HOSTS` with that alias unless the job already overrides them explicitly.
-Only after that gate passes does Jenkins build the release Docker images and run the smoke checks relevant to the target environment, keeping the public `find_website` deployment distinct from the end-user self-hosted stack.
+## Qua trinh phat trien
 
-For Docker-based server deployments, set `FIRMWARE_PUBLIC_BASE_URL` to the real WebUI origin, for example `https://192.168.2.55:3000`, because bridge-mode containers cannot infer the host LAN IP reliably at startup.
-If you want the public scanner and firmware metadata to use `econnect.local` instead of a raw IP, either let Jenkins deploy the `discovery_mdns` helper or publish that hostname to the server LAN IP through Avahi/mDNS or your router DNS, then set `FIRMWARE_PUBLIC_BASE_URL=https://econnect.local:3000`, `FIRMWARE_MQTT_BROKER=econnect.local`, and `HTTPS_HOSTS=econnect.local` for the compose stack. For the `.local` suffix, Avahi/mDNS is the preferred path; router DNS is only a fallback when your clients resolve it consistently.
+Repo nay dang duoc van hanh theo baseline waterfall voi 4 phase ro rang:
 
-GitHub Actions also runs a scoped Docker workflow for `find_website` on pull requests and pushes to `main` that touch [find_website](/Users/kiendinhtrung/Documents/GitHub/Final-Project/find_website) or the workflow file itself. That workflow builds the image from [find_website/Dockerfile](/Users/kiendinhtrung/Documents/GitHub/Final-Project/find_website/Dockerfile) and smoke-checks the developer-hosted public discovery portal over HTTP, but it does not publish the image to a registry yet.
+1. `Requirement`: doc PRD, chot scope, mapping FR/NFR va verification plan.
+2. `Design`: cap nhat design docs hoac ghi ro `Design unchanged` neu chi la sua hep.
+3. `Implementation`: thay doi nho nhat hop ly, giu dung topology va domain rules.
+4. `Test`: xac minh doc lap bang lint, build, pytest, browser hoac DB evidence tuy theo pham vi thay doi.
+
+### Kenh xac minh va delivery
+
+- GitHub Actions:
+  - `webapp`: `npm run lint` + `npm run build`
+  - `server`: `pytest tests/`
+  - `find_website`: build Docker image va smoke check HTTP
+- Jenkins:
+  - build-gated Docker deployment
+  - co `docker-compose.jenkins.yml` cho environment Jenkins
+  - co the publish `econnect.local` qua helper `discovery_mdns` khi pipeline duoc cau hinh phu hop
+
+### Luu y topology
+
+Self-hosted stack mac dinh cua nguoi dung chi gom `db`, `mqtt`, `server`, `webapp`.
+`find_website` la thanh phan discovery public do nha phat trien host, khong phai mot phan bat buoc cua home-server deployment thong thuong. Repo van giu service nay trong `docker-compose.yml` de phuc vu local validation va build pipeline.
+
+## Huong dan su dung voi Docker Compose
+
+### Yeu cau moi truong
+
+- Docker Engine
+- Docker Compose plugin (`docker compose`)
+- Cac cong host con trong: `3000`, `3306`, `8000`, `1883`
+- Tuy chon: `9123` neu muon chay local `find_website`
+
+### 1. Clone repo
+
+```bash
+git clone https://github.com/isharoverwhite/Final-Project.git
+cd Final-Project
+```
+
+### 2. Cau hinh bien moi truong tuy chon
+
+Neu khong tao `.env` tai root, Compose se dung cac gia tri mac dinh trong `docker-compose.yml`.
+Neu can doi credential hoac origin, tao file `.env` tai root repo, vi du:
+
+```env
+DB_ROOT_PASSWORD=root_password
+DB_NAME=e_connect_db
+DB_USER=econnect
+DB_PASSWORD=root_password
+SECRET_KEY=change-me
+NEXT_PUBLIC_API_URL=/api/v1
+BACKEND_INTERNAL_URL=http://server:8000
+FIND_WEBSITE_PORT=9123
+```
+
+### 3. Chay self-hosted stack chuan
+
+Lenh sau phu hop voi topology duoc phe duyet cho moi truong tu host:
+
+```bash
+docker compose up -d --build db mqtt server webapp
+```
+
+Sau khi stack len:
+
+- Web UI: `https://localhost:3000`
+- Backend health: `http://localhost:8000/health`
+- MQTT broker: `localhost:1883`
+- MariaDB: `localhost:3306`
+
+Luu y: `webapp` dung HTTPS local va co the yeu cau ban chap nhan chung chi tu ky khi mo lan dau.
+
+### 4. Kiem tra trang thai
+
+```bash
+docker compose ps
+curl http://localhost:8000/health
+docker compose logs -f server webapp
+```
+
+Neu `health` tra ve `status: ok`, backend da san sang de `webapp` proxy va thuc hien setup/login flow.
+
+### 5. Chay toan bo repo cho muc dich developer validation
+
+Neu ban muon build ca cong discovery public trong may local de test:
+
+```bash
+docker compose up -d --build
+```
+
+Khi do:
+
+- `find_website` se mo tren `http://localhost:9123`
+- service nay chi nen dung cho local validation hoac pipeline testing
+- trong topology san pham chuan, discovery public van duoc host rieng boi nha phat trien
+
+### 6. Dung stack
+
+```bash
+docker compose down
+```
+
+Du lieu van duoc giu trong cac named volume:
+
+- `db_data`
+- `server_data`
+- `webapp_tls`
+
+Neu can xoa ca du lieu:
+
+```bash
+docker compose down -v
+```
+
+## Tai lieu lien quan
+
+- [PRD.md](PRD.md)
+- [AGENTS.md](AGENTS.md)
+- [docker-compose.yml](docker-compose.yml)
+- [docker-compose.jenkins.yml](docker-compose.jenkins.yml)
+- [find_website/README.md](find_website/README.md)
+
+## Ban quyen
+
+Repo nay hien khong co file `LICENSE` rieng o root.
+Dieu do co nghia la khong co mot giay phep nguon mo duoc cong bo ro rang cho code, tai lieu va tai nguyen trong repo.
+Cho den khi chu so huu du an bo sung giay phep chinh thuc, hay xem noi dung cua repo la tai san co ban quyen va chi su dung, sao chep, phan phoi khi co su dong y phu hop.

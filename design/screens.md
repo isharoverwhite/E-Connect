@@ -70,6 +70,7 @@
   - The page is scan-only: no helper download, session code, or CLI instructions appear in the UI.
   - The public host uses a white/light surface with blue accents so the discovery page matches the WebUI theme instead of the older dark/green shell.
   - The page keeps the centered radar, sticky header, and stacked result-card layout from the existing scanner rather than switching to a marketing-style landing page.
+  - The secure public page must not show a permanent warning banner on initial load just because it is running on HTTPS or through Cloudflare Tunnel; browser-transport guidance belongs in the contextual empty/failure copy after a secure scan ends without a usable result.
   - The secure public host probes LAN targets with the Synology-style `http://<candidate-ip>:8000/web-assistant.js?callback=...` transport, while LAN-hosted HTTP copies may fall back to `GET /health` on the same backend when direct JSONP probing proves unreliable.
   - The scanner must try `econnect.local` first, followed by other approved local aliases, before it starts sweeping common private subnets.
   - When the scanner is hosted from a LAN IP or `.local` origin, it must probe that current host before the wider subnet sweep so a colocated `find_website` reaches its paired backend quickly.
@@ -80,6 +81,7 @@
 - **Backend discovery script (`server`)**:
   - The browser-facing script endpoint returns JavaScript that invokes a validated callback with the same runtime health payload used by `/health`.
   - The scanner uses the backend-advertised host plus the WebApp protocol and port derived from `firmware_network.advertised_host` / `firmware_network.api_base_url` to build the launch URL for that server.
+  - The result card must keep the backend-advertised host such as `econnect.local` as the primary identity label even when the browser had to probe or launch the WebUI through a raw LAN IP fallback.
   - If the backend does not expose a usable WebApp transport, the scanner must fall back to `http` on port `3000` instead of guessing alternate ports.
   - A backend-responsive server must remain visible in scan results even when the website probe fails, and the result card must show whether the website is currently `online` or `offline`.
 - **Device Management screen**:
