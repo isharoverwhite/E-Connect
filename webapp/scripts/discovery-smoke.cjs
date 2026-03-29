@@ -1,4 +1,5 @@
-import { chromium } from "playwright";
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { chromium } = require("playwright");
 
 const DEFAULT_TIMEOUT_MS = 45_000;
 const MAX_DEBUG_LINES = 20;
@@ -177,4 +178,7 @@ async function main() {
   }
 }
 
-await main();
+main().catch((error) => {
+  console.error(error instanceof Error ? error.stack || error.message : String(error));
+  process.exit(1);
+});

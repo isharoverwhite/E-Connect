@@ -327,14 +327,14 @@ pipeline {
                         expected_any="$3"
 
                         docker run --rm --network host \
+                            -i \
                             -e DISCOVERY_SCAN_LABEL="$label" \
                             -e DISCOVERY_SCAN_URL="$scan_url" \
                             -e DISCOVERY_EXPECT_ANY="$expected_any" \
                             -e DISCOVERY_SCAN_TIMEOUT_MS="45000" \
-                            -v "$PWD:/workspace" \
-                            -w /workspace/webapp \
                             mcr.microsoft.com/playwright:v1.58.2-noble \
-                            node scripts/discovery-smoke.mjs
+                            bash -lc 'npm install -g playwright@1.58.2 >/tmp/playwright-npm.log 2>&1 && export NODE_PATH="$(npm root -g)" && node -' \
+                            < webapp/scripts/discovery-smoke.cjs
                     }
 
                     retry 3 5 run_browser_discovery_smoke \
