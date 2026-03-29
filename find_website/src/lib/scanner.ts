@@ -1,5 +1,7 @@
 export type DeviceInfo = {
-  ip: string;
+  displayHost: string;
+  launchHost: string;
+  probeHost: string;
   database: string;
   mqtt: string;
   protocol?: string;
@@ -190,7 +192,7 @@ export function resolveDiscoveryHost(
   );
 }
 
-export function buildWebappBaseUrl(ip: string, protocol = DEFAULT_WEBAPP_PROTOCOL, port = DEFAULT_WEBAPP_PORT): string {
+export function buildWebappBaseUrl(host: string, protocol = DEFAULT_WEBAPP_PROTOCOL, port = DEFAULT_WEBAPP_PORT): string {
   const normalizedProtocol = normalizeProtocol(protocol) ?? DEFAULT_WEBAPP_PROTOCOL;
   const normalizedPort = normalizePort(port) ?? DEFAULT_WEBAPP_PORT;
   const portSegment =
@@ -199,7 +201,7 @@ export function buildWebappBaseUrl(ip: string, protocol = DEFAULT_WEBAPP_PROTOCO
       ? ""
       : `:${normalizedPort}`;
 
-  return `${normalizedProtocol}://${ip}${portSegment}`;
+  return `${normalizedProtocol}://${host}${portSegment}`;
 }
 
 export function buildDiscoveryScriptUrl(host: string, callbackName: string): string {

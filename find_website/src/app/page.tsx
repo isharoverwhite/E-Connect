@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from "react";
 import { useScanner } from "@/hooks/useScanner";
 import { ScannerRadar } from "@/components/ScannerRadar";
-import { Server, ArrowRight, ShieldAlert, MonitorPlay } from "lucide-react";
+import { Server, ArrowRight, MonitorPlay } from "lucide-react";
 import { buildWebappBaseUrl } from "@/lib/scanner";
 import { cn } from "@/lib/utils";
 
@@ -54,19 +54,6 @@ export default function Home() {
       </header>
 
       <main className="mx-auto flex w-full max-w-5xl flex-1 flex-col items-center p-6 sm:p-12">
-        {isHttps ? (
-          <div className="mb-8 flex w-full items-start gap-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-            <ShieldAlert className="mt-0.5 h-6 w-6 shrink-0 text-amber-500" />
-            <div className="text-sm leading-relaxed text-amber-800">
-              <strong className="mb-1 block text-amber-600">Browser Security Notice</strong>
-              Some browsers can still limit discovery requests to local HTTP devices when this page is opened over a
-              secure connection. If your LAN publishes <span className="font-mono">econnect.local</span>, this page
-              will try it before the wider subnet sweep. If scanning still fails, retry from the same LAN in Chrome or
-              Edge and keep the tab open until the scan completes.
-            </div>
-          </div>
-        ) : null}
-
         <div className="flex min-h-[400px] w-full flex-1 flex-col items-center justify-center">
           {(isScanning || foundDevices.length === 0) && (
             <ScannerRadar isScanning={isScanning} className="mb-10 scale-125" />
@@ -105,6 +92,12 @@ export default function Home() {
                       Please check if the server is turned on, your device is connected to the right LAN, and the LAN
                       can resolve <span className="font-mono">econnect.local</span> if you plan to use that shortcut.
                     </p>
+                    {isHttps ? (
+                      <p className="mt-3 max-w-sm text-sm text-slate-500">
+                        If you opened this public page through HTTPS or Cloudflare Tunnel, retry in Chrome or Edge on
+                        the same LAN and keep the tab open until the scan completes.
+                      </p>
+                    ) : null}
                   </div>
                   <button
                     onClick={handleStartScan}
@@ -133,8 +126,9 @@ export default function Home() {
               </div>
               <div className="flex flex-col gap-3">
                 {foundDevices.map((device) => {
-                  const href = `${buildWebappBaseUrl(device.ip, device.protocol, device.port)}/`;
+                  const href = `${buildWebappBaseUrl(device.launchHost, device.protocol, device.port)}/`;
                   const isWebsiteOnline = device.websiteStatus === "online";
+                  const showsFallbackHost = device.displayHost !== device.launchHost;
                   const cardClassName = cn(
                     "group relative flex items-center justify-between overflow-hidden rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-300",
                     isWebsiteOnline ? "hover:border-blue-500/40 hover:bg-blue-50/30 hover:shadow-md" : "opacity-90",
@@ -174,7 +168,12 @@ export default function Home() {
                           >
                             Local Server
                           </h4>
-                          <p className="font-mono text-sm text-slate-500">{device.ip}</p>
+                          <p className="font-mono text-sm text-slate-500">{device.displayHost}</p>
+                          {showsFallbackHost ? (
+                            <p className="text-xs text-slate-400">
+                              Reachable at <span className="font-mono">{device.launchHost}</span>
+                            </p>
+                          ) : null}
                         </div>
                       </div>
 
@@ -240,14 +239,20 @@ export default function Home() {
 
                   if (isWebsiteOnline) {
                     return (
-                      <a key={device.ip} href={href} target="_blank" rel="noreferrer" className={cardClassName}>
+                      <a
+                        key={`${device.launchHost}:${device.port ?? ""}`}
+                        href={href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className={cardClassName}
+                      >
                         {cardContent}
                       </a>
                     );
                   }
 
                   return (
-                    <div key={device.ip} className={cardClassName}>
+                    <div key={`${device.launchHost}:${device.port ?? ""}`} className={cardClassName}>
                       {cardContent}
                     </div>
                   );

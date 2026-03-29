@@ -28,11 +28,12 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
      - `http://<candidate-host>:8000/web-assistant.js?callback=<callbackName>`
 8. Both discovery paths consume the same runtime health payload, and the script endpoint still invokes the provided callback when the JSONP transport is used.
 9. The page trusts `firmware_network` as the source of truth for:
-   - the preferred launch host, via `advertised_host` or the hostname embedded in `api_base_url`
+   - the primary identity label shown in the UI, via `advertised_host` or the hostname embedded in `api_base_url`
    - the WebUI protocol and port
-10. The page performs a lightweight website probe for the advertised WebUI and labels each hit as `online` or `offline`.
-11. After the scan window closes, the page reveals the final result list, or surfaces an explicit browser-blocked failure when the secure public origin cannot reach local HTTP discovery endpoints.
-12. The developer-hosted public page never scans the user's LAN from the developer server; all LAN discovery requests come from the user's own browser session.
+10. The page first probes the advertised host for the WebUI and, if that host is not reachable from the current browser client, may fall back to the responding LAN host for the actual launch URL without replacing the advertised identity label in the result card.
+11. The page performs a lightweight website probe for the resolved launch target and labels each hit as `online` or `offline`.
+12. After the scan window closes, the page reveals the final result list, or surfaces an explicit browser-blocked failure when the secure public origin cannot reach local HTTP discovery endpoints.
+13. The developer-hosted public page never scans the user's LAN from the developer server; all LAN discovery requests come from the user's own browser session.
 
 ## Backend Contract
 
@@ -52,6 +53,7 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 - `no server found`
 - `scan failed`
 - `scan failed (secure-origin browser block)`
+- no permanent HTTPS warning banner before a secure scan actually ends empty or fails
 
 ## Verification Hooks
 
