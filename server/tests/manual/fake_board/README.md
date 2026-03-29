@@ -349,5 +349,4 @@ Cách xử lý:
 
 - Harness chính: [harness.py](/Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/manual/fake_board/harness.py)
 - Hướng dẫn run stack: [run.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/run.md)
-- Quy tắc agent: [AGENTS.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/AGENTS.md)
 - Product baseline: [PRD.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PRD.md)
