@@ -1,6 +1,10 @@
 # Local AI working artifacts
 /antigravity-prompts/
 /ANTIGRAVITY_*PROMPT.md
+/AGENT_COMMUNICATION.log
+/PROJECT_STATUS.md
+/E2E_*REPORT.md
+CLAUDE.md
 
 # Python caches and local environments
 **/__pycache__/
@@ -44,6 +48,7 @@ env/
 
 # Root-level local captures and temporary debug exports
 /.playwright-mcp/
+/.codex-artifacts/
 /temp_*.json
 /current_flash_ui.md
 /full_page.md
@@ -71,7 +76,6 @@ env/
 /design/change-requests/CR-*.md
 AGENTS.md
 PRD.md
-PROJECT_STATUS.md
 run.md
 run_*.md
 TASK_REPORT.md
