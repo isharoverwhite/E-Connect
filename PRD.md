@@ -51,6 +51,13 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 - `Settings` phải cung cấp menu quản lý user cho admin, bao gồm `create`, `approve`, và `revoke` user với trạng thái bền vững ở backend.
 - Đây là ngoại lệ tạm thời so với tinh thần của `NFR-05` về hardcoded production secrets, chỉ chấp nhận cho môi trường local/dev hiện tại và phải được gỡ trước release production.
 
+## 2.3 Deployment Topology Baseline
+
+1. E-Connect vẫn là sản phẩm `self-hosted, local-first` cho phần vận hành tại nhà người dùng, với stack self-hosted gồm `server`, `webapp`, `mqtt`, và `db`.
+2. `E-Connect Web Assistant`, còn gọi là `find_website`, là cổng discovery public do nhà phát triển vận hành và không thuộc stack self-hosted thông thường của người dùng.
+3. Sau khi người dùng setup xong server tại nhà, họ mở [find.isharoverwhite.com](https://find.isharoverwhite.com) từ một thiết bị nằm cùng LAN để tìm instance E-Connect mà họ vừa self-host.
+4. Discovery trong flow này được thực hiện bởi browser của người dùng trên LAN của họ; hạ tầng public của nhà phát triển chỉ host UI/entrypoint discovery và không trực tiếp scan mạng nội bộ của người dùng.
+
 ---
 
 ## 3. Scope Baseline
@@ -82,6 +89,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 2. Plugin marketplace công khai hoàn chỉnh.
 3. Voice assistant production integration.
 4. Native mobile production parity.
+5. Deploy `find_website` như một thành phần bắt buộc trên home server của người dùng thay vì giữ nó ở hạ tầng do nhà phát triển kiểm soát.
 
 ---
 

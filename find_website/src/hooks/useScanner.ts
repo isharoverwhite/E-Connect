@@ -1,5 +1,119 @@
-import { useState, useCallback, useRef } from "react";
-import { generateSubnetIps, COMMON_SUBNETS, type DeviceInfo } from "@/lib/scanner";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  buildDiscoveryScriptUrl,
+  buildWebappBaseUrl,
+  COMMON_HOST_ALIASES,
+  COMMON_SUBNETS,
+  DISCOVERY_TIMEOUT_MS,
+  generateSubnetIps,
+  isDiscoveryPayloadCandidate,
+  resolveDiscoveryHost,
+  resolveWebappTransport,
+  WEBSITE_PROBE_TIMEOUT_MS,
+  type DeviceInfo,
+  type DiscoveryScriptPayload,
+} from "@/lib/scanner";
+
+const FOUND_SCAN_TIMEOUT_MS = 7000;
+const EMPTY_SCAN_TIMEOUT_MS = 15000;
+const BATCH_SIZE = 40;
+
+type WindowWithDynamicCallbacks = Window & Record<string, unknown>;
+
+function getDynamicWindow(): WindowWithDynamicCallbacks | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  return window as unknown as WindowWithDynamicCallbacks;
+}
+
+async function probeWebsite(baseUrl: string, signal: AbortSignal): Promise<DeviceInfo["websiteStatus"]> {
+  return new Promise((resolve) => {
+    const image = new Image();
+    let finished = false;
+
+    const finalize = (status: DeviceInfo["websiteStatus"]) => {
+      if (finished) {
+        return;
+      }
+
+      finished = true;
+      clearTimeout(timeoutId);
+      image.onload = null;
+      image.onerror = null;
+      signal.removeEventListener("abort", handleAbort);
+      resolve(status);
+    };
+
+    const handleAbort = () => finalize("offline");
+    const timeoutId = window.setTimeout(() => finalize("offline"), WEBSITE_PROBE_TIMEOUT_MS);
+
+    signal.addEventListener("abort", handleAbort, { once: true });
+    image.onload = () => finalize("online");
+    image.onerror = () => finalize("offline");
+    image.src = `${baseUrl}/favicon.ico?_dc=${Date.now()}`;
+  });
+}
+
+async function probeCandidateHost(host: string, signal: AbortSignal): Promise<DeviceInfo | null> {
+  const pageWindow = getDynamicWindow();
+  if (!pageWindow || signal.aborted) {
+    return null;
+  }
+
+  return new Promise((resolve) => {
+    let finished = false;
+    const callbackName = `__econnectDiscovery_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const script = document.createElement("script");
+
+    const finalize = (device: DeviceInfo | null) => {
+      if (finished) {
+        return;
+      }
+
+      finished = true;
+      clearTimeout(timeoutId);
+      signal.removeEventListener("abort", handleAbort);
+      script.onload = null;
+      script.onerror = null;
+      script.remove();
+      delete pageWindow[callbackName];
+      resolve(device);
+    };
+
+    const handleAbort = () => finalize(null);
+    const timeoutId = window.setTimeout(() => finalize(null), DISCOVERY_TIMEOUT_MS);
+
+    pageWindow[callbackName] = async (payload: DiscoveryScriptPayload) => {
+      if (!isDiscoveryPayloadCandidate(payload)) {
+        finalize(null);
+        return;
+      }
+
+      clearTimeout(timeoutId);
+      const { protocol, port } = resolveWebappTransport(payload.firmware_network);
+      const resolvedHost = resolveDiscoveryHost(host, payload.firmware_network);
+      const websiteStatus = await probeWebsite(buildWebappBaseUrl(resolvedHost, protocol, port), signal);
+
+      finalize({
+        ip: resolvedHost,
+        database: payload.database?.trim() || "unknown",
+        mqtt: payload.mqtt?.trim() || "unknown",
+        protocol,
+        port,
+        websiteStatus,
+      });
+    };
+
+    script.async = true;
+    script.onerror = () => finalize(null);
+    script.src = buildDiscoveryScriptUrl(host, callbackName);
+
+    signal.addEventListener("abort", handleAbort, { once: true });
+    document.body.appendChild(script);
+  });
+}
 
 export const useScanner = () => {
   const [isScanning, setIsScanning] = useState(false);
@@ -7,137 +121,198 @@ export const useScanner = () => {
   const [progress, setProgress] = useState(0);
   const [scannedCount, setScannedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
-  
+  const [scanError, setScanError] = useState<string | null>(null);
+
   const abortControllerRef = useRef<AbortController | null>(null);
-  const globalTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const globalTimeoutRef = useRef<number | null>(null);
+  const scanStartedAtRef = useRef<number | null>(null);
+  const pendingDevicesRef = useRef<Map<string, DeviceInfo>>(new Map());
+  const hasDetectedServerRef = useRef(false);
+  const hasAutoStartedRef = useRef(false);
+
+  const clearGlobalTimeout = useCallback(() => {
+    if (globalTimeoutRef.current !== null) {
+      window.clearTimeout(globalTimeoutRef.current);
+      globalTimeoutRef.current = null;
+    }
+  }, []);
+
+  const finalizeScan = useCallback(() => {
+    clearGlobalTimeout();
+    scanStartedAtRef.current = null;
+    setFoundDevices(Array.from(pendingDevicesRef.current.values()));
+    setIsScanning(false);
+  }, [clearGlobalTimeout]);
+
+  const scheduleScanAbort = useCallback(
+    (delayMs: number) => {
+      clearGlobalTimeout();
+      globalTimeoutRef.current = window.setTimeout(() => {
+        abortControllerRef.current?.abort();
+      }, Math.max(0, delayMs));
+    },
+    [clearGlobalTimeout],
+  );
+
+  const waitForScanDeadline = useCallback(async (signal: AbortSignal) => {
+    if (signal.aborted || !scanStartedAtRef.current) {
+      return;
+    }
+
+    const timeoutMs = hasDetectedServerRef.current ? FOUND_SCAN_TIMEOUT_MS : EMPTY_SCAN_TIMEOUT_MS;
+    const remainingMs = scanStartedAtRef.current + timeoutMs - Date.now();
+    if (remainingMs <= 0) {
+      return;
+    }
+
+    await new Promise<void>((resolve) => {
+      const handleAbort = () => {
+        clearTimeout(timeoutId);
+        resolve();
+      };
+
+      const timeoutId = window.setTimeout(() => {
+        signal.removeEventListener("abort", handleAbort);
+        resolve();
+      }, remainingMs);
+
+      signal.addEventListener("abort", handleAbort, { once: true });
+    });
+  }, []);
+
+  const shortenScanAfterDetection = useCallback(() => {
+    if (hasDetectedServerRef.current) {
+      return;
+    }
+
+    hasDetectedServerRef.current = true;
+    if (!scanStartedAtRef.current) {
+      return;
+    }
+
+    const remainingMs = scanStartedAtRef.current + FOUND_SCAN_TIMEOUT_MS - Date.now();
+    if (remainingMs <= 0) {
+      abortControllerRef.current?.abort();
+      return;
+    }
+
+    scheduleScanAbort(remainingMs);
+  }, [scheduleScanAbort]);
 
   const startScan = useCallback(async () => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    abortControllerRef.current?.abort();
+    clearGlobalTimeout();
+
     setIsScanning(true);
     setFoundDevices([]);
     setProgress(0);
     setScannedCount(0);
-    
+    setScanError(null);
+    pendingDevicesRef.current = new Map();
+    hasDetectedServerRef.current = false;
+    scanStartedAtRef.current = Date.now();
+
     abortControllerRef.current = new AbortController();
     const signal = abortControllerRef.current.signal;
+    scheduleScanAbort(EMPTY_SCAN_TIMEOUT_MS);
 
-    if (globalTimeoutRef.current) {
-      clearTimeout(globalTimeoutRef.current);
-    }
-    
-    globalTimeoutRef.current = setTimeout(() => {
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort();
-      }
-      setIsScanning(false);
-    }, 10000);
+    const preferredHosts = Array.from(
+      new Set([
+        ...(window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+          ? ["127.0.0.1", "localhost"]
+          : []),
+        ...COMMON_HOST_ALIASES,
+      ]),
+    );
+    const subnetHosts = COMMON_SUBNETS.flatMap(generateSubnetIps).filter((host) => !preferredHosts.includes(host));
+    const candidateHosts = [...preferredHosts, ...subnetHosts];
 
-    const extraIps = ["127.0.0.1", "localhost"];
-    if (typeof window !== "undefined" && window.location.hostname) {
-      extraIps.push(window.location.hostname);
-    }
-    
-    // Combine explicit IPs with generated subnet IPs, filtering duplicates
-    const allIps = Array.from(new Set([...extraIps, ...COMMON_SUBNETS.flatMap(generateSubnetIps)]));
-    
-    setTotalCount(allIps.length);
-    const total = allIps.length;
+    setTotalCount(candidateHosts.length);
     let checked = 0;
 
-    // Scan in chunks so we don't overwhelm the browser network queue
-    const BATCH_SIZE = 50; 
-    
-    for (let i = 0; i < allIps.length; i += BATCH_SIZE) {
-      if (signal.aborted) break;
-      const batch = allIps.slice(i, i + BATCH_SIZE);
-      
-      const promises = batch.map(async (ip) => {
-        try {
-          // We use a short timeout because local networks respond very fast for alive hosts
-          // Dead hosts will hang or take seconds to reject, we do not want to wait that long.
-          const timeoutController = new AbortController();
-          const timeoutId = setTimeout(() => timeoutController.abort(), 1500);
-          
-          // E-Connect backend is at :8000
-          const response8000 = await fetch(`http://${ip}:8000/health`, {
-            signal: timeoutController.signal,
-          });
-          
-          if (response8000.ok || response8000.status === 503) {
-            const data = await response8000.json();
-            // E-connect always returns status ok or degraded inside payload
-            if (data && (data.status === "ok" || data.status === "degraded")) {
-              // Extract webapp protocol/port from backend if available
-              let protocol = "http";
-              let port = "3000";
-              if (data.firmware_network?.api_base_url) {
-                try {
-                  const url = new URL(data.firmware_network.api_base_url);
-                  protocol = url.protocol.replace(':', '');
-                  port = url.port || (protocol === 'https' ? '443' : '80');
-                } catch {
-                  // Fallback to defaults
-                }
-              }
+    const runBatch = async (batch: string[]) => {
+      const results = await Promise.all(
+        batch.map(async (host) => {
+          const device = await probeCandidateHost(host, signal);
 
-              // Verify frontend is also up
-              try {
-                // Using no-cors mode prevents CORS errors and checks connection. 
-                // For HTTPS, this throws immediately due to self-signed cert on local IPs.
-                await fetch(`${protocol}://${ip}:${port}/`, {
-                  mode: "no-cors",
-                  signal: timeoutController.signal,
-                }).catch(() => {
-                  if (protocol === 'https') {
-                    // Browser fetch strictly rejects local self-signed HTTPS without bypassing,
-                    // but finding the backend + it advertising HTTPS is enough proof it's running.
-                    return true; 
-                  }
-                  throw new Error("HTTP connection failed");
-                });
-                
-                // If it succeeds (or is trusted HTTPS), both are considered open
-                setFoundDevices((prev) => {
-                  if (!prev.find((d) => d.ip === ip)) {
-                    return [...prev, { ip, protocol, port, database: data.database, mqtt: data.mqtt }];
-                  }
-                  return prev;
-                });
-              } catch {
-                // Connection was refused or timed out, so web app is not actually running.
-              }
-            }
+          checked += 1;
+          if (checked % 10 === 0 || checked === candidateHosts.length) {
+            setScannedCount(checked);
+            setProgress(Math.round((checked / candidateHosts.length) * 100));
           }
-          
-          clearTimeout(timeoutId);
-        } catch {
-          // Ignore timeouts and connection errors
-        } finally {
-          checked++;
-          if (checked % 10 === 0 || checked === total) {
-             setScannedCount(checked);
-             setProgress(Math.round((checked / total) * 100));
-          }
+
+          return device;
+        }),
+      );
+
+      for (const device of results) {
+        if (!device) {
+          continue;
         }
-      });
-      
-      await Promise.all(promises);
+
+        pendingDevicesRef.current.set(device.ip, device);
+        shortenScanAfterDetection();
+      }
+    };
+
+    try {
+      if (preferredHosts.length > 0) {
+        await runBatch(preferredHosts);
+      }
+
+      if (pendingDevicesRef.current.size > 0) {
+        checked = candidateHosts.length;
+        setScannedCount(candidateHosts.length);
+        setProgress(100);
+        await waitForScanDeadline(signal);
+        return;
+      }
+
+      for (let index = 0; index < subnetHosts.length; index += BATCH_SIZE) {
+        if (signal.aborted) {
+          break;
+        }
+
+        const batch = subnetHosts.slice(index, index + BATCH_SIZE);
+        await runBatch(batch);
+      }
+
+      await waitForScanDeadline(signal);
+    } catch (error) {
+      setScanError(error instanceof Error ? error.message : "The browser scanner failed unexpectedly.");
+    } finally {
+      finalizeScan();
     }
-    
-    if (globalTimeoutRef.current) {
-      clearTimeout(globalTimeoutRef.current);
-    }
-    setIsScanning(false);
-  }, []);
+  }, [clearGlobalTimeout, finalizeScan, scheduleScanAbort, shortenScanAfterDetection, waitForScanDeadline]);
 
   const stopScan = useCallback(() => {
-    if (globalTimeoutRef.current) {
-      clearTimeout(globalTimeoutRef.current);
-    }
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort();
-    }
-    setIsScanning(false);
-  }, []);
+    clearGlobalTimeout();
+    abortControllerRef.current?.abort();
+  }, [clearGlobalTimeout]);
 
-  return { isScanning, startScan, stopScan, foundDevices, progress, scannedCount, totalCount };
+  useEffect(() => {
+    if (hasAutoStartedRef.current) {
+      return;
+    }
+
+    hasAutoStartedRef.current = true;
+    void startScan();
+  }, [startScan]);
+
+  useEffect(() => () => stopScan(), [stopScan]);
+
+  return {
+    isScanning,
+    startScan,
+    stopScan,
+    foundDevices,
+    progress,
+    scannedCount,
+    totalCount,
+    scanError,
+  };
 };

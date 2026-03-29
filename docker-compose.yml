@@ -44,6 +44,9 @@ services:
       MQTT_PORT: ${MQTT_PORT:-1883}
       MQTT_NAMESPACE: ${MQTT_NAMESPACE:-local}
       FIRMWARE_PUBLIC_BASE_URL: ${FIRMWARE_PUBLIC_BASE_URL:-}
+      FIRMWARE_PUBLIC_SCHEME: ${FIRMWARE_PUBLIC_SCHEME:-https}
+      FIRMWARE_PUBLIC_PORT: ${FIRMWARE_PUBLIC_PORT:-3000}
+      FIRMWARE_MQTT_BROKER: ${FIRMWARE_MQTT_BROKER:-}
     volumes:
       - server_data:/data
     depends_on:
@@ -78,6 +81,8 @@ services:
     environment:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
       BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://server:8000}
+      HTTPS_HOSTS: ${HTTPS_HOSTS:-}
+      HTTPS_IPS: ${HTTPS_IPS:-}
     depends_on:
       server:
         condition: service_healthy
@@ -91,6 +96,19 @@ services:
       timeout: 5s
       retries: 24
       start_period: 5s
+
+  find_website:
+    build:
+      context: ./find_website
+      dockerfile: Dockerfile
+    image: econnect-find-website
+    container_name: e-connect-find-website
+    restart: always
+    ports:
+      - "${FIND_WEBSITE_PORT:-9123}:9123"
+    depends_on:
+      server:
+        condition: service_healthy
 
 volumes:
   db_data:

@@ -1,0 +1,4 @@
+# Copy the final line into /etc/avahi/hosts on the Linux machine
+# that runs the E-Connect stack, then restart avahi-daemon.
+# Replace 192.168.8.44 with your server LAN IP before using it.
+192.168.8.44 econnect.local

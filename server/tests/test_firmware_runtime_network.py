@@ -98,6 +98,20 @@ def test_infer_firmware_network_targets_can_fallback_to_request_when_runtime_sta
     }
 
 
+def test_resolve_webapp_transport_reads_protocol_and_port_from_api_base_url():
+    assert builder.resolve_webapp_transport("https://192.168.1.45:3000/api/v1") == {
+        "webapp_protocol": "https",
+        "webapp_port": 3000,
+    }
+
+
+def test_resolve_webapp_transport_defaults_to_http_3000_when_backend_has_no_value():
+    assert builder.resolve_webapp_transport(None) == {
+        "webapp_protocol": "http",
+        "webapp_port": 3000,
+    }
+
+
 def test_describe_runtime_firmware_mismatch_requires_manual_reflash():
     mismatch = builder.describe_runtime_firmware_mismatch(
         {

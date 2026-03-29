@@ -56,6 +56,7 @@ from .services.builder import (
     describe_network_target_change,
     get_durable_artifact_path,
     infer_firmware_network_targets,
+    resolve_webapp_transport,
 )
 from .services.device_registration import (
     build_pairing_queue_event_payload,
@@ -1670,11 +1671,15 @@ async def get_diy_network_targets(
         if raw_device_count is not None:
             stale_device_count = int(raw_device_count)
 
+    webapp_transport = resolve_webapp_transport(str(targets["api_base_url"]))
+
     return FirmwareNetworkTargetsResponse(
         advertised_host=str(targets["advertised_host"]),
         api_base_url=str(targets["api_base_url"]),
         mqtt_broker=str(targets["mqtt_broker"]),
         mqtt_port=int(targets["mqtt_port"]),
+        webapp_protocol=str(webapp_transport["webapp_protocol"]),
+        webapp_port=int(webapp_transport["webapp_port"]),
         target_key=str(targets["target_key"]),
         warning=warning,
         stale_project_count=stale_project_count,

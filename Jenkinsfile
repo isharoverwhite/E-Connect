@@ -119,15 +119,10 @@ pipeline {
                 expression { return params.DEPLOY }
             }
             steps {
-                echo 'Building active release services plus find_website image'
+                echo 'Building all live release services including find_website'
                 sh '''
                     set -eu
-                    docker compose build mqtt server webapp
-
-                    docker build \
-                        --file find_website/Dockerfile \
-                        --tag econnect-find-website:${BUILD_NUMBER:-local} \
-                        ./find_website
+                    docker compose build mqtt server webapp find_website
                 '''
             }
         }
@@ -172,8 +167,11 @@ pipeline {
                         done
                     }
 
+                    docker compose port server 8000 >/dev/null
+                    docker compose port find_website 9123 >/dev/null
                     retry 30 2 docker compose exec -T server python -c "import json, urllib.request; data = json.loads(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read().decode()); assert data.get('status') == 'ok'"
                     retry 30 2 docker compose exec -T webapp node -e "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; const main = async () => { const res = await fetch('https://127.0.0.1:3000/login'); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))"
+                    retry 30 2 docker compose exec -T find_website wget -q --spider http://127.0.0.1:9123/
                 '''
             }
         }
@@ -188,7 +186,7 @@ pipeline {
 
         failure {
             sh '''
-                docker compose logs --tail=200 server webapp db mqtt || true
+                docker compose logs --tail=200 server webapp find_website db mqtt || true
             '''
             echo 'Deployment failed. Review compose status and service logs above.'
         }
