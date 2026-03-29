@@ -48,6 +48,8 @@ _FIRMWARE_PUBLIC_PORT_ENV = "FIRMWARE_PUBLIC_PORT"
 _FIRMWARE_PUBLIC_SCHEME_ENV = "FIRMWARE_PUBLIC_SCHEME"
 _FIRMWARE_MQTT_BROKER_ENV = "FIRMWARE_MQTT_BROKER"
 _FIRMWARE_MQTT_PORT_ENV = "FIRMWARE_MQTT_PORT"
+_DEFAULT_WEBAPP_PROTOCOL = "http"
+_DEFAULT_WEBAPP_PORT = 3000
 _DEFAULT_FIRMWARE_PUBLIC_PORT = "3000"
 _DEFAULT_FIRMWARE_PUBLIC_SCHEME = "https"
 _DEFAULT_MQTT_PORT = "1883"
@@ -259,6 +261,36 @@ def build_firmware_network_targets(
     }
     targets["target_key"] = build_firmware_target_key(targets)
     return targets
+
+
+def resolve_webapp_transport(api_base_url: str | None) -> dict[str, object]:
+    protocol = _DEFAULT_WEBAPP_PROTOCOL
+    port = _DEFAULT_WEBAPP_PORT
+
+    if not isinstance(api_base_url, str) or not api_base_url.strip():
+        return {
+            "webapp_protocol": protocol,
+            "webapp_port": port,
+        }
+
+    candidate = api_base_url.strip()
+    parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}", scheme=protocol)
+
+    if parsed.scheme in {"http", "https"}:
+        protocol = parsed.scheme
+
+    try:
+        parsed_port = parsed.port
+    except ValueError:
+        parsed_port = None
+
+    if parsed_port is not None:
+        port = parsed_port
+
+    return {
+        "webapp_protocol": protocol,
+        "webapp_port": port,
+    }
 
 
 def coerce_firmware_network_targets(raw_targets: Mapping[str, object] | None) -> dict[str, object] | None:

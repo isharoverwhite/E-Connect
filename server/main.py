@@ -1,12 +1,16 @@
 from fastapi import FastAPI
 from fastapi import Request
+from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 import asyncio
 from contextlib import asynccontextmanager, suppress
+import json
 import logging
 from pathlib import Path
+import re
 from app.api import DEVICE_HEARTBEAT_TIMEOUT_SECONDS, expire_stale_online_devices_once, router as device_router
 from sqlalchemy.exc import OperationalError
 
@@ -16,12 +20,14 @@ from app.services.builder import (
     audit_runtime_firmware_target_mismatches,
     extract_runtime_firmware_network_targets,
     resolve_runtime_firmware_network_state,
+    resolve_webapp_transport,
 )
 from app.services.user_management import ensure_temp_support_account
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STALE_DEVICE_SWEEP_INTERVAL_SECONDS = max(1, min(DEVICE_HEARTBEAT_TIMEOUT_SECONDS, 2))
+JSONP_CALLBACK_PATTERN = re.compile(r"^[A-Za-z_$][0-9A-Za-z_$.]*$")
 
 def _using_overridden_database(app: FastAPI) -> bool:
     return get_db in app.dependency_overrides
@@ -46,6 +52,9 @@ def _serialize_firmware_network_state(app: FastAPI) -> dict[str, str] | None:
         mqtt_port = targets.get("mqtt_port")
         if mqtt_port is not None:
             payload["mqtt_port"] = str(mqtt_port)
+        webapp_transport = resolve_webapp_transport(targets.get("api_base_url"))
+        payload["webapp_protocol"] = str(webapp_transport["webapp_protocol"])
+        payload["webapp_port"] = str(webapp_transport["webapp_port"])
 
     error = runtime_state.get("error")
     if isinstance(error, str) and error.strip():
@@ -62,6 +71,40 @@ def _serialize_firmware_network_state(app: FastAPI) -> dict[str, str] | None:
                 payload[key] = str(value)
 
     return payload or None
+
+
+def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
+    firmware_network_state = _serialize_firmware_network_state(request.app)
+    if _using_overridden_database(request.app):
+        payload: dict[str, object] = {"status": "ok", "database": "overridden", "mqtt": "skipped"}
+        if firmware_network_state is not None:
+            payload["firmware_network"] = firmware_network_state
+        return payload, 200
+
+    database_ready, database_error = check_database_connection()
+    request.app.state.database_ready = database_ready
+    request.app.state.database_error = database_error
+
+    if database_ready:
+        payload = {
+            "status": "ok",
+            "database": "ok",
+            "mqtt": "connected" if mqtt_manager.connected else "disconnected",
+        }
+        if firmware_network_state is not None:
+            payload["firmware_network"] = firmware_network_state
+        return payload, 200
+
+    payload = {
+        "status": "degraded",
+        "database": "unavailable",
+        "mqtt": "connected" if mqtt_manager.connected else "disconnected",
+        "error": database_error,
+    }
+    if firmware_network_state is not None:
+        payload["firmware_network"] = firmware_network_state
+
+    return payload, 503
 
 
 @asynccontextmanager
@@ -161,34 +204,18 @@ async def database_error_handler(request: Request, exc: OperationalError):
 
 @app.get("/health")
 def health_check(request: Request):
-    firmware_network_state = _serialize_firmware_network_state(request.app)
-    if _using_overridden_database(request.app):
-        payload = {"status": "ok", "database": "overridden", "mqtt": "skipped"}
-        if firmware_network_state is not None:
-            payload["firmware_network"] = firmware_network_state
+    payload, status_code = _build_health_payload(request)
+    if status_code == 200:
         return payload
+    return JSONResponse(status_code=status_code, content=payload)
 
-    database_ready, database_error = check_database_connection()
-    request.app.state.database_ready = database_ready
-    request.app.state.database_error = database_error
 
-    if database_ready:
-        payload = {
-            "status": "ok",
-            "database": "ok",
-            "mqtt": "connected" if mqtt_manager.connected else "disconnected",
-        }
-        if firmware_network_state is not None:
-            payload["firmware_network"] = firmware_network_state
-        return payload
+@app.get("/web-assistant.js")
+def web_assistant_script(request: Request, callback: str):
+    normalized_callback = callback.strip()
+    if not normalized_callback or JSONP_CALLBACK_PATTERN.fullmatch(normalized_callback) is None:
+        raise HTTPException(status_code=400, detail="Invalid callback name")
 
-    payload = {
-        "status": "degraded",
-        "database": "unavailable",
-        "mqtt": "connected" if mqtt_manager.connected else "disconnected",
-        "error": database_error,
-    }
-    if firmware_network_state is not None:
-        payload["firmware_network"] = firmware_network_state
-
-    return JSONResponse(status_code=503, content=payload)
+    payload, _status_code = _build_health_payload(request)
+    javascript = f"{normalized_callback}({json.dumps(payload)});"
+    return Response(content=javascript, media_type="application/javascript")

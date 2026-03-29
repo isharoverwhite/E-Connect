@@ -66,6 +66,20 @@
   - After the OTA job reaches `flashed`, the dialog must wait for the board to report `online` again on the expected firmware version for that exact build before showing the final success state, then return the admin to the dashboard automatically.
 
 ## Dashboard And Discovery
+- **Public discovery page (`find_website`)**:
+  - The page is scan-only: no helper download, session code, or CLI instructions appear in the UI.
+  - The public host uses a white/light surface with blue accents so the discovery page matches the WebUI theme instead of the older dark/green shell.
+  - The page keeps the centered radar, sticky header, and stacked result-card layout from the existing scanner rather than switching to a marketing-style landing page.
+  - The browser probes LAN targets by loading `http://<candidate-ip>:8000/web-assistant.js?callback=...` in the same style as Synology Web Assistant instead of using `fetch` to the backend health route.
+  - The scanner must try `econnect.local` first, followed by other approved local aliases, before it starts sweeping common private subnets.
+  - The page must show explicit `scanning`, `scan complete`, `no servers found`, and `scan failed` states.
+  - The scanner must keep detected servers hidden while the active scan window is still running, then reveal the full list only after the scan completes.
+  - The active scan window is `15s` by default, but once any server is detected the scanner must shorten the run to a total `7s` timeout before revealing results.
+- **Backend discovery script (`server`)**:
+  - The browser-facing script endpoint returns JavaScript that invokes a validated callback with the same runtime health payload used by `/health`.
+  - The scanner uses the backend-advertised host plus the WebApp protocol and port derived from `firmware_network.advertised_host` / `firmware_network.api_base_url` to build the launch URL for that server.
+  - If the backend does not expose a usable WebApp transport, the scanner must fall back to `http` on port `3000` instead of guessing alternate ports.
+  - A backend-responsive server must remain visible in scan results even when the website probe fails, and the result card must show whether the website is currently `online` or `offline`.
 - **Device Management screen**:
   - The page header must keep the title block readable while preserving the admin action set `SVG Builder`, `Discover New`, and `Refresh`.
   - Action labels must stay on a single line inside each button; when horizontal space becomes tight, the action group wraps beneath the title or onto a new row as whole buttons instead of compressing text inside the buttons.

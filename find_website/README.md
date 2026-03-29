@@ -1,6 +1,6 @@
 # Find Website
 
-Public-facing E-Connect helper site used to scan a user's local network for reachable E-Connect servers. The app probes `http://<candidate-ip>:8000/health` and opens the main E-Connect UI at `http://<server-ip>:3000/` when a server is found.
+Public-facing E-Connect LAN scanner modeled after Synology Web Assistant. The page probes preferred local aliases such as `econnect.local` before it falls back to common private subnets, loads `http://<candidate-ip>:8000/web-assistant.js?callback=...` from the browser, lets the backend execute a JSONP-style callback with its runtime health payload, resolves the launch host from `firmware_network.advertised_host` / `firmware_network.api_base_url`, falls back to `http://<server-ip>:3000/` only when that metadata is unusable, and keeps backend hits visible even when the WebUI probe is offline.
 
 ## Local development
 
@@ -40,5 +40,8 @@ docker run -d \
 ## Notes
 
 - The container listens on `0.0.0.0:9123`.
-- No extra runtime environment variables are required for the current scanner flow.
-- Users must open this site from a device that is on the same LAN as the E-Connect server they want to find.
+- No extra runtime environment variables are required for the current discovery flow.
+- The page probes LAN targets directly from the browser via script injection instead of `fetch`.
+- The backend must expose `http://<candidate-ip>:8000/web-assistant.js?callback=...` for the scan to work.
+- If the server LAN publishes `econnect.local` through mDNS or router DNS, the scanner will try that alias before brute-force subnet scanning.
+- Browser behavior is transport-dependent; the current implementation is aligned with the Synology-style pattern verified on Chrome on 2026-03-29.

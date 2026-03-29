@@ -74,6 +74,7 @@ env/
 /design/flows/TASK-PACKET-*.md
 /design/flows/REPORT_*.md
 /design/change-requests/CR-*.md
+!/design/change-requests/CR-DEPLOY-FULL-STACK-JENKINS-001.md
 AGENTS.md
 PRD.md
 run.md
