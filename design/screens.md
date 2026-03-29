@@ -70,9 +70,11 @@
   - The page is scan-only: no helper download, session code, or CLI instructions appear in the UI.
   - The public host uses a white/light surface with blue accents so the discovery page matches the WebUI theme instead of the older dark/green shell.
   - The page keeps the centered radar, sticky header, and stacked result-card layout from the existing scanner rather than switching to a marketing-style landing page.
-  - The browser probes LAN targets by loading `http://<candidate-ip>:8000/web-assistant.js?callback=...` in the same style as Synology Web Assistant instead of using `fetch` to the backend health route.
+  - The secure public host probes LAN targets with the Synology-style `http://<candidate-ip>:8000/web-assistant.js?callback=...` transport, while LAN-hosted HTTP copies may fall back to `GET /health` on the same backend when direct JSONP probing proves unreliable.
   - The scanner must try `econnect.local` first, followed by other approved local aliases, before it starts sweeping common private subnets.
+  - When the scanner is hosted from a LAN IP or `.local` origin, it must probe that current host before the wider subnet sweep so a colocated `find_website` reaches its paired backend quickly.
   - The page must show explicit `scanning`, `scan complete`, `no servers found`, and `scan failed` states.
+  - If the secure public page cannot reach local HTTP discovery endpoints because the browser blocks that transport, the UI must show an explicit failure message instead of silently reporting a normal empty scan.
   - The scanner must keep detected servers hidden while the active scan window is still running, then reveal the full list only after the scan completes.
   - The active scan window is `15s` by default, but once any server is detected the scanner must shorten the run to a total `7s` timeout before revealing results.
 - **Backend discovery script (`server`)**:

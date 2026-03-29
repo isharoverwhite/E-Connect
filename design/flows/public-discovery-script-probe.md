@@ -22,14 +22,16 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 5. On deployments that want the alias-first fast path, the operator publishes `econnect.local` to the server LAN IP via Avahi/mDNS, router DNS, the backend's built-in mDNS publisher when the server runtime is configured with `MDNS_HOSTNAME`, or the Jenkins-managed `discovery_mdns` helper when the stack is deployed through the repository pipeline.
 6. If none of the preferred aliases responds, the browser falls back to the wider candidate host list:
    - common private subnets such as `192.168.1.x`, `192.168.0.x`, `192.168.2.x`, `10.0.0.x`
-7. For each candidate host, the browser injects a script tag to:
-   - `http://<candidate-host>:8000/web-assistant.js?callback=<callbackName>`
-8. The backend script endpoint executes inside the browser and calls the provided callback with the same runtime health payload used by `/health`.
+7. For each candidate host, the browser uses one of these transport paths:
+   - on local HTTP-hosted copies of `find_website`, the scanner may fetch `http://<candidate-host>:8000/health` directly because the backend exposes permissive CORS for that payload
+   - on the secure public host, the scanner keeps the Synology-style script probe transport:
+     - `http://<candidate-host>:8000/web-assistant.js?callback=<callbackName>`
+8. Both discovery paths consume the same runtime health payload, and the script endpoint still invokes the provided callback when the JSONP transport is used.
 9. The page trusts `firmware_network` as the source of truth for:
    - the preferred launch host, via `advertised_host` or the hostname embedded in `api_base_url`
    - the WebUI protocol and port
 10. The page performs a lightweight website probe for the advertised WebUI and labels each hit as `online` or `offline`.
-11. After the scan window closes, the page reveals the final result list.
+11. After the scan window closes, the page reveals the final result list, or surfaces an explicit browser-blocked failure when the secure public origin cannot reach local HTTP discovery endpoints.
 12. The developer-hosted public page never scans the user's LAN from the developer server; all LAN discovery requests come from the user's own browser session.
 
 ## Backend Contract
@@ -39,6 +41,9 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
   - validates the callback name
   - invokes the callback with the backend health payload
   - degraded database state still returns a payload because the browser scanner only sees script success/failure, not HTTP status
+- `GET /health`
+  - returns the same runtime health payload as JSON
+  - may be consumed directly by local HTTP-hosted scanner copies because the backend CORS policy allows browser access on the LAN
 
 ## UI States
 
@@ -46,6 +51,7 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 - `scan complete`
 - `no server found`
 - `scan failed`
+- `scan failed (secure-origin browser block)`
 
 ## Verification Hooks
 
@@ -54,7 +60,8 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 - Browser:
   - the browser session running [find.isharoverwhite.com](https://find.isharoverwhite.com) is on the same LAN as the user's self-hosted server
   - the deployment can resolve `econnect.local` to the server LAN IP when the alias fast path is configured
-  - page can discover a fake backend through the script endpoint
+  - a local HTTP-hosted copy of the page can discover a fake backend through `/health`
+  - the secure public page either discovers the server through the script probe or surfaces the secure-origin browser-blocked failure explicitly
   - page prefers `econnect.local`-style aliases before subnet sweeping
   - page renders scan results and empty state correctly
   - page shows no hydration/runtime errors; failed probe requests may still appear in the browser console as expected network noise
@@ -66,3 +73,4 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 - Without mDNS or a remote registry, the browser still probes subnets rather than a tiny fixed hostname set.
 - The `.local` suffix is most reliable through mDNS/Avahi; a router DNS override for the same suffix may still lose to mDNS on some client resolvers.
 - When the backend or Jenkins helper advertises `econnect.local`, Docker deployments still need an explicit or auto-detected LAN IP override because containers cannot always infer the host LAN address correctly.
+- Browsers can still block `http://<candidate-host>:8000/...` from the secure public origin because of mixed-content or private-network restrictions, even when the backend is healthy on the LAN.

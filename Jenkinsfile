@@ -60,6 +60,45 @@ pipeline {
                         }
                         entries.unique().join(',')
                     }
+                    def isPrivateIpv4 = { String candidate ->
+                        def normalized = candidate?.trim()
+                        if (!normalized || !(normalized ==~ /^(\d{1,3}\.){3}\d{1,3}$/)) {
+                            return false
+                        }
+
+                        def octets = normalized.tokenize('.').collect { it as Integer }
+                        if (octets.any { it < 0 || it > 255 }) {
+                            return false
+                        }
+
+                        return octets[0] == 10 ||
+                            octets[0] == 127 ||
+                            (octets[0] == 192 && octets[1] == 168) ||
+                            (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
+                    }
+                    def isCommonDockerBridgeIpv4 = { String candidate ->
+                        def normalized = candidate?.trim()
+                        if (!isPrivateIpv4(normalized)) {
+                            return false
+                        }
+
+                        def octets = normalized.tokenize('.').collect { it as Integer }
+                        return (octets[0] == 172 && octets[1] >= 17 && octets[1] <= 31) ||
+                            (octets[0] == 192 && octets[1] == 168 && octets[2] == 65)
+                    }
+                    def privateIpv4FromUrl = { String rawUrl ->
+                        def normalized = rawUrl?.trim()
+                        if (!normalized) {
+                            return null
+                        }
+
+                        try {
+                            def host = new java.net.URI(normalized).host?.trim()
+                            return isPrivateIpv4(host) ? host : null
+                        } catch (Exception ignored) {
+                            return null
+                        }
+                    }
 
                     env.RESOLVED_BRANCH = sh(
                         returnStdout: true,
@@ -90,7 +129,21 @@ pipeline {
                         env.DISCOVERY_ALIAS_HOSTNAME = params.DISCOVERY_ALIAS_HOSTNAME?.trim()
                             ? params.DISCOVERY_ALIAS_HOSTNAME.trim()
                             : 'econnect.local'
-                        env.DISCOVERY_ALIAS_IP = params.DISCOVERY_ALIAS_IP?.trim()
+                        def explicitDiscoveryAliasIp = params.DISCOVERY_ALIAS_IP?.trim()
+                        def aliasIpProvidedByUser = explicitDiscoveryAliasIp ? true : false
+                        env.DISCOVERY_ALIAS_IP = explicitDiscoveryAliasIp
+                        def ciDiscoveryAliasIp = null
+
+                        if (!env.DISCOVERY_ALIAS_IP) {
+                            for (candidateUrl in [env.JENKINS_URL, env.BUILD_URL]) {
+                                ciDiscoveryAliasIp = privateIpv4FromUrl(candidateUrl)
+                                if (ciDiscoveryAliasIp) {
+                                    env.DISCOVERY_ALIAS_IP = ciDiscoveryAliasIp
+                                    echo "Using Jenkins URL host ${ciDiscoveryAliasIp} as the discovery alias IP."
+                                    break
+                                }
+                            }
+                        }
 
                         if (!env.DISCOVERY_ALIAS_IP) {
                             env.DISCOVERY_ALIAS_IP = sh(
@@ -119,8 +172,16 @@ pipeline {
                             ).trim()
                         }
 
+                        if (!aliasIpProvidedByUser && ciDiscoveryAliasIp && isCommonDockerBridgeIpv4(env.DISCOVERY_ALIAS_IP)) {
+                            echo "Auto-detected ${env.DISCOVERY_ALIAS_IP} looks like a Docker bridge address. Overriding with Jenkins URL host ${ciDiscoveryAliasIp}."
+                            env.DISCOVERY_ALIAS_IP = ciDiscoveryAliasIp
+                        }
+
                         if (!env.DISCOVERY_ALIAS_IP) {
                             error("Could not determine a LAN IP for ${env.DISCOVERY_ALIAS_HOSTNAME}. Set DISCOVERY_ALIAS_IP explicitly.")
+                        }
+                        if (!aliasIpProvidedByUser && isCommonDockerBridgeIpv4(env.DISCOVERY_ALIAS_IP)) {
+                            error("Auto-detected ${env.DISCOVERY_ALIAS_IP} looks like a Docker bridge address, not a stable LAN IP. Set DISCOVERY_ALIAS_IP explicitly or configure JENKINS_URL to the Jenkins host LAN URL.")
                         }
 
                         env.DISCOVERY_MDNS_HOSTNAME = env.DISCOVERY_ALIAS_HOSTNAME
@@ -247,6 +308,7 @@ pipeline {
                     retry 30 2 docker compose exec -T webapp node -e "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; const main = async () => { const res = await fetch('https://127.0.0.1:3000/login'); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))"
                     retry 30 2 docker compose exec -T find_website wget -q --spider http://127.0.0.1:9123/
                     retry 30 2 sh -c "docker compose logs discovery_mdns 2>&1 | grep -q 'Published mDNS alias'"
+                    retry 30 2 sh -c "docker compose logs discovery_mdns 2>&1 | grep -F \"Published mDNS alias ${DISCOVERY_MDNS_HOSTNAME} -> ${DISCOVERY_ALIAS_IP}\""
                 '''
             }
         }
