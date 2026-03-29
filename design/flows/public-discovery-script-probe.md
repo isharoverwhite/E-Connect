@@ -19,7 +19,7 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
    - `econnect.local`
    - `e-connect.local`
    - `econnect-server.local`
-5. On deployments that want the alias-first fast path, the operator publishes `econnect.local` to the server LAN IP via Avahi/mDNS or a router DNS override and keeps the backend/WebUI runtime config aligned with that hostname.
+5. On deployments that want the alias-first fast path, the operator publishes `econnect.local` to the server LAN IP via Avahi/mDNS, router DNS, the backend's built-in mDNS publisher when the server runtime is configured with `MDNS_HOSTNAME`, or the Jenkins-managed `discovery_mdns` helper when the stack is deployed through the repository pipeline.
 6. If none of the preferred aliases responds, the browser falls back to the wider candidate host list:
    - common private subnets such as `192.168.1.x`, `192.168.0.x`, `192.168.2.x`, `10.0.0.x`
 7. For each candidate host, the browser injects a script tag to:
@@ -65,3 +65,4 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 - The developer-hosted public page is only the entrypoint; it cannot see the user's private LAN unless the user's browser is on that LAN and allowed to issue the probe requests.
 - Without mDNS or a remote registry, the browser still probes subnets rather than a tiny fixed hostname set.
 - The `.local` suffix is most reliable through mDNS/Avahi; a router DNS override for the same suffix may still lose to mDNS on some client resolvers.
+- When the backend or Jenkins helper advertises `econnect.local`, Docker deployments still need an explicit or auto-detected LAN IP override because containers cannot always infer the host LAN address correctly.

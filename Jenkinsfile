@@ -20,6 +20,16 @@ pipeline {
             defaultValue: false,
             description: 'Allow deployment from a branch other than main/master.'
         )
+        string(
+            name: 'DISCOVERY_ALIAS_HOSTNAME',
+            defaultValue: 'econnect.local',
+            description: 'LAN hostname to publish for browser discovery during Docker deployment.'
+        )
+        string(
+            name: 'DISCOVERY_ALIAS_IP',
+            defaultValue: '',
+            description: 'Optional explicit LAN IP for the alias. Leave blank to auto-detect on the Jenkins node.'
+        )
     }
 
     environment {
@@ -40,6 +50,17 @@ pipeline {
         stage('Preflight') {
             steps {
                 script {
+                    def mergeCsv = { String currentValue, String addition ->
+                        def entries = []
+                        if (currentValue?.trim()) {
+                            entries.addAll(currentValue.split(',').collect { it.trim() }.findAll { it })
+                        }
+                        if (addition?.trim()) {
+                            entries.addAll(addition.split(',').collect { it.trim() }.findAll { it })
+                        }
+                        entries.unique().join(',')
+                    }
+
                     env.RESOLVED_BRANCH = sh(
                         returnStdout: true,
                         script: '''
@@ -64,6 +85,58 @@ pipeline {
                         '''
                     ).trim()
                     echo "Resolved branch: ${env.RESOLVED_BRANCH}"
+
+                    if (params.DEPLOY) {
+                        env.DISCOVERY_ALIAS_HOSTNAME = params.DISCOVERY_ALIAS_HOSTNAME?.trim()
+                            ? params.DISCOVERY_ALIAS_HOSTNAME.trim()
+                            : 'econnect.local'
+                        env.DISCOVERY_ALIAS_IP = params.DISCOVERY_ALIAS_IP?.trim()
+
+                        if (!env.DISCOVERY_ALIAS_IP) {
+                            env.DISCOVERY_ALIAS_IP = sh(
+                                returnStdout: true,
+                                script: '''
+                                    set -eu
+
+                                    if command -v ip >/dev/null 2>&1; then
+                                        candidate="$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ { for (i=1; i<=NF; i++) if ($i == "src") { print $(i+1); exit } }')"
+                                        if [ -n "$candidate" ]; then
+                                            printf '%s' "$candidate"
+                                            exit 0
+                                        fi
+                                    fi
+
+                                    if command -v hostname >/dev/null 2>&1; then
+                                        candidate="$(hostname -I 2>/dev/null | awk '{print $1}')"
+                                        if [ -n "$candidate" ]; then
+                                            printf '%s' "$candidate"
+                                            exit 0
+                                        fi
+                                    fi
+
+                                    exit 1
+                                '''
+                            ).trim()
+                        }
+
+                        if (!env.DISCOVERY_ALIAS_IP) {
+                            error("Could not determine a LAN IP for ${env.DISCOVERY_ALIAS_HOSTNAME}. Set DISCOVERY_ALIAS_IP explicitly.")
+                        }
+
+                        env.DISCOVERY_MDNS_HOSTNAME = env.DISCOVERY_ALIAS_HOSTNAME
+                        env.DISCOVERY_MDNS_ADVERTISED_IPS = mergeCsv(env.DISCOVERY_MDNS_ADVERTISED_IPS, env.DISCOVERY_ALIAS_IP)
+                        env.HTTPS_HOSTS = mergeCsv(env.HTTPS_HOSTS, env.DISCOVERY_ALIAS_HOSTNAME)
+
+                        if (!env.FIRMWARE_PUBLIC_BASE_URL?.trim()) {
+                            env.FIRMWARE_PUBLIC_BASE_URL = "https://${env.DISCOVERY_ALIAS_HOSTNAME}:3000"
+                        }
+                        if (!env.FIRMWARE_MQTT_BROKER?.trim()) {
+                            env.FIRMWARE_MQTT_BROKER = env.DISCOVERY_ALIAS_HOSTNAME
+                        }
+
+                        echo "Discovery alias: ${env.DISCOVERY_MDNS_HOSTNAME} -> ${env.DISCOVERY_MDNS_ADVERTISED_IPS}"
+                        echo "Runtime WebUI origin: ${env.FIRMWARE_PUBLIC_BASE_URL}"
+                    }
                 }
 
                 sh '''
@@ -119,10 +192,10 @@ pipeline {
                 expression { return params.DEPLOY }
             }
             steps {
-                echo 'Building all live release services including find_website'
+                echo 'Building all live release services including find_website and discovery_mdns'
                 sh '''
                     set -eu
-                    docker compose build mqtt server webapp find_website
+                    docker compose build mqtt server webapp find_website discovery_mdns
                 '''
             }
         }
@@ -172,6 +245,7 @@ pipeline {
                     retry 30 2 docker compose exec -T server python -c "import json, urllib.request; data = json.loads(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read().decode()); assert data.get('status') == 'ok'"
                     retry 30 2 docker compose exec -T webapp node -e "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; const main = async () => { const res = await fetch('https://127.0.0.1:3000/login'); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))"
                     retry 30 2 docker compose exec -T find_website wget -q --spider http://127.0.0.1:9123/
+                    retry 30 2 sh -c "docker compose logs discovery_mdns 2>&1 | grep -q 'Published mDNS alias'"
                 '''
             }
         }
@@ -186,7 +260,7 @@ pipeline {
 
         failure {
             sh '''
-                docker compose logs --tail=200 server webapp find_website db mqtt || true
+                docker compose logs --tail=200 server webapp find_website db mqtt discovery_mdns || true
             '''
             echo 'Deployment failed. Review compose status and service logs above.'
         }

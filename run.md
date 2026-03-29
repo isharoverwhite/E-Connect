@@ -68,6 +68,33 @@ HTTPS_HOSTS=econnect.local
 
 `HTTPS_IPS` là optional nếu bạn cũng muốn cert frontend chứa IP LAN cụ thể. Khi `HTTPS_HOSTS=econnect.local`, webapp container sẽ sinh cert có SAN cho hostname này thay vì chỉ `localhost` và IP detect được.
 
+Nếu bạn muốn publish alias bằng chính backend code thay vì cài publisher ở host OS, hãy giữ `FIRMWARE_PUBLIC_BASE_URL` theo IP/public host hiện tại và chỉ thêm:
+
+```env
+MDNS_HOSTNAME=econnect.local
+# Optional nếu runtime firmware target hiện không phải IP số:
+MDNS_ADVERTISED_IPS=192.168.2.65
+```
+
+Luồng này cho phép scanner probe `econnect.local` trước, nhưng backend vẫn có thể trả `advertised_host` là IP hiện tại để WebUI launch path không phụ thuộc ngay vào cert cho alias mới.
+
+Với Jenkins-managed Docker deployment, pipeline hiện tự làm phần còn lại trong phạm vi repo/Jenkins:
+
+```text
+- auto-detect LAN IP trên Jenkins node (hoặc dùng parameter `DISCOVERY_ALIAS_IP`)
+- publish `econnect.local` qua service `discovery_mdns` chạy `network_mode: host`
+- set mặc định `FIRMWARE_PUBLIC_BASE_URL=https://econnect.local:3000`
+- set mặc định `FIRMWARE_MQTT_BROKER=econnect.local`
+- append `econnect.local` vào `HTTPS_HOSTS`
+```
+
+Nếu Jenkins job cần override alias hoặc IP, dùng parameters:
+
+```text
+DISCOVERY_ALIAS_HOSTNAME=econnect.local
+DISCOVERY_ALIAS_IP=192.168.2.65
+```
+
 4. Build/deploy lại stack:
 
 ```bash
