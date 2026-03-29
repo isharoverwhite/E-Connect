@@ -27,12 +27,18 @@ export const DISCOVERY_SCRIPT_PORT = "8000";
 export const DISCOVERY_SCRIPT_PATH = "/web-assistant.js";
 export const DISCOVERY_TIMEOUT_MS = 1500;
 export const ALIAS_DISCOVERY_TIMEOUT_MS = 4000;
-export const ALIAS_DISCOVERY_RETRY_COUNT = 2;
+export const ALIAS_DISCOVERY_RETRY_COUNT = 1;
 export const WEBSITE_PROBE_TIMEOUT_MS = 1500;
+export const EARLY_PRIORITY_HOST_LIMIT = 80;
 export const COMMON_HOST_ALIASES = [
   "econnect.local",
   "e-connect.local",
   "econnect-server.local",
+];
+export const EARLY_PRIORITY_SUBNETS = [
+  "192.168.1",
+  "192.168.0",
+  "192.168.2",
 ];
 
 export function resolveDiscoveryAttemptBudget(host: string): { timeoutMs: number; attempts: number } {
@@ -200,3 +206,42 @@ export const generateSubnetIps = (subnetPrefix: string): string[] => {
   }
   return ips;
 };
+
+export function buildCandidateHosts(preferredHosts: string[]): string[] {
+  const preferredHostSet = new Set(preferredHosts.map((host) => host.trim()).filter(Boolean));
+  const discoveredHosts: string[] = [];
+  const discoveredHostSet = new Set<string>();
+
+  const pushHost = (host: string) => {
+    if (preferredHostSet.has(host) || discoveredHostSet.has(host)) {
+      return;
+    }
+
+    discoveredHostSet.add(host);
+    discoveredHosts.push(host);
+  };
+
+  const hotSubnets = COMMON_SUBNETS.filter((subnet) => EARLY_PRIORITY_SUBNETS.includes(subnet));
+  const remainingSubnets = COMMON_SUBNETS.filter((subnet) => !EARLY_PRIORITY_SUBNETS.includes(subnet));
+
+  // Interleave the hottest subnets so .0/.1/.2-style home LANs all get an early pass.
+  for (let hostIndex = 1; hostIndex <= EARLY_PRIORITY_HOST_LIMIT; hostIndex += 1) {
+    for (const subnet of hotSubnets) {
+      pushHost(`${subnet}.${hostIndex}`);
+    }
+  }
+
+  for (const subnet of hotSubnets) {
+    for (let hostIndex = EARLY_PRIORITY_HOST_LIMIT + 1; hostIndex < 255; hostIndex += 1) {
+      pushHost(`${subnet}.${hostIndex}`);
+    }
+  }
+
+  for (const subnet of remainingSubnets) {
+    for (const host of generateSubnetIps(subnet)) {
+      pushHost(host);
+    }
+  }
+
+  return discoveredHosts;
+}

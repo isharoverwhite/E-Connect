@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  buildCandidateHosts,
   buildDiscoveryScriptUrl,
   buildWebappBaseUrl,
   COMMON_HOST_ALIASES,
-  COMMON_SUBNETS,
-  generateSubnetIps,
   isDiscoveryPayloadCandidate,
   resolveDiscoveryAttemptBudget,
   resolveDiscoveryHost,
@@ -94,10 +93,18 @@ async function probeCandidateHostOnce(host: string, signal: AbortSignal, timeout
       clearTimeout(timeoutId);
       const { protocol, port } = resolveWebappTransport(payload.firmware_network);
       const resolvedHost = resolveDiscoveryHost(host, payload.firmware_network);
-      const websiteStatus = await probeWebsite(buildWebappBaseUrl(resolvedHost, protocol, port), signal);
+      const probedHost = host.trim();
+      let launchHost = resolvedHost;
+      let websiteStatus = await probeWebsite(buildWebappBaseUrl(launchHost, protocol, port), signal);
+
+      if (launchHost !== probedHost && websiteStatus === "offline") {
+        const fallbackStatus = await probeWebsite(buildWebappBaseUrl(probedHost, protocol, port), signal);
+        launchHost = probedHost;
+        websiteStatus = fallbackStatus;
+      }
 
       finalize({
-        ip: resolvedHost,
+        ip: launchHost,
         database: payload.database?.trim() || "unknown",
         mqtt: payload.mqtt?.trim() || "unknown",
         protocol,
@@ -262,7 +269,7 @@ export const useScanner = () => {
         ...COMMON_HOST_ALIASES,
       ]),
     );
-    const subnetHosts = COMMON_SUBNETS.flatMap(generateSubnetIps).filter((host) => !preferredHosts.includes(host));
+    const subnetHosts = buildCandidateHosts(preferredHosts);
     const candidateHosts = [...preferredHosts, ...subnetHosts];
 
     setTotalCount(candidateHosts.length);

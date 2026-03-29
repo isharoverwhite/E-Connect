@@ -1,6 +1,6 @@
 # Find Website
 
-Public-facing E-Connect LAN scanner modeled after Synology Web Assistant. The page probes preferred local aliases such as `econnect.local` before it falls back to common private subnets, loads `http://<candidate-ip>:8000/web-assistant.js?callback=...` from the browser, lets the backend execute a JSONP-style callback with its runtime health payload, resolves the launch host from `firmware_network.advertised_host` / `firmware_network.api_base_url`, falls back to `http://<server-ip>:3000/` only when that metadata is unusable, and keeps backend hits visible even when the WebUI probe is offline.
+Public-facing E-Connect LAN scanner modeled after Synology Web Assistant. The page probes preferred local aliases such as `econnect.local` before it falls back to common private subnets, prioritizes early passes over the common `192.168.1.x`, `192.168.0.x`, and `192.168.2.x` home LAN ranges, loads `http://<candidate-ip>:8000/web-assistant.js?callback=...` from the browser, lets the backend execute a JSONP-style callback with its runtime health payload, resolves the launch host from `firmware_network.advertised_host` / `firmware_network.api_base_url`, and falls back to the probed LAN IP when the advertised alias is not reachable from that browser client.
 
 ## Local development
 
@@ -43,5 +43,6 @@ docker run -d \
 - No extra runtime environment variables are required for the current discovery flow.
 - The page probes LAN targets directly from the browser via script injection instead of `fetch`.
 - The backend must expose `http://<candidate-ip>:8000/web-assistant.js?callback=...` for the scan to work.
-- If the server LAN publishes `econnect.local` through mDNS or router DNS, the scanner will try that alias before brute-force subnet scanning, and `.local` aliases now get a longer probe budget plus one retry before the wider subnet sweep begins.
+- If the server LAN publishes `econnect.local` through mDNS or router DNS, the scanner will try that alias before subnet scanning, and `.local` aliases now get a longer probe budget before the wider sweep begins.
+- When the backend advertises `econnect.local` but the browser client cannot resolve that alias, the UI now falls back to the probed LAN IP so the card can still link to the WebUI when the raw IP is reachable.
 - Browser behavior is transport-dependent; the current implementation is aligned with the Synology-style pattern verified on Chrome on 2026-03-29.

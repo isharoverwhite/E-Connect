@@ -125,6 +125,7 @@ pipeline {
 
                         env.DISCOVERY_MDNS_HOSTNAME = env.DISCOVERY_ALIAS_HOSTNAME
                         env.DISCOVERY_MDNS_ADVERTISED_IPS = mergeCsv(env.DISCOVERY_MDNS_ADVERTISED_IPS, env.DISCOVERY_ALIAS_IP)
+                        env.COMPOSE_PROFILES = mergeCsv(env.COMPOSE_PROFILES, 'discovery-mdns')
                         env.HTTPS_HOSTS = mergeCsv(env.HTTPS_HOSTS, env.DISCOVERY_ALIAS_HOSTNAME)
 
                         if (!env.FIRMWARE_PUBLIC_BASE_URL?.trim()) {
