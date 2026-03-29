@@ -3,10 +3,10 @@
 ## Current Phase: Complete
 
 ## Active Task
-- Task ID: JENKINS-DB-FIX-001
-- Objective: Resolve the live Jenkins `E-Connect-CD` database authentication failure and verify a successful redeploy.
+- Task ID: JENKINS-LIVE-CLEANUP-002
+- Objective: Normalize the live Jenkins deployment DB to one authoritative `e_connect_db` schema and publish the tracking updates.
 - Owner: Codex
-- Started At: 2026-03-29 03:23:12
+- Started At: 2026-03-29 12:50:20
 
 ## Gate Status
 - [x] G0 Task intake
@@ -17,16 +17,16 @@
 
 ## Deliverables
 - PRD: No change required.
-- Design docs: Design unchanged; this task repaired live delivery infrastructure state only.
-- Code: No repository code changes planned unless follow-up action is requested.
-- Verification: Using Jenkins Script Console on `192.168.2.55:8080`, I confirmed the MariaDB container still used legacy initialized credentials (`root/root`, `user/password`) while the current compose stack expected `econnect/root_password` and `e_connect_db`. I backed up `smart_home` to `/var/jenkins_home/econnect-smart_home-20260328-203304.sql`, created the compatible `econnect` user and `e_connect_db` database, imported the existing schema/data into `e_connect_db`, restarted `e-connect-server` and `e-connect-webapp`, verified `/health` returned `status=ok`, and confirmed Jenkins build `#20` on commit `88da152` finished `SUCCESS`.
+- Design docs: Design unchanged; the repository and Jenkins runtime already target `e_connect_db`, so this task removed leftover live compatibility drift instead of changing the baseline.
+- Code: No repository runtime code changed; live Jenkins MariaDB state was normalized and repository tracking files were prepared for publish.
+- Verification: Over SSH on `ryzen30xx@192.168.2.55`, backed up `smart_home` and `e_connect_db` to `/tmp/jenkins-db-cleanup-20260329/`, confirmed the live `e-connect-db` still exposed both schemas plus the legacy `user` account, changed `root` to `root_password`, dropped `smart_home`, dropped `user`, and re-verified `e_connect_db` remained the only app schema while `e-connect-server` `/health` returned `status=ok` and `e-connect-webapp` returned HTTP `200` for `/login`.
 
 ## Risks / Blockers
-- The Jenkins MariaDB volume still contains legacy `smart_home` data as well as the new compatibility clone `e_connect_db`; if you later want to clean this up, do it as a separate maintenance task after deciding which schema name should remain authoritative.
-- Local tracking files remain modified in the working tree and are not pushed as part of the operational Jenkins fix.
+- The live Jenkins host still has a dirty operational clone at `~/Final-Project` with local-only changes in `docker-compose.jenkins.yml` and a backup file `docker-compose.jenkins.yml.bak.20260327233133`; cleaning that repo state safely is a separate task because the current Jenkins container appears to depend on it.
+- Local `find_website/src/app/layout.tsx` remains an unrelated unstaged modification and is intentionally excluded from the publish for this task.
 
 ## Next Action
-- Optional follow-up: normalize the live MariaDB schema naming on Jenkins so the deployment no longer depends on the compatibility clone from `smart_home` to `e_connect_db`.
+- Optional follow-up: clean the Jenkins host repository drift and decide whether `/mnt/cache/jenkins_home` should remain the authoritative Jenkins home mount.
 
 ## Last Updated
-2026-03-29 03:23:12
+2026-03-29 12:50:20
