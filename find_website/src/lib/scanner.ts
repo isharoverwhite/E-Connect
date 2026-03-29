@@ -25,6 +25,7 @@ export const DEFAULT_WEBAPP_PROTOCOL = "http";
 export const DEFAULT_WEBAPP_PORT = "3000";
 export const DISCOVERY_SCRIPT_PORT = "8000";
 export const DISCOVERY_SCRIPT_PATH = "/web-assistant.js";
+export const DISCOVERY_HEALTH_PATH = "/health";
 export const DISCOVERY_TIMEOUT_MS = 1500;
 export const ALIAS_DISCOVERY_TIMEOUT_MS = 4000;
 export const ALIAS_DISCOVERY_RETRY_COUNT = 1;
@@ -56,7 +57,7 @@ export function resolveDiscoveryAttemptBudget(host: string): { timeoutMs: number
   };
 }
 
-function normalizeDiscoveryHost(value: string | null | undefined): string | null {
+export function normalizeDiscoveryHost(value: string | null | undefined): string | null {
   if (typeof value !== "string" || !value.trim()) {
     return null;
   }
@@ -74,6 +75,42 @@ function normalizeDiscoveryHost(value: string | null | undefined): string | null
   } catch {
     return null;
   }
+}
+
+function isPrivateIpv4Host(hostname: string): boolean {
+  const octets = hostname.split(".").map((segment) => Number.parseInt(segment, 10));
+  if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) {
+    return false;
+  }
+
+  if (octets[0] === 10 || octets[0] === 127) {
+    return true;
+  }
+
+  if (octets[0] === 192 && octets[1] === 168) {
+    return true;
+  }
+
+  return octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31;
+}
+
+export function isLikelyPrivateDiscoveryHost(value: string | null | undefined): boolean {
+  const hostname = normalizeDiscoveryHost(value);
+  if (!hostname) {
+    return false;
+  }
+
+  return hostname === "localhost" || hostname.endsWith(".local") || isPrivateIpv4Host(hostname);
+}
+
+export function resolvePrivateIpv4SubnetPrefix(value: string | null | undefined): string | null {
+  const hostname = normalizeDiscoveryHost(value);
+  if (!hostname || !isPrivateIpv4Host(hostname)) {
+    return null;
+  }
+
+  const octets = hostname.split(".");
+  return octets.length === 4 ? `${octets[0]}.${octets[1]}.${octets[2]}` : null;
 }
 
 function normalizeProtocol(value: string | null | undefined): string | null {
