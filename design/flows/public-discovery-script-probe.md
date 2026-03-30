@@ -28,9 +28,9 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
      - `http://<candidate-host>:8000/web-assistant.js?callback=<callbackName>`
 8. Both discovery paths consume the same runtime health payload, and the script endpoint still invokes the provided callback when the JSONP transport is used.
 9. The page trusts `firmware_network` as the source of truth for:
-   - the primary identity label shown in the UI, via `advertised_host` or the hostname embedded in `api_base_url`
    - the WebUI protocol and port
-10. The page first probes the advertised host for the WebUI and, if that host is not reachable from the current browser client, may fall back to the responding LAN host for the actual launch URL without replacing the advertised identity label in the result card.
+   - the preferred LAN launch host, by first extracting a private IPv4 from `api_base_url`, then `advertised_host`, then the responding probe host
+10. Once a private LAN IP is available, the page probes the WebUI through that IP, launches through that IP, and shows that same LAN IP as the primary host in the result card. A backend-advertised alias such as `econnect.local` may remain secondary context only.
 11. The page performs a lightweight website probe for the resolved launch target and labels each hit as `online` or `offline`.
 12. After the scan window closes, the page reveals the final result list, or surfaces an explicit browser-blocked failure when the secure public origin cannot reach local HTTP discovery endpoints.
 13. The developer-hosted public page never scans the user's LAN from the developer server; all LAN discovery requests come from the user's own browser session.
@@ -65,6 +65,7 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
   - a local HTTP-hosted copy of the page can discover a fake backend through `/health`
   - the secure public page either discovers the server through the script probe or surfaces the secure-origin browser-blocked failure explicitly
   - page prefers `econnect.local`-style aliases before subnet sweeping
+  - once discovery succeeds, the result card and launch link use the resolved LAN IP instead of the mDNS alias
   - page renders scan results and empty state correctly
   - page shows no hydration/runtime errors; failed probe requests may still appear in the browser console as expected network noise
   - Jenkins CD runs a post-deploy Playwright smoke against both the LAN-hosted `find_website` and the public page

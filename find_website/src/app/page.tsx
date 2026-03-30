@@ -128,6 +128,9 @@ export default function Home() {
                 {foundDevices.map((device) => {
                   const href = `${buildWebappBaseUrl(device.launchHost, device.protocol, device.port)}/`;
                   const isWebsiteOnline = device.websiteStatus === "online";
+                  const showsAdvertisedAlias = Boolean(
+                    device.advertisedHost && device.advertisedHost !== device.displayHost,
+                  );
                   const showsFallbackHost = device.displayHost !== device.launchHost;
                   const cardClassName = cn(
                     "group relative flex items-center justify-between overflow-hidden rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition-all duration-300",
@@ -169,7 +172,12 @@ export default function Home() {
                             Local Server
                           </h4>
                           <p className="font-mono text-sm text-slate-500">{device.displayHost}</p>
-                          {showsFallbackHost ? (
+                          {showsAdvertisedAlias ? (
+                            <p className="text-xs text-slate-400">
+                              Advertised as <span className="font-mono">{device.advertisedHost}</span>
+                            </p>
+                          ) : null}
+                          {!showsAdvertisedAlias && showsFallbackHost ? (
                             <p className="text-xs text-slate-400">
                               Reachable at <span className="font-mono">{device.launchHost}</span>
                             </p>
