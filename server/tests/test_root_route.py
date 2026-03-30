@@ -58,15 +58,21 @@ def test_root_route_uses_runtime_webapp_transport_when_available(monkeypatch):
     assert response.headers["location"] == "https://econnect.local:3443/"
 
 
-def test_health_route_remains_available():
+def test_health_route_remains_available(monkeypatch):
+    monkeypatch.delenv("MDNS_HOSTNAME", raising=False)
+    monkeypatch.delenv("MDNS_ADVERTISED_IPS", raising=False)
+
     with TestClient(app) as client:
-        response = client.get("/health")
+        app.state.firmware_network_state = None
+        app.state.firmware_network_audit = None
+        response = client.get("/health", headers={"host": "testserver"})
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
     assert response.json()["database"] == "overridden"
     assert response.json()["mqtt"] == "skipped"
     assert response.json()["initialized"] is False
+    assert "server_ip" not in response.json()
 
 
 def test_health_route_reports_initialized_after_first_user_exists():
@@ -88,33 +94,37 @@ def test_health_route_reports_initialized_after_first_user_exists():
     assert response.json()["initialized"] is True
 
 
-def test_health_route_exposes_webapp_transport_from_runtime_network_targets():
-    app.state.firmware_network_state = {
-        "source": "startup_auto",
-        "targets": {
-            "advertised_host": "192.168.8.44",
-            "api_base_url": "https://192.168.8.44:3000/api/v1",
-            "mqtt_broker": "192.168.8.44",
-            "mqtt_port": 1883,
-            "target_key": "192.168.8.44|https://192.168.8.44:3000/api/v1|192.168.8.44|1883",
-        },
-        "error": None,
-    }
-    app.state.firmware_network_audit = {
-        "warning": "Sensitive runtime warning should stay private.",
-        "stale_project_count": 2,
-        "stale_device_count": 3,
-    }
+def test_health_route_exposes_webapp_transport_from_runtime_network_targets(monkeypatch):
+    monkeypatch.delenv("MDNS_HOSTNAME", raising=False)
+    monkeypatch.delenv("MDNS_ADVERTISED_IPS", raising=False)
 
-    try:
-        with TestClient(app) as client:
+    with TestClient(app) as client:
+        app.state.firmware_network_state = {
+            "source": "startup_auto",
+            "targets": {
+                "advertised_host": "192.168.8.44",
+                "api_base_url": "https://192.168.8.44:3000/api/v1",
+                "mqtt_broker": "192.168.8.44",
+                "mqtt_port": 1883,
+                "target_key": "192.168.8.44|https://192.168.8.44:3000/api/v1|192.168.8.44|1883",
+            },
+            "error": None,
+        }
+        app.state.firmware_network_audit = {
+            "warning": "Sensitive runtime warning should stay private.",
+            "stale_project_count": 2,
+            "stale_device_count": 3,
+        }
+
+        try:
             response = client.get("/health")
-    finally:
-        app.state.firmware_network_state = None
-        app.state.firmware_network_audit = None
+        finally:
+            app.state.firmware_network_state = None
+            app.state.firmware_network_audit = None
 
     assert response.status_code == 200
     payload = response.json()
+    assert payload["server_ip"] == "192.168.8.44"
     assert payload["webapp"]["protocol"] == "https"
     assert payload["webapp"]["port"] == "3000"
     assert "firmware_network" not in payload
@@ -122,6 +132,32 @@ def test_health_route_exposes_webapp_transport_from_runtime_network_targets():
     assert "warning" not in payload
     assert "stale_project_count" not in payload
     assert "stale_device_count" not in payload
+
+
+def test_health_route_prefers_mdns_advertised_server_ip_when_runtime_target_uses_alias(monkeypatch):
+    monkeypatch.setenv("MDNS_HOSTNAME", "econnect.local")
+    monkeypatch.setenv("MDNS_ADVERTISED_IPS", "192.168.8.55")
+
+    with TestClient(app) as client:
+        app.state.firmware_network_state = {
+            "source": "configured_env",
+            "targets": {
+                "advertised_host": "econnect.local",
+                "api_base_url": "https://econnect.local:3000/api/v1",
+                "mqtt_broker": "econnect.local",
+                "mqtt_port": 1883,
+                "target_key": "econnect.local|https://econnect.local:3000/api/v1|econnect.local|1883",
+            },
+            "error": None,
+        }
+
+        try:
+            response = client.get("/health")
+        finally:
+            app.state.firmware_network_state = None
+
+    assert response.status_code == 200
+    assert response.json()["server_ip"] == "192.168.8.55"
 
 
 def test_web_assistant_script_route_returns_jsonp_payload():

@@ -34,9 +34,9 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
      - `http://<candidate-host>:8000/web-assistant.js?callback=<callbackName>`
 11. Both discovery paths consume the same runtime health payload, and the script endpoint still invokes the provided callback when the JSONP transport is used.
 12. The health payload exposed to the public scanner must stay discovery-safe:
-   - include only `status`, `database`, `mqtt`, `initialized`, and minimal `webapp` transport hints such as `protocol` and `port`
+   - include only `status`, `database`, `mqtt`, `initialized`, the explicit LAN `server_ip` when available, and minimal `webapp` transport hints such as `protocol` and `port`
    - do not expose `advertised_host`, raw `api_base_url`, MQTT broker hostnames, target keys, stale-count audit values, or raw backend errors
-13. The page derives the launch target from the responding probe host plus the sanitized `webapp` transport hints. When a legacy backend still returns the older `firmware_network` fields, the page may use them as a backward-compatible fallback during rollout.
+13. The page prefers the explicit `server_ip` as the visible LAN identity when the backend provides it, but still falls back to the responding alias or probe host if that IP is unavailable or the alias is the only reachable launch target. When a legacy backend still returns the older `firmware_network` fields, the page may use them as a backward-compatible fallback during rollout.
 14. The page performs a lightweight website probe for the resolved launch target and labels each hit as `online` or `offline`.
 15. On the secure public host, if a private/LAN target still advertises the legacy transport `https://<host>:3000` and that probe fails, the scanner retries `http://<host>:3000` before declaring the WebUI offline.
 16. For the standard self-hosted Docker Compose topology, the primary WebUI launch target should remain plain `http://<lan-host>:3000` so the public finder does not depend on trusting a self-signed LAN certificate just to open the dashboard.
@@ -59,9 +59,9 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 - `GET /`
   - on the host-mapped HTTP landing port, returns a redirect to the current WebUI transport on the same host
   - for the standard compose runtime, the expected redirect target is `http://<alias-or-lan-host>:3000/`
-- `GET /health`
+  - `GET /health`
   - returns the same runtime health payload as JSON
-  - keeps the payload limited to server-safe discovery status plus minimal WebUI transport hints
+  - keeps the payload limited to server-safe discovery status, the explicit LAN `server_ip` when available, plus minimal WebUI transport hints
   - may be consumed directly by local HTTP-hosted scanner copies because the backend CORS policy allows browser access on the LAN
 
 ## UI States
@@ -86,7 +86,7 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
   - a local HTTP-hosted copy of the page can discover a fake backend through `/health`
   - the secure public page either discovers the server through the bridge fast path or continues with alias/subnet JSONP probing before surfacing a secure-origin browser-blocked failure
   - page prefers `econnect.local`-style aliases before subnet sweeping
-  - once discovery succeeds, the result card and launch link use the responding probe host plus the sanitized WebUI transport hints, while legacy payloads may still expose the older LAN-IP preference during rollout
+  - once discovery succeeds, the result card should prefer the sanitized `server_ip` for the visible LAN identity, while the launch link may still fall back to the alias or responding probe host when that is the reachable target
   - page renders scan results and empty state correctly
   - page shows no hydration/runtime errors; failed probe requests may still appear in the browser console as expected network noise
   - Jenkins CD runs a post-deploy Playwright smoke against both the LAN-hosted `find_website` and the public page
