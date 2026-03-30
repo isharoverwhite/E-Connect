@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import close_all_sessions, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.api import router
 from app.database import Base, get_db
@@ -28,8 +29,12 @@ from app.sql_models import (
 from app.auth import get_password_hash
 
 # Setup test DB
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_diy_api.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+SQLALCHEMY_DATABASE_URL = "sqlite://"
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def override_get_db():
