@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 import asyncio
 import base64
 from contextlib import asynccontextmanager, suppress
+import ipaddress
 import json
 import logging
 from pathlib import Path
@@ -96,6 +97,52 @@ def _serialize_discovery_webapp_transport(app: FastAPI) -> dict[str, str] | None
     }
 
 
+def _normalize_discovery_server_ip(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    try:
+        parsed_ip = ipaddress.ip_address(value.strip())
+    except ValueError:
+        return None
+
+    if not isinstance(parsed_ip, ipaddress.IPv4Address):
+        return None
+
+    if parsed_ip.is_loopback or parsed_ip.is_unspecified or parsed_ip.is_link_local or parsed_ip.is_multicast:
+        return None
+
+    return str(parsed_ip)
+
+
+def _resolve_discovery_server_ip(request: Request) -> str | None:
+    runtime_state = getattr(request.app.state, "firmware_network_state", None)
+
+    targets = extract_runtime_firmware_network_targets(runtime_state)
+    if isinstance(targets, dict):
+        for key in ("advertised_host", "mqtt_broker"):
+            normalized_address = _normalize_discovery_server_ip(targets.get(key))
+            if normalized_address is not None:
+                return normalized_address
+
+        api_base_url = targets.get("api_base_url")
+        if isinstance(api_base_url, str) and api_base_url.strip():
+            with suppress(ValueError):
+                normalized_address = _normalize_discovery_server_ip(urlparse(api_base_url.strip()).hostname)
+                if normalized_address is not None:
+                    return normalized_address
+
+    with suppress(Exception):
+        mdns_config = resolve_mdns_registration_config(runtime_state)
+        if mdns_config is not None:
+            for address in mdns_config.addresses:
+                normalized_address = _normalize_discovery_server_ip(address)
+                if normalized_address is not None:
+                    return normalized_address
+
+    return _normalize_discovery_server_ip(request.url.hostname)
+
+
 def _resolve_initialized_state(app: FastAPI) -> bool | None:
     session_provider = app.dependency_overrides.get(get_db, get_db)
     session_context = session_provider()
@@ -120,6 +167,7 @@ def _resolve_initialized_state(app: FastAPI) -> bool | None:
 
 def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
     webapp_transport = _serialize_discovery_webapp_transport(request.app)
+    server_ip = _resolve_discovery_server_ip(request)
     if _using_overridden_database(request.app):
         payload: dict[str, object] = {
             "status": "ok",
@@ -127,6 +175,8 @@ def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
             "mqtt": "skipped",
             "initialized": _resolve_initialized_state(request.app),
         }
+        if server_ip is not None:
+            payload["server_ip"] = server_ip
         if webapp_transport is not None:
             payload["webapp"] = webapp_transport
         return payload, 200
@@ -142,6 +192,8 @@ def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
             "mqtt": "connected" if mqtt_manager.connected else "disconnected",
             "initialized": _resolve_initialized_state(request.app),
         }
+        if server_ip is not None:
+            payload["server_ip"] = server_ip
         if webapp_transport is not None:
             payload["webapp"] = webapp_transport
         return payload, 200
@@ -152,6 +204,8 @@ def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
         "mqtt": "connected" if mqtt_manager.connected else "disconnected",
         "initialized": None,
     }
+    if server_ip is not None:
+        payload["server_ip"] = server_ip
     if webapp_transport is not None:
         payload["webapp"] = webapp_transport
 

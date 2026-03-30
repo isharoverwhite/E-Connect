@@ -16,6 +16,7 @@ export type DiscoveryScriptPayload = {
   database?: string | null;
   mqtt?: string | null;
   initialized?: boolean | null;
+  server_ip?: string | null;
   webapp?: DiscoveryWebappPayload | null;
   firmware_network?: FirmwareNetworkPayload | null;
 };
@@ -254,9 +255,10 @@ export function resolveWebappProbeTransports(
 export function resolveDiscoveryHost(
   probedHost: string,
   firmwareNetwork?: FirmwareNetworkPayload | null,
+  serverIp?: string | null,
 ): string {
   return (
-    resolveDiscoveryLanHost(probedHost, firmwareNetwork) ??
+    resolveDiscoveryLanHost(probedHost, firmwareNetwork, serverIp) ??
     normalizeDiscoveryHost(firmwareNetwork?.advertised_host) ??
     normalizeDiscoveryHost(firmwareNetwork?.api_base_url) ??
     normalizeDiscoveryHost(probedHost) ??
@@ -267,8 +269,10 @@ export function resolveDiscoveryHost(
 export function resolveDiscoveryLanHost(
   probedHost: string,
   firmwareNetwork?: FirmwareNetworkPayload | null,
+  serverIp?: string | null,
 ): string | null {
   return (
+    extractPrivateIpv4DiscoveryHost(serverIp) ??
     extractPrivateIpv4DiscoveryHost(firmwareNetwork?.api_base_url) ??
     extractPrivateIpv4DiscoveryHost(firmwareNetwork?.advertised_host) ??
     extractPrivateIpv4DiscoveryHost(probedHost)
