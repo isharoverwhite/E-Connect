@@ -10,9 +10,11 @@ import {
   isDiscoveryPayloadCandidate,
   isLikelyPrivateDiscoveryHost,
   normalizeDiscoveryHost,
+  resolveDiscoveryAliasHost,
   resolvePrivateIpv4SubnetPrefix,
   resolveDiscoveryAttemptBudget,
   resolveDiscoveryHost,
+  resolveDiscoveryLanHost,
   resolveWebappTransport,
   WEBSITE_PROBE_TIMEOUT_MS,
   type DeviceInfo,
@@ -76,12 +78,14 @@ async function buildDeviceFromPayload(
   }
 
   const { protocol, port } = resolveWebappTransport(payload.firmware_network);
-  const displayHost = resolveDiscoveryHost(host, payload.firmware_network);
   const probeHost = host.trim();
+  const lanHost = resolveDiscoveryLanHost(host, payload.firmware_network);
+  const displayHost = lanHost ?? resolveDiscoveryHost(host, payload.firmware_network);
+  const advertisedHost = lanHost ? resolveDiscoveryAliasHost(host, payload.firmware_network) : null;
   let launchHost = displayHost;
   let websiteStatus = await probeWebsite(buildWebappBaseUrl(launchHost, protocol, port), signal);
 
-  if (launchHost !== probeHost && websiteStatus === "offline") {
+  if (!lanHost && launchHost !== probeHost && websiteStatus === "offline") {
     const fallbackStatus = await probeWebsite(buildWebappBaseUrl(probeHost, protocol, port), signal);
     launchHost = probeHost;
     websiteStatus = fallbackStatus;
@@ -91,6 +95,7 @@ async function buildDeviceFromPayload(
     displayHost,
     launchHost,
     probeHost,
+    advertisedHost,
     database: payload.database?.trim() || "unknown",
     mqtt: payload.mqtt?.trim() || "unknown",
     protocol,

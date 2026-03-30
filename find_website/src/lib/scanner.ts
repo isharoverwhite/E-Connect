@@ -2,6 +2,7 @@ export type DeviceInfo = {
   displayHost: string;
   launchHost: string;
   probeHost: string;
+  advertisedHost?: string | null;
   database: string;
   mqtt: string;
   protocol?: string;
@@ -96,6 +97,15 @@ function isPrivateIpv4Host(hostname: string): boolean {
   return octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31;
 }
 
+export function extractPrivateIpv4DiscoveryHost(value: string | null | undefined): string | null {
+  const hostname = normalizeDiscoveryHost(value);
+  if (!hostname || !isPrivateIpv4Host(hostname)) {
+    return null;
+  }
+
+  return hostname;
+}
+
 export function isLikelyPrivateDiscoveryHost(value: string | null | undefined): boolean {
   const hostname = normalizeDiscoveryHost(value);
   if (!hostname) {
@@ -185,11 +195,42 @@ export function resolveDiscoveryHost(
   firmwareNetwork?: FirmwareNetworkPayload | null,
 ): string {
   return (
+    resolveDiscoveryLanHost(probedHost, firmwareNetwork) ??
     normalizeDiscoveryHost(firmwareNetwork?.advertised_host) ??
     normalizeDiscoveryHost(firmwareNetwork?.api_base_url) ??
     normalizeDiscoveryHost(probedHost) ??
     probedHost.trim()
   );
+}
+
+export function resolveDiscoveryLanHost(
+  probedHost: string,
+  firmwareNetwork?: FirmwareNetworkPayload | null,
+): string | null {
+  return (
+    extractPrivateIpv4DiscoveryHost(firmwareNetwork?.api_base_url) ??
+    extractPrivateIpv4DiscoveryHost(firmwareNetwork?.advertised_host) ??
+    extractPrivateIpv4DiscoveryHost(probedHost)
+  );
+}
+
+export function resolveDiscoveryAliasHost(
+  probedHost: string,
+  firmwareNetwork?: FirmwareNetworkPayload | null,
+): string | null {
+  const candidates = [
+    normalizeDiscoveryHost(firmwareNetwork?.advertised_host),
+    normalizeDiscoveryHost(firmwareNetwork?.api_base_url),
+    normalizeDiscoveryHost(probedHost),
+  ];
+
+  for (const candidate of candidates) {
+    if (candidate && !isPrivateIpv4Host(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
 }
 
 export function buildWebappBaseUrl(host: string, protocol = DEFAULT_WEBAPP_PROTOCOL, port = DEFAULT_WEBAPP_PORT): string {

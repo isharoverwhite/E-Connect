@@ -80,8 +80,8 @@
   - The active scan window is `15s` by default, but once any server is detected the scanner must shorten the run to a total `7s` timeout before revealing results.
 - **Backend discovery script (`server`)**:
   - The browser-facing script endpoint returns JavaScript that invokes a validated callback with the same runtime health payload used by `/health`.
-  - The scanner uses the backend-advertised host plus the WebApp protocol and port derived from `firmware_network.advertised_host` / `firmware_network.api_base_url` to build the launch URL for that server.
-  - The result card must keep the backend-advertised host such as `econnect.local` as the primary identity label even when the browser had to probe or launch the WebUI through a raw LAN IP fallback.
+  - The scanner derives the WebUI protocol and port from `firmware_network.advertised_host` / `firmware_network.api_base_url`, then resolves a private LAN IP from that same health payload before probing or launching the WebUI.
+  - The result card must show the resolved LAN IP as the primary identity label and launch target. If the backend also advertises an alias such as `econnect.local`, that alias may appear only as secondary context.
   - If the backend does not expose a usable WebApp transport, the scanner must fall back to `http` on port `3000` instead of guessing alternate ports.
   - A backend-responsive server must remain visible in scan results even when the website probe fails, and the result card must show whether the website is currently `online` or `offline`.
 - **Device Management screen**:
