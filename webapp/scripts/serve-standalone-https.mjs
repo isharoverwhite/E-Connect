@@ -6,16 +6,25 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { ensureLocalTlsAssets, formatTlsHostSummary } from "./local-https.mjs";
 
-const publicPort = Number.parseInt(process.env.PORT ?? "3000", 10);
-const publicHost = process.env.HOSTNAME ?? "0.0.0.0";
-const internalPort = Number.parseInt(process.env.INTERNAL_HTTP_PORT ?? "3001", 10);
-
-if (!Number.isFinite(publicPort) || publicPort <= 0) {
-  throw new Error(`Invalid PORT=${process.env.PORT}`);
+function parsePort(rawValue, envName) {
+  const parsed = Number.parseInt(rawValue ?? "", 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${envName}=${rawValue}`);
+  }
+  return parsed;
 }
 
-if (!Number.isFinite(internalPort) || internalPort <= 0 || internalPort === publicPort) {
-  throw new Error(`Invalid INTERNAL_HTTP_PORT=${process.env.INTERNAL_HTTP_PORT ?? "3001"}`);
+const publicHttpPort = parsePort(process.env.PORT ?? "3000", "PORT");
+const publicHttpsPort = parsePort(process.env.HTTPS_PORT ?? "3443", "HTTPS_PORT");
+const publicHost = process.env.HOSTNAME ?? "0.0.0.0";
+const internalPort = parsePort(process.env.INTERNAL_HTTP_PORT ?? "3001", "INTERNAL_HTTP_PORT");
+
+if (publicHttpPort === publicHttpsPort) {
+  throw new Error(`PORT=${publicHttpPort} and HTTPS_PORT=${publicHttpsPort} must not be the same.`);
+}
+
+if (internalPort === publicHttpPort || internalPort === publicHttpsPort) {
+  throw new Error(`INTERNAL_HTTP_PORT=${internalPort} must differ from the public listener ports.`);
 }
 
 const standaloneServerPath = [
@@ -30,7 +39,7 @@ if (!standaloneServerPath) {
 const { keyPath, certPath, provider, hosts, httpsDir } = ensureLocalTlsAssets();
 
 console.log(
-  `[https] Frontend runtime is HTTPS-only. Using ${provider} TLS assets in ${httpsDir} for ${formatTlsHostSummary(hosts)}.`,
+  `[https] HTTPS companion is enabled on port ${publicHttpsPort}. Using ${provider} TLS assets in ${httpsDir} for ${formatTlsHostSummary(hosts)}.`,
 );
 
 const child = spawn(process.execPath, [standaloneServerPath], {
@@ -44,16 +53,16 @@ const child = spawn(process.execPath, [standaloneServerPath], {
 
 let shuttingDown = false;
 
-function forwardedHeaders(request) {
+function forwardedHeaders(request, { externalPort, isSecure }) {
   const headers = { ...request.headers };
   const remoteAddress = request.socket.remoteAddress ?? "";
   const existingForwardedFor = request.headers["x-forwarded-for"];
   const forwardedFor = [existingForwardedFor, remoteAddress].filter(Boolean).join(", ");
 
-  headers.host = request.headers.host ?? `${publicHost}:${publicPort}`;
-  headers["x-forwarded-proto"] = "https";
-  headers["x-forwarded-port"] = String(publicPort);
-  headers["x-forwarded-host"] = request.headers.host ?? `${publicHost}:${publicPort}`;
+  headers.host = request.headers.host ?? `${publicHost}:${externalPort}`;
+  headers["x-forwarded-proto"] = isSecure ? "https" : "http";
+  headers["x-forwarded-port"] = String(externalPort);
+  headers["x-forwarded-host"] = request.headers.host ?? `${publicHost}:${externalPort}`;
   if (forwardedFor) {
     headers["x-forwarded-for"] = forwardedFor;
   }
@@ -61,14 +70,14 @@ function forwardedHeaders(request) {
   return headers;
 }
 
-function proxyHttpRequest(request, response) {
+function proxyHttpRequest(request, response, options) {
   const upstream = http.request(
     {
       host: "127.0.0.1",
       port: internalPort,
       method: request.method,
       path: request.url,
-      headers: forwardedHeaders(request),
+      headers: forwardedHeaders(request, options),
     },
     (upstreamResponse) => {
       response.writeHead(
@@ -94,9 +103,9 @@ function proxyHttpRequest(request, response) {
   request.pipe(upstream);
 }
 
-function serializeUpgradeHeaders(request) {
+function serializeUpgradeHeaders(request, options) {
   const headerLines = [];
-  const headers = forwardedHeaders(request);
+  const headers = forwardedHeaders(request, options);
 
   for (const [name, value] of Object.entries(headers)) {
     if (Array.isArray(value)) {
@@ -112,36 +121,53 @@ function serializeUpgradeHeaders(request) {
   return `${request.method} ${request.url} HTTP/${request.httpVersion}\r\n${headerLines.join("\r\n")}\r\n\r\n`;
 }
 
-const secureServer = https.createServer(
+function attachUpgradeProxy(server, options) {
+  server.on("upgrade", (request, socket, head) => {
+    const upstreamSocket = net.connect(internalPort, "127.0.0.1");
+
+    upstreamSocket.on("connect", () => {
+      upstreamSocket.write(serializeUpgradeHeaders(request, options));
+      if (head.length > 0) {
+        upstreamSocket.write(head);
+      }
+      socket.pipe(upstreamSocket).pipe(socket);
+    });
+
+    upstreamSocket.on("error", () => {
+      socket.destroy();
+    });
+
+    socket.on("error", () => {
+      upstreamSocket.destroy();
+    });
+  });
+}
+
+const httpServer = http.createServer((request, response) => {
+  proxyHttpRequest(request, response, { externalPort: publicHttpPort, isSecure: false });
+});
+
+const httpsServer = https.createServer(
   {
     key: readFileSync(keyPath),
     cert: readFileSync(certPath),
   },
-  proxyHttpRequest,
+  (request, response) => {
+    proxyHttpRequest(request, response, { externalPort: publicHttpsPort, isSecure: true });
+  },
 );
 
-secureServer.on("upgrade", (request, socket, head) => {
-  const upstreamSocket = net.connect(internalPort, "127.0.0.1");
+attachUpgradeProxy(httpServer, { externalPort: publicHttpPort, isSecure: false });
+attachUpgradeProxy(httpsServer, { externalPort: publicHttpsPort, isSecure: true });
 
-  upstreamSocket.on("connect", () => {
-    upstreamSocket.write(serializeUpgradeHeaders(request));
-    if (head.length > 0) {
-      upstreamSocket.write(head);
-    }
-    socket.pipe(upstreamSocket).pipe(socket);
-  });
-
-  upstreamSocket.on("error", () => {
-    socket.destroy();
-  });
-
-  socket.on("error", () => {
-    upstreamSocket.destroy();
-  });
+httpServer.listen(publicHttpPort, publicHost, () => {
+  console.log(`[http] Listening on http://${publicHost}:${publicHttpPort}.`);
 });
 
-secureServer.listen(publicPort, publicHost, () => {
-  console.log(`[https] Listening on https://${publicHost}:${publicPort} with internal Next upstream on 127.0.0.1:${internalPort}.`);
+httpsServer.listen(publicHttpsPort, publicHost, () => {
+  console.log(
+    `[https] Listening on https://${publicHost}:${publicHttpsPort} with internal Next upstream on 127.0.0.1:${internalPort}.`,
+  );
 });
 
 function shutdown(signal) {
@@ -150,9 +176,16 @@ function shutdown(signal) {
   }
 
   shuttingDown = true;
-  secureServer.close(() => {
-    child.kill(signal);
-  });
+  let closedServers = 0;
+  const handleClose = () => {
+    closedServers += 1;
+    if (closedServers === 2) {
+      child.kill(signal);
+    }
+  };
+
+  httpServer.close(handleClose);
+  httpsServer.close(handleClose);
 
   setTimeout(() => {
     child.kill(signal);
@@ -165,7 +198,8 @@ function shutdown(signal) {
 
 child.on("exit", (code, signal) => {
   if (!shuttingDown) {
-    secureServer.close();
+    httpServer.close();
+    httpsServer.close();
   }
 
   if (signal) {
