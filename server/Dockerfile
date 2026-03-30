@@ -12,9 +12,9 @@ ENV BUILD_BASE_DIR=/data/builds
 ENV PLATFORMIO_CORE_DIR=/data/.platformio
 ENV HOST_OS_ROOT=/
 
-# Install system dependencies
+# Install only runtime packages required by the current build path.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends git ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
