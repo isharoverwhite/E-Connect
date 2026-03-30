@@ -211,9 +211,18 @@ async function probeCandidateHostOnce(host: string, signal: AbortSignal, timeout
     const handleAbort = () => finalize(null);
     const timeoutId = window.setTimeout(() => finalize(null), timeoutMs);
 
-    pageWindow[callbackName] = async (payload: DiscoveryScriptPayload) => {
+    pageWindow[callbackName] = (payload: DiscoveryScriptPayload) => {
       clearTimeout(timeoutId);
-      finalize(await buildDeviceFromPayload(host, payload, signal));
+      window.setTimeout(() => {
+        if (signal.aborted) {
+          finalize(null);
+          return;
+        }
+
+        void (async () => {
+          finalize(await buildDeviceFromPayload(host, payload, signal));
+        })();
+      }, 0);
     };
 
     script.async = true;
