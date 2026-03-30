@@ -62,6 +62,7 @@ export async function fetchRuntimeNetworkInfo(token?: string): Promise<RuntimeNe
     const response = await fetch(`${API_URL}/diy/network-targets`, {
         headers: {
             Authorization: `Bearer ${authToken}`,
+            ...buildProvisioningHeaders(),
         },
         cache: "no-store",
     });
