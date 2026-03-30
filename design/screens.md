@@ -73,6 +73,7 @@
   - The page keeps the centered radar, sticky header, and stacked result-card layout from the existing scanner rather than switching to a marketing-style landing page.
   - The secure public page must not show a permanent warning banner on initial load just because it is running on HTTPS or through Cloudflare Tunnel; browser-transport guidance belongs in the contextual empty/failure copy after a secure scan ends without a usable result.
   - The secure public page should auto-start scanning shortly after load instead of waiting at a manual `Start LAN Scan` gate; the button remains available as a retry path when the browser blocks the local bridge attempt.
+  - If the local bridge popup is blocked or closes before posting a result, the scan must continue with the normal alias-first and subnet JSONP sweep instead of hard-failing immediately.
   - The secure public host probes LAN targets with the Synology-style `http://<candidate-ip>:8000/web-assistant.js?callback=...` transport, while LAN-hosted HTTP copies may fall back to `GET /health` on the same backend when direct JSONP probing proves unreliable.
   - The scanner must try `econnect.local` first, followed by other approved local aliases, before it starts sweeping common private subnets.
   - When the scanner is hosted from a LAN IP or `.local` origin, it must probe that current host before the wider subnet sweep so a colocated `find_website` reaches its paired backend quickly.
@@ -82,9 +83,11 @@
   - The active scan window is `15s` by default, but once any server is detected the scanner must shorten the run to a total `7s` timeout before revealing results.
 - **Backend discovery script (`server`)**:
   - The browser-facing script endpoint returns JavaScript that invokes a validated callback with the same runtime health payload used by `/health`.
+  - The discovery payload exposed by `/health`, `/web-assistant.js`, and `/discovery-bridge` must stay sanitized: it may expose only high-level server status (`status`, `database`, `mqtt`, `initialized`) plus minimal WebApp transport hints needed for launch (`webapp.protocol`, `webapp.port`).
+  - The discovery payload must not expose backend-internal hostnames, raw API base URLs, MQTT broker hostnames, target keys, stale project counts, stale device counts, or raw backend error strings.
   - When the operator publishes an alias such as `econnect.local` and the self-hosted machine exposes host port `80`, opening `http://econnect.local` must redirect to the current WebUI transport on that same host. For the standard Docker Compose runtime, the default redirect target is `http://econnect.local:3000/`.
-  - The scanner derives the WebUI protocol and port from `firmware_network.advertised_host` / `firmware_network.api_base_url`, then resolves a private LAN IP from that same health payload before probing or launching the WebUI.
-  - The result card must show the resolved LAN IP as the primary identity label and launch target. If the backend also advertises an alias such as `econnect.local`, that alias may appear only as secondary context.
+  - The scanner derives the WebUI protocol and port from the sanitized `webapp` transport hints and uses the responding probe host as the primary launch identity. Legacy `firmware_network` fields may be read only as a backward-compatible fallback during rollout.
+  - The result card must show truthful server status for `Database`, `Initialized`, `MQTT Broker`, and `Web App`. If the responding probe host is an alias such as `econnect.local`, that alias may remain the visible identity instead of forcing a backend-reported LAN IP.
   - For the standard Docker Compose runtime, the finder should prefer a plain `http://<lan-host>:3000` launch target so LAN discovery does not fail on a self-signed HTTPS certificate before the dashboard even opens.
   - If the secure public page receives a private/LAN transport of `https://<host>:3000` and that probe fails, the scanner must retry `http://<host>:3000` before marking the WebUI offline.
   - If the backend still does not expose a usable WebApp transport after that retry, the scanner must keep the server card visible and report the website as offline instead of guessing alternate ports.

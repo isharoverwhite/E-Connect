@@ -150,9 +150,10 @@ async function buildDeviceFromPayload(
     return null;
   }
 
-  const advertisedTransport = resolveWebappTransport(payload.firmware_network);
-  const transportCandidates = resolveWebappProbeTransports(payload.firmware_network, {
+  const advertisedTransport = resolveWebappTransport(payload.webapp, payload.firmware_network);
+  const transportCandidates = resolveWebappProbeTransports(payload.webapp, payload.firmware_network, {
     securePage: isSecureScannerPage(),
+    probeHost: host,
   });
   const primaryTransport = transportCandidates[0] ?? advertisedTransport;
   const probeHost = host.trim();
@@ -182,6 +183,7 @@ async function buildDeviceFromPayload(
       advertisedHost,
       database: payload.database?.trim() || "unknown",
       mqtt: payload.mqtt?.trim() || "unknown",
+      initialized: typeof payload.initialized === "boolean" ? payload.initialized : null,
       protocol: selectedTransport.protocol,
       port: selectedTransport.port,
       websiteStatus,
@@ -226,6 +228,7 @@ async function buildDeviceFromPayload(
     advertisedHost,
     database: payload.database?.trim() || "unknown",
     mqtt: payload.mqtt?.trim() || "unknown",
+    initialized: typeof payload.initialized === "boolean" ? payload.initialized : null,
     protocol: selectedTransport.protocol,
     port: selectedTransport.port,
     websiteStatus,
@@ -480,7 +483,7 @@ async function probePreferredAliasesViaBridge(signal: AbortSignal): Promise<Devi
 
     const bridgeWindow = bridgeWindowRef.current;
     if (!bridgeWindow) {
-      throw new Error("Allow pop-ups for this page, then retry the LAN scan.");
+      return null;
     }
 
     for (const host of remainingBridgeHosts) {

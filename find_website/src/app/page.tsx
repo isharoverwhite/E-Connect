@@ -151,6 +151,8 @@ export default function Home() {
                 {foundDevices.map((device) => {
                   const href = `${buildWebappBaseUrl(device.launchHost, device.protocol, device.port)}/`;
                   const isWebsiteOnline = device.websiteStatus === "online";
+                  const initializedLabel =
+                    device.initialized === true ? "Initialized" : device.initialized === false ? "Setup required" : "Unknown";
                   const showsAdvertisedAlias = Boolean(
                     device.advertisedHost && device.advertisedHost !== device.displayHost,
                   );
@@ -224,6 +226,24 @@ export default function Home() {
                           </div>
                           <div className="text-right">
                             <span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">
+                              Initialized
+                            </span>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <span className="text-sm text-slate-700">{initializedLabel}</span>
+                              <div
+                                className={cn(
+                                  "h-2 w-2 rounded-full",
+                                  device.initialized === true
+                                    ? "bg-blue-500"
+                                    : device.initialized === false
+                                      ? "bg-amber-500"
+                                      : "bg-slate-300",
+                                )}
+                              />
+                            </div>
+                          </div>
+                          <div className="text-right">
+                            <span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">
                               MQTT Broker
                             </span>
                             <div className="flex items-center justify-end gap-1.5">
@@ -237,7 +257,7 @@ export default function Home() {
                             </div>
                           </div>
                           <div className="text-right">
-                            <span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Website</span>
+                            <span className="mb-1 block text-[10px] uppercase tracking-wider text-slate-500">Web App</span>
                             <div className="flex items-center justify-end gap-1.5">
                               <span className="text-sm capitalize text-slate-700">{device.websiteStatus}</span>
                               <div

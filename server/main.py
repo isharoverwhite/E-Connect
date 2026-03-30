@@ -28,6 +28,7 @@ from app.services.builder import (
 )
 from app.services.mdns import MdnsPublisher, resolve_mdns_registration_config
 from app.services.user_management import ensure_temp_support_account
+from app.sql_models import User
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -79,12 +80,55 @@ def _serialize_firmware_network_state(app: FastAPI) -> dict[str, str] | None:
     return payload or None
 
 
+def _serialize_discovery_webapp_transport(app: FastAPI) -> dict[str, str] | None:
+    runtime_state = getattr(app.state, "firmware_network_state", None)
+    if not isinstance(runtime_state, dict):
+        return None
+
+    targets = extract_runtime_firmware_network_targets(runtime_state)
+    if not isinstance(targets, dict):
+        return None
+
+    webapp_transport = resolve_webapp_transport(targets.get("api_base_url"))
+    return {
+        "protocol": str(webapp_transport["webapp_protocol"]),
+        "port": str(webapp_transport["webapp_port"]),
+    }
+
+
+def _resolve_initialized_state(app: FastAPI) -> bool | None:
+    session_provider = app.dependency_overrides.get(get_db, get_db)
+    session_context = session_provider()
+
+    try:
+        db = next(session_context)
+    except StopIteration:
+        return None
+    except Exception:
+        logger.exception("Failed to open a database session for the discovery health payload")
+        return None
+
+    try:
+        return db.query(User).count() > 0
+    except Exception:
+        logger.exception("Failed to determine server initialization state for discovery health")
+        return None
+    finally:
+        with suppress(Exception):
+            session_context.close()
+
+
 def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
-    firmware_network_state = _serialize_firmware_network_state(request.app)
+    webapp_transport = _serialize_discovery_webapp_transport(request.app)
     if _using_overridden_database(request.app):
-        payload: dict[str, object] = {"status": "ok", "database": "overridden", "mqtt": "skipped"}
-        if firmware_network_state is not None:
-            payload["firmware_network"] = firmware_network_state
+        payload: dict[str, object] = {
+            "status": "ok",
+            "database": "overridden",
+            "mqtt": "skipped",
+            "initialized": _resolve_initialized_state(request.app),
+        }
+        if webapp_transport is not None:
+            payload["webapp"] = webapp_transport
         return payload, 200
 
     database_ready, database_error = check_database_connection()
@@ -96,19 +140,20 @@ def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
             "status": "ok",
             "database": "ok",
             "mqtt": "connected" if mqtt_manager.connected else "disconnected",
+            "initialized": _resolve_initialized_state(request.app),
         }
-        if firmware_network_state is not None:
-            payload["firmware_network"] = firmware_network_state
+        if webapp_transport is not None:
+            payload["webapp"] = webapp_transport
         return payload, 200
 
     payload = {
         "status": "degraded",
         "database": "unavailable",
         "mqtt": "connected" if mqtt_manager.connected else "disconnected",
-        "error": database_error,
+        "initialized": None,
     }
-    if firmware_network_state is not None:
-        payload["firmware_network"] = firmware_network_state
+    if webapp_transport is not None:
+        payload["webapp"] = webapp_transport
 
     return payload, 503
 

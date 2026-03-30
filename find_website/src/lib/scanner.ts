@@ -5,6 +5,7 @@ export type DeviceInfo = {
   advertisedHost?: string | null;
   database: string;
   mqtt: string;
+  initialized: boolean | null;
   protocol?: string;
   port?: string;
   websiteStatus: "online" | "offline";
@@ -14,7 +15,14 @@ export type DiscoveryScriptPayload = {
   status?: string | null;
   database?: string | null;
   mqtt?: string | null;
+  initialized?: boolean | null;
+  webapp?: DiscoveryWebappPayload | null;
   firmware_network?: FirmwareNetworkPayload | null;
+};
+
+type DiscoveryWebappPayload = {
+  protocol?: string | null;
+  port?: string | number | null;
 };
 
 type FirmwareNetworkPayload = {
@@ -164,10 +172,11 @@ function normalizePort(value: string | number | null | undefined): string | null
 }
 
 export function resolveWebappTransport(
+  webapp?: DiscoveryWebappPayload | null,
   firmwareNetwork?: FirmwareNetworkPayload | null,
 ): WebappTransport {
-  const backendProtocol = normalizeProtocol(firmwareNetwork?.webapp_protocol);
-  const backendPort = normalizePort(firmwareNetwork?.webapp_port);
+  const backendProtocol = normalizeProtocol(webapp?.protocol) ?? normalizeProtocol(firmwareNetwork?.webapp_protocol);
+  const backendPort = normalizePort(webapp?.port) ?? normalizePort(firmwareNetwork?.webapp_port);
 
   if (backendProtocol && backendPort) {
     return {
@@ -211,13 +220,15 @@ function appendWebappTransportCandidate(candidates: WebappTransport[], candidate
 }
 
 export function resolveWebappProbeTransports(
+  webapp?: DiscoveryWebappPayload | null,
   firmwareNetwork?: FirmwareNetworkPayload | null,
-  options?: { securePage?: boolean },
+  options?: { securePage?: boolean; probeHost?: string | null },
 ): WebappTransport[] {
-  const primaryTransport = resolveWebappTransport(firmwareNetwork);
+  const primaryTransport = resolveWebappTransport(webapp, firmwareNetwork);
   const candidates: WebappTransport[] = [];
   const securePage = options?.securePage === true;
   const looksPrivateLanTarget =
+    isLikelyPrivateDiscoveryHost(options?.probeHost) ||
     isLikelyPrivateDiscoveryHost(firmwareNetwork?.api_base_url) ||
     isLikelyPrivateDiscoveryHost(firmwareNetwork?.advertised_host);
 
