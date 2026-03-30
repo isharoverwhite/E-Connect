@@ -28,15 +28,16 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
    - on the secure public host, the scanner keeps the Synology-style script probe transport:
      - `http://<candidate-host>:8000/web-assistant.js?callback=<callbackName>`
 9. Both discovery paths consume the same runtime health payload, and the script endpoint still invokes the provided callback when the JSONP transport is used.
-10. The page trusts `firmware_network` as the source of truth for:
+10. The page trusts `firmware_network` as the primary source of truth for:
    - the WebUI protocol and port
    - the preferred LAN launch host, by first extracting a private IPv4 from `api_base_url`, then `advertised_host`, then the responding probe host
 11. Once a private LAN IP is available, the page probes the WebUI through that IP, launches through that IP, and shows that same LAN IP as the primary host in the result card. A backend-advertised alias such as `econnect.local` may remain secondary context only.
 12. The page performs a lightweight website probe for the resolved launch target and labels each hit as `online` or `offline`.
-13. For the standard self-hosted Docker Compose topology, the primary WebUI launch target should remain plain `http://<lan-host>:3000` so the public finder does not depend on trusting a self-signed LAN certificate just to open the dashboard.
-14. When secure-context browser features such as Web Serial are needed, the self-hosted stack may still expose an HTTPS companion origin separately from the finder launch target.
-15. After the scan window closes, the page reveals the final result list, or surfaces an explicit browser-blocked failure when the secure public origin cannot reach local HTTP discovery endpoints.
-16. The developer-hosted public page never scans the user's LAN from the developer server; all LAN discovery requests come from the user's own browser session.
+13. On the secure public host, if a private/LAN target still advertises the legacy transport `https://<host>:3000` and that probe fails, the scanner retries `http://<host>:3000` before declaring the WebUI offline.
+14. For the standard self-hosted Docker Compose topology, the primary WebUI launch target should remain plain `http://<lan-host>:3000` so the public finder does not depend on trusting a self-signed LAN certificate just to open the dashboard.
+15. When secure-context browser features such as Web Serial are needed, the self-hosted stack may still expose an HTTPS companion origin separately from the finder launch target.
+16. After the scan window closes, the page reveals the final result list, or surfaces an explicit browser-blocked failure when the secure public origin cannot reach local HTTP discovery endpoints.
+17. The developer-hosted public page never scans the user's LAN from the developer server; all LAN discovery requests come from the user's own browser session.
 
 ## Backend Contract
 

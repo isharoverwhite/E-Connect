@@ -85,7 +85,8 @@
   - The scanner derives the WebUI protocol and port from `firmware_network.advertised_host` / `firmware_network.api_base_url`, then resolves a private LAN IP from that same health payload before probing or launching the WebUI.
   - The result card must show the resolved LAN IP as the primary identity label and launch target. If the backend also advertises an alias such as `econnect.local`, that alias may appear only as secondary context.
   - For the standard Docker Compose runtime, the finder should prefer a plain `http://<lan-host>:3000` launch target so LAN discovery does not fail on a self-signed HTTPS certificate before the dashboard even opens.
-  - If the backend does not expose a usable WebApp transport, the scanner must fall back to `http` on port `3000` instead of guessing alternate ports.
+  - If the secure public page receives a private/LAN transport of `https://<host>:3000` and that probe fails, the scanner must retry `http://<host>:3000` before marking the WebUI offline.
+  - If the backend still does not expose a usable WebApp transport after that retry, the scanner must keep the server card visible and report the website as offline instead of guessing alternate ports.
   - A backend-responsive server must remain visible in scan results even when the website probe fails, and the result card must show whether the website is currently `online` or `offline`.
 - **Device Management screen**:
   - The page header must keep the title block readable while preserving the admin action set `SVG Builder`, `Discover New`, and `Refresh`.
