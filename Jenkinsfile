@@ -335,7 +335,13 @@ pipeline {
                             -e DISCOVERY_ALLOW_SCAN_FAILED="$allow_scan_failed" \
                             -e DISCOVERY_SCAN_TIMEOUT_MS="45000" \
                             mcr.microsoft.com/playwright:v1.58.2-noble \
-                            bash -lc 'npm install -g playwright@1.58.2 >/tmp/playwright-npm.log 2>&1 && export NODE_PATH="$(npm root -g)" && node -' \
+                            bash -lc 'set -eu
+                                if ! npm install -g playwright@1.58.2 >/tmp/playwright-npm.log 2>&1; then
+                                    cat /tmp/playwright-npm.log >&2 || true
+                                    exit 1
+                                fi
+                                export NODE_PATH="$(npm root -g)"
+                                node -' \
                             < webapp/scripts/discovery-smoke.cjs
                     }
 

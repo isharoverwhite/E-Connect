@@ -12,7 +12,6 @@ import uuid
 from datetime import datetime, timedelta, timezone
 import anyio
 import asyncio
-import psutil
 import hashlib
 
 from .mqtt import build_pairing_rejected_ack_payload, mqtt_manager
@@ -70,6 +69,7 @@ from .services.diy_validation import resolve_board_definition, validate_diy_conf
 from .services.user_management import ensure_temp_support_account, resolve_household_id_for_user
 from .services.provisioning import derive_project_secret
 from .services.i2c_registry import I2CLibrary, get_i2c_catalog
+from .services.system_metrics import collect_system_metrics
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
@@ -1673,6 +1673,7 @@ async def get_diy_network_targets(
             stale_device_count = int(raw_device_count)
 
     webapp_transport = resolve_webapp_transport(str(targets["api_base_url"]))
+    metrics = collect_system_metrics()
 
     return FirmwareNetworkTargetsResponse(
         advertised_host=str(targets["advertised_host"]),
@@ -1685,11 +1686,11 @@ async def get_diy_network_targets(
         warning=warning,
         stale_project_count=stale_project_count,
         stale_device_count=stale_device_count,
-        cpu_percent=psutil.cpu_percent(interval=None),
-        memory_used=psutil.virtual_memory().used,
-        memory_total=psutil.virtual_memory().total,
-        storage_used=psutil.disk_usage(os.getenv('HOST_OS_ROOT', '/')).used,
-        storage_total=psutil.disk_usage(os.getenv('HOST_OS_ROOT', '/')).total,
+        cpu_percent=metrics["cpu_percent"],
+        memory_used=metrics["memory_used"],
+        memory_total=metrics["memory_total"],
+        storage_used=metrics["storage_used"],
+        storage_total=metrics["storage_total"],
     )
 
 @router.get("/diy/i2c/libraries", response_model=List[I2CLibrary])

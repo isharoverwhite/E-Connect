@@ -22,8 +22,6 @@ from sqlalchemy.exc import OperationalError
 from app.database import SessionLocal, check_database_connection, get_db, initialize_database
 from app.mqtt import mqtt_manager
 from app.ws_manager import manager as ws_manager
-import psutil
-import os
 from app.services.builder import (
     audit_runtime_firmware_target_mismatches,
     extract_runtime_firmware_network_targets,
@@ -31,6 +29,7 @@ from app.services.builder import (
     resolve_webapp_transport,
 )
 from app.services.mdns import MdnsPublisher, resolve_mdns_registration_config
+from app.services.system_metrics import collect_system_metrics
 from app.services.user_management import ensure_temp_support_account
 from app.sql_models import User
 
@@ -273,13 +272,7 @@ async def lifespan(app: FastAPI):
         while True:
             await asyncio.sleep(1.0)
             try:
-                payload = {
-                    "cpu_percent": psutil.cpu_percent(interval=None),
-                    "memory_used": psutil.virtual_memory().used,
-                    "memory_total": psutil.virtual_memory().total,
-                    "storage_used": psutil.disk_usage(os.getenv('HOST_OS_ROOT', '/')).used,
-                    "storage_total": psutil.disk_usage(os.getenv('HOST_OS_ROOT', '/')).total,
-                }
+                payload = collect_system_metrics()
                 await ws_manager.broadcast_system_event("system_metrics", payload)
             except Exception:
                 logger.exception("System metrics watchdog failed")
