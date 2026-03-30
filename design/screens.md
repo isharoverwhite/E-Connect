@@ -72,6 +72,7 @@
   - The public host uses a white/light surface with blue accents so the discovery page matches the WebUI theme instead of the older dark/green shell.
   - The page keeps the centered radar, sticky header, and stacked result-card layout from the existing scanner rather than switching to a marketing-style landing page.
   - The secure public page must not show a permanent warning banner on initial load just because it is running on HTTPS or through Cloudflare Tunnel; browser-transport guidance belongs in the contextual empty/failure copy after a secure scan ends without a usable result.
+  - The secure public page should auto-start scanning shortly after load instead of waiting at a manual `Start LAN Scan` gate; the button remains available as a retry path when the browser blocks the local bridge attempt.
   - The secure public host probes LAN targets with the Synology-style `http://<candidate-ip>:8000/web-assistant.js?callback=...` transport, while LAN-hosted HTTP copies may fall back to `GET /health` on the same backend when direct JSONP probing proves unreliable.
   - The scanner must try `econnect.local` first, followed by other approved local aliases, before it starts sweeping common private subnets.
   - When the scanner is hosted from a LAN IP or `.local` origin, it must probe that current host before the wider subnet sweep so a colocated `find_website` reaches its paired backend quickly.

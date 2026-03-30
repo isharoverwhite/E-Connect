@@ -15,7 +15,7 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 1. The user completes setup of the self-hosted E-Connect stack on their own server or mini-PC at home.
 2. From a device on the same LAN, the user opens [find.isharoverwhite.com](https://find.isharoverwhite.com).
 3. On local HTTP-hosted copies of the page, the browser may still start scanning immediately on load.
-4. On the secure public host, the page waits for an explicit user click before it starts LAN discovery because the browser may require a user gesture to open the local discovery bridge window.
+4. On the secure public host, the page auto-starts LAN discovery shortly after load and immediately attempts the local bridge fast path from the user's browser session.
 5. The browser probes preferred aliases first:
    - `econnect.local`
    - `e-connect.local`
@@ -41,7 +41,7 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 15. On the secure public host, if a private/LAN target still advertises the legacy transport `https://<host>:3000` and that probe fails, the scanner retries `http://<host>:3000` before declaring the WebUI offline.
 16. For the standard self-hosted Docker Compose topology, the primary WebUI launch target should remain plain `http://<lan-host>:3000` so the public finder does not depend on trusting a self-signed LAN certificate just to open the dashboard.
 17. When secure-context browser features such as Web Serial are needed, the self-hosted stack may still expose an HTTPS companion origin separately from the finder launch target.
-18. After the scan window closes, the page reveals the final result list, or surfaces an explicit browser-blocked failure when the secure public origin cannot reach local HTTP discovery endpoints.
+18. After the scan window closes, the page reveals the final result list, or surfaces an explicit browser-blocked failure plus a retry action when the secure public origin cannot reach local HTTP discovery endpoints.
 19. The developer-hosted public page never scans the user's LAN from the developer server; all LAN discovery requests come from the user's own browser session.
 
 ## Backend Contract
@@ -70,7 +70,7 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 - `no server found`
 - `scan failed`
 - `scan failed (secure-origin browser block)`
-- `ready to scan` on the secure public host before the user grants the scan gesture
+- `ready to scan` may appear briefly before the automatic secure-page scan starts, and remains the fallback idle state before a manual retry
 - no permanent HTTPS warning banner before a secure scan actually ends empty or fails
 
 ## Verification Hooks
@@ -80,7 +80,7 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 - Browser:
   - the browser session running [find.isharoverwhite.com](https://find.isharoverwhite.com) is on the same LAN as the user's self-hosted server
   - the deployment can resolve `econnect.local` to the server LAN IP when the alias fast path is configured
-  - on the secure public host, clicking `Start LAN Scan` opens the local bridge window and receives a `postMessage` payload from the LAN server
+  - on the secure public host, opening the page auto-starts the local bridge window flow and receives a `postMessage` payload from the LAN server
   - when host port `80` is available, opening `http://econnect.local` returns a redirect to the advertised WebUI host and port
   - a local HTTP-hosted copy of the page can discover a fake backend through `/health`
   - the secure public page either discovers the server through the bridge fast path or surfaces the secure-origin browser-blocked failure explicitly
