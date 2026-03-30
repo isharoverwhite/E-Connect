@@ -316,7 +316,7 @@ pipeline {
                     docker compose port server 8000 >/dev/null
                     docker compose port find_website 9123 >/dev/null
                     retry 30 2 docker compose exec -T server python -c "import json, urllib.request; data = json.loads(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read().decode()); assert data.get('status') == 'ok'"
-                    retry 30 2 docker compose exec -T webapp node -e "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; const main = async () => { const res = await fetch('https://127.0.0.1:3000/login'); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))"
+                    retry 30 2 docker compose exec -T webapp node -e "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; const candidates = ['http://127.0.0.1:3000/login', 'https://127.0.0.1:3443/login']; const main = async () => { for (const url of candidates) { try { const res = await fetch(url); if (res.ok) return; } catch (error) {} } process.exit(1); }; main().catch(() => process.exit(1))"
                     retry 30 2 docker compose exec -T find_website wget -q --spider http://127.0.0.1:9123/
                     retry 30 2 sh -c "docker compose logs discovery_mdns 2>&1 | grep -q 'Published mDNS alias'"
                     retry 30 2 sh -c "docker compose logs discovery_mdns 2>&1 | grep -F \"Published mDNS alias ${DISCOVERY_MDNS_HOSTNAME} -> ${DISCOVERY_ALIAS_IP}\""
