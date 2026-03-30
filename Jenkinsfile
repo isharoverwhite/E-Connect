@@ -217,6 +217,16 @@ pipeline {
                     docker version
                     docker compose version
                     docker compose config -q
+                    docker system df || true
+
+                    buildx_activity_dir="${HOME:-/root}/.docker/buildx/activity"
+                    mkdir -p "$buildx_activity_dir"
+                    find "$buildx_activity_dir" -type f -delete || true
+
+                    docker builder prune -af || true
+                    docker image prune -af || true
+                    docker container prune -f || true
+                    docker system df || true
                 '''
             }
         }
