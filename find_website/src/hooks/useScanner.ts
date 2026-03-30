@@ -15,10 +15,12 @@ import {
   resolveDiscoveryAttemptBudget,
   resolveDiscoveryHost,
   resolveDiscoveryLanHost,
+  resolveWebappProbeTransports,
   resolveWebappTransport,
   WEBSITE_PROBE_TIMEOUT_MS,
   type DeviceInfo,
   type DiscoveryScriptPayload,
+  type WebappTransport,
 } from "@/lib/scanner";
 
 const FOUND_SCAN_TIMEOUT_MS = 7000;
@@ -77,18 +79,41 @@ async function buildDeviceFromPayload(
     return null;
   }
 
-  const { protocol, port } = resolveWebappTransport(payload.firmware_network);
+  const transportCandidates = resolveWebappProbeTransports(payload.firmware_network, {
+    securePage: isSecureScannerPage(),
+  });
+  const primaryTransport = transportCandidates[0] ?? resolveWebappTransport(payload.firmware_network);
   const probeHost = host.trim();
   const lanHost = resolveDiscoveryLanHost(host, payload.firmware_network);
   const displayHost = lanHost ?? resolveDiscoveryHost(host, payload.firmware_network);
   const advertisedHost = lanHost ? resolveDiscoveryAliasHost(host, payload.firmware_network) : null;
+  let selectedTransport: WebappTransport = primaryTransport;
   let launchHost = displayHost;
-  let websiteStatus = await probeWebsite(buildWebappBaseUrl(launchHost, protocol, port), signal);
+  let websiteStatus: DeviceInfo["websiteStatus"] = "offline";
 
-  if (!lanHost && launchHost !== probeHost && websiteStatus === "offline") {
-    const fallbackStatus = await probeWebsite(buildWebappBaseUrl(probeHost, protocol, port), signal);
-    launchHost = probeHost;
-    websiteStatus = fallbackStatus;
+  for (const transport of transportCandidates) {
+    selectedTransport = transport;
+    launchHost = displayHost;
+    websiteStatus = await probeWebsite(
+      buildWebappBaseUrl(launchHost, transport.protocol, transport.port),
+      signal,
+    );
+
+    if (websiteStatus === "online") {
+      break;
+    }
+
+    if (!lanHost && launchHost !== probeHost) {
+      const fallbackStatus = await probeWebsite(
+        buildWebappBaseUrl(probeHost, transport.protocol, transport.port),
+        signal,
+      );
+      launchHost = probeHost;
+      websiteStatus = fallbackStatus;
+      if (websiteStatus === "online") {
+        break;
+      }
+    }
   }
 
   return {
@@ -98,8 +123,8 @@ async function buildDeviceFromPayload(
     advertisedHost,
     database: payload.database?.trim() || "unknown",
     mqtt: payload.mqtt?.trim() || "unknown",
-    protocol,
-    port,
+    protocol: selectedTransport.protocol,
+    port: selectedTransport.port,
     websiteStatus,
   };
 }
