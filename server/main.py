@@ -8,6 +8,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 import asyncio
+import base64
 from contextlib import asynccontextmanager, suppress
 import json
 import logging
@@ -320,6 +321,8 @@ def discovery_bridge(request: Request, target_origin: str, request_id: str):
         "host": request.url.hostname or "localhost",
         "payload": payload,
     }
+    encoded_bridge_payload = base64.urlsafe_b64encode(json.dumps(message_payload).encode("utf-8")).decode("ascii")
+    bridge_complete_url = f"{normalized_target_origin}/bridge-complete?bridge={encoded_bridge_payload}"
     html = f"""<!doctype html>
 <html lang="en">
   <head>
@@ -331,6 +334,7 @@ def discovery_bridge(request: Request, target_origin: str, request_id: str):
     <script>
       const messagePayload = {json.dumps(message_payload)};
       const targetOrigin = {json.dumps(normalized_target_origin)};
+      const bridgeCompleteUrl = {json.dumps(bridge_complete_url)};
 
       function notifyOpener() {{
         try {{
@@ -348,9 +352,9 @@ def discovery_bridge(request: Request, target_origin: str, request_id: str):
       notifyOpener();
       window.setTimeout(() => {{
         notifyOpener();
-        window.close();
+        window.location.replace(bridgeCompleteUrl);
       }}, 100);
-      window.setTimeout(() => window.close(), 350);
+      window.setTimeout(() => window.location.replace(bridgeCompleteUrl), 350);
     </script>
   </body>
 </html>
