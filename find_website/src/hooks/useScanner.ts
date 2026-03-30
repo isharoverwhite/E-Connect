@@ -170,6 +170,23 @@ async function buildDeviceFromPayload(
   let launchHost = displayHost;
   let websiteStatus: DeviceInfo["websiteStatus"] = "offline";
 
+  if (canAssumeComposeHttpWebsite && composeHttpFallbackTransport) {
+    selectedTransport = composeHttpFallbackTransport;
+    websiteStatus = "online";
+
+    return {
+      displayHost,
+      launchHost,
+      probeHost,
+      advertisedHost,
+      database: payload.database?.trim() || "unknown",
+      mqtt: payload.mqtt?.trim() || "unknown",
+      protocol: selectedTransport.protocol,
+      port: selectedTransport.port,
+      websiteStatus,
+    };
+  }
+
   for (const transport of transportCandidates) {
     selectedTransport = transport;
     launchHost = displayHost;
@@ -333,6 +350,7 @@ async function probeCandidateHostViaBridgeWindow(
         return;
       }
 
+      clearTimeout(timeoutId);
       void (async () => {
         try {
           finalize(await buildDeviceFromPayload(bridgeMessage.host || host, bridgeMessage.payload, signal));
