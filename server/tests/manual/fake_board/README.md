@@ -348,5 +348,5 @@ Cách xử lý:
 ## 9. File liên quan
 
 - Harness chính: [harness.py](/Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/manual/fake_board/harness.py)
-- Hướng dẫn run stack: [run.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/run.md)
+- Hướng dẫn run stack: [README.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/README.md)
 - Product baseline: [PRD.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PRD.md)
