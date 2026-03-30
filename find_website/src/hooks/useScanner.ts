@@ -43,6 +43,29 @@ function isSecureScannerPage(): boolean {
 }
 
 async function probeWebsite(baseUrl: string, signal: AbortSignal): Promise<DeviceInfo["websiteStatus"]> {
+  const probeUrl = `${baseUrl}/favicon.ico?_dc=${Date.now()}`;
+
+  if (isSecureScannerPage() && baseUrl.startsWith("http://") && isLikelyPrivateDiscoveryHost(baseUrl)) {
+    const requestController = new AbortController();
+    const abortRequest = () => requestController.abort();
+    const timeoutId = window.setTimeout(abortRequest, WEBSITE_PROBE_TIMEOUT_MS);
+
+    signal.addEventListener("abort", abortRequest, { once: true });
+
+    try {
+      await fetch(probeUrl, {
+        mode: "no-cors",
+        signal: requestController.signal,
+      });
+      return "online";
+    } catch {
+      return "offline";
+    } finally {
+      clearTimeout(timeoutId);
+      signal.removeEventListener("abort", abortRequest);
+    }
+  }
+
   return new Promise((resolve) => {
     const image = new Image();
     let finished = false;
@@ -66,7 +89,7 @@ async function probeWebsite(baseUrl: string, signal: AbortSignal): Promise<Devic
     signal.addEventListener("abort", handleAbort, { once: true });
     image.onload = () => finalize("online");
     image.onerror = () => finalize("offline");
-    image.src = `${baseUrl}/favicon.ico?_dc=${Date.now()}`;
+    image.src = probeUrl;
   });
 }
 
