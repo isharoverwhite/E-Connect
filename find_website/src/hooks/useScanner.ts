@@ -8,6 +8,7 @@ import {
   DEFAULT_WEBAPP_PORT,
   DEFAULT_WEBAPP_PROTOCOL,
   DISCOVERY_BRIDGE_TIMEOUT_MS,
+  DISCOVERY_BRIDGE_STORAGE_KEY,
   DISCOVERY_HEALTH_PATH,
   DISCOVERY_SCRIPT_PORT,
   generateSubnetIps,
@@ -69,6 +70,18 @@ function isDiscoveryBridgeMessage(value: unknown, requestId: string): value is D
     typeof candidate.host === "string" &&
     isDiscoveryPayloadCandidate(candidate.payload)
   );
+}
+
+function decodeDiscoveryBridgePayload(value: string, requestId: string): DiscoveryBridgeMessage | null {
+  try {
+    const normalizedValue = value.replace(/-/g, "+").replace(/_/g, "/");
+    const paddedValue = normalizedValue.padEnd(Math.ceil(normalizedValue.length / 4) * 4, "=");
+    const decodedValue = atob(paddedValue);
+    const candidate = JSON.parse(decodedValue) as unknown;
+    return isDiscoveryBridgeMessage(candidate, requestId) ? candidate : null;
+  } catch {
+    return null;
+  }
 }
 
 async function probeWebsite(baseUrl: string, signal: AbortSignal): Promise<DeviceInfo["websiteStatus"]> {
@@ -308,17 +321,13 @@ async function probeCandidateHostViaBridgeWindow(
       clearTimeout(timeoutId);
       signal.removeEventListener("abort", handleAbort);
       pageWindow.removeEventListener("message", handleMessage);
+      pageWindow.removeEventListener("storage", handleStorage);
       resolve(device);
     };
 
     const handleAbort = () => finalize(null);
-    const handleMessage = (event: MessageEvent<unknown>) => {
-      if (event.source !== bridgeWindow || !isDiscoveryBridgeMessage(event.data, requestId)) {
-        return;
-      }
-
-      const bridgeMessage = event.data;
-      const eventOriginHost = normalizeDiscoveryHost(event.origin);
+    const resolveBridgeMessage = (bridgeMessage: DiscoveryBridgeMessage, eventOrigin?: string) => {
+      const eventOriginHost = eventOrigin ? normalizeDiscoveryHost(eventOrigin) : normalizeDiscoveryHost(bridgeMessage.host);
       const expectedHost = normalizeDiscoveryHost(host);
       if (expectedHost && eventOriginHost && eventOriginHost !== expectedHost) {
         return;
@@ -332,10 +341,42 @@ async function probeCandidateHostViaBridgeWindow(
         }
       })();
     };
+    const handleMessage = (event: MessageEvent<unknown>) => {
+      if (event.source !== bridgeWindow || !isDiscoveryBridgeMessage(event.data, requestId)) {
+        return;
+      }
+
+      resolveBridgeMessage(event.data, event.origin);
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== DISCOVERY_BRIDGE_STORAGE_KEY || typeof event.newValue !== "string") {
+        return;
+      }
+
+      const bridgeMessage = decodeDiscoveryBridgePayload(event.newValue, requestId);
+      if (!bridgeMessage) {
+        return;
+      }
+
+      try {
+        pageWindow.localStorage.removeItem(DISCOVERY_BRIDGE_STORAGE_KEY);
+      } catch {
+        // Ignore storage cleanup failures and still accept the bridge result.
+      }
+
+      resolveBridgeMessage(bridgeMessage);
+    };
     const timeoutId = window.setTimeout(() => finalize(null), DISCOVERY_BRIDGE_TIMEOUT_MS);
 
     signal.addEventListener("abort", handleAbort, { once: true });
     pageWindow.addEventListener("message", handleMessage);
+    pageWindow.addEventListener("storage", handleStorage);
+
+    try {
+      pageWindow.localStorage.removeItem(DISCOVERY_BRIDGE_STORAGE_KEY);
+    } catch {
+      // Ignore storage cleanup failures before the bridge attempt.
+    }
 
     try {
       bridgeWindow.location.href = bridgeUrl;
