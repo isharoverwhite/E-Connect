@@ -80,13 +80,16 @@ services:
     restart: always
     ports:
       - "3000:3000"
+      - "3443:3443"
     volumes:
       - webapp_tls:/app/.local-https
     environment:
+      ALLOW_INSECURE_HTTP: "1"
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
       BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://server:8000}
       HTTPS_HOSTS: ${HTTPS_HOSTS:-}
       HTTPS_IPS: ${HTTPS_IPS:-}
+      HTTPS_PORT: 3443
     depends_on:
       server:
         condition: service_healthy
@@ -95,7 +98,7 @@ services:
         - CMD
         - node
         - -e
-        - process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0"; const main = async () => { const res = await fetch("https://127.0.0.1:3000/login"); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))
+        - const main = async () => { const res = await fetch("http://127.0.0.1:3000/login"); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))
       interval: 5s
       timeout: 5s
       retries: 24

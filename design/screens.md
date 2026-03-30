@@ -46,12 +46,13 @@
   - Boards that reconnect while reporting embedded firmware targets different from the current runtime target must be told that manual reflash is required instead of being treated as healthy pair candidates.
   - ESP32-family application-only server builds remain single-binary manifests at `0x10000`.
   - ESP8266 single-binary server builds and maintained demo manifests must produce a manifest that flashes `firmware.bin` at `0x0`.
-  - The DIY builder must no longer treat plain `http://` origins as a supported access path. The frontend runtime must terminate on HTTPS, auto-generate local TLS assets when missing, and preserve secure-origin access for Web Serial / ESP Web Tools on LAN hosts.
+  - The standard self-hosted Docker Compose runtime must expose a plain `http://` dashboard origin on port `3000` so the public finder can launch the LAN UI without depending on browser trust for a self-signed certificate.
+  - The webapp runtime must also expose an HTTPS companion origin on port `3443`, auto-generate local TLS assets when missing, and preserve secure-origin access for Web Serial / ESP Web Tools on LAN hosts that explicitly reopen the secure companion URL.
   - If a board no longer has a maintained demo manifest, the `Bundled Demo` source must be hidden and `/api/diy/demo-firmware/...` must fail closed with a `404` JSON response instead of reading local filesystem artifacts from the webapp container.
   - When a server build reaches `artifact_ready`, the backend must auto-release the same-user serial reservation stored in `config.serial_port`.
   - When a server build reaches `artifact_ready`, the frontend must also close any stale in-page `esp-web-tools` dialog, remount the install button, and re-check the selected port before the next browser flash launch.
   - The browser flasher becomes available only when the artifact/manifest is ready and the configured serial port is free; if any serial session still holds the port, the screen must show a release-first blocking message.
-  - When Web Serial is unavailable because the page is not in a secure context, the lock message must explain that only the HTTPS origin is supported for the frontend and plain HTTP is intentionally blocked.
+  - When Web Serial is unavailable because the page is not in a secure context, the lock message must direct the user to reopen the page on the HTTPS companion origin instead of implying that the plain HTTP dashboard origin is unsupported for all use cases.
 
 ## Managed Device Reconfiguration
 - **`/devices/[id]/config`**:
@@ -82,6 +83,7 @@
   - The browser-facing script endpoint returns JavaScript that invokes a validated callback with the same runtime health payload used by `/health`.
   - The scanner derives the WebUI protocol and port from `firmware_network.advertised_host` / `firmware_network.api_base_url`, then resolves a private LAN IP from that same health payload before probing or launching the WebUI.
   - The result card must show the resolved LAN IP as the primary identity label and launch target. If the backend also advertises an alias such as `econnect.local`, that alias may appear only as secondary context.
+  - For the standard Docker Compose runtime, the finder should prefer a plain `http://<lan-host>:3000` launch target so LAN discovery does not fail on a self-signed HTTPS certificate before the dashboard even opens.
   - If the backend does not expose a usable WebApp transport, the scanner must fall back to `http` on port `3000` instead of guessing alternate ports.
   - A backend-responsive server must remain visible in scan results even when the website probe fails, and the result card must show whether the website is currently `online` or `offline`.
 - **Device Management screen**:
