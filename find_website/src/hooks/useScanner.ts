@@ -428,11 +428,12 @@ async function probePreferredAliasesViaBridge(signal: AbortSignal): Promise<Devi
       bridgeUrl: buildDiscoveryBridgeUrl(host, pageWindow.location.origin, requestId),
     };
   };
+  const bridgeWindowName = `econnect-discovery-bridge-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const [firstBridgeHost, ...remainingBridgeHosts] = bridgeHosts;
   const firstBridgeAttempt = createBridgeAttempt(firstBridgeHost);
   const bridgeWindow = pageWindow.open(
     firstBridgeAttempt.bridgeUrl,
-    "econnect-discovery-bridge",
+    bridgeWindowName,
     "popup,width=420,height=640",
   );
   if (!bridgeWindow) {
