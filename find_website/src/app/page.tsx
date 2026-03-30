@@ -70,8 +70,8 @@ export default function Home() {
                 </p>
                 {isHttps ? (
                   <p className="mt-3 max-w-sm text-sm text-slate-500">
-                    The public HTTPS page opens a temporary local scan window on your LAN. Allow pop-ups for this page
-                    when the browser asks.
+                    We may open a small local window to find your server on this network. If your browser asks, please
+                    allow it.
                   </p>
                 ) : null}
               </div>
