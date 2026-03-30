@@ -43,8 +43,8 @@ docker run -d \
 - No extra runtime environment variables are required for the current discovery flow.
 - The secure public page probes LAN targets directly from the browser via script injection, and LAN-hosted HTTP copies can fall back to `GET /health`.
 - The backend must expose both `http://<candidate-ip>:8000/web-assistant.js?callback=...` and `http://<candidate-ip>:8000/health` for the full discovery matrix to work.
-- The discovery payload stays sanitized for public exposure: it includes only `status`, `database`, `mqtt`, `initialized`, and minimal `webapp` transport hints (`protocol`, `port`).
+- The discovery payload stays sanitized for public exposure: it includes only `status`, `database`, `mqtt`, `initialized`, the explicit LAN `server_ip` when available, and minimal `webapp` transport hints (`protocol`, `port`).
 - If the server LAN publishes `econnect.local` through mDNS or router DNS, the scanner will try that alias before subnet scanning, and `.local` aliases now get a longer probe budget before the wider sweep begins.
-- During rollout, legacy backends may still let the card show an advertised alias such as `econnect.local`, but the preferred path is to derive the launch target from the responding probe host plus the sanitized WebUI transport hints.
+- When the backend provides `server_ip`, the result card should show that LAN IP as the main identity and keep aliases such as `econnect.local` only as secondary advertised metadata. During rollout, legacy backends may still let the card show an advertised alias until they expose `server_ip`.
 - When the page itself is opened from a LAN IP or `.local` hostname, that current host is now probed before the wider subnet sweep so colocated deployments resolve faster.
 - Browser behavior is transport-dependent; secure public pages can still hit mixed-content or private-network restrictions against local HTTP endpoints, so the UI only surfaces that guidance after a secure-origin scan ends empty or fails instead of showing a permanent warning banner on load.

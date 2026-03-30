@@ -157,9 +157,24 @@ async function buildDeviceFromPayload(
   });
   const primaryTransport = transportCandidates[0] ?? advertisedTransport;
   const probeHost = host.trim();
-  const lanHost = resolveDiscoveryLanHost(host, payload.firmware_network);
-  const displayHost = lanHost ?? resolveDiscoveryHost(host, payload.firmware_network);
-  const advertisedHost = lanHost ? resolveDiscoveryAliasHost(host, payload.firmware_network) : null;
+  const displayHost = resolveDiscoveryHost(host, payload.firmware_network, payload.server_ip);
+  const advertisedHostCandidate = resolveDiscoveryAliasHost(host, payload.firmware_network);
+  const advertisedHost =
+    advertisedHostCandidate && advertisedHostCandidate !== displayHost ? advertisedHostCandidate : null;
+  const launchHostCandidates: string[] = [];
+  const appendLaunchHostCandidate = (candidate: string | null | undefined) => {
+    const normalizedCandidate = normalizeDiscoveryHost(candidate);
+    if (!normalizedCandidate || launchHostCandidates.includes(normalizedCandidate)) {
+      return;
+    }
+
+    launchHostCandidates.push(normalizedCandidate);
+  };
+
+  appendLaunchHostCandidate(resolveDiscoveryLanHost(host, payload.firmware_network, payload.server_ip));
+  appendLaunchHostCandidate(resolveDiscoveryHost(host, payload.firmware_network));
+  appendLaunchHostCandidate(host);
+
   const composeHttpFallbackTransport = transportCandidates.find(
     (transport) => transport.protocol === DEFAULT_WEBAPP_PROTOCOL && transport.port === DEFAULT_WEBAPP_PORT,
   );
@@ -169,11 +184,12 @@ async function buildDeviceFromPayload(
     advertisedTransport.port === DEFAULT_WEBAPP_PORT &&
     composeHttpFallbackTransport !== undefined;
   let selectedTransport: WebappTransport = primaryTransport;
-  let launchHost = displayHost;
+  let launchHost = launchHostCandidates[0] ?? displayHost;
   let websiteStatus: DeviceInfo["websiteStatus"] = "offline";
 
   if (canAssumeComposeHttpWebsite && composeHttpFallbackTransport) {
     selectedTransport = composeHttpFallbackTransport;
+    launchHost = launchHostCandidates[0] ?? displayHost;
     websiteStatus = "online";
 
     return {
@@ -192,32 +208,25 @@ async function buildDeviceFromPayload(
 
   for (const transport of transportCandidates) {
     selectedTransport = transport;
-    launchHost = displayHost;
-    websiteStatus = await probeWebsite(
-      buildWebappBaseUrl(launchHost, transport.protocol, transport.port),
-      signal,
-    );
-
-    if (websiteStatus === "online") {
-      break;
-    }
-
-    if (!lanHost && launchHost !== probeHost) {
-      const fallbackStatus = await probeWebsite(
-        buildWebappBaseUrl(probeHost, transport.protocol, transport.port),
+    for (const candidateHost of launchHostCandidates) {
+      launchHost = candidateHost;
+      websiteStatus = await probeWebsite(
+        buildWebappBaseUrl(candidateHost, transport.protocol, transport.port),
         signal,
       );
-      launchHost = probeHost;
-      websiteStatus = fallbackStatus;
       if (websiteStatus === "online") {
         break;
       }
+    }
+
+    if (websiteStatus === "online") {
+      break;
     }
   }
 
   if (websiteStatus !== "online" && canAssumeComposeHttpWebsite && composeHttpFallbackTransport) {
     selectedTransport = composeHttpFallbackTransport;
-    launchHost = displayHost;
+    launchHost = launchHostCandidates[0] ?? displayHost;
     websiteStatus = "online";
   }
 
