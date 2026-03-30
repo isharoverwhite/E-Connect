@@ -786,15 +786,11 @@ export const useScanner = () => {
       timeoutId = window.setTimeout(
         () => {
           timeoutId = null;
-          void startScan();
+          void startScan({ interactive: secureScannerPage });
         },
         secureScannerPage ? SECURE_AUTO_SCAN_DELAY_MS : 0,
       );
     };
-
-    if (secureScannerPage) {
-      return;
-    }
 
     if (document.readyState === "complete") {
       scheduleStart();
