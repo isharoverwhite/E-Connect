@@ -2145,6 +2145,18 @@ function buildFlashManifest({
   return null;
 }
 
+function resolveSecureCompanionOrigin() {
+  if (typeof window === "undefined") {
+    return "the secure HTTPS companion origin";
+  }
+
+  if (window.location.protocol === "https:") {
+    return window.location.origin;
+  }
+
+  return `https://${window.location.hostname}:3443`;
+}
+
 function getFlashLockedReason({
   validation,
   browserSupportsSerial,
@@ -2179,7 +2191,7 @@ function getFlashLockedReason({
   }
 
   if (!browserIsSecureContext) {
-    return "Web Serial requires a secure context. This frontend is HTTPS-only, so reopen the page on its https:// origin before using the browser flasher.";
+    return `Web Serial requires a secure context. Reopen the page on ${resolveSecureCompanionOrigin()} before using the browser flasher.`;
   }
 
   if (!browserSupportsSerial) {

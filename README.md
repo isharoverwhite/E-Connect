@@ -68,7 +68,8 @@ docker compose up -d --build db mqtt server webapp
 ```
 
 Once the stack is up:
-- **Web UI & Setup**: `https://localhost:3000` *(Note: local HTTPS is used; you may need to accept a self-signed certificate on your first visit).*
+- **Web UI & Setup**: `http://localhost:3000`
+- **Secure companion origin for Web Serial / browser APIs**: `https://localhost:3443` *(Note: this HTTPS endpoint uses a local self-signed certificate by default, so you may need to accept the warning on first use).*
 - **Backend Health**: `http://localhost:8000/health`
 - **MQTT Broker**: `localhost:1883`
 - **Database**: `localhost:3306`
@@ -157,7 +158,8 @@ docker compose up -d --build db mqtt server webapp
 ```
 
 Khi chạy xong:
-- **Giao diện Web & Setup**: Vào trang `https://localhost:3000` *(Lưu ý: Bạn sẽ bị trình duyệt hỏi chứng chỉ tự ký vì dự án dùng local HTTPS. Hãy nhấn vào chấp thuận).*
+- **Giao diện Web & Setup**: Vào trang `http://localhost:3000`
+- **Origin HTTPS cho Web Serial / browser APIs**: `https://localhost:3443` *(Lưu ý: endpoint HTTPS này dùng chứng chỉ tự ký cục bộ theo mặc định nên trình duyệt có thể hiện cảnh báo ở lần mở đầu tiên).*
 - **Kiểm tra Backend**: `http://localhost:8000/health`
 - **MQTT Broker Address**: Cùng trên IP cổng `1883`
 - **Database MariaDB**: Truy cập ở `localhost:3306`

@@ -32,8 +32,10 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
    - the preferred LAN launch host, by first extracting a private IPv4 from `api_base_url`, then `advertised_host`, then the responding probe host
 10. Once a private LAN IP is available, the page probes the WebUI through that IP, launches through that IP, and shows that same LAN IP as the primary host in the result card. A backend-advertised alias such as `econnect.local` may remain secondary context only.
 11. The page performs a lightweight website probe for the resolved launch target and labels each hit as `online` or `offline`.
-12. After the scan window closes, the page reveals the final result list, or surfaces an explicit browser-blocked failure when the secure public origin cannot reach local HTTP discovery endpoints.
-13. The developer-hosted public page never scans the user's LAN from the developer server; all LAN discovery requests come from the user's own browser session.
+12. For the standard self-hosted Docker Compose topology, the primary WebUI launch target should remain plain `http://<lan-host>:3000` so the public finder does not depend on trusting a self-signed LAN certificate just to open the dashboard.
+13. When secure-context browser features such as Web Serial are needed, the self-hosted stack may still expose an HTTPS companion origin separately from the finder launch target.
+14. After the scan window closes, the page reveals the final result list, or surfaces an explicit browser-blocked failure when the secure public origin cannot reach local HTTP discovery endpoints.
+15. The developer-hosted public page never scans the user's LAN from the developer server; all LAN discovery requests come from the user's own browser session.
 
 ## Backend Contract
 
