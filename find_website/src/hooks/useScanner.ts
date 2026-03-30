@@ -150,10 +150,11 @@ async function buildDeviceFromPayload(
     return null;
   }
 
+  const advertisedTransport = resolveWebappTransport(payload.firmware_network);
   const transportCandidates = resolveWebappProbeTransports(payload.firmware_network, {
     securePage: isSecureScannerPage(),
   });
-  const primaryTransport = transportCandidates[0] ?? resolveWebappTransport(payload.firmware_network);
+  const primaryTransport = transportCandidates[0] ?? advertisedTransport;
   const probeHost = host.trim();
   const lanHost = resolveDiscoveryLanHost(host, payload.firmware_network);
   const displayHost = lanHost ?? resolveDiscoveryHost(host, payload.firmware_network);
@@ -163,8 +164,8 @@ async function buildDeviceFromPayload(
   );
   const canAssumeComposeHttpWebsite =
     isSecureScannerPage() &&
-    primaryTransport.protocol === "https" &&
-    primaryTransport.port === DEFAULT_WEBAPP_PORT &&
+    advertisedTransport.protocol === "https" &&
+    advertisedTransport.port === DEFAULT_WEBAPP_PORT &&
     composeHttpFallbackTransport !== undefined;
   let selectedTransport: WebappTransport = primaryTransport;
   let launchHost = displayHost;
