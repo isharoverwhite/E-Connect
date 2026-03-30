@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
+from app.sql_models import User
 from main import app
 
 
@@ -65,6 +66,26 @@ def test_health_route_remains_available():
     assert response.json()["status"] == "ok"
     assert response.json()["database"] == "overridden"
     assert response.json()["mqtt"] == "skipped"
+    assert response.json()["initialized"] is False
+
+
+def test_health_route_reports_initialized_after_first_user_exists():
+    db = TestingSessionLocal()
+    db.add(
+        User(
+            fullname="Admin",
+            username="admin",
+            authentication="hashed-password",
+        )
+    )
+    db.commit()
+    db.close()
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json()["initialized"] is True
 
 
 def test_health_route_exposes_webapp_transport_from_runtime_network_targets():
@@ -79,17 +100,28 @@ def test_health_route_exposes_webapp_transport_from_runtime_network_targets():
         },
         "error": None,
     }
+    app.state.firmware_network_audit = {
+        "warning": "Sensitive runtime warning should stay private.",
+        "stale_project_count": 2,
+        "stale_device_count": 3,
+    }
 
     try:
         with TestClient(app) as client:
             response = client.get("/health")
     finally:
         app.state.firmware_network_state = None
+        app.state.firmware_network_audit = None
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["firmware_network"]["webapp_protocol"] == "https"
-    assert payload["firmware_network"]["webapp_port"] == "3000"
+    assert payload["webapp"]["protocol"] == "https"
+    assert payload["webapp"]["port"] == "3000"
+    assert "firmware_network" not in payload
+    assert "error" not in payload
+    assert "warning" not in payload
+    assert "stale_project_count" not in payload
+    assert "stale_device_count" not in payload
 
 
 def test_web_assistant_script_route_returns_jsonp_payload():
@@ -101,6 +133,7 @@ def test_web_assistant_script_route_returns_jsonp_payload():
     assert response.text.startswith("window.econnectDiscovery(")
     assert '"status": "ok"' in response.text
     assert '"database": "overridden"' in response.text
+    assert '"initialized": false' in response.text
 
 
 def test_web_assistant_script_route_rejects_invalid_callback():
