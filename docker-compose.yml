@@ -35,6 +35,7 @@ services:
     container_name: e-connect-server
     restart: always
     ports:
+      - "80:8000"
       - "8000:8000"
     environment:
       DATABASE_URL: mysql+pymysql://${DB_USER:-econnect}:${DB_PASSWORD:-root_password}@${DB_HOST:-db}:3306/${DB_NAME:-e_connect_db}
@@ -44,7 +45,7 @@ services:
       MQTT_PORT: ${MQTT_PORT:-1883}
       MQTT_NAMESPACE: ${MQTT_NAMESPACE:-local}
       FIRMWARE_PUBLIC_BASE_URL: ${FIRMWARE_PUBLIC_BASE_URL:-}
-      FIRMWARE_PUBLIC_SCHEME: ${FIRMWARE_PUBLIC_SCHEME:-https}
+      FIRMWARE_PUBLIC_SCHEME: ${FIRMWARE_PUBLIC_SCHEME:-http}
       FIRMWARE_PUBLIC_PORT: ${FIRMWARE_PUBLIC_PORT:-3000}
       FIRMWARE_MQTT_BROKER: ${FIRMWARE_MQTT_BROKER:-}
       MDNS_HOSTNAME: ${MDNS_HOSTNAME:-}

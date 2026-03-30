@@ -41,7 +41,7 @@ E-Connect emphasizes a self-hosted smart home model where the main operational c
 
 #### Prerequisites
 - Docker Engine & Docker Compose plugin.
-- Available host ports: `3000`, `3306`, `8000`, `1883`, (and `9123` if you wish to run the discovery website locally).
+- Available host ports: `80`, `3000`, `3306`, `8000`, `1883`, (and `9123` if you wish to run the discovery website locally).
 
 #### 1. Clone the Repository
 ```bash
@@ -68,6 +68,7 @@ docker compose up -d --build db mqtt server webapp
 ```
 
 Once the stack is up:
+- **Bare LAN shortcut**: `http://econnect.local` redirects to the current Web UI port when your LAN resolves that alias to the self-hosted machine and host port `80` is available. In the standard compose runtime this lands on `http://econnect.local:3000`.
 - **Web UI & Setup**: `http://localhost:3000`
 - **Secure companion origin for Web Serial / browser APIs**: `https://localhost:3443` *(Note: this HTTPS endpoint uses a local self-signed certificate by default, so you may need to accept the warning on first use).*
 - **Backend Health**: `http://localhost:8000/health`
@@ -131,7 +132,7 @@ E-Connect hướng tới sự tinh gọn theo mô hình tự host, trong đó đ
 
 #### Yêu cầu môi trường
 - Máy tính đã trỏ sẵn Docker Engine và Docker Compose plugin.
-- Port còn khả dụng: `3000`, `3306`, `8000`, `1883`, (và tùy chọn `9123` nếu muốn dựng portal khám phá cục bộ).
+- Port còn khả dụng: `80`, `3000`, `3306`, `8000`, `1883`, (và tùy chọn `9123` nếu muốn dựng portal khám phá cục bộ).
 
 #### 1. Clone dự án
 ```bash
@@ -158,6 +159,7 @@ docker compose up -d --build db mqtt server webapp
 ```
 
 Khi chạy xong:
+- **Lối tắt LAN**: `http://econnect.local` sẽ tự redirect sang cổng Web UI hiện tại nếu alias đó trỏ đúng về máy self-host và host port `80` còn trống. Với runtime compose tiêu chuẩn, đích sẽ là `http://econnect.local:3000`.
 - **Giao diện Web & Setup**: Vào trang `http://localhost:3000`
 - **Origin HTTPS cho Web Serial / browser APIs**: `https://localhost:3443` *(Lưu ý: endpoint HTTPS này dùng chứng chỉ tự ký cục bộ theo mặc định nên trình duyệt có thể hiện cảnh báo ở lần mở đầu tiên).*
 - **Kiểm tra Backend**: `http://localhost:8000/health`

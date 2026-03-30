@@ -3,6 +3,7 @@ from fastapi import Request
 from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.responses import RedirectResponse
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 import asyncio
@@ -106,6 +107,33 @@ def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
         payload["firmware_network"] = firmware_network_state
 
     return payload, 503
+
+
+def _resolve_root_redirect_transport(app: FastAPI) -> tuple[str, int]:
+    runtime_state = _serialize_firmware_network_state(app)
+    protocol = "http"
+    port = 3000
+
+    if isinstance(runtime_state, dict):
+        raw_protocol = str(runtime_state.get("webapp_protocol", "")).strip().lower()
+        if raw_protocol in {"http", "https"}:
+            protocol = raw_protocol
+
+        raw_port = runtime_state.get("webapp_port")
+        try:
+            parsed_port = int(str(raw_port).strip()) if raw_port is not None else None
+        except ValueError:
+            parsed_port = None
+        if parsed_port is not None and 1 <= parsed_port <= 65535:
+            port = parsed_port
+
+    return protocol, port
+
+
+def _format_redirect_netloc(hostname: str, port: int) -> str:
+    if ":" in hostname and not hostname.startswith("["):
+        return f"[{hostname}]:{port}"
+    return f"{hostname}:{port}"
 
 
 @asynccontextmanager
@@ -238,6 +266,16 @@ def health_check(request: Request):
     if status_code == 200:
         return payload
     return JSONResponse(status_code=status_code, content=payload)
+
+
+@app.get("/")
+def root_redirect(request: Request):
+    hostname = request.url.hostname or "localhost"
+    protocol, port = _resolve_root_redirect_transport(request.app)
+    redirect_url = f"{protocol}://{_format_redirect_netloc(hostname, port)}{request.url.path}"
+    if request.url.query:
+        redirect_url = f"{redirect_url}?{request.url.query}"
+    return RedirectResponse(url=redirect_url, status_code=307)
 
 
 @app.get("/web-assistant.js")
