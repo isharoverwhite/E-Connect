@@ -33,11 +33,13 @@ export const DEFAULT_WEBAPP_PROTOCOL = "http";
 export const DEFAULT_WEBAPP_PORT = "3000";
 export const DISCOVERY_SCRIPT_PORT = "8000";
 export const DISCOVERY_SCRIPT_PATH = "/web-assistant.js";
+export const DISCOVERY_BRIDGE_PATH = "/discovery-bridge";
 export const DISCOVERY_HEALTH_PATH = "/health";
 export const DISCOVERY_TIMEOUT_MS = 1500;
 export const ALIAS_DISCOVERY_TIMEOUT_MS = 4000;
 export const ALIAS_DISCOVERY_RETRY_COUNT = 1;
 export const WEBSITE_PROBE_TIMEOUT_MS = 1500;
+export const DISCOVERY_BRIDGE_TIMEOUT_MS = 4500;
 export const EARLY_PRIORITY_HOST_LIMIT = 80;
 export const COMMON_HOST_ALIASES = [
   "econnect.local",
@@ -298,6 +300,13 @@ export function buildDiscoveryScriptUrl(host: string, callbackName: string): str
   // depend on the browser creating a bare global identifier for dynamic callbacks.
   const normalizedCallback = encodeURIComponent(`window.${callbackName}`);
   return `http://${normalizedHost}:${DISCOVERY_SCRIPT_PORT}${DISCOVERY_SCRIPT_PATH}?callback=${normalizedCallback}`;
+}
+
+export function buildDiscoveryBridgeUrl(host: string, targetOrigin: string, requestId: string): string {
+  const normalizedHost = host.trim();
+  const normalizedTargetOrigin = encodeURIComponent(targetOrigin.trim());
+  const normalizedRequestId = encodeURIComponent(requestId.trim());
+  return `http://${normalizedHost}:${DISCOVERY_SCRIPT_PORT}${DISCOVERY_BRIDGE_PATH}?target_origin=${normalizedTargetOrigin}&request_id=${normalizedRequestId}`;
 }
 
 export function isDiscoveryPayloadCandidate(payload: unknown): payload is DiscoveryScriptPayload {
