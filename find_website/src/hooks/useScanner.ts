@@ -26,6 +26,7 @@ import {
 const FOUND_SCAN_TIMEOUT_MS = 7000;
 const EMPTY_SCAN_TIMEOUT_MS = 15000;
 const BATCH_SIZE = 40;
+const SECURE_AUTO_SCAN_DELAY_MS = 500;
 
 type WindowWithDynamicCallbacks = Window & Record<string, unknown>;
 
@@ -479,12 +480,47 @@ export const useScanner = () => {
   }, [clearGlobalTimeout]);
 
   useEffect(() => {
-    if (hasAutoStartedRef.current) {
+    if (hasAutoStartedRef.current || typeof window === "undefined") {
       return;
     }
 
     hasAutoStartedRef.current = true;
-    void startScan();
+
+    const secureScannerPage = isSecureScannerPage();
+    let timeoutId: number | null = null;
+
+    const scheduleStart = () => {
+      timeoutId = window.setTimeout(
+        () => {
+          timeoutId = null;
+          void startScan();
+        },
+        secureScannerPage ? SECURE_AUTO_SCAN_DELAY_MS : 0,
+      );
+    };
+
+    if (!secureScannerPage || document.readyState === "complete") {
+      scheduleStart();
+      return () => {
+        if (timeoutId !== null) {
+          window.clearTimeout(timeoutId);
+        }
+      };
+    }
+
+    const handleLoad = () => {
+      window.removeEventListener("load", handleLoad);
+      scheduleStart();
+    };
+
+    window.addEventListener("load", handleLoad, { once: true });
+
+    return () => {
+      window.removeEventListener("load", handleLoad);
+      if (timeoutId !== null) {
+        window.clearTimeout(timeoutId);
+      }
+    };
   }, [startScan]);
 
   useEffect(() => () => stopScan(), [stopScan]);
