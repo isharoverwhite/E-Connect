@@ -81,6 +81,7 @@
   - The active scan window is `15s` by default, but once any server is detected the scanner must shorten the run to a total `7s` timeout before revealing results.
 - **Backend discovery script (`server`)**:
   - The browser-facing script endpoint returns JavaScript that invokes a validated callback with the same runtime health payload used by `/health`.
+  - When the operator publishes an alias such as `econnect.local` and the self-hosted machine exposes host port `80`, opening `http://econnect.local` must redirect to the current WebUI transport on that same host. For the standard Docker Compose runtime, the default redirect target is `http://econnect.local:3000/`.
   - The scanner derives the WebUI protocol and port from `firmware_network.advertised_host` / `firmware_network.api_base_url`, then resolves a private LAN IP from that same health payload before probing or launching the WebUI.
   - The result card must show the resolved LAN IP as the primary identity label and launch target. If the backend also advertises an alias such as `econnect.local`, that alias may appear only as secondary context.
   - For the standard Docker Compose runtime, the finder should prefer a plain `http://<lan-host>:3000` launch target so LAN discovery does not fail on a self-signed HTTPS certificate before the dashboard even opens.
