@@ -4,6 +4,8 @@ import {
   buildDiscoveryScriptUrl,
   buildWebappBaseUrl,
   COMMON_HOST_ALIASES,
+  DEFAULT_WEBAPP_PORT,
+  DEFAULT_WEBAPP_PROTOCOL,
   DISCOVERY_HEALTH_PATH,
   DISCOVERY_SCRIPT_PORT,
   generateSubnetIps,
@@ -118,6 +120,14 @@ async function buildDeviceFromPayload(
   const lanHost = resolveDiscoveryLanHost(host, payload.firmware_network);
   const displayHost = lanHost ?? resolveDiscoveryHost(host, payload.firmware_network);
   const advertisedHost = lanHost ? resolveDiscoveryAliasHost(host, payload.firmware_network) : null;
+  const composeHttpFallbackTransport = transportCandidates.find(
+    (transport) => transport.protocol === DEFAULT_WEBAPP_PROTOCOL && transport.port === DEFAULT_WEBAPP_PORT,
+  );
+  const canAssumeComposeHttpWebsite =
+    isSecureScannerPage() &&
+    primaryTransport.protocol === "https" &&
+    primaryTransport.port === DEFAULT_WEBAPP_PORT &&
+    composeHttpFallbackTransport !== undefined;
   let selectedTransport: WebappTransport = primaryTransport;
   let launchHost = displayHost;
   let websiteStatus: DeviceInfo["websiteStatus"] = "offline";
@@ -145,6 +155,12 @@ async function buildDeviceFromPayload(
         break;
       }
     }
+  }
+
+  if (websiteStatus !== "online" && canAssumeComposeHttpWebsite && composeHttpFallbackTransport) {
+    selectedTransport = composeHttpFallbackTransport;
+    launchHost = displayHost;
+    websiteStatus = "online";
   }
 
   return {
