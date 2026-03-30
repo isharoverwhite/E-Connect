@@ -12,6 +12,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 import anyio
 import asyncio
+import psutil
 import hashlib
 
 from .mqtt import build_pairing_rejected_ack_payload, mqtt_manager
@@ -1684,6 +1685,11 @@ async def get_diy_network_targets(
         warning=warning,
         stale_project_count=stale_project_count,
         stale_device_count=stale_device_count,
+        cpu_percent=psutil.cpu_percent(interval=None),
+        memory_used=psutil.virtual_memory().used,
+        memory_total=psutil.virtual_memory().total,
+        storage_used=psutil.disk_usage(os.getenv('HOST_OS_ROOT', '/')).used,
+        storage_total=psutil.disk_usage(os.getenv('HOST_OS_ROOT', '/')).total,
     )
 
 @router.get("/diy/i2c/libraries", response_model=List[I2CLibrary])

@@ -9,6 +9,7 @@ import {
     getToken,
     refreshSession,
     removeToken,
+    ServerOfflineError,
     type AuthSession,
 } from "@/lib/auth";
 
@@ -56,6 +57,7 @@ function getSessionIssuedAt(session: AuthSession | null): number {
 export default function AuthProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
+    const [serverOffline, setServerOffline] = useState(false);
     const router = useRouter();
     const pathname = usePathname();
     const sessionTimeoutRef = useRef<number | null>(null);
@@ -142,6 +144,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
     const fetchUser = useCallback(async () => {
         try {
+            setServerOffline(false);
             try {
                 const sysStatus = await fetchSystemStatus();
                 if (!sysStatus.initialized) {
@@ -151,7 +154,12 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
                     setLoading(false);
                     return;
                 }
-            } catch {
+            } catch (err: unknown) {
+                if (err instanceof TypeError || err instanceof ServerOfflineError) {
+                    setServerOffline(true);
+                    setLoading(false);
+                    return;
+                }
                 console.warn("Failed to check system initialized state.");
             }
 
@@ -164,7 +172,12 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
             const profile = await fetchMyProfile();
             setUser(profile);
             scheduleSessionTimeout(getSession());
-        } catch {
+        } catch (err: unknown) {
+            if (err instanceof TypeError || err instanceof ServerOfflineError) {
+                setServerOffline(true);
+                setLoading(false);
+                return;
+            }
             setUser(null);
             removeToken();
             clearSessionTimeout();
@@ -221,6 +234,33 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
             clearSessionTimeout();
         };
     }, [clearSessionTimeout]);
+
+    if (serverOffline) {
+        return (
+            <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center p-4">
+                <div className="bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700/50 rounded-2xl p-8 max-w-md w-full shadow-xl flex flex-col items-center">
+                    <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mb-6">
+                        <span className="material-icons-round text-red-500 text-3xl">wifi_off</span>
+                    </div>
+                    <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2 text-center">Cannot find your Logic server</h2>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm mb-8 text-center leading-relaxed">
+                        We couldn&apos;t reach your E-Connect backend. It might be turned off, updating, or on a different network. Please ensure both the WebUI and the backend server are actively running on the same host machine, then give it another try.
+                    </p>
+                    <button
+                        onClick={() => {
+                            setLoading(true);
+                            setServerOffline(false);
+                            void fetchUser();
+                        }}
+                        className="w-full bg-primary hover:bg-blue-600 text-white font-medium py-2.5 rounded-xl transition shadow-sm hover:shadow shadow-primary/20 flex justify-center items-center"
+                    >
+                        <span className="material-icons-round mr-2 text-lg">refresh</span>
+                        Retry Connection
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     if (loading) {
         return (

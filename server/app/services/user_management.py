@@ -71,7 +71,9 @@ def ensure_temp_support_account(db: Session) -> Optional[User]:
         db.add(user)
         db.flush()
     else:
-        user.fullname = TEMP_SUPPORT_FULLNAME
+        # Retain the user's preferred fullname if they used this account as primary.
+        if not user.fullname:
+            user.fullname = TEMP_SUPPORT_FULLNAME
         user.authentication = hashed_password
         user.account_type = AccountType.admin
         user.approval_status = UserApprovalStatus.approved
