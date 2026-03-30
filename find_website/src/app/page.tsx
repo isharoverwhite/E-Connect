@@ -28,7 +28,7 @@ const HubIcon = ({ className }: { className?: string }) => (
 );
 
 export default function Home() {
-  const { isScanning, startScan, foundDevices, scanError } = useScanner();
+  const { isScanning, startScan, foundDevices, scanError, hasScannedOnce } = useScanner();
   const isHttps = useSyncExternalStore(
     () => () => {},
     () => window.location.protocol === "https:",
@@ -36,7 +36,7 @@ export default function Home() {
   );
 
   const handleStartScan = () => {
-    void startScan();
+    void startScan({ interactive: isHttps });
   };
 
   return (
@@ -59,7 +59,30 @@ export default function Home() {
             <ScannerRadar isScanning={isScanning} className="mb-10 scale-125" />
           )}
 
-          {isScanning || foundDevices.length === 0 ? (
+          {!hasScannedOnce && !isScanning && foundDevices.length === 0 ? (
+            <div className="w-full max-w-2xl text-center">
+              <h2 className="mb-4 text-2xl font-medium text-slate-900">Ready to Scan</h2>
+              <div className="mb-8 flex flex-col items-center rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
+                <MonitorPlay className="mb-4 h-12 w-12 text-slate-400" />
+                <h3 className="mb-2 text-lg font-medium text-slate-800">Scan your LAN from this browser</h3>
+                <p className="max-w-sm text-slate-500">
+                  Open this page from a device on the same LAN as your E-Connect server, then start the scan.
+                </p>
+                {isHttps ? (
+                  <p className="mt-3 max-w-sm text-sm text-slate-500">
+                    The public HTTPS page opens a temporary local scan window on your LAN. Allow pop-ups for this page
+                    when the browser asks.
+                  </p>
+                ) : null}
+              </div>
+              <button
+                onClick={handleStartScan}
+                className="rounded-full bg-blue-600 px-8 py-3 font-medium text-white shadow-lg shadow-blue-500/20 transition-all hover:bg-blue-500"
+              >
+                {isHttps ? "Start LAN Scan" : "Scan LAN"}
+              </button>
+            </div>
+          ) : isScanning || foundDevices.length === 0 ? (
             <div className="w-full max-w-2xl text-center">
               {isScanning ? (
                 <div>
@@ -79,7 +102,7 @@ export default function Home() {
                     onClick={handleStartScan}
                     className="rounded-full bg-blue-600 px-8 py-3 font-medium text-white shadow-lg shadow-blue-500/20 transition-all hover:bg-blue-500"
                   >
-                    Scan LAN Again
+                    {isHttps ? "Scan LAN Again" : "Retry Scan"}
                   </button>
                 </div>
               ) : (
@@ -103,7 +126,7 @@ export default function Home() {
                     onClick={handleStartScan}
                     className="rounded-full bg-blue-600 px-8 py-3 font-medium text-white shadow-lg shadow-blue-500/20 transition-all hover:bg-blue-500"
                   >
-                    Scan LAN Again
+                    {isHttps ? "Scan LAN Again" : "Retry Scan"}
                   </button>
                 </div>
               )}
@@ -121,7 +144,7 @@ export default function Home() {
                   onClick={handleStartScan}
                   className="rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50"
                 >
-                  Scan Again
+                  {isHttps ? "Scan LAN Again" : "Scan Again"}
                 </button>
               </div>
               <div className="flex flex-col gap-3">
