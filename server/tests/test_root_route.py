@@ -35,12 +35,26 @@ def teardown_function():
     Base.metadata.drop_all(bind=engine)
 
 
-def test_root_route_is_not_exposed():
-    with TestClient(app) as client:
-        response = client.get("/")
+def test_root_route_redirects_to_default_http_webapp_port(monkeypatch):
+    monkeypatch.delenv("FIRMWARE_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.setenv("FIRMWARE_PUBLIC_SCHEME", "http")
+    monkeypatch.setenv("FIRMWARE_PUBLIC_PORT", "3000")
 
-    assert response.status_code == 404
-    assert response.json() == {"detail": "Not Found"}
+    with TestClient(app) as client:
+        response = client.get("/", follow_redirects=False, headers={"host": "econnect.local"})
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "http://econnect.local:3000/"
+
+
+def test_root_route_uses_runtime_webapp_transport_when_available(monkeypatch):
+    monkeypatch.setenv("FIRMWARE_PUBLIC_BASE_URL", "https://econnect.local:3443")
+
+    with TestClient(app) as client:
+        response = client.get("/", follow_redirects=False, headers={"host": "econnect.local"})
+
+    assert response.status_code == 307
+    assert response.headers["location"] == "https://econnect.local:3443/"
 
 
 def test_health_route_remains_available():
