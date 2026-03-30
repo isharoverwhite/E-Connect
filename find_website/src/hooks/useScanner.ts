@@ -27,6 +27,7 @@ const FOUND_SCAN_TIMEOUT_MS = 7000;
 const EMPTY_SCAN_TIMEOUT_MS = 15000;
 const BATCH_SIZE = 40;
 const SECURE_AUTO_SCAN_DELAY_MS = 500;
+const SECURE_HTTP_WEBSITE_RETRY_DELAY_MS = 400;
 
 type WindowWithDynamicCallbacks = Window & Record<string, unknown>;
 
@@ -47,23 +48,29 @@ async function probeWebsite(baseUrl: string, signal: AbortSignal): Promise<Devic
   const probeUrl = `${baseUrl}/favicon.ico?_dc=${Date.now()}`;
 
   if (isSecureScannerPage() && baseUrl.startsWith("http://") && isLikelyPrivateDiscoveryHost(baseUrl)) {
-    const requestController = new AbortController();
-    const abortRequest = () => requestController.abort();
-    const timeoutId = window.setTimeout(abortRequest, WEBSITE_PROBE_TIMEOUT_MS);
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+      const requestController = new AbortController();
+      const abortRequest = () => requestController.abort();
+      const timeoutId = window.setTimeout(abortRequest, WEBSITE_PROBE_TIMEOUT_MS);
 
-    signal.addEventListener("abort", abortRequest, { once: true });
+      signal.addEventListener("abort", abortRequest, { once: true });
 
-    try {
-      await fetch(probeUrl, {
-        mode: "no-cors",
-        signal: requestController.signal,
-      });
-      return "online";
-    } catch {
-      return "offline";
-    } finally {
-      clearTimeout(timeoutId);
-      signal.removeEventListener("abort", abortRequest);
+      try {
+        await fetch(probeUrl, {
+          mode: "no-cors",
+          signal: requestController.signal,
+        });
+        return "online";
+      } catch {
+        if (attempt === 2 || signal.aborted) {
+          return "offline";
+        }
+      } finally {
+        clearTimeout(timeoutId);
+        signal.removeEventListener("abort", abortRequest);
+      }
+
+      await waitBeforeRetry(signal, SECURE_HTTP_WEBSITE_RETRY_DELAY_MS);
     }
   }
 
