@@ -314,12 +314,13 @@ async function probeCandidateHostOnce(host: string, signal: AbortSignal, timeout
 }
 
 async function probeCandidateHostViaBridgeWindow(
-  bridgeWindow: Window,
+  bridgeWindowRef: { current: Window | null },
   host: string,
   requestId: string,
   signal: AbortSignal,
   options?: {
     bridgeUrl?: string;
+    openPopup?: () => Window | null;
     skipNavigation?: boolean;
   },
 ): Promise<DeviceInfo | null> {
@@ -364,7 +365,7 @@ async function probeCandidateHostViaBridgeWindow(
       })();
     };
     const handleMessage = (event: MessageEvent<unknown>) => {
-      if (event.source !== bridgeWindow || !isDiscoveryBridgeMessage(event.data, requestId)) {
+      if (event.source !== bridgeWindowRef.current || !isDiscoveryBridgeMessage(event.data, requestId)) {
         return;
       }
 
@@ -400,6 +401,26 @@ async function probeCandidateHostViaBridgeWindow(
       // Ignore storage cleanup failures before the bridge attempt.
     }
 
+    if (options?.openPopup) {
+      try {
+        bridgeWindowRef.current = options.openPopup();
+      } catch {
+        finalize(null);
+        return;
+      }
+
+      if (!bridgeWindowRef.current) {
+        finalize(null);
+        return;
+      }
+    }
+
+    const bridgeWindow = bridgeWindowRef.current;
+    if (!bridgeWindow) {
+      finalize(null);
+      return;
+    }
+
     if (!options?.skipNavigation) {
       try {
         bridgeWindow.location.href = bridgeUrl;
@@ -431,30 +452,34 @@ async function probePreferredAliasesViaBridge(signal: AbortSignal): Promise<Devi
   const bridgeWindowName = `econnect-discovery-bridge-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   const [firstBridgeHost, ...remainingBridgeHosts] = bridgeHosts;
   const firstBridgeAttempt = createBridgeAttempt(firstBridgeHost);
-  const bridgeWindow = pageWindow.open(
-    firstBridgeAttempt.bridgeUrl,
-    bridgeWindowName,
-    "popup,width=420,height=640",
-  );
-  if (!bridgeWindow) {
-    throw new Error("Allow pop-ups for this page, then retry the LAN scan.");
-  }
+  const bridgeWindowRef: { current: Window | null } = { current: null };
 
   try {
-    if (!signal.aborted && !bridgeWindow.closed) {
+    if (!signal.aborted) {
       const firstDevice = await probeCandidateHostViaBridgeWindow(
-        bridgeWindow,
+        bridgeWindowRef,
         firstBridgeHost,
         firstBridgeAttempt.requestId,
         signal,
         {
           bridgeUrl: firstBridgeAttempt.bridgeUrl,
+          openPopup: () =>
+            pageWindow.open(
+              firstBridgeAttempt.bridgeUrl,
+              bridgeWindowName,
+              "popup,width=420,height=640",
+            ),
           skipNavigation: true,
         },
       );
       if (firstDevice) {
         return firstDevice;
       }
+    }
+
+    const bridgeWindow = bridgeWindowRef.current;
+    if (!bridgeWindow) {
+      throw new Error("Allow pop-ups for this page, then retry the LAN scan.");
     }
 
     for (const host of remainingBridgeHosts) {
@@ -464,7 +489,7 @@ async function probePreferredAliasesViaBridge(signal: AbortSignal): Promise<Devi
 
       const bridgeAttempt = createBridgeAttempt(host);
       const device = await probeCandidateHostViaBridgeWindow(
-        bridgeWindow,
+        bridgeWindowRef,
         host,
         bridgeAttempt.requestId,
         signal,
@@ -477,7 +502,8 @@ async function probePreferredAliasesViaBridge(signal: AbortSignal): Promise<Devi
       }
     }
   } finally {
-    if (!bridgeWindow.closed) {
+    const bridgeWindow = bridgeWindowRef.current;
+    if (bridgeWindow && !bridgeWindow.closed) {
       bridgeWindow.close();
     }
   }
