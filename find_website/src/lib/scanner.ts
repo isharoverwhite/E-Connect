@@ -294,7 +294,9 @@ export function buildWebappBaseUrl(host: string, protocol = DEFAULT_WEBAPP_PROTO
 
 export function buildDiscoveryScriptUrl(host: string, callbackName: string): string {
   const normalizedHost = host.trim();
-  const normalizedCallback = encodeURIComponent(callbackName);
+  // Use an explicit window-qualified JSONP callback so the server response does not
+  // depend on the browser creating a bare global identifier for dynamic callbacks.
+  const normalizedCallback = encodeURIComponent(`window.${callbackName}`);
   return `http://${normalizedHost}:${DISCOVERY_SCRIPT_PORT}${DISCOVERY_SCRIPT_PATH}?callback=${normalizedCallback}`;
 }
 
