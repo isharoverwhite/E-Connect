@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   buildCandidateHosts,
+  buildDiscoveryBridgeUrl,
   buildDiscoveryScriptUrl,
   buildWebappBaseUrl,
   COMMON_HOST_ALIASES,
   DEFAULT_WEBAPP_PORT,
   DEFAULT_WEBAPP_PROTOCOL,
+  DISCOVERY_BRIDGE_TIMEOUT_MS,
   DISCOVERY_HEALTH_PATH,
   DISCOVERY_SCRIPT_PORT,
   generateSubnetIps,
@@ -32,6 +34,15 @@ const SECURE_AUTO_SCAN_DELAY_MS = 500;
 const SECURE_HTTP_WEBSITE_RETRY_DELAY_MS = 400;
 
 type WindowWithDynamicCallbacks = Window & Record<string, unknown>;
+type DiscoveryBridgeMessage = {
+  type: "econnect.discovery.bridge";
+  requestId: string;
+  host: string;
+  payload: DiscoveryScriptPayload;
+};
+type StartScanOptions = {
+  interactive?: boolean;
+};
 
 function getDynamicWindow(): WindowWithDynamicCallbacks | null {
   if (typeof window === "undefined") {
@@ -44,6 +55,20 @@ function getDynamicWindow(): WindowWithDynamicCallbacks | null {
 function isSecureScannerPage(): boolean {
   const pageWindow = getDynamicWindow();
   return pageWindow?.location.protocol === "https:";
+}
+
+function isDiscoveryBridgeMessage(value: unknown, requestId: string): value is DiscoveryBridgeMessage {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.type === "econnect.discovery.bridge" &&
+    candidate.requestId === requestId &&
+    typeof candidate.host === "string" &&
+    isDiscoveryPayloadCandidate(candidate.payload)
+  );
 }
 
 async function probeWebsite(baseUrl: string, signal: AbortSignal): Promise<DeviceInfo["websiteStatus"]> {
@@ -258,6 +283,104 @@ async function probeCandidateHostOnce(host: string, signal: AbortSignal, timeout
   });
 }
 
+async function probeCandidateHostViaBridgeWindow(
+  bridgeWindow: Window,
+  host: string,
+  signal: AbortSignal,
+): Promise<DeviceInfo | null> {
+  const pageWindow = getDynamicWindow();
+  if (!pageWindow || signal.aborted) {
+    return null;
+  }
+
+  const requestId = `bridge_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const bridgeUrl = buildDiscoveryBridgeUrl(host, pageWindow.location.origin, requestId);
+
+  return new Promise((resolve) => {
+    let finished = false;
+
+    const finalize = (device: DeviceInfo | null) => {
+      if (finished) {
+        return;
+      }
+
+      finished = true;
+      clearTimeout(timeoutId);
+      signal.removeEventListener("abort", handleAbort);
+      pageWindow.removeEventListener("message", handleMessage);
+      resolve(device);
+    };
+
+    const handleAbort = () => finalize(null);
+    const handleMessage = (event: MessageEvent<unknown>) => {
+      if (event.source !== bridgeWindow || !isDiscoveryBridgeMessage(event.data, requestId)) {
+        return;
+      }
+
+      const bridgeMessage = event.data;
+      const eventOriginHost = normalizeDiscoveryHost(event.origin);
+      const expectedHost = normalizeDiscoveryHost(host);
+      if (expectedHost && eventOriginHost && eventOriginHost !== expectedHost) {
+        return;
+      }
+
+      void (async () => {
+        try {
+          finalize(await buildDeviceFromPayload(bridgeMessage.host || host, bridgeMessage.payload, signal));
+        } catch {
+          finalize(null);
+        }
+      })();
+    };
+    const timeoutId = window.setTimeout(() => finalize(null), DISCOVERY_BRIDGE_TIMEOUT_MS);
+
+    signal.addEventListener("abort", handleAbort, { once: true });
+    pageWindow.addEventListener("message", handleMessage);
+
+    try {
+      bridgeWindow.location.href = bridgeUrl;
+    } catch {
+      finalize(null);
+    }
+  });
+}
+
+async function probePreferredAliasesViaBridge(signal: AbortSignal): Promise<DeviceInfo | null> {
+  const pageWindow = getDynamicWindow();
+  if (!pageWindow || signal.aborted) {
+    return null;
+  }
+
+  const bridgeHosts = COMMON_HOST_ALIASES.filter((host) => host.endsWith(".local"));
+  if (bridgeHosts.length === 0) {
+    return null;
+  }
+
+  const bridgeWindow = pageWindow.open("", "econnect-discovery-bridge", "popup,width=420,height=640");
+  if (!bridgeWindow) {
+    throw new Error("Allow pop-ups for this page, then retry the LAN scan.");
+  }
+
+  try {
+    for (const host of bridgeHosts) {
+      if (signal.aborted || bridgeWindow.closed) {
+        return null;
+      }
+
+      const device = await probeCandidateHostViaBridgeWindow(bridgeWindow, host, signal);
+      if (device) {
+        return device;
+      }
+    }
+  } finally {
+    if (!bridgeWindow.closed) {
+      bridgeWindow.close();
+    }
+  }
+
+  return null;
+}
+
 async function waitBeforeRetry(signal: AbortSignal, delayMs: number): Promise<void> {
   if (signal.aborted) {
     return;
@@ -307,6 +430,7 @@ export const useScanner = () => {
   const [scannedCount, setScannedCount] = useState(0);
   const [totalCount, setTotalCount] = useState(0);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [hasScannedOnce, setHasScannedOnce] = useState(false);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const globalTimeoutRef = useRef<number | null>(null);
@@ -386,7 +510,7 @@ export const useScanner = () => {
     scheduleScanAbort(remainingMs);
   }, [scheduleScanAbort]);
 
-  const startScan = useCallback(async () => {
+  const startScan = useCallback(async (options?: StartScanOptions) => {
     if (typeof window === "undefined") {
       return;
     }
@@ -399,6 +523,7 @@ export const useScanner = () => {
     setProgress(0);
     setScannedCount(0);
     setScanError(null);
+    setHasScannedOnce(true);
     scanTimedOutRef.current = false;
     pendingDevicesRef.current = new Map();
     hasDetectedServerRef.current = false;
@@ -461,6 +586,20 @@ export const useScanner = () => {
     };
 
     try {
+      if (isSecureScannerPage() && options?.interactive) {
+        setTotalCount(COMMON_HOST_ALIASES.length);
+        const bridgedDevice = await probePreferredAliasesViaBridge(signal);
+        if (bridgedDevice) {
+          pendingDevicesRef.current.set(`${bridgedDevice.launchHost}:${bridgedDevice.port ?? ""}`, bridgedDevice);
+          shortenScanAfterDetection();
+          setScannedCount(COMMON_HOST_ALIASES.length);
+          setProgress(100);
+          return;
+        }
+
+        setScannedCount(COMMON_HOST_ALIASES.length);
+      }
+
       if (preferredHosts.length > 0) {
         await runBatch(preferredHosts);
       }
@@ -522,7 +661,11 @@ export const useScanner = () => {
       );
     };
 
-    if (!secureScannerPage || document.readyState === "complete") {
+    if (secureScannerPage) {
+      return;
+    }
+
+    if (document.readyState === "complete") {
       scheduleStart();
       return () => {
         if (timeoutId !== null) {
@@ -557,5 +700,6 @@ export const useScanner = () => {
     scannedCount,
     totalCount,
     scanError,
+    hasScannedOnce,
   };
 };

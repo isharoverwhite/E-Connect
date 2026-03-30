@@ -14,30 +14,35 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 
 1. The user completes setup of the self-hosted E-Connect stack on their own server or mini-PC at home.
 2. From a device on the same LAN, the user opens [find.isharoverwhite.com](https://find.isharoverwhite.com).
-3. The public page starts a LAN scan as soon as it loads.
-4. The browser probes preferred aliases first:
+3. On local HTTP-hosted copies of the page, the browser may still start scanning immediately on load.
+4. On the secure public host, the page waits for an explicit user click before it starts LAN discovery because the browser may require a user gesture to open the local discovery bridge window.
+5. The browser probes preferred aliases first:
    - `econnect.local`
    - `e-connect.local`
    - `econnect-server.local`
-5. On deployments that want the alias-first fast path, the operator publishes `econnect.local` to the server LAN IP via Avahi/mDNS, router DNS, the backend's built-in mDNS publisher when the server runtime is configured with `MDNS_HOSTNAME`, or the Jenkins-managed `discovery_mdns` helper when the stack is deployed through the repository pipeline.
-6. For the standard self-hosted Docker Compose topology, the server also exposes a bare HTTP landing port on host `80`; opening `http://econnect.local` on the LAN must redirect to the current WebUI transport on the same hostname, which defaults to `http://econnect.local:3000/`.
-7. If none of the preferred aliases responds, the browser falls back to the wider candidate host list:
+6. On deployments that want the alias-first fast path, the operator publishes `econnect.local` to the server LAN IP via Avahi/mDNS, router DNS, the backend's built-in mDNS publisher when the server runtime is configured with `MDNS_HOSTNAME`, or the Jenkins-managed `discovery_mdns` helper when the stack is deployed through the repository pipeline.
+7. For the standard self-hosted Docker Compose topology, the server also exposes a bare HTTP landing port on host `80`; opening `http://econnect.local` on the LAN must redirect to the current WebUI transport on the same hostname, which defaults to `http://econnect.local:3000/`.
+8. On the secure public host, the first interactive scan attempt opens a temporary popup or tab to the preferred alias on the user's LAN:
+   - `http://<preferred-alias>:8000/discovery-bridge?...`
+   - the bridge page runs on the local HTTP origin, reads the same health payload as `/health`, then posts that payload back to the public page with `window.opener.postMessage(...)`
+9. If none of the preferred aliases responds, the browser falls back to the wider candidate host list:
    - common private subnets such as `192.168.1.x`, `192.168.0.x`, `192.168.2.x`, `10.0.0.x`
-8. For each candidate host, the browser uses one of these transport paths:
+10. For each candidate host, the browser uses one of these transport paths:
    - on local HTTP-hosted copies of `find_website`, the scanner may fetch `http://<candidate-host>:8000/health` directly because the backend exposes permissive CORS for that payload
-   - on the secure public host, the scanner keeps the Synology-style script probe transport:
+   - on the secure public host, the interactive fast path prefers the local bridge popup for `.local` aliases
+   - on the secure public host, the non-interactive fallback still keeps the Synology-style script probe transport:
      - `http://<candidate-host>:8000/web-assistant.js?callback=<callbackName>`
-9. Both discovery paths consume the same runtime health payload, and the script endpoint still invokes the provided callback when the JSONP transport is used.
-10. The page trusts `firmware_network` as the primary source of truth for:
+11. Both discovery paths consume the same runtime health payload, and the script endpoint still invokes the provided callback when the JSONP transport is used.
+12. The page trusts `firmware_network` as the primary source of truth for:
    - the WebUI protocol and port
    - the preferred LAN launch host, by first extracting a private IPv4 from `api_base_url`, then `advertised_host`, then the responding probe host
-11. Once a private LAN IP is available, the page probes the WebUI through that IP, launches through that IP, and shows that same LAN IP as the primary host in the result card. A backend-advertised alias such as `econnect.local` may remain secondary context only.
-12. The page performs a lightweight website probe for the resolved launch target and labels each hit as `online` or `offline`.
-13. On the secure public host, if a private/LAN target still advertises the legacy transport `https://<host>:3000` and that probe fails, the scanner retries `http://<host>:3000` before declaring the WebUI offline.
-14. For the standard self-hosted Docker Compose topology, the primary WebUI launch target should remain plain `http://<lan-host>:3000` so the public finder does not depend on trusting a self-signed LAN certificate just to open the dashboard.
-15. When secure-context browser features such as Web Serial are needed, the self-hosted stack may still expose an HTTPS companion origin separately from the finder launch target.
-16. After the scan window closes, the page reveals the final result list, or surfaces an explicit browser-blocked failure when the secure public origin cannot reach local HTTP discovery endpoints.
-17. The developer-hosted public page never scans the user's LAN from the developer server; all LAN discovery requests come from the user's own browser session.
+13. Once a private LAN IP is available, the page probes the WebUI through that IP, launches through that IP, and shows that same LAN IP as the primary host in the result card. A backend-advertised alias such as `econnect.local` may remain secondary context only.
+14. The page performs a lightweight website probe for the resolved launch target and labels each hit as `online` or `offline`.
+15. On the secure public host, if a private/LAN target still advertises the legacy transport `https://<host>:3000` and that probe fails, the scanner retries `http://<host>:3000` before declaring the WebUI offline.
+16. For the standard self-hosted Docker Compose topology, the primary WebUI launch target should remain plain `http://<lan-host>:3000` so the public finder does not depend on trusting a self-signed LAN certificate just to open the dashboard.
+17. When secure-context browser features such as Web Serial are needed, the self-hosted stack may still expose an HTTPS companion origin separately from the finder launch target.
+18. After the scan window closes, the page reveals the final result list, or surfaces an explicit browser-blocked failure when the secure public origin cannot reach local HTTP discovery endpoints.
+19. The developer-hosted public page never scans the user's LAN from the developer server; all LAN discovery requests come from the user's own browser session.
 
 ## Backend Contract
 
@@ -46,6 +51,11 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
   - validates the callback name
   - invokes the callback with the backend health payload
   - degraded database state still returns a payload because the browser scanner only sees script success/failure, not HTTP status
+- `GET /discovery-bridge?target_origin=<origin>&request_id=<id>`
+  - returns a tiny HTML page served from the user's local E-Connect server over HTTP
+  - validates the public-page target origin and request id
+  - posts the backend health payload back to the public page with `window.opener.postMessage(...)`
+  - exists specifically so the secure public page can receive local-LAN discovery data without executing mixed-content JavaScript inside the HTTPS tab
 - `GET /`
   - on the host-mapped HTTP landing port, returns a redirect to the current WebUI transport on the same host
   - for the standard compose runtime, the expected redirect target is `http://<alias-or-lan-host>:3000/`
@@ -60,6 +70,7 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 - `no server found`
 - `scan failed`
 - `scan failed (secure-origin browser block)`
+- `ready to scan` on the secure public host before the user grants the scan gesture
 - no permanent HTTPS warning banner before a secure scan actually ends empty or fails
 
 ## Verification Hooks
@@ -69,9 +80,10 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 - Browser:
   - the browser session running [find.isharoverwhite.com](https://find.isharoverwhite.com) is on the same LAN as the user's self-hosted server
   - the deployment can resolve `econnect.local` to the server LAN IP when the alias fast path is configured
+  - on the secure public host, clicking `Start LAN Scan` opens the local bridge window and receives a `postMessage` payload from the LAN server
   - when host port `80` is available, opening `http://econnect.local` returns a redirect to the advertised WebUI host and port
   - a local HTTP-hosted copy of the page can discover a fake backend through `/health`
-  - the secure public page either discovers the server through the script probe or surfaces the secure-origin browser-blocked failure explicitly
+  - the secure public page either discovers the server through the bridge fast path or surfaces the secure-origin browser-blocked failure explicitly
   - page prefers `econnect.local`-style aliases before subnet sweeping
   - once discovery succeeds, the result card and launch link use the resolved LAN IP instead of the mDNS alias
   - page renders scan results and empty state correctly
@@ -88,3 +100,4 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 - The `.local` suffix is most reliable through mDNS/Avahi; a router DNS override for the same suffix may still lose to mDNS on some client resolvers.
 - When the backend or Jenkins helper advertises `econnect.local`, Docker deployments still need an explicit or auto-detected LAN IP override because containers cannot always infer the host LAN address correctly.
 - Browsers can still block `http://<candidate-host>:8000/...` from the secure public origin because of mixed-content or private-network restrictions, even when the backend is healthy on the LAN.
+- The interactive bridge flow depends on one user gesture and a browser window or popup that can open a local HTTP page on the LAN alias.

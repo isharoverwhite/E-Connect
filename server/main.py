@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi import Request
 from fastapi import HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from fastapi.responses import RedirectResponse
 from fastapi.responses import Response
@@ -12,6 +13,7 @@ import json
 import logging
 from pathlib import Path
 import re
+from urllib.parse import urlparse
 from app.api import DEVICE_HEARTBEAT_TIMEOUT_SECONDS, expire_stale_online_devices_once, router as device_router
 from sqlalchemy.exc import OperationalError
 
@@ -30,6 +32,7 @@ logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STALE_DEVICE_SWEEP_INTERVAL_SECONDS = max(1, min(DEVICE_HEARTBEAT_TIMEOUT_SECONDS, 2))
 JSONP_CALLBACK_PATTERN = re.compile(r"^[A-Za-z_$][0-9A-Za-z_$.]*$")
+DISCOVERY_BRIDGE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 def _using_overridden_database(app: FastAPI) -> bool:
     return get_db in app.dependency_overrides
@@ -128,6 +131,20 @@ def _resolve_root_redirect_transport(app: FastAPI) -> tuple[str, int]:
             port = parsed_port
 
     return protocol, port
+
+
+def _normalize_target_origin(target_origin: str) -> str:
+    normalized_origin = target_origin.strip()
+    if not normalized_origin:
+        raise HTTPException(status_code=400, detail="Missing target origin")
+
+    parsed_origin = urlparse(normalized_origin)
+    if parsed_origin.scheme not in {"http", "https"} or not parsed_origin.netloc:
+        raise HTTPException(status_code=400, detail="Invalid target origin")
+    if parsed_origin.path not in {"", "/"} or parsed_origin.params or parsed_origin.query or parsed_origin.fragment:
+        raise HTTPException(status_code=400, detail="Invalid target origin")
+
+    return f"{parsed_origin.scheme}://{parsed_origin.netloc}"
 
 
 def _format_redirect_netloc(hostname: str, port: int) -> str:
@@ -287,3 +304,60 @@ def web_assistant_script(request: Request, callback: str):
     payload, _status_code = _build_health_payload(request)
     javascript = f"{normalized_callback}({json.dumps(payload)});"
     return Response(content=javascript, media_type="application/javascript")
+
+
+@app.get("/discovery-bridge")
+def discovery_bridge(request: Request, target_origin: str, request_id: str):
+    normalized_request_id = request_id.strip()
+    if DISCOVERY_BRIDGE_REQUEST_ID_PATTERN.fullmatch(normalized_request_id) is None:
+        raise HTTPException(status_code=400, detail="Invalid request id")
+
+    normalized_target_origin = _normalize_target_origin(target_origin)
+    payload, _status_code = _build_health_payload(request)
+    message_payload = {
+        "type": "econnect.discovery.bridge",
+        "requestId": normalized_request_id,
+        "host": request.url.hostname or "localhost",
+        "payload": payload,
+    }
+    html = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>E-Connect Discovery Bridge</title>
+  </head>
+  <body>
+    <script>
+      const messagePayload = {json.dumps(message_payload)};
+      const targetOrigin = {json.dumps(normalized_target_origin)};
+
+      function notifyOpener() {{
+        try {{
+          if (window.opener && !window.opener.closed) {{
+            window.opener.postMessage(messagePayload, targetOrigin);
+            return true;
+          }}
+        }} catch (_error) {{
+          // Ignore cross-origin opener access failures and let the timeout close the bridge window.
+        }}
+
+        return false;
+      }}
+
+      notifyOpener();
+      window.setTimeout(() => {{
+        notifyOpener();
+        window.close();
+      }}, 100);
+      window.setTimeout(() => window.close(), 350);
+    </script>
+  </body>
+</html>
+"""
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Cache-Control": "no-store",
+        },
+    )
