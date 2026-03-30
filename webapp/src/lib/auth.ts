@@ -1,5 +1,12 @@
 import { API_URL } from "./api";
 
+export class ServerOfflineError extends Error {
+    constructor(message: string) {
+        super(message);
+        this.name = "ServerOfflineError";
+    }
+}
+
 export type UserApprovalStatus = "pending" | "approved" | "revoked";
 export type ManagedHouseholdRole = "owner" | "admin" | "member" | "guest";
 
@@ -283,6 +290,9 @@ export async function fetchMyProfile() {
 export async function fetchSystemStatus() {
     const res = await fetch(`${API_URL}/system/status`);
     if (!res.ok) {
+        if (res.status >= 500) {
+            throw new ServerOfflineError("Server is offline");
+        }
         throw new Error("Failed to check system status");
     }
     return res.json();

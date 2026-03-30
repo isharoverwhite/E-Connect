@@ -21,6 +21,9 @@ from sqlalchemy.exc import OperationalError
 
 from app.database import SessionLocal, check_database_connection, get_db, initialize_database
 from app.mqtt import mqtt_manager
+from app.ws_manager import manager as ws_manager
+import psutil
+import os
 from app.services.builder import (
     audit_runtime_firmware_target_mismatches,
     extract_runtime_firmware_network_targets,
@@ -256,6 +259,7 @@ def _format_redirect_netloc(hostname: str, port: int) -> str:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     stale_device_watchdog_task: asyncio.Task[None] | None = None
+    system_metrics_watchdog_task: asyncio.Task[None] | None = None
 
     async def stale_device_watchdog() -> None:
         while True:
@@ -264,6 +268,21 @@ async def lifespan(app: FastAPI):
                 expire_stale_online_devices_once()
             except Exception:
                 logger.exception("Stale-device watchdog sweep failed")
+
+    async def system_metrics_watchdog() -> None:
+        while True:
+            await asyncio.sleep(1.0)
+            try:
+                payload = {
+                    "cpu_percent": psutil.cpu_percent(interval=None),
+                    "memory_used": psutil.virtual_memory().used,
+                    "memory_total": psutil.virtual_memory().total,
+                    "storage_used": psutil.disk_usage(os.getenv('HOST_OS_ROOT', '/')).used,
+                    "storage_total": psutil.disk_usage(os.getenv('HOST_OS_ROOT', '/')).total,
+                }
+                await ws_manager.broadcast_system_event("system_metrics", payload)
+            except Exception:
+                logger.exception("System metrics watchdog failed")
 
     app.state.database_ready = False
     app.state.database_error = None
@@ -334,6 +353,7 @@ async def lifespan(app: FastAPI):
     mqtt_manager.start()
     app.state.mqtt_started = True
     stale_device_watchdog_task = asyncio.create_task(stale_device_watchdog())
+    system_metrics_watchdog_task = asyncio.create_task(system_metrics_watchdog())
     app.state.stale_device_watchdog_started = True
 
     try:
@@ -343,6 +363,10 @@ async def lifespan(app: FastAPI):
             stale_device_watchdog_task.cancel()
             with suppress(asyncio.CancelledError):
                 await stale_device_watchdog_task
+        if system_metrics_watchdog_task is not None:
+            system_metrics_watchdog_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await system_metrics_watchdog_task
         mdns_publisher = getattr(app.state, "mdns_publisher", None)
         if isinstance(mdns_publisher, MdnsPublisher):
             await mdns_publisher.stop()

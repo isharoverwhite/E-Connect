@@ -302,6 +302,11 @@ class FirmwareNetworkTargetsResponse(BaseModel):
     warning: Optional[str] = None
     stale_project_count: int = 0
     stale_device_count: int = 0
+    cpu_percent: float = 0.0
+    memory_used: int = 0
+    memory_total: int = 0
+    storage_used: int = 0
+    storage_total: int = 0
 
 class DiyProjectBase(BaseModel):
     name: str
@@ -378,3 +383,11 @@ class FirmwareResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class SystemInfoResponse(BaseModel):
+    cpu_percent: float
+    memory_used: int
+    memory_total: int
+    ip_address: str
+    os_name: str

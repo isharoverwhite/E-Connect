@@ -8,6 +8,7 @@ import { useRouter } from "next/navigation";
 export default function LoginPage() {
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
+    const [showPassword, setShowPassword] = useState(false);
     const [keepLogin, setKeepLogin] = useState(false);
     const [error, setError] = useState("");
     const [isLoading, setIsLoading] = useState(false);
@@ -42,7 +43,7 @@ export default function LoginPage() {
             <div className="bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700/50 rounded-2xl p-8 w-full max-w-md shadow-xl flex flex-col items-center">
 
                 <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mb-6">
-                    <span className="material-icons-round text-primary text-3xl">home_iot_device</span>
+                    <span className="material-icons-round text-primary text-3xl">home</span>
                 </div>
 
                 <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Welcome Back</h1>
@@ -78,30 +79,43 @@ export default function LoginPage() {
                         <div className="relative">
                             <span className="material-icons-round absolute left-3 top-2.5 text-slate-400 text-[20px]">lock</span>
                             <input
-                                type="password"
+                                type={showPassword ? "text" : "password"}
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                className="w-full bg-white dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-xl py-2.5 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                                className="w-full bg-white dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-xl py-2.5 pl-10 pr-10 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
                                 placeholder="••••••••"
                                 required
                             />
+                            <button
+                                type="button"
+                                onClick={() => setShowPassword(!showPassword)}
+                                className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors focus:outline-none"
+                                aria-label={showPassword ? "Hide password" : "Show password"}
+                                tabIndex={-1}
+                            >
+                                <span className="material-icons-round text-[20px]">
+                                    {showPassword ? "visibility_off" : "visibility"}
+                                </span>
+                            </button>
                         </div>
                     </div>
 
-                    <label className="flex items-start gap-3 rounded-xl border border-slate-200 dark:border-slate-700/60 bg-slate-50/80 dark:bg-black/20 px-4 py-3 cursor-pointer">
-                        <input
-                            type="checkbox"
-                            checked={keepLogin}
-                            onChange={(e) => setKeepLogin(e.target.checked)}
-                            className="mt-1 h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary"
-                        />
-                        <span className="text-sm text-slate-600 dark:text-slate-300">
-                            <span className="block font-medium text-slate-800 dark:text-slate-100">Keep login</span>
-                            <span className="block text-xs text-slate-500 dark:text-slate-400">
-                                Leave this unchecked to auto-logout after 4 hours without interaction.
+                    <div className="flex items-center justify-between">
+                        <label className="flex items-center gap-2 cursor-pointer group">
+                            <input
+                                type="checkbox"
+                                checked={keepLogin}
+                                onChange={(e) => setKeepLogin(e.target.checked)}
+                                className="w-4 h-4 rounded appearance-none border border-slate-300 dark:border-slate-600 checked:bg-primary checked:border-primary relative
+                                before:content-[''] before:absolute before:inset-0 before:bg-[url('data:image/svg+xml;charset=UTF-8,%3csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22white%22 stroke-width=%223%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22%3e%3cpolyline points=%2220 6 9 17 4 12%22/%3e%3c/svg%3e')]
+                                before:scale-0 checked:before:scale-75 before:transition-transform before:duration-200 before:ease-out
+                                transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/30"
+                            />
+                            <span className="text-sm text-slate-600 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-slate-200 transition-colors">
+                                Keep me logged in
                             </span>
-                        </span>
-                    </label>
+                        </label>
+                    </div>
 
                     <button
                         type="submit"

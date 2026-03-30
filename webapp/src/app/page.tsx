@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchDashboardDevices, fetchDevices, sendDeviceCommand, rejectDiscoveredDevice } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
+import Sidebar from '@/components/Sidebar';
 import { DeviceConfig, DeviceStatePin, DeviceStateSnapshot } from "@/types/device";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
 export default function Dashboard() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
   const router = useRouter();
   const [devices, setDevices] = useState<DeviceConfig[]>([]);
   const [pairingRequests, setPairingRequests] = useState<DeviceConfig[]>([]);
@@ -19,7 +20,7 @@ export default function Dashboard() {
       try {
         const saved = localStorage.getItem("dismissedNotifs");
         if (saved) return new Set(JSON.parse(saved));
-      } catch (e) {}
+      } catch {}
     }
     return new Set<string>();
   });
@@ -39,6 +40,10 @@ export default function Dashboard() {
   const { isConnected } = useWebSocket((event) => {
     if ((event.type === "pairing_requested" || event.type === "pairing_queue_updated") && isAdmin) {
       void syncDashboardData();
+      return;
+    }
+
+    if (!("device_id" in event)) {
       return;
     }
 
@@ -148,7 +153,7 @@ export default function Dashboard() {
       }
     }
     setDismissedNotifIds(newDismissed);
-    try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(newDismissed))); } catch(e) {}
+    try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(newDismissed))); } catch {}
     if (pairingRejected) {
       void syncDashboardData();
     }
@@ -156,60 +161,7 @@ export default function Dashboard() {
 
   return (
     <div className="bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-200 font-sans h-screen flex overflow-hidden selection:bg-primary selection:text-white">
-      <aside className="w-64 bg-surface-light dark:bg-surface-dark border-r border-slate-200 dark:border-slate-700 flex flex-col justify-between hidden md:flex z-20 shadow-lg">
-        <div>
-          <div className="h-16 flex items-center px-6 border-b border-slate-200 dark:border-slate-700">
-            <span className="material-icons-round text-primary mr-2 text-3xl">hub</span>
-            <span className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">E-Connect</span>
-          </div>
-          <nav className="p-4 space-y-1">
-            <a className="flex items-center px-4 py-3 bg-primary/10 text-primary font-medium rounded-lg" href="#">
-              <span className="material-icons-round mr-3">dashboard</span>
-              Dashboard
-            </a>
-            <a className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors" href="/devices">
-              <span className="material-icons-round mr-3">devices_other</span>
-              Devices
-            </a>
-            <a className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors" href="/automation">
-              <span className="material-icons-round mr-3">precision_manufacturing</span>
-              Automation
-            </a>
-            <a className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors" href="/logs">
-              <span className="material-icons-round mr-3">analytics</span>
-              Logs & Stats
-            </a>
-            <a className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors" href="/extensions">
-              <span className="material-icons-round mr-3">extension</span>
-              Extensions
-            </a>
-          </nav>
-        </div>
-        <div className="p-4 border-t border-slate-200 dark:border-slate-700">
-          <a className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition-colors mb-2" href="/settings">
-            <span className="material-icons-round mr-3">settings</span>
-            Settings
-          </a>
-          <div className="flex items-center px-4 py-3 justify-between group">
-            <div className="flex items-center">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-purple-500 flex items-center justify-center text-white font-bold text-xs uppercase">
-                {user?.fullname?.substring(0, 2) || 'AD'}
-              </div>
-              <div className="ml-3">
-                <p className="text-sm font-medium text-slate-900 dark:text-white">{user?.fullname || 'Admin User'}</p>
-                <p className="text-xs text-slate-500 dark:text-slate-400 capitalize">{user?.account_type || 'Master Node'}</p>
-              </div>
-            </div>
-            <button
-              onClick={logout}
-              className="text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all p-2 rounded-md hover:bg-red-50 dark:hover:bg-red-500/10"
-              title="Logout"
-            >
-              <span className="material-icons-round text-[18px]">logout</span>
-            </button>
-          </div>
-        </div>
-      </aside>
+      <Sidebar />
 
       <main className="flex-1 flex flex-col min-w-0 relative">
         <header className="h-16 bg-surface-light dark:bg-surface-dark border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-6 shadow-sm z-30">
@@ -308,7 +260,7 @@ export default function Dashboard() {
                                         setDismissedNotifIds(prev => {
                                           const next = new Set(prev);
                                           next.add(notif.id);
-                                          try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(next))); } catch(e) {}
+                                          try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(next))); } catch {}
                                           return next;
                                         });
                                       }}

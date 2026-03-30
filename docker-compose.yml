@@ -52,8 +52,12 @@ services:
       MDNS_ADVERTISED_IPS: ${MDNS_ADVERTISED_IPS:-}
       MDNS_DISCOVERY_PORT: ${MDNS_DISCOVERY_PORT:-8000}
       MDNS_WEBAPP_PORT: ${MDNS_WEBAPP_PORT:-3000}
+      HOST_OS_ROOT: /hostfs
     volumes:
       - server_data:/data
+      # To monitor the real host's storage limits from the System Health dashboard, uncomment the line below.
+      # Make sure to leave 'ro' to keep the container from modifying host files.
+      # - /:/hostfs:ro
     depends_on:
       db:
         condition: service_healthy

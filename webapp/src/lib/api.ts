@@ -22,6 +22,11 @@ export interface RuntimeNetworkInfo {
     warning?: string | null;
     stale_project_count?: number;
     stale_device_count?: number;
+    cpu_percent: number;
+    memory_used: number;
+    memory_total: number;
+    storage_used: number;
+    storage_total: number;
 }
 
 async function parseApiError(response: Response, fallback: string) {

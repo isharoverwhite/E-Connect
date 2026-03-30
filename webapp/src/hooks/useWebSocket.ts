@@ -13,7 +13,8 @@ type WebSocketEvent =
   | { type: "device_online"; device_id: string; payload: WebSocketPayload }
   | { type: "pairing_requested"; device_id: string; payload: WebSocketPayload }
   | { type: "pairing_queue_updated"; device_id: string; payload: WebSocketPayload }
-  | { type: "command_delivery"; device_id: string; payload: WebSocketPayload };
+  | { type: "command_delivery"; device_id: string; payload: WebSocketPayload }
+  | { type: "system_metrics"; payload: WebSocketPayload };
 
 export function useWebSocket(onEvent: (event: WebSocketEvent) => void) {
   const [isConnected, setIsConnected] = useState(false);

@@ -1,9 +1,10 @@
 "use client";
 
 import { FormEvent, useEffect, useEffectEvent, useState } from "react";
-import Link from "next/link";
+
 
 import { useAuth } from "@/components/AuthProvider";
+import { useWebSocket } from "@/hooks/useWebSocket";
 import {
     ManagedUser,
     adminCreateUser,
@@ -22,19 +23,20 @@ import {
     deleteRoom,
     updateRoomAccess,
 } from "@/lib/rooms";
+import Sidebar from "@/components/Sidebar";
 import { ConfigsPanel } from "./ConfigsPanel";
 import { useToast } from "@/components/ToastContext";
-
-type SettingsPanel = "general" | "users" | "rooms" | "configs";
-type AccountType = ManagedUser["account_type"];
 
 function formatAccountTypeLabel(accountType?: string | null) {
     return accountType === "admin" ? "admin" : "user";
 }
 
+type SettingsPanel = "general" | "users" | "rooms" | "configs";
+type AccountType = ManagedUser["account_type"];
+
 
 export default function SettingsPage() {
-    const { user, logout } = useAuth();
+    const { user } = useAuth();
     const { showToast } = useToast();
     const isAdmin = user?.account_type === "admin";
 
@@ -64,6 +66,25 @@ export default function SettingsPage() {
         username: "",
         password: "",
         account_type: "parent" as AccountType,
+    });
+
+    useWebSocket((event) => {
+        if (event.type === "system_metrics" && event.payload) {
+            const metrics = event.payload as Record<string, unknown>;
+            if (typeof metrics.cpu_percent === 'number' && typeof metrics.memory_used === 'number' && typeof metrics.memory_total === 'number') {
+                setRuntimeNetwork((prev) => {
+                    if (!prev) return prev;
+                    return {
+                        ...prev,
+                        cpu_percent: metrics.cpu_percent as number,
+                        memory_used: metrics.memory_used as number,
+                        memory_total: metrics.memory_total as number,
+                        storage_used: metrics.storage_used as number,
+                        storage_total: metrics.storage_total as number
+                    };
+                });
+            }
+        }
     });
 
     useEffect(() => {
@@ -412,62 +433,7 @@ export default function SettingsPage() {
 
     return (
         <div className="flex min-h-screen w-full bg-background-light text-slate-800 dark:bg-background-dark dark:text-slate-200 overflow-hidden font-sans selection:bg-primary selection:text-white">
-            <aside className="hidden w-64 flex-col justify-between border-r border-slate-200 bg-surface-light shadow-lg dark:border-slate-700 dark:bg-surface-dark md:flex">
-                <div>
-                    <div className="flex h-16 items-center border-b border-slate-200 px-6 dark:border-slate-700">
-                        <span className="material-icons-round mr-2 text-3xl text-primary">hub</span>
-                        <span className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">E-Connect</span>
-                    </div>
-
-                    <nav className="space-y-1 p-4">
-                        <Link href="/" className="flex items-center rounded-lg px-4 py-3 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white">
-                            <span className="material-icons-round mr-3">dashboard</span>
-                            Dashboard
-                        </Link>
-                        <Link href="/devices" className="flex items-center rounded-lg px-4 py-3 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white">
-                            <span className="material-icons-round mr-3">devices_other</span>
-                            Devices
-                        </Link>
-                        <Link href="/automation" className="flex items-center rounded-lg px-4 py-3 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white">
-                            <span className="material-icons-round mr-3">precision_manufacturing</span>
-                            Automation
-                        </Link>
-                        <Link href="/logs" className="flex items-center rounded-lg px-4 py-3 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white">
-                            <span className="material-icons-round mr-3">analytics</span>
-                            Logs & Stats
-                        </Link>
-                        <Link href="/extensions" className="flex items-center rounded-lg px-4 py-3 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white">
-                            <span className="material-icons-round mr-3">extension</span>
-                            Extensions
-                        </Link>
-                    </nav>
-                </div>
-
-                <div className="border-t border-slate-200 p-4 dark:border-slate-700">
-                    <Link href="/settings" className="mb-2 flex items-center rounded-lg bg-primary/10 px-4 py-3 font-medium text-primary transition-colors">
-                        <span className="material-icons-round mr-3">settings</span>
-                        Settings
-                    </Link>
-                    <div className="group flex items-center justify-between px-4 py-3">
-                        <div className="flex items-center">
-                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-tr from-primary to-cyan-500 text-xs font-bold uppercase text-white">
-                                {user?.fullname?.substring(0, 2) || "EC"}
-                            </div>
-                            <div className="ml-3">
-                                <p className="text-sm font-medium text-slate-900 dark:text-white">{user?.fullname || "E-Connect User"}</p>
-                                <p className="text-xs capitalize text-slate-500 dark:text-slate-400">{formatAccountTypeLabel(user?.account_type) || "member"}</p>
-                            </div>
-                        </div>
-                        <button
-                            onClick={logout}
-                            className="rounded-md p-2 text-slate-400 opacity-0 transition-all hover:bg-red-50 hover:text-red-500 group-hover:opacity-100 dark:hover:bg-red-500/10"
-                            title="Logout"
-                        >
-                            <span className="material-icons-round text-[18px]">logout</span>
-                        </button>
-                    </div>
-                </div>
-            </aside>
+            <Sidebar />
 
             <main className="flex min-w-0 flex-1 flex-col">
                 <header className="px-8 pt-8 pb-4">
@@ -544,57 +510,16 @@ export default function SettingsPage() {
 
                         {activePanel === "general" ? (
                             <div className="grid gap-6">
-                                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
-                                    <div className="flex items-start justify-between gap-4">
-                                        <div>
-                                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Instance</p>
-                                            <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Operational baseline for this deployment</h2>
-                                        </div>
-                                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-right dark:border-slate-700 dark:bg-slate-900/80">
-                                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Current session</p>
-                                            <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{user?.username || "unknown"}</p>
-                                            <p className="text-xs capitalize text-slate-500 dark:text-slate-400">{formatAccountTypeLabel(user?.account_type) || "member"}</p>
-                                        </div>
-                                    </div>
-
-                                    <div className="mt-6 grid gap-4 md:grid-cols-3">
-                                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Admin-only menu</p>
-                                            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-                                                User lifecycle controls only render for `account_type=admin` and are enforced again by backend role checks.
-                                            </p>
-                                        </div>
-                                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Approval lifecycle</p>
-                                            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-                                                New users start in `pending`, can be switched to `approved`, and `revoked` accounts are blocked at login and on authenticated routes.
-                                            </p>
-                                        </div>
-                                        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                            <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Temporary note</p>
-                                            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
-                                                PRD has been updated with the seeded QA account so future agents know this instance intentionally carries a temporary hardcoded credential.
-                                            </p>
-                                        </div>
-                                    </div>
-                                </section>
-
                                 {isAdmin ? (
                                     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
                                         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                                             <div>
-                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Runtime Network</p>
-                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Current provisioning targets</h2>
+                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">System Health</p>
+                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Active server metrics</h2>
                                                 <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                                                    These are the live server and MQTT addresses the backend is currently advertising for firmware generation and troubleshooting.
+                                                    Real-time server diagnostics covering active processes, memory limits, and localized network targets.
                                                 </p>
                                             </div>
-                                            {runtimeNetwork ? (
-                                                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-900/80">
-                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Provisioning key</p>
-                                                    <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{runtimeNetwork.target_key}</p>
-                                                </div>
-                                            ) : null}
                                         </div>
 
                                         {networkError ? (
@@ -612,29 +537,39 @@ export default function SettingsPage() {
 
                                         {networkLoading ? (
                                             <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-400">
-                                                Loading active runtime network targets...
+                                                Loading system metrics...
                                             </div>
                                         ) : runtimeNetwork ? (
                                             <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
                                                     <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Server Host / IP</p>
                                                     <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{runtimeNetwork.advertised_host}</p>
-                                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">This is the host the backend currently stamps into new firmware builds.</p>
+                                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Current network boundary for devices.</p>
                                                 </div>
                                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">MQTT Broker Host / IP</p>
-                                                    <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{runtimeNetwork.mqtt_broker}</p>
-                                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Boards use this host for MQTT transport after flashing.</p>
+                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">CPU Usage</p>
+                                                    <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{runtimeNetwork.cpu_percent.toFixed(1)}%</p>
+                                                    <div className="mt-2 h-1.5 w-full rounded-full bg-slate-200 overflow-hidden dark:bg-slate-700">
+                                                        <div className={`h-full ${runtimeNetwork.cpu_percent > 80 ? 'bg-rose-500' : 'bg-primary'}`} style={{ width: `${Math.min(100, runtimeNetwork.cpu_percent)}%` }}></div>
+                                                    </div>
                                                 </div>
                                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">MQTT Port</p>
-                                                    <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{runtimeNetwork.mqtt_port}</p>
-                                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Use this together with the broker host when checking runtime connectivity.</p>
+                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Memory Usage</p>
+                                                    <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
+                                                        {(runtimeNetwork.memory_used / 1024 / 1024 / 1024).toFixed(1)} GB / {(runtimeNetwork.memory_total / 1024 / 1024 / 1024).toFixed(1)} GB
+                                                    </p>
+                                                    <div className="mt-2 h-1.5 w-full rounded-full bg-slate-200 overflow-hidden dark:bg-slate-700">
+                                                        <div className={`h-full ${(runtimeNetwork.memory_used / runtimeNetwork.memory_total) > 0.8 ? 'bg-rose-500' : 'bg-primary'}`} style={{ width: `${Math.min(100, (runtimeNetwork.memory_used / runtimeNetwork.memory_total) * 100)}%` }}></div>
+                                                    </div>
                                                 </div>
                                                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">API Base URL</p>
-                                                    <p className="mt-2 break-all text-sm font-semibold text-slate-900 dark:text-white">{runtimeNetwork.api_base_url}</p>
-                                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Nearby provisioning and firmware diagnostics should resolve back to this API endpoint.</p>
+                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Storage Usage</p>
+                                                    <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
+                                                        {(runtimeNetwork.storage_used / 1024 / 1024 / 1024).toFixed(1)} GB / {(runtimeNetwork.storage_total / 1024 / 1024 / 1024).toFixed(1)} GB
+                                                    </p>
+                                                    <div className="mt-2 h-1.5 w-full rounded-full bg-slate-200 overflow-hidden dark:bg-slate-700">
+                                                        <div className={`h-full ${(runtimeNetwork.storage_used / runtimeNetwork.storage_total) > 0.8 ? 'bg-rose-500' : 'bg-primary'}`} style={{ width: `${Math.min(100, (runtimeNetwork.storage_used / runtimeNetwork.storage_total) * 100)}%` }}></div>
+                                                    </div>
                                                 </div>
                                             </div>
                                         ) : null}
