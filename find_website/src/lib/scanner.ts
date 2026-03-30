@@ -34,6 +34,7 @@ export const DEFAULT_WEBAPP_PORT = "3000";
 export const DISCOVERY_SCRIPT_PORT = "8000";
 export const DISCOVERY_SCRIPT_PATH = "/web-assistant.js";
 export const DISCOVERY_BRIDGE_PATH = "/discovery-bridge";
+export const DISCOVERY_BRIDGE_STORAGE_KEY = "econnect.discovery.bridge";
 export const DISCOVERY_HEALTH_PATH = "/health";
 export const DISCOVERY_TIMEOUT_MS = 1500;
 export const ALIAS_DISCOVERY_TIMEOUT_MS = 4000;
