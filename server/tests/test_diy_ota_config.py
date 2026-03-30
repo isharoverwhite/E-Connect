@@ -3,6 +3,7 @@ from datetime import datetime
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import close_all_sessions, sessionmaker
+from sqlalchemy.pool import StaticPool
 import json
 import uuid
 
@@ -12,8 +13,12 @@ from app.sql_models import AuthStatus, User, Household, HouseholdMembership, Hou
 from app.auth import get_password_hash, create_ota_token
 
 # Setup test DB
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_diy_ota_config.db"
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+SQLALCHEMY_DATABASE_URL = "sqlite://"
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def override_get_db():
