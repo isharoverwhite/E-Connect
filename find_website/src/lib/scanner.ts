@@ -212,7 +212,7 @@ export function resolveWebappProbeTransports(
   options?: { securePage?: boolean },
 ): WebappTransport[] {
   const primaryTransport = resolveWebappTransport(firmwareNetwork);
-  const candidates: WebappTransport[] = [primaryTransport];
+  const candidates: WebappTransport[] = [];
   const securePage = options?.securePage === true;
   const looksPrivateLanTarget =
     isLikelyPrivateDiscoveryHost(firmwareNetwork?.api_base_url) ||
@@ -231,6 +231,8 @@ export function resolveWebappProbeTransports(
       port: DEFAULT_WEBAPP_PORT,
     });
   }
+
+  appendWebappTransportCandidate(candidates, primaryTransport);
 
   return candidates;
 }
