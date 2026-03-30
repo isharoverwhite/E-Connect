@@ -4,6 +4,7 @@ from unittest.mock import Mock
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.api import DEVICE_HEARTBEAT_TIMEOUT, expire_stale_online_devices_once
 from app.database import Base
@@ -23,11 +24,12 @@ from app.sql_models import (
 )
 
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_device_heartbeat.db"
+SQLALCHEMY_DATABASE_URL = "sqlite://"
 
 engine = create_engine(
     SQLALCHEMY_DATABASE_URL,
     connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

@@ -2,17 +2,20 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from main import app
 from app.database import Base, get_db
 from app.auth import create_access_token
 from app.sql_models import User, Household, HouseholdMembership, HouseholdRole, AccountType, Automation, AutomationExecutionLog, ExecutionStatus
 
-# Basic Setup for SQLite in-memory DB
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_auto.db"
+# Keep automation tests in memory to avoid workspace disk growth during CI.
+SQLALCHEMY_DATABASE_URL = "sqlite://"
 
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

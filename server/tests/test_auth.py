@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 from jose import jwt
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -19,11 +20,13 @@ from app.database import Base, get_db
 from app.services.user_management import TEMP_SUPPORT_USERNAME
 from app.sql_models import User, AccountType, HouseholdMembership, HouseholdRole, UserApprovalStatus
 
-# Create an in-memory SQLite database for testing
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test.db"
+# Keep auth tests in memory to avoid workspace disk growth during CI.
+SQLALCHEMY_DATABASE_URL = "sqlite://"
 
 engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
