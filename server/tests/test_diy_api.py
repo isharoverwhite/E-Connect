@@ -466,6 +466,27 @@ def test_get_diy_network_targets_uses_browser_origin_header():
     assert payload["target_key"] == "192.168.8.4|https://192.168.8.4:3000/api/v1|192.168.8.4|1883"
 
 
+def test_get_diy_network_targets_falls_back_when_host_storage_mount_is_missing(monkeypatch):
+    db = TestingSessionLocal()
+    create_test_user(db, username="networktargetsfallback")
+    token = get_token(username="networktargetsfallback")
+    monkeypatch.setenv("HOST_OS_ROOT", "/hostfs-missing-for-test")
+
+    response = client.get(
+        "/api/v1/diy/network-targets",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Host": "server:8000",
+            "X-EConnect-Origin": "https://192.168.8.4:3000",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["storage_used"] >= 0
+    assert payload["storage_total"] > 0
+
+
 def test_get_diy_network_targets_prefers_runtime_startup_target_over_localhost_request():
     db = TestingSessionLocal()
     create_test_user(db, username="runtimehost")
