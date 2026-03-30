@@ -1,5 +1,11 @@
 # Screens and UI Flow Details
 
+## Global Error States
+- **Server Offline**:
+  - If the Webapp cannot connect to the backend server (e.g. `ERR_CONNECTION_REFUSED`), the main application wrapper (`AuthProvider`) must immediately interrupt rendering completely.
+  - The UI must display a standalone, prominent "Cannot connect to server" error page instead of falling back to a broken login form or blank screen.
+  - This state must provide a "Retry" or "Refresh" action that re-evaluates the server status without requiring a manual page reload.
+
 ## Login Page
 - The login form must submit a real session request to `/api/v1/auth/token` and store the returned access/refresh session contract instead of a single long-lived bearer token.
 - The form must expose a `Keep login` checkbox.

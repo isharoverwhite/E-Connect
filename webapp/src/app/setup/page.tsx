@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { initializeServer, fetchSystemStatus } from "@/lib/auth";
 import { useRouter } from "next/navigation";
+import { useToast } from "@/components/ToastContext";
 
 function getErrorMessage(error: unknown, fallback: string) {
     return error instanceof Error ? error.message : fallback;
@@ -16,11 +17,13 @@ export default function SetupPage() {
     const [repassword, setRepassword] = useState("");
 
     const [error, setError] = useState("");
+    const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [isLoading, setIsLoading] = useState(false);
     const [isCheckingStatus, setIsCheckingStatus] = useState(true);
     const [statusError, setStatusError] = useState("");
 
     const router = useRouter();
+    const { showToast } = useToast();
 
     useEffect(() => {
         let mounted = true;
@@ -48,9 +51,37 @@ export default function SetupPage() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError("");
+        setFieldErrors({});
 
+        let isValid = true;
+        const newFieldErrors: Record<string, string> = {};
+
+        if (!householdName.trim()) {
+            newFieldErrors.householdName = "Please provide a household name.";
+            isValid = false;
+        }
+        if (!fullname.trim()) {
+            newFieldErrors.fullname = "Please enter your full name.";
+            isValid = false;
+        }
+        if (!username.trim()) {
+            newFieldErrors.username = "An admin username is required.";
+            isValid = false;
+        }
+        if (!password) {
+            newFieldErrors.password = "A secure password is required.";
+            isValid = false;
+        } else if (password.length < 6) {
+            newFieldErrors.password = "Password must be at least 6 characters.";
+            isValid = false;
+        }
         if (password !== repassword) {
-            setError("Passwords do not match");
+            newFieldErrors.repassword = "Passwords do not match.";
+            isValid = false;
+        }
+
+        if (!isValid) {
+            setFieldErrors(newFieldErrors);
             return;
         }
 
@@ -64,6 +95,7 @@ export default function SetupPage() {
                 householdName,
                 ui_layout: {}
             });
+            showToast("Server initialized successfully! Please log in.", "success");
             // Success, send them to login
             router.push("/login");
         } catch (error: unknown) {
@@ -98,7 +130,7 @@ export default function SetupPage() {
 
     return (
         <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center p-4">
-            <div className="bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700/50 rounded-2xl p-8 w-full max-w-lg shadow-xl flex items-start space-x-8">
+            <div className="bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700/50 rounded-2xl p-6 sm:p-8 w-full max-w-2xl shadow-xl flex flex-col sm:flex-row sm:items-stretch gap-6 sm:gap-8">
 
                 {/* Visual Side Info */}
                 <div className="flex-1 hidden sm:flex flex-col items-center justify-center border-r border-slate-200 dark:border-slate-700 pr-8">
@@ -124,92 +156,150 @@ export default function SetupPage() {
                         </div>
                     )}
 
-                    <form onSubmit={handleSubmit} className="w-full space-y-4">
+                    <form onSubmit={handleSubmit} noValidate className="w-full space-y-4">
 
                         {/* Household Name */}
                         <div>
-                            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wide">Household Name</label>
+                            <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${fieldErrors.householdName ? 'text-red-500' : 'text-slate-700 dark:text-slate-300'}`}>Household Name</label>
                             <div className="relative">
-                                <span className="material-icons-round absolute left-3 top-2.5 text-slate-400 text-[18px]">home</span>
+                                <span className={`material-icons-round absolute left-3 top-2.5 text-[18px] ${fieldErrors.householdName ? 'text-red-500' : 'text-slate-400'}`}>home</span>
                                 <input
                                     type="text"
                                     value={householdName}
-                                    onChange={(e) => setHouseholdName(e.target.value)}
-                                    className="w-full bg-slate-50 dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                                    onChange={(e) => {
+                                        setHouseholdName(e.target.value);
+                                        if (fieldErrors.householdName) setFieldErrors(prev => ({ ...prev, householdName: "" }));
+                                    }}
+                                    className={`w-full bg-slate-50 dark:bg-black/20 border rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent transition-all ${fieldErrors.householdName ? 'border-red-500 focus:ring-red-500' : 'border-slate-300 dark:border-slate-700 focus:ring-primary'}`}
                                     placeholder="My Smart Home"
-                                    required
                                 />
                             </div>
+                            {fieldErrors.householdName && <p className="text-red-500 text-xs mt-1.5 flex items-center font-medium"><span className="material-icons-round text-[14px] mr-1">error</span>{fieldErrors.householdName}</p>}
                         </div>
 
                         {/* Fullname */}
                         <div>
-                            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wide">Full Name</label>
+                            <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${fieldErrors.fullname ? 'text-red-500' : 'text-slate-700 dark:text-slate-300'}`}>Full Name</label>
                             <div className="relative">
-                                <span className="material-icons-round absolute left-3 top-2.5 text-slate-400 text-[18px]">badge</span>
+                                <span className={`material-icons-round absolute left-3 top-2.5 text-[18px] ${fieldErrors.fullname ? 'text-red-500' : 'text-slate-400'}`}>badge</span>
                                 <input
                                     type="text"
                                     value={fullname}
-                                    onChange={(e) => setFullname(e.target.value)}
-                                    className="w-full bg-slate-50 dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                                    onChange={(e) => {
+                                        setFullname(e.target.value);
+                                        if (fieldErrors.fullname) setFieldErrors(prev => ({ ...prev, fullname: "" }));
+                                    }}
+                                    className={`w-full bg-slate-50 dark:bg-black/20 border rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent transition-all ${fieldErrors.fullname ? 'border-red-500 focus:ring-red-500' : 'border-slate-300 dark:border-slate-700 focus:ring-primary'}`}
                                     placeholder="Jane Doe"
-                                    required
                                 />
                             </div>
+                            {fieldErrors.fullname && <p className="text-red-500 text-xs mt-1.5 flex items-center font-medium"><span className="material-icons-round text-[14px] mr-1">error</span>{fieldErrors.fullname}</p>}
                         </div>
 
                         {/* Username */}
                         <div>
-                            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5 uppercase tracking-wide">Admin Username</label>
+                            <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${fieldErrors.username ? 'text-red-500' : 'text-slate-700 dark:text-slate-300'}`}>Admin Username</label>
                             <div className="relative">
-                                <span className="material-icons-round absolute left-3 top-2.5 text-slate-400 text-[18px]">admin_panel_settings</span>
+                                <span className={`material-icons-round absolute left-3 top-2.5 text-[18px] ${fieldErrors.username ? 'text-red-500' : 'text-slate-400'}`}>admin_panel_settings</span>
                                 <input
                                     type="text"
                                     value={username}
-                                    onChange={(e) => setUsername(e.target.value)}
-                                    className="w-full bg-slate-50 dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                                    onChange={(e) => {
+                                        setUsername(e.target.value);
+                                        if (fieldErrors.username) setFieldErrors(prev => ({ ...prev, username: "" }));
+                                    }}
+                                    className={`w-full bg-slate-50 dark:bg-black/20 border rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent transition-all ${fieldErrors.username ? 'border-red-500 focus:ring-red-500' : 'border-slate-300 dark:border-slate-700 focus:ring-primary'}`}
                                     placeholder="admin"
-                                    required
                                 />
                             </div>
+                            {fieldErrors.username && <p className="text-red-500 text-xs mt-1.5 flex items-center font-medium"><span className="material-icons-round text-[14px] mr-1">error</span>{fieldErrors.username}</p>}
                         </div>
 
                         {/* Password */}
                         <div>
                             <div className="flex justify-between items-center mb-1.5">
-                                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">Secure Password</label>
+                                <label className={`block text-xs font-semibold uppercase tracking-wide ${fieldErrors.password ? 'text-red-500' : (password.length >= 6 ? 'text-emerald-500 dark:text-emerald-400' : 'text-slate-700 dark:text-slate-300')}`}>Secure Password</label>
                             </div>
                             <div className="relative">
-                                <span className="material-icons-round absolute left-3 top-2.5 text-slate-400 text-[18px]">lock</span>
+                                <span className={`material-icons-round absolute left-3 top-2.5 text-[18px] transition-colors ${fieldErrors.password ? 'text-red-500' : (password.length >= 6 ? 'text-emerald-500' : 'text-slate-400')}`}>
+                                    {password.length >= 6 ? 'check_circle' : 'lock'}
+                                </span>
                                 <input
                                     type="password"
                                     value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    className="w-full bg-slate-50 dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        setPassword(val);
+
+                                        // Live check for length
+                                        if (val.length > 0 && val.length < 6) {
+                                            setFieldErrors(prev => ({ ...prev, password: "Password must be at least 6 characters." }));
+                                        } else {
+                                            setFieldErrors(prev => {
+                                                const newErrors = { ...prev };
+                                                delete newErrors.password;
+                                                return newErrors;
+                                            });
+                                        }
+
+                                        // Match check
+                                        if (repassword.length > 0) {
+                                            if (val !== repassword) {
+                                                setFieldErrors(prev => ({ ...prev, repassword: "Passwords do not match." }));
+                                            } else {
+                                                setFieldErrors(prev => {
+                                                    const newErrors = { ...prev };
+                                                    delete newErrors.repassword;
+                                                    return newErrors;
+                                                });
+                                            }
+                                        }
+                                    }}
+                                    className={`w-full bg-slate-50 dark:bg-black/20 border rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent transition-all ${fieldErrors.password ? 'border-red-500 focus:ring-red-500' : (password.length >= 6 ? 'border-emerald-500 focus:ring-emerald-500' : 'border-slate-300 dark:border-slate-700 focus:ring-primary')}`}
                                     placeholder="••••••••"
-                                    required
-                                    minLength={8}
                                 />
                             </div>
+                            {fieldErrors.password && <p className="text-red-500 text-xs mt-1.5 flex items-center font-medium"><span className="material-icons-round text-[14px] mr-1">error</span>{fieldErrors.password}</p>}
                         </div>
 
                         {/* Re-enter Password */}
                         <div>
                             <div className="flex justify-between items-center mb-1.5">
-                                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wide">Re-Enter Password</label>
+                                <label className={`block text-xs font-semibold uppercase tracking-wide ${fieldErrors.repassword ? 'text-red-500' : (repassword && password === repassword ? 'text-emerald-500 dark:text-emerald-400' : 'text-slate-700 dark:text-slate-300')}`}>Re-Enter Password</label>
                             </div>
                             <div className="relative">
-                                <span className="material-icons-round absolute left-3 top-2.5 text-slate-400 text-[18px]">lock</span>
+                                <span className={`material-icons-round absolute left-3 top-2.5 text-[18px] transition-colors ${fieldErrors.repassword ? 'text-red-500' : (repassword && password === repassword ? 'text-emerald-500' : 'text-slate-400')}`}>
+                                    {repassword && password === repassword ? 'check_circle' : 'lock'}
+                                </span>
                                 <input
                                     type="password"
                                     value={repassword}
-                                    onChange={(e) => setRepassword(e.target.value)}
-                                    className="w-full bg-slate-50 dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        setRepassword(val);
+                                        if (val.length > 0) {
+                                            if (password !== val) {
+                                                setFieldErrors(prev => ({ ...prev, repassword: "Passwords do not match." }));
+                                            } else {
+                                                setFieldErrors(prev => {
+                                                    const newErrors = { ...prev };
+                                                    delete newErrors.repassword;
+                                                    return newErrors;
+                                                });
+                                            }
+                                        } else {
+                                            setFieldErrors(prev => {
+                                                const newErrors = { ...prev };
+                                                delete newErrors.repassword;
+                                                return newErrors;
+                                            });
+                                        }
+                                    }}
+                                    className={`w-full bg-slate-50 dark:bg-black/20 border rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent transition-all ${fieldErrors.repassword ? 'border-red-500 focus:ring-red-500' : (repassword && password === repassword ? 'border-emerald-500 focus:ring-emerald-500' : 'border-slate-300 dark:border-slate-700 focus:ring-primary')}`}
                                     placeholder="••••••••"
-                                    required
-                                    minLength={8}
                                 />
                             </div>
+                            {fieldErrors.repassword && <p className="text-red-500 text-xs mt-1.5 flex items-center font-medium"><span className="material-icons-round text-[14px] mr-1">error</span>{fieldErrors.repassword}</p>}
                         </div>
 
                         <div className="mt-6">

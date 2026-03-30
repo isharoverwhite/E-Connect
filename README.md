@@ -58,7 +58,10 @@ git clone https://github.com/isharoverwhite/Final-Project.git
 cd Final-Project
 ```
 
-#### 2. Configuration (Optional)
+#### 2. Host Storage Monitoring (Optional)
+To display the correct system storage limit used by the host hardware instead of the Docker virtual disk, uncomment the line `#- /:/hostfs:ro` inside your `docker-compose.yml` under `server:` -> `volumes:` before starting the stack.
+
+#### 3. Configuration (Optional)
 Create a `.env` file at the root to override default credentials safely:
 ```env
 DB_ROOT_PASSWORD=secure_root_password
@@ -158,7 +161,10 @@ git clone https://github.com/isharoverwhite/Final-Project.git
 cd Final-Project
 ```
 
-#### 2. Cấu hình biến môi trường
+#### 2. Giám sát Bộ nhớ Host (Tùy chọn)
+Để bảng thông số "System Health" hiển thị chính xác dung lượng ổ cứng rỗng mặt vật lý của thiết bị Server thay vì bộ nhớ ảo của Docker sinh ra, bạn hãy mở tệp `docker-compose.yml`, tìm cài đặt volume của phần service `server` và bỏ dấu `#` trước dòng `#- /:/hostfs:ro` trước khi khởi chạy hệ thống.
+
+#### 3. Cấu hình biến môi trường
 Nếu muốn điều chỉnh/nâng cao mức độ bảo mật mặc định, sử dụng cấu hình tập tin `.env` riêng biệt đặt ở mục ngoài cùng thư mục dự án:
 ```env
 DB_ROOT_PASSWORD=mat_khau_root

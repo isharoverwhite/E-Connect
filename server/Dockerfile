@@ -10,6 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV BUILD_BASE_DIR=/data/builds
 ENV PLATFORMIO_CORE_DIR=/data/.platformio
+ENV HOST_OS_ROOT=/
 
 # Install system dependencies
 RUN apt-get update \

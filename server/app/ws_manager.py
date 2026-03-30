@@ -34,21 +34,39 @@ class ConnectionManager:
             "device_id": device_id,
             "payload": payload
         })
-        
+
         dead_connections = []
         for conn in self.active_connections:
             has_permission = (
-                conn["account_type"] == "admin" or 
+                conn["account_type"] == "admin" or
                 (room_id is not None and room_id in conn["accessible_room_ids"])
             )
-            
+
             if has_permission:
                 try:
                     await conn["websocket"].send_text(message)
                 except Exception as e:
                     logger.warning(f"Error sending WS message: {e}")
                     dead_connections.append(conn["websocket"])
-                    
+
+        for ws in dead_connections:
+            self.disconnect(ws)
+
+    async def broadcast_system_event(self, event_type: str, payload: Dict[str, Any]):
+        message = json.dumps({
+            "type": event_type,
+            "payload": payload
+        })
+
+        dead_connections = []
+        for conn in self.active_connections:
+            if conn["account_type"] == "admin":
+                try:
+                    await conn["websocket"].send_text(message)
+                except Exception as e:
+                    logger.warning(f"Error sending WS message: {e}")
+                    dead_connections.append(conn["websocket"])
+
         for ws in dead_connections:
             self.disconnect(ws)
 

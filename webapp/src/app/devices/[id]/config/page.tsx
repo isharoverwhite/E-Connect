@@ -172,7 +172,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   const [boardOnlineAfterOta, setBoardOnlineAfterOta] = useState(false);
 
   useWebSocket((event) => {
-    if (event.device_id !== deviceId) {
+    if (!("device_id" in event) || event.device_id !== deviceId) {
       return;
     }
 
