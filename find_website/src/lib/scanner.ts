@@ -24,6 +24,11 @@ type FirmwareNetworkPayload = {
   webapp_port?: string | number | null;
 };
 
+export type WebappTransport = {
+  protocol: string;
+  port: string;
+};
+
 export const DEFAULT_WEBAPP_PROTOCOL = "http";
 export const DEFAULT_WEBAPP_PORT = "3000";
 export const DISCOVERY_SCRIPT_PORT = "8000";
@@ -157,7 +162,7 @@ function normalizePort(value: string | number | null | undefined): string | null
 
 export function resolveWebappTransport(
   firmwareNetwork?: FirmwareNetworkPayload | null,
-): { protocol: string; port: string } {
+): WebappTransport {
   const backendProtocol = normalizeProtocol(firmwareNetwork?.webapp_protocol);
   const backendPort = normalizePort(firmwareNetwork?.webapp_port);
 
@@ -188,6 +193,46 @@ export function resolveWebappTransport(
     protocol: backendProtocol ?? DEFAULT_WEBAPP_PROTOCOL,
     port: backendPort ?? DEFAULT_WEBAPP_PORT,
   };
+}
+
+function appendWebappTransportCandidate(candidates: WebappTransport[], candidate: WebappTransport): void {
+  if (
+    candidates.some(
+      (existing) => existing.protocol === candidate.protocol && existing.port === candidate.port,
+    )
+  ) {
+    return;
+  }
+
+  candidates.push(candidate);
+}
+
+export function resolveWebappProbeTransports(
+  firmwareNetwork?: FirmwareNetworkPayload | null,
+  options?: { securePage?: boolean },
+): WebappTransport[] {
+  const primaryTransport = resolveWebappTransport(firmwareNetwork);
+  const candidates: WebappTransport[] = [primaryTransport];
+  const securePage = options?.securePage === true;
+  const looksPrivateLanTarget =
+    isLikelyPrivateDiscoveryHost(firmwareNetwork?.api_base_url) ||
+    isLikelyPrivateDiscoveryHost(firmwareNetwork?.advertised_host);
+
+  // Legacy deployments can still advertise https://<lan-host>:3000 even though the
+  // compose WebUI now serves plain HTTP on 3000 and keeps HTTPS on a companion port.
+  if (
+    securePage &&
+    looksPrivateLanTarget &&
+    primaryTransport.protocol === "https" &&
+    primaryTransport.port === DEFAULT_WEBAPP_PORT
+  ) {
+    appendWebappTransportCandidate(candidates, {
+      protocol: DEFAULT_WEBAPP_PROTOCOL,
+      port: DEFAULT_WEBAPP_PORT,
+    });
+  }
+
+  return candidates;
 }
 
 export function resolveDiscoveryHost(
