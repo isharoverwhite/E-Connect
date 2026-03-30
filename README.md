@@ -41,7 +41,16 @@ E-Connect emphasizes a self-hosted smart home model where the main operational c
 
 #### Prerequisites
 - Docker Engine & Docker Compose plugin.
-- Available host ports: `80`, `3000`, `3306`, `8000`, `1883`, (and `9123` if you wish to run the discovery website locally).
+- Available host ports: `80`, `3000`, `3443`, `3306`, `8000`, `1883`, (and `9123` if you wish to run the discovery website locally).
+- Keep these host ports free before running the default Compose stack:
+  `80` -> bare `econnect.local` redirect entrypoint
+  `3000` -> HTTP Web UI
+  `3443` -> HTTPS companion origin for secure browser APIs
+  `8000` -> backend API/health endpoint
+  `1883` -> MQTT broker
+  `3306` -> MariaDB
+  `9123` -> optional local `find_website`
+  If any of these ports is already occupied, `docker compose up` and the Jenkins CD deploy stage can fail immediately when Docker tries to bind the host port.
 
 #### 1. Clone the Repository
 ```bash
@@ -132,7 +141,16 @@ E-Connect hướng tới sự tinh gọn theo mô hình tự host, trong đó đ
 
 #### Yêu cầu môi trường
 - Máy tính đã trỏ sẵn Docker Engine và Docker Compose plugin.
-- Port còn khả dụng: `80`, `3000`, `3306`, `8000`, `1883`, (và tùy chọn `9123` nếu muốn dựng portal khám phá cục bộ).
+- Port còn khả dụng: `80`, `3000`, `3443`, `3306`, `8000`, `1883`, (và tùy chọn `9123` nếu muốn dựng portal khám phá cục bộ).
+- Cần để trống các cổng host này trước khi chạy Compose mặc định:
+  `80` -> entrypoint redirect cho bare `econnect.local`
+  `3000` -> Web UI HTTP
+  `3443` -> origin HTTPS đi kèm cho các browser API cần secure context
+  `8000` -> backend API/health endpoint
+  `1883` -> MQTT broker
+  `3306` -> MariaDB
+  `9123` -> `find_website` cục bộ (tùy chọn)
+  Nếu một trong các cổng trên đã bị dịch vụ khác chiếm, `docker compose up` và stage deploy của Jenkins CD có thể fail ngay khi Docker bind cổng host.
 
 #### 1. Clone dự án
 ```bash
