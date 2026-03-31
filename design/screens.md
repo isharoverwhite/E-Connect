@@ -6,6 +6,10 @@
   - The UI must display a standalone, prominent "Cannot connect to server" error page instead of falling back to a broken login form or blank screen.
   - This state must provide a "Retry" or "Refresh" action that re-evaluates the server status without requiring a manual page reload.
 
+## Application Shell
+- Desktop admin surfaces such as `/settings`, `/automation`, and `/extensions` must use the shared application sidebar instead of page-local navigation variants.
+- The shared desktop sidebar must support both expanded and collapsed states while keeping route icons, the settings link, account badge, and logout action accessible.
+
 ## Login Page
 - The login form must submit a real session request to `/api/v1/auth/token` and store the returned access/refresh session contract instead of a single long-lived bearer token.
 - The form must expose a `Keep login` checkbox.
@@ -21,7 +25,10 @@
   - The admin-visible panel must also surface the current `MQTT port` and `API base URL`, plus a clear loading or error state if the runtime network target cannot be resolved.
   - If backend startup audit finds DIY projects or linked boards stamped with older server/MQTT targets, the same panel must show a warning that manual reflash is required before those boards can pair against the current runtime target.
 - **`users`**: Admin user management panel to provision and approve/revoke accounts.
+  - The create-user form must show inline client-side validation before submit for missing `username`, `full name`, and `password`.
+  - The create-user form must require a minimum username length of `3` characters and a minimum password length of `8` characters before it sends the request.
 - **`rooms`**: Admin panel for managing room access control.
+  - The create-room form must show an inline required-name validation message before it attempts the create request.
 - **`configs` (New)**: Admin panel for managing DIY Config projects.
   - Lists all project records.
   - Usage state badges: **`unused`** and **`in_use`**.
