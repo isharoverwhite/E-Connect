@@ -51,8 +51,10 @@ export interface ValidationResult {
 export interface FlashManifest {
     name: string;
     version: string;
+    new_install_improv_wait_time?: number;
     builds: Array<{
         chipFamily: string;
+        improv?: boolean;
         parts: Array<{
             path: string;
             offset: number;

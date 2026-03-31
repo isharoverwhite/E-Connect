@@ -527,11 +527,6 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
     pins: normalizePins(pins),
   };
   const projectSyncState = isSaving ? "saving" : hasChanges ? "idle" : "saved";
-  const projectSyncMessage = isSaving
-    ? "Re-authenticating and starting a safety-reviewed rebuild..."
-    : hasChanges
-      ? "Unsaved GPIO edits require password confirmation before the server accepts them."
-      : "Device and project pin mapping are in sync.";
   const statusMessageClassName =
     jobStatus === "flashed" && !boardOnlineAfterOta
       ? "rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm text-blue-800 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200"
@@ -670,7 +665,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
+    <div className="h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <header className="border-b border-slate-200 bg-white/95 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
         <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-6 lg:flex-row lg:items-center lg:justify-between">
           <div className="space-y-3">
@@ -738,68 +733,70 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         </div>
       </header>
 
-      <main className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-6">
-        {statusMessage && (
-          <section className={statusMessageClassName}>
-            {statusMessage}
-          </section>
-        )}
+      <main className="flex-grow flex flex-col relative w-full overflow-hidden">
+        <div className="absolute inset-0 overflow-y-auto overflow-x-hidden flex flex-col md:flex-row">
+          <div className="flex-grow flex flex-col p-6 gap-6 relative">
+            {statusMessage && (
+              <section className={statusMessageClassName}>
+                {statusMessage}
+              </section>
+            )}
 
-        {validation.errors.length > 0 && (
-          <section className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 dark:border-rose-500/20 dark:bg-rose-500/10">
-            <div className="flex items-start gap-3">
-              <span className="material-icons-round mt-0.5 text-rose-500">report</span>
-              <div className="space-y-2">
-                <h2 className="text-sm font-semibold text-rose-800 dark:text-rose-100">
-                  Fix these wiring issues before rebuilding
-                </h2>
-                <ul className="space-y-1 text-sm text-rose-700 dark:text-rose-200">
-                  {validation.errors.map((validationError) => (
-                    <li key={validationError}>• {validationError}</li>
-                  ))}
-                </ul>
-              </div>
+            {validation.errors.length > 0 && (
+              <section className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 dark:border-rose-500/20 dark:bg-rose-500/10">
+                <div className="flex items-start gap-3">
+                  <span className="material-icons-round mt-0.5 text-rose-500">report</span>
+                  <div className="space-y-2">
+                    <h2 className="text-sm font-semibold text-rose-800 dark:text-rose-100">
+                      Fix these wiring issues before rebuilding
+                    </h2>
+                    <ul className="space-y-1 text-sm text-rose-700 dark:text-rose-200">
+                      {validation.errors.map((validationError) => (
+                        <li key={validationError}>• {validationError}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {validation.warnings.length > 0 && (
+              <section className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-500/20 dark:bg-amber-500/10">
+                <div className="flex items-start gap-3">
+                  <span className="material-icons-round mt-0.5 text-amber-500">warning</span>
+                  <div className="space-y-2">
+                    <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-100">
+                      Review these hardware safety warnings
+                    </h2>
+                    <ul className="space-y-1 text-sm text-amber-700 dark:text-amber-200">
+                      {validation.warnings.map((warning) => (
+                        <li key={warning}>• {warning}</li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </section>
+            )}
+
+            <div className="w-full flex-grow flex shadow-sm rounded-3xl overflow-hidden bg-white border border-slate-200 dark:border-slate-800 dark:bg-slate-900">
+              <Step2Pins
+                board={boardProfile}
+                boardPins={[...boardProfile.leftPins, ...boardProfile.rightPins]}
+                configBusy={isSaving}
+                nextLabel="Review & rebuild"
+                onBack={() => router.push("/devices")}
+                onExportConfig={exportConfig}
+                onNext={openConfirmModal}
+                pins={pins}
+                projectName={device.name}
+                projectSyncState={projectSyncState}
+                selectedPinId={selectedPinId}
+                setPins={setPins}
+                setSelectedPinId={setSelectedPinId}
+              />
             </div>
-          </section>
-        )}
-
-        {validation.warnings.length > 0 && (
-          <section className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-500/20 dark:bg-amber-500/10">
-            <div className="flex items-start gap-3">
-              <span className="material-icons-round mt-0.5 text-amber-500">warning</span>
-              <div className="space-y-2">
-                <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-100">
-                  Review these hardware safety warnings
-                </h2>
-                <ul className="space-y-1 text-sm text-amber-700 dark:text-amber-200">
-                  {validation.warnings.map((warning) => (
-                    <li key={warning}>• {warning}</li>
-                  ))}
-                </ul>
-              </div>
-            </div>
-          </section>
-        )}
-
-        <section className="rounded-3xl border border-slate-200 bg-white px-6 py-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-          <Step2Pins
-            board={boardProfile}
-            boardPins={[...boardProfile.leftPins, ...boardProfile.rightPins]}
-            configBusy={isSaving}
-            draftConfig={pinPreview}
-            nextLabel="Review & rebuild"
-            onBack={() => router.push("/devices")}
-            onExportConfig={exportConfig}
-            onNext={openConfirmModal}
-            pins={pins}
-            projectName={device.name}
-            projectSyncMessage={projectSyncMessage}
-            projectSyncState={projectSyncState}
-            selectedPinId={selectedPinId}
-            setPins={setPins}
-            setSelectedPinId={setSelectedPinId}
-          />
-        </section>
+          </div>
+        </div>
       </main>
 
       {confirmModalOpen && (
