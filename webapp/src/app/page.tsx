@@ -305,11 +305,11 @@ export default function Dashboard() {
               </div>
             ) : null}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-              <div className="bg-surface-light dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm relative overflow-hidden group">
-                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <span className="material-icons-round text-6xl text-slate-500">router</span>
+              <div className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300 cursor-pointer">
+                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
+                  <span className="material-icons-round text-6xl text-slate-500 dark:group-hover:text-slate-400 transition-colors">router</span>
                 </div>
-                <div className="relative z-10">
+                <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">Total Devices</p>
                   <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{loading ? '--' : devices.length.toString().padStart(2, '0')}</h3>
                   <div className="mt-2 text-xs text-green-600 dark:text-green-400 flex items-center font-medium">
@@ -318,11 +318,11 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-              <div className="bg-surface-light dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm relative overflow-hidden group">
-                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <span className="material-icons-round text-6xl text-green-500">wifi</span>
+              <div className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300 cursor-pointer">
+                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
+                  <span className="material-icons-round text-6xl text-green-500 dark:group-hover:text-green-400 transition-colors">wifi</span>
                 </div>
-                <div className="relative z-10">
+                <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">Online</p>
                   <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{loading ? '--' : onlineCount.toString().padStart(2, '0')}</h3>
                   <div className="mt-2 text-xs text-slate-500 dark:text-slate-400 flex items-center">
@@ -330,11 +330,11 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-              <div className="bg-surface-light dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm relative overflow-hidden group">
-                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <span className="material-icons-round text-6xl text-red-500">wifi_off</span>
+              <div className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300 cursor-pointer">
+                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
+                  <span className="material-icons-round text-6xl text-red-500 dark:group-hover:text-red-400 transition-colors">wifi_off</span>
                 </div>
-                <div className="relative z-10">
+                <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">Offline</p>
                   <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{loading ? '--' : offlineDevices.length.toString().padStart(2, '0')}</h3>
                   <div className="mt-2 text-xs text-red-500 dark:text-red-400 flex items-center font-medium">
@@ -342,11 +342,11 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-              <div className="bg-surface-light dark:bg-surface-dark p-6 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm relative overflow-hidden group">
-                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                  <span className="material-icons-round text-6xl text-orange-500">warning</span>
+              <div className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300 cursor-pointer">
+                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
+                  <span className="material-icons-round text-6xl text-orange-500 dark:group-hover:text-orange-400 transition-colors">warning</span>
                 </div>
-                <div className="relative z-10">
+                <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">System Alerts</p>
                   <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{loading ? '--' : alertCount.toString().padStart(2, '0')}</h3>
                   <div className="mt-2 text-xs text-orange-500 dark:text-orange-400 flex items-center font-medium">

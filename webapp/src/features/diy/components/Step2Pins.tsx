@@ -235,9 +235,9 @@ export function Step2Pins({
     const gap = totalRows === 1 ? 0 : (bottom - top) / (totalRows - 1);
 
     return (
-        <div className="flex flex-col xl:flex-row h-full w-full bg-slate-50 text-slate-700 dark:text-slate-300 border-t border-border-light dark:border-border-dark overflow-hidden">
+        <div className="flex flex-col md:flex-row h-full w-full bg-slate-50 text-slate-700 dark:text-slate-300 border-t border-border-light dark:border-border-dark overflow-hidden">
             {/* Left Sidebar: Pin List & Config */}
-            <div className="w-full xl:w-[420px] flex-shrink-0 flex flex-col h-[45vh] lg:h-[50vh] xl:h-full bg-surface-light dark:bg-surface-dark border-b xl:border-b-0 xl:border-r border-border-light dark:border-border-dark z-10 shadow-[4px_0_24px_rgba(0,0,0,0.05)] text-slate-800 dark:text-slate-200">
+            <div className="w-full md:w-[350px] lg:w-[420px] flex-shrink-0 flex flex-col h-[40vh] md:h-full bg-surface-light dark:bg-surface-dark border-b md:border-b-0 md:border-r border-border-light dark:border-border-dark z-10 shadow-[4px_0_24px_rgba(0,0,0,0.05)] text-slate-800 dark:text-slate-200">
                 {/* Header inside sidebar */}
                 <div className="p-6 border-b border-border-light dark:border-border-dark flex-shrink-0">
                     <h1 className="text-slate-900 dark:text-white text-2xl font-bold tracking-tight">Pin Configuration</h1>
@@ -256,7 +256,7 @@ export function Step2Pins({
                         const isSelected = selectedPinId === pin.id;
 
                         return (
-                            <div key={pin.id} id={`pin-config-${pin.id}`} className={`flex flex-col gap-2 p-3 rounded-lg border transition-colors cursor-default ${isSelected ? 'bg-blue-50 border-blue-200 shadow-[0_0_12px_rgba(37,99,235,0.1)]' : 'bg-white border-border-light dark:border-border-dark hover:border-slate-300'}`} onClick={() => setSelectedPinId(pin.id)}>
+                            <div key={pin.id} id={`pin-config-${pin.id}`} className={`flex flex-col gap-2 p-3 rounded-lg border transition-colors cursor-default ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 shadow-[0_0_12px_rgba(37,99,235,0.1)]' : 'bg-white dark:bg-slate-800/80 border-border-light dark:border-border-dark hover:border-slate-300 dark:hover:border-slate-600'}`} onClick={() => setSelectedPinId(pin.id)}>
                                 <div className="flex justify-between items-center px-1">
                                     <p className={`text-xs font-bold tracking-wider ${isSelected ? 'text-blue-600' : 'text-slate-600 dark:text-slate-400'}`}>
                                         <span className="uppercase">{pin.label}</span> <span className="text-[10px] opacity-70">(GPIO {pin.gpio})</span>
@@ -280,7 +280,7 @@ export function Step2Pins({
                                                 const val = e.target.value;
                                                 handleModeChange(pin, val as PinMode | "none");
                                             }}
-                                            className={`w-full bg-white border rounded text-sm py-2.5 pl-9 pr-4 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 appearance-none cursor-pointer outline-none transition-colors ${assignment ? 'text-blue-600 font-medium border-blue-300' : 'text-slate-700 dark:text-slate-300 border-slate-300'}`}
+                                            className={`w-full bg-white dark:bg-slate-900 border rounded text-sm py-2.5 pl-9 pr-4 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 appearance-none cursor-pointer outline-none transition-colors ${assignment ? 'text-blue-600 dark:text-blue-400 font-medium border-blue-300 dark:border-blue-700' : 'text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'}`}
                                         >
                                             <option value="none">Disabled</option>
                                             {Array.from(new Set(pin.capabilities.map(cap => cap === "PWM" ? "OUTPUT" : cap))).map(cap => (
@@ -305,14 +305,14 @@ export function Step2Pins({
                                                 value={assignment.function || ""}
                                                 onChange={(e) => handleFunctionChange(pin, e.target.value)}
                                                 placeholder="Function (e.g. relay)"
-                                                className="w-full bg-white border border-slate-300 rounded text-sm text-slate-700 dark:text-slate-300 py-2.5 px-3 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
+                                                className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-sm text-slate-700 dark:text-slate-300 py-2.5 px-3 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
                                             />
                                         </div>
                                     )}
                                 </div>
 
                                 {(assignment?.mode === "OUTPUT" || assignment?.mode === "PWM") && (
-                                    <div className="mt-2 rounded bg-slate-50 border border-border-light dark:border-border-dark p-2.5">
+                                    <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5">
                                         <div className="flex flex-col gap-3">
                                             <div className="flex items-center justify-between">
                                                 <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
@@ -328,7 +328,7 @@ export function Step2Pins({
                                                         className={`rounded px-2.5 py-1 text-[10px] uppercase font-bold tracking-wider transition-colors ${
                                                             assignment.mode === "OUTPUT"
                                                                 ? "bg-blue-100 text-blue-700 border border-blue-200"
-                                                                : "bg-white text-slate-500 dark:text-slate-400 border border-border-light dark:border-border-dark hover:text-slate-700 dark:text-slate-300"
+                                                                : "bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-border-light dark:border-border-dark hover:text-slate-700 dark:text-slate-300"
                                                         }`}
                                                     >
                                                         On/Off
@@ -343,7 +343,7 @@ export function Step2Pins({
                                                             className={`rounded px-2.5 py-1 text-[10px] uppercase font-bold tracking-wider transition-colors ${
                                                                 assignment.mode === "PWM"
                                                                     ? "bg-blue-100 text-blue-700 border border-blue-200"
-                                                                    : "bg-white text-slate-500 dark:text-slate-400 border border-border-light dark:border-border-dark hover:text-slate-700 dark:text-slate-300"
+                                                                    : "bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-border-light dark:border-border-dark hover:text-slate-700 dark:text-slate-300"
                                                             }`}
                                                         >
                                                             PWM
@@ -372,7 +372,7 @@ export function Step2Pins({
                                                                     className={`rounded px-2.5 py-1 text-[10px] uppercase font-bold tracking-wider transition-colors ${
                                                                         isActive
                                                                             ? "bg-blue-100 text-blue-700 border border-blue-200"
-                                                                            : "bg-white text-slate-500 dark:text-slate-400 border border-border-light dark:border-border-dark hover:text-slate-700 dark:text-slate-300"
+                                                                            : "bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-border-light dark:border-border-dark hover:text-slate-700 dark:text-slate-300"
                                                                     }`}
                                                                 >
                                                                     {level === 1 ? "HIGH" : "LOW"}
@@ -387,7 +387,7 @@ export function Step2Pins({
                                 )}
 
                                 {assignment?.mode === "PWM" && (
-                                    <div className="mt-2 rounded bg-slate-50 border border-border-light dark:border-border-dark p-2.5">
+                                    <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5">
                                         <div className="flex flex-col gap-2.5">
                                             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
                                                 Output Map (0-255)
@@ -403,7 +403,7 @@ export function Step2Pins({
                                                         max="255"
                                                         value={assignment.extra_params?.min_value ?? 0}
                                                         onChange={(e) => handleExtraParamChange(pin, { min_value: parseInt(e.target.value) || 0 })}
-                                                        className="bg-white border border-slate-300 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-blue-500"
+                                                        className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-blue-500"
                                                     />
                                                 </div>
                                                 <div className="flex flex-col gap-1">
@@ -416,7 +416,7 @@ export function Step2Pins({
                                                         max="255"
                                                         value={assignment.extra_params?.max_value ?? 255}
                                                         onChange={(e) => handleExtraParamChange(pin, { max_value: parseInt(e.target.value) || 0 })}
-                                                        className="bg-white border border-slate-300 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-blue-500"
+                                                        className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-blue-500"
                                                     />
                                                 </div>
                                             </div>
@@ -425,7 +425,7 @@ export function Step2Pins({
                                 )}
 
                                 {assignment?.mode === "I2C" && (
-                                    <div className="mt-2 rounded bg-slate-50 border border-border-light dark:border-border-dark p-2.5 flex flex-col gap-3">
+                                    <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5 flex flex-col gap-3">
                                         <div className="flex items-center justify-between">
                                             <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">Bus Role</p>
                                             <div className="flex gap-1">
@@ -460,7 +460,7 @@ export function Step2Pins({
                                                     placeholder="0x3C"
                                                     value={assignment.extra_params?.i2c_address ?? ""}
                                                     onChange={(e) => handleExtraParamChange(pin, { i2c_address: e.target.value })}
-                                                    className="bg-white border border-slate-300 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs font-mono uppercase outline-none focus:border-blue-500"
+                                                    className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs font-mono uppercase outline-none focus:border-blue-500"
                                                 />
                                             </div>
                                             <div className="flex flex-col gap-1">
@@ -476,7 +476,7 @@ export function Step2Pins({
                                                             lib?.default_address
                                                         );
                                                     }}
-                                                    className="bg-white border border-slate-300 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
+                                                    className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
                                                 >
                                                     <option value="">Custom...</option>
                                                     {i2cCatalog.map(lib => (
@@ -493,13 +493,13 @@ export function Step2Pins({
                 </div>
 
                 {/* Footer buttons / Deployment */}
-                <div className="p-4 border-t border-border-light dark:border-border-dark bg-slate-50 flex-shrink-0 space-y-3">
-                    <div className="flex items-center justify-between bg-white border border-border-light dark:border-border-dark p-2.5 rounded text-xs select-none">
+                <div className="p-4 border-t border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-900/40 flex-shrink-0 space-y-3">
+                    <div className="flex items-center justify-between bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark p-2.5 rounded text-xs select-none">
                         <div className="flex items-center gap-2">
                             <span className="material-symbols-outlined text-sm text-blue-600">description</span>
                             <span className="font-mono text-slate-600 dark:text-slate-400 font-medium">device_config.json</span>
                         </div>
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${projectSyncState === 'saved' ? 'bg-emerald-100 text-emerald-700 border border-emerald-200' : 'bg-amber-100 text-amber-700 border border-amber-200'}`}>
+                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${projectSyncState === 'saved' ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800' : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800'}`}>
                             {formatSyncState(projectSyncState)}
                         </span>
                     </div>
@@ -512,10 +512,10 @@ export function Step2Pins({
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 mt-4">
-                        <button onClick={onBack} className="bg-white text-slate-600 dark:text-slate-400 border border-slate-300 hover:bg-slate-50 hover:text-slate-800 dark:text-slate-200 rounded py-2 text-xs font-bold uppercase tracking-widest transition-colors shadow-sm">
+                        <button onClick={onBack} className="bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-800 dark:text-slate-200 rounded py-2 text-xs font-bold uppercase tracking-widest transition-colors shadow-sm">
                             {backLabel}
                         </button>
-                        <button onClick={() => void onExportConfig()} disabled={configBusy} className="bg-white text-slate-600 dark:text-slate-400 border border-slate-300 hover:bg-slate-50 hover:text-slate-800 dark:text-slate-200 rounded py-2 text-xs font-bold uppercase tracking-widest transition-colors disabled:opacity-50 shadow-sm">
+                        <button onClick={() => void onExportConfig()} disabled={configBusy} className="bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-800 dark:text-slate-200 rounded py-2 text-xs font-bold uppercase tracking-widest transition-colors disabled:opacity-50 shadow-sm">
                             {configBusy ? "Wait..." : exportLabel}
                         </button>
                     </div>
@@ -531,9 +531,9 @@ export function Step2Pins({
             </div>
 
             {/* Right Workspace - SVG Board Area */}
-            <div className="flex-[2] relative flex flex-col bg-slate-50 overflow-hidden">
-                <div className="absolute inset-0 bg-slate-50 bg-[linear-gradient(rgba(203,213,225,0.4)_1px,transparent_1px),linear-gradient(90deg,rgba(203,213,225,0.4)_1px,transparent_1px)] bg-[size:32px_32px]"></div>
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_transparent_0%,_#f8fafc_80%)]"></div>
+            <div className="flex-[2] relative flex flex-col bg-slate-50 dark:bg-slate-900 overflow-hidden">
+                <div className="absolute inset-0 bg-slate-50 dark:bg-slate-900 bg-[linear-gradient(rgba(203,213,225,0.4)_1px,transparent_1px),linear-gradient(90deg,rgba(203,213,225,0.4)_1px,transparent_1px)] dark:bg-[linear-gradient(rgba(51,65,85,0.4)_1px,transparent_1px),linear-gradient(90deg,rgba(51,65,85,0.4)_1px,transparent_1px)] bg-[size:32px_32px]"></div>
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_transparent_0%,_#f8fafc_80%)] dark:bg-[radial-gradient(circle_at_center,_transparent_0%,_#0f172a_80%)]"></div>
 
                 {/* SVG Visual Board */}
                 <div className="relative flex-1 w-full h-[55vh] md:h-[50vh] xl:h-full overflow-hidden custom-scrollbar group">
@@ -568,12 +568,12 @@ export function Step2Pins({
                                     >
                         <defs>
                             <linearGradient id="boardShell" x1="0%" x2="100%" y1="0%" y2="100%">
-                                <stop offset="0%" stopColor="#f1f5f9" />
-                                <stop offset="100%" stopColor="#e2e8f0" />
+                                <stop offset="0%" stopColor={isDark ? "#1e293b" : "#f1f5f9"} />
+                                <stop offset="100%" stopColor={isDark ? "#334155" : "#e2e8f0"} />
                             </linearGradient>
                             <linearGradient id="chipShell" x1="0%" x2="100%" y1="0%" y2="100%">
-                                <stop offset="0%" stopColor="#334155" />
-                                <stop offset="100%" stopColor="#1e293b" />
+                                <stop offset="0%" stopColor={isDark ? "#0f172a" : "#334155"} />
+                                <stop offset="100%" stopColor={isDark ? "#1e293b" : "#1e293b"} />
                             </linearGradient>
                             <filter id="neon-glow" x="-50%" y="-50%" width="200%" height="200%">
                                 <feGaussianBlur stdDeviation="3" result="blur" />
@@ -583,7 +583,7 @@ export function Step2Pins({
 
                         {board.id === 'esp32-c3-super-mini' ? (
                             <g id="super-mini-artwork" transform="translate(190, 50)">
-                                <rect x="0" y="0" width="340" height={boardHeight} rx="12" fill="url(#boardShell)" stroke="#cbd5e1" strokeWidth="4" />
+                                <rect x="0" y="0" width="340" height={boardHeight} rx="12" fill="url(#boardShell)" stroke={isDark ? "#475569" : "#cbd5e1"} strokeWidth="4" />
 
                                 {/* USB-C Connector */}
                                 <path d="M 130 -10 L 210 -10 L 210 0 L 130 0 Z" fill={isDark ? "#475569" : "#94a3b8"} stroke="#cbd5e1" strokeWidth="2" />
@@ -612,7 +612,7 @@ export function Step2Pins({
                             </g>
                         ) : (
                             <>
-                                <rect x="190" y="50" width="340" height={boardHeight} rx="24" fill="url(#boardShell)" stroke="#cbd5e1" strokeWidth="4" />
+                                <rect x="190" y="50" width="340" height={boardHeight} rx="24" fill="url(#boardShell)" stroke={isDark ? "#475569" : "#cbd5e1"} strokeWidth="4" />
                                 <rect x="260" y="150" width="200" height="180" rx="16" fill="url(#chipShell)" stroke={isDark ? "#94a3b8" : "#475569"} strokeWidth="2" />
 
                                 <text x="360" y="234" fill={isDark ? "#cbd5e1" : "#64748b"} textAnchor="middle" fontSize="22" fontWeight="800" letterSpacing="0.1em">
@@ -658,7 +658,7 @@ export function Step2Pins({
                 </div>
 
                 {/* Overlaid Label on Bottom-Right */}
-                <div className="absolute bottom-6 right-6 bg-white/90 backdrop-blur border border-border-light dark:border-border-dark px-3 py-2 rounded shadow-xl text-xs text-slate-500 dark:text-slate-400 font-mono flex items-center gap-2 pointer-events-none">
+                <div className="absolute bottom-6 right-6 bg-white/90 dark:bg-slate-800/90 backdrop-blur border border-border-light dark:border-border-dark px-3 py-2 rounded shadow-xl text-xs text-slate-500 dark:text-slate-400 font-mono flex items-center gap-2 pointer-events-none">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_6px_rgba(16,185,129,0.5)]"></span>
                     <span className="opacity-70">PROFILE:</span> <span className="text-slate-900 dark:text-white font-bold">{board.name}</span>
                 </div>
@@ -669,7 +669,7 @@ export function Step2Pins({
                     if (!selPin) return null;
                     const assignment = pins.find(p => p.gpio_pin === selPin.gpio);
                     return (
-                        <div className="absolute top-6 right-6 bg-white/95 backdrop-blur border border-border-light dark:border-border-dark px-5 py-4 rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] text-slate-600 dark:text-slate-400 min-w-[240px] pointer-events-none z-20">
+                        <div className="absolute top-6 right-6 bg-white/95 dark:bg-slate-800/95 backdrop-blur border border-border-light dark:border-border-dark px-5 py-4 rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] text-slate-600 dark:text-slate-400 min-w-[240px] pointer-events-none z-20">
                             <div className="flex justify-between items-start mb-2">
                                 <h3 className="text-slate-900 dark:text-white font-black text-lg tracking-tight uppercase">{selPin.label}</h3>
                                 <span className="text-blue-600 font-mono font-bold text-[10px] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">GPIO {selPin.gpio}</span>
@@ -718,7 +718,7 @@ export function Step2Pins({
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setShowClearConfirm(false)}></div>
                     <div className="flex flex-col gap-6 w-full max-w-sm relative z-10 transition-all duration-200">
-                        <div className="p-6 bg-white text-slate-600 dark:text-slate-400 rounded-xl shadow-[0_0_40px_rgba(0,0,0,0.2)] border border-border-light dark:border-border-dark mx-auto w-full">
+                        <div className="p-6 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 rounded-xl shadow-[0_0_40px_rgba(0,0,0,0.2)] dark:shadow-[0_0_40px_rgba(0,0,0,0.5)] border border-border-light dark:border-border-dark mx-auto w-full">
                             <div className="flex flex-col items-center text-center">
                                 <div className="w-14 h-14 flex items-center justify-center rounded-full bg-red-50 border border-red-100 text-red-500 mb-4">
                                     <svg fill="none" height="28" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="28" xmlns="http://www.w3.org/2000/svg">
@@ -732,13 +732,13 @@ export function Step2Pins({
                                 <div className="flex w-full gap-3">
                                     <button
                                         onClick={confirmClearAll}
-                                        className="flex-1 px-4 py-3 bg-red-50 hover:bg-red-600 text-red-600 hover:text-white text-xs font-bold uppercase tracking-wider rounded transition-colors border border-red-200 hover:border-red-600"
+                                        className="flex-1 px-4 py-3 bg-red-50 dark:bg-red-900/20 hover:bg-red-600 text-red-600 dark:text-red-400 hover:text-white text-xs font-bold uppercase tracking-wider rounded transition-colors border border-red-200 dark:border-red-900 hover:border-red-600"
                                     >
                                         Clear All
                                     </button>
                                     <button
                                         onClick={() => setShowClearConfirm(false)}
-                                        className="flex-1 px-4 py-3 bg-white hover:bg-slate-50 text-slate-600 dark:text-slate-400 text-xs font-bold uppercase tracking-wider rounded transition-colors border border-slate-300"
+                                        className="flex-1 px-4 py-3 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 text-xs font-bold uppercase tracking-wider rounded transition-colors border border-slate-300 dark:border-slate-700"
                                     >
                                         Cancel
                                     </button>
@@ -835,7 +835,7 @@ function renderSvgPin({
             <text
                 x={labelX}
                 y={y + 5}
-                fill={assignment ? "#0f172a" : "#64748b"}
+                fill={assignment ? (isDark ? "#f8fafc" : "#0f172a") : (isDark ? "#94a3b8" : "#64748b")}
                 textAnchor={anchor}
                 fontSize="14"
                 fontWeight="700"
@@ -845,7 +845,7 @@ function renderSvgPin({
             <text
                 x={mappingTextX}
                 y={y + 24}
-                fill={assignment ? "#2563eb" : "#94a3b8"}
+                fill={assignment ? (isDark ? "#60a5fa" : "#2563eb") : (isDark ? "#475569" : "#94a3b8")}
                 textAnchor={anchor}
                 fontSize="11"
                 fontFamily="monospace"

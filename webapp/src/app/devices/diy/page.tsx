@@ -431,6 +431,7 @@ export default function DIYBuilderPage() {
   );
   const [serialError, setSerialError] = useState<string | null>(null);
   const [webFlasherResetKey, setWebFlasherResetKey] = useState(0);
+  const [flasherClosed, setFlasherClosed] = useState(false);
 
   const familyOptions = useMemo(
     () => BOARD_PROFILES.filter((profile) => profile.family === family),
@@ -572,6 +573,32 @@ export default function DIYBuilderPage() {
   const logPanelRef = useRef<HTMLDivElement | null>(null);
   const sseJobIdRef = useRef<string | null>(null);
   const authRedirectTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const observer = new MutationObserver((mutations) => {
+      let isClosed = false;
+      for (const mutation of mutations) {
+        for (const addedNode of Array.from(mutation.addedNodes)) {
+          if (addedNode.nodeName === "EWT-INSTALL-DIALOG") {
+            setFlasherClosed(false);
+          }
+        }
+        for (const removedNode of Array.from(mutation.removedNodes)) {
+          if (removedNode.nodeName === "EWT-INSTALL-DIALOG") {
+            isClosed = true;
+          }
+        }
+      }
+      
+      if (isClosed) {
+        setFlasherClosed(true);
+      }
+    });
+
+    observer.observe(document.body, { childList: true });
+
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     const nextUrls = {
@@ -2140,6 +2167,8 @@ export default function DIYBuilderPage() {
             onRefreshSerialStatus={() => refreshSerialStatus()}
             onLogPanelRef={(el) => { logPanelRef.current = el; }}
             onBack={() => setCurrentStep(4)}
+            onProceedToScan={() => router.push("/devices/scan")}
+            flasherClosed={flasherClosed}
           />
         )}
       </main>

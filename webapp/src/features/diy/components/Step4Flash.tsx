@@ -44,6 +44,8 @@ export interface Step4FlashProps {
     onReleaseSerialLock: () => Promise<void>;
     onRefreshSerialStatus: () => Promise<void>;
     onLogPanelRef?: (element: HTMLDivElement | null) => void;
+    onProceedToScan: () => void;
+    flasherClosed: boolean;
 }
 
 function toHex(value: number) {
@@ -164,6 +166,8 @@ export function Step4Flash({
     onReleaseSerialLock,
     onRefreshSerialStatus,
     onLogPanelRef,
+    onProceedToScan,
+    flasherClosed,
 }: Step4FlashProps) {
     const previewLines = JSON.stringify(draftConfig, null, 2).split("\n");
     const readiness = getReadinessModel({
@@ -633,13 +637,23 @@ export function Step4Flash({
                 </div>
             </div>
 
-            <div className="flex justify-start border-t border-border-light dark:border-border-dark pt-6 dark:border-slate-800">
+            <div className={`flex ${flasherClosed ? "justify-between" : "justify-start"} border-t border-border-light dark:border-border-dark pt-6 dark:border-slate-800`}>
                 <button
                     onClick={onBack}
                     className="rounded-lg border border-border-light dark:border-border-dark px-6 py-2.5 font-bold text-slate-600 dark:text-slate-400 transition-colors hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-800 dark:text-slate-400 dark:hover:bg-slate-800"
                 >
                     Back to Validation
                 </button>
+
+                {flasherClosed && (
+                    <button
+                        onClick={onProceedToScan}
+                        className="flex items-center gap-2 rounded-lg bg-primary px-6 py-2.5 font-bold text-white shadow-sm transition-colors hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 dark:focus:ring-offset-slate-900"
+                    >
+                        Proceed to Scan Device
+                        <span className="material-symbols-outlined text-sm">arrow_forward</span>
+                    </button>
+                )}
             </div>
         </div>
     );

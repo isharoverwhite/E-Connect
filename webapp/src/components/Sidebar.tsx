@@ -8,7 +8,22 @@ import { usePathname } from 'next/navigation';
 export default function Sidebar() {
     const { user, logout } = useAuth();
     const pathname = usePathname();
-    const [isCollapsed, setIsCollapsed] = useState(false);
+    const [isCollapsed, setIsCollapsed] = useState(() => {
+        if (typeof window !== 'undefined') {
+            const stored = localStorage.getItem('sidebarCollapsed');
+            if (stored !== null) return stored === 'true';
+        }
+        return false;
+    });
+
+
+    const toggleSidebar = () => {
+        setIsCollapsed(prev => {
+            const next = !prev;
+            localStorage.setItem('sidebarCollapsed', String(next));
+            return next;
+        });
+    };
 
     const formatAccountTypeLabel = (type: string | undefined) => {
         switch (type) {
@@ -47,7 +62,7 @@ export default function Sidebar() {
                         {!isCollapsed && <span className="ml-2 text-xl font-bold tracking-tight text-slate-900 dark:text-white transition-opacity duration-300">E-Connect</span>}
                     </div>
                     <button
-                        onClick={() => setIsCollapsed(!isCollapsed)}
+                        onClick={toggleSidebar}
                         className="flex shrink-0 items-center justify-center rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white"
                         title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
                     >
