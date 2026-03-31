@@ -1,8 +1,9 @@
 "use client";
 
 import { useState } from "react";
-import Link from "next/link";
+
 import Image from "next/image";
+import Sidebar from "@/components/Sidebar";
 
 export default function ExtensionsLibrary() {
     const [activeTab, setActiveTab] = useState<'installed' | 'discover'>('installed');
@@ -11,32 +12,8 @@ export default function ExtensionsLibrary() {
     return (
         <div className="flex bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-200 min-h-screen font-sans">
 
-            {/* Sidebar (Full desktop version) */}
-            <aside className="w-64 bg-surface-light dark:bg-surface-dark border-r border-slate-200 dark:border-slate-700 flex flex-col hidden md:flex shrink-0">
-                <div className="h-16 flex items-center px-6 border-b border-slate-200 dark:border-slate-700">
-                    <span className="material-icons-round text-primary mr-2 text-3xl">hub</span>
-                    <span className="text-xl font-bold tracking-tight text-slate-900 dark:text-white">E-Connect</span>
-                </div>
-                <div className="flex-1 py-4">
-                    <nav className="px-4 space-y-1">
-                        <Link href="/" className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors">
-                            <span className="material-icons-round mr-3">dashboard</span> Dashboard
-                        </Link>
-                        <Link href="/devices" className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors">
-                            <span className="material-icons-round mr-3">devices_other</span> Devices
-                        </Link>
-                        <Link href="/automation" className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors">
-                            <span className="material-icons-round mr-3">precision_manufacturing</span> Automation
-                        </Link>
-                        <Link href="/logs" className="flex items-center px-4 py-3 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white rounded-lg transition-colors">
-                            <span className="material-icons-round mr-3">analytics</span> Logs & Stats
-                        </Link>
-                        <Link href="/extensions" className="flex items-center px-4 py-3 bg-primary/10 text-primary font-medium rounded-lg">
-                            <span className="material-icons-round mr-3">extension</span> Extensions
-                        </Link>
-                    </nav>
-                </div>
-            </aside>
+            {/* Shared Sidebar Component */}
+            <Sidebar />
 
             {/* Main Content Area */}
             <main className="flex-1 flex flex-col min-w-0">
