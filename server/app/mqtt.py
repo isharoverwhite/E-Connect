@@ -27,6 +27,7 @@ from app.services.device_registration import (
     register_device_payload,
     sync_user_dashboard_widgets,
 )
+from app.services.automation_runtime import process_state_event_for_automations
 from app.sql_models import AuthStatus, ConnStatus, Device, DeviceHistory, EventType, JobStatus, PinConfiguration, User
 from app.ws_manager import manager as ws_manager
 
@@ -498,6 +499,17 @@ class MQTTClientManager:
                     payload=payload_str,
                 )
             )
+            if isinstance(payload_json, dict):
+                try:
+                    process_state_event_for_automations(
+                        db,
+                        device_id=device_id,
+                        state_payload=payload_json,
+                        publish_command=self.publish_command,
+                        triggered_at=observed_at,
+                    )
+                except Exception:
+                    logger.exception("Automation graph evaluation failed for MQTT state %s", device_id)
 
             try:
                 ws_manager.broadcast_device_event_sync(

@@ -1,0 +1,747 @@
+from __future__ import annotations
+
+import ast
+import json
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Callable, Mapping
+
+from sqlalchemy.orm import Session
+
+from ..models import ExecutionStatus
+from ..sql_models import (
+    AuthStatus,
+    Automation,
+    AutomationExecutionLog,
+    Device,
+    DeviceHistory,
+    ExecutionStatus as SqlExecutionStatus,
+    EventType,
+    PinMode,
+)
+
+TRIGGER_PORT = "event_out"
+FLOW_INPUT_PORT = "event_in"
+CONDITION_PASS_PORT = "pass_out"
+SUPPORTED_TRIGGER_SOURCES = ("manual", "device_state")
+SUPPORTED_NODE_TYPES = ("trigger", "condition", "action")
+SUPPORTED_TRIGGER_KINDS = ("device_state",)
+SUPPORTED_CONDITION_KINDS = ("state_equals", "numeric_compare")
+SUPPORTED_ACTION_KINDS = ("set_output", "set_value")
+SUPPORTED_COMPARISON_OPERATORS = ("gt", "gte", "lt", "lte", "between")
+EXPECTED_BINARY_VALUES = {"on", "off"}
+SET_OUTPUT_VALUES = {0, 1}
+
+
+class AutomationGraphValidationError(ValueError):
+    def __init__(self, message: str, *, code: str = "validation") -> None:
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
+def _enum_value(value: object, *, default: str) -> str:
+    if value is None:
+        return default
+    if hasattr(value, "value"):
+        return str(getattr(value, "value"))
+    return str(value)
+
+
+def _decode_history_payload(payload: str | None) -> dict[str, Any] | None:
+    if not payload:
+        return None
+
+    try:
+        decoded = json.loads(payload)
+        return decoded if isinstance(decoded, dict) else None
+    except json.JSONDecodeError:
+        try:
+            decoded = ast.literal_eval(payload)
+            return decoded if isinstance(decoded, dict) else None
+        except (ValueError, SyntaxError):
+            return None
+
+
+def _normalize_text(value: object, *, field_name: str) -> str:
+    if hasattr(value, "value"):
+        value = getattr(value, "value")
+    normalized = str(value or "").strip()
+    if not normalized:
+        raise AutomationGraphValidationError(f"{field_name} is required.")
+    return normalized
+
+
+def _normalize_int(value: object, *, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise AutomationGraphValidationError(f"{field_name} must be an integer.")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise AutomationGraphValidationError(f"{field_name} must be an integer.") from exc
+
+
+def _normalize_number(value: object, *, field_name: str) -> float:
+    if isinstance(value, bool):
+        raise AutomationGraphValidationError(f"{field_name} must be numeric.")
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise AutomationGraphValidationError(f"{field_name} must be numeric.") from exc
+
+
+def _normalize_binary_state(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value > 0
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"on", "true", "1", "high"}:
+            return True
+        if normalized in {"off", "false", "0", "low"}:
+            return False
+    return None
+
+
+def _normalize_graph_payload(raw_graph: object) -> dict[str, Any]:
+    if hasattr(raw_graph, "model_dump"):
+        dumped = getattr(raw_graph, "model_dump")(mode="json")
+        if not isinstance(dumped, dict):
+            raise AutomationGraphValidationError("Automation graph must be a JSON object.")
+        graph = dumped
+    elif isinstance(raw_graph, Mapping):
+        graph = dict(raw_graph)
+    elif isinstance(raw_graph, str):
+        try:
+            decoded = json.loads(raw_graph)
+        except json.JSONDecodeError as exc:
+            raise AutomationGraphValidationError("Automation graph must be valid JSON.") from exc
+        if not isinstance(decoded, dict):
+            raise AutomationGraphValidationError("Automation graph must be a JSON object.")
+        graph = decoded
+    else:
+        raise AutomationGraphValidationError("Automation graph must be a JSON object.")
+
+    nodes = graph.get("nodes")
+    edges = graph.get("edges")
+    if not isinstance(nodes, list) or not isinstance(edges, list):
+        raise AutomationGraphValidationError("Automation graph must include nodes and edges arrays.")
+
+    return {"nodes": nodes, "edges": edges}
+
+
+def _normalize_trigger_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "device_id": _normalize_text(config.get("device_id"), field_name="Trigger device_id"),
+        "pin": _normalize_int(config.get("pin"), field_name="Trigger pin"),
+    }
+
+
+def _normalize_condition_config(kind: str, config: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = {
+        "device_id": _normalize_text(config.get("device_id"), field_name="Condition device_id"),
+        "pin": _normalize_int(config.get("pin"), field_name="Condition pin"),
+    }
+    if kind == "state_equals":
+        expected = _normalize_text(config.get("expected"), field_name="Condition expected").lower()
+        if expected not in EXPECTED_BINARY_VALUES:
+            raise AutomationGraphValidationError("state_equals conditions require expected to be 'on' or 'off'.")
+        normalized["expected"] = expected
+        return normalized
+
+    operator = _normalize_text(config.get("operator"), field_name="Condition operator").lower()
+    if operator not in SUPPORTED_COMPARISON_OPERATORS:
+        raise AutomationGraphValidationError(
+            "numeric_compare conditions require operator to be one of gt, gte, lt, lte, or between."
+        )
+
+    value = _normalize_number(config.get("value"), field_name="Condition value")
+    normalized["operator"] = operator
+    normalized["value"] = value
+    if operator == "between":
+        secondary_value = _normalize_number(config.get("secondary_value"), field_name="Condition secondary_value")
+        lower = min(value, secondary_value)
+        upper = max(value, secondary_value)
+        normalized["value"] = lower
+        normalized["secondary_value"] = upper
+    return normalized
+
+
+def _normalize_action_config(kind: str, config: Mapping[str, Any]) -> dict[str, Any]:
+    normalized = {
+        "device_id": _normalize_text(config.get("device_id"), field_name="Action device_id"),
+        "pin": _normalize_int(config.get("pin"), field_name="Action pin"),
+    }
+    if kind == "set_output":
+        value = _normalize_int(config.get("value"), field_name="Action value")
+        if value not in SET_OUTPUT_VALUES:
+            raise AutomationGraphValidationError("set_output actions require value 0 or 1.")
+        normalized["value"] = value
+        return normalized
+
+    normalized["value"] = _normalize_number(config.get("value"), field_name="Action value")
+    return normalized
+
+
+def _normalize_graph_node(node: object) -> dict[str, Any]:
+    if not isinstance(node, Mapping):
+        raise AutomationGraphValidationError("Each graph node must be an object.")
+
+    node_id = _normalize_text(node.get("id"), field_name="Node id")
+    node_type = _normalize_text(node.get("type"), field_name="Node type").lower()
+    if node_type not in SUPPORTED_NODE_TYPES:
+        raise AutomationGraphValidationError(f"Unsupported node type '{node_type}'.")
+
+    kind = _normalize_text(node.get("kind"), field_name=f"{node_type} node kind").lower()
+    config = node.get("config")
+    if config is None:
+        config = {}
+    if not isinstance(config, Mapping):
+        raise AutomationGraphValidationError(f"Node '{node_id}' config must be an object.")
+
+    if node_type == "trigger":
+        if kind not in SUPPORTED_TRIGGER_KINDS:
+            raise AutomationGraphValidationError(f"Unsupported trigger kind '{kind}'.")
+        normalized_config = _normalize_trigger_config(config)
+    elif node_type == "condition":
+        if kind not in SUPPORTED_CONDITION_KINDS:
+            raise AutomationGraphValidationError(f"Unsupported condition kind '{kind}'.")
+        normalized_config = _normalize_condition_config(kind, config)
+    else:
+        if kind not in SUPPORTED_ACTION_KINDS:
+            raise AutomationGraphValidationError(f"Unsupported action kind '{kind}'.")
+        normalized_config = _normalize_action_config(kind, config)
+
+    label = node.get("label")
+    normalized_label = str(label).strip() if isinstance(label, str) and label.strip() else None
+    return {
+        "id": node_id,
+        "type": node_type,
+        "kind": kind,
+        "label": normalized_label,
+        "config": normalized_config,
+    }
+
+
+def _normalize_graph_edge(edge: object, *, node_ids: set[str]) -> dict[str, Any]:
+    if not isinstance(edge, Mapping):
+        raise AutomationGraphValidationError("Each graph edge must be an object.")
+
+    source_node_id = _normalize_text(edge.get("source_node_id"), field_name="Edge source_node_id")
+    target_node_id = _normalize_text(edge.get("target_node_id"), field_name="Edge target_node_id")
+    source_port = _normalize_text(edge.get("source_port"), field_name="Edge source_port")
+    target_port = _normalize_text(edge.get("target_port"), field_name="Edge target_port")
+
+    if source_node_id not in node_ids or target_node_id not in node_ids:
+        raise AutomationGraphValidationError("Edges must reference existing nodes.")
+
+    return {
+        "source_node_id": source_node_id,
+        "source_port": source_port,
+        "target_node_id": target_node_id,
+        "target_port": target_port,
+    }
+
+
+def _validate_device_bindings(normalized_graph: dict[str, Any], *, device_scope: Mapping[str, Device] | None) -> None:
+    if device_scope is None:
+        return
+
+    for node in normalized_graph["nodes"]:
+        config = node["config"]
+        device_id = config.get("device_id")
+        device = device_scope.get(device_id)
+        if device is None:
+            raise AutomationGraphValidationError(f"Automation references device '{device_id}' outside your visible scope.")
+
+        pin = config.get("pin")
+        if pin is None:
+            continue
+
+        pin_config = next((row for row in device.pin_configurations if row.gpio_pin == pin), None)
+        if pin_config is None:
+            raise AutomationGraphValidationError(
+                f"Automation references GPIO {pin} on device '{device.name}', but that pin is not configured."
+            )
+
+        if node["type"] != "action":
+            continue
+
+        pin_mode = _enum_value(pin_config.mode, default="")
+        if node["kind"] == "set_output" and pin_mode != PinMode.OUTPUT.value:
+            raise AutomationGraphValidationError(
+                f"set_output actions require an OUTPUT pin. Device '{device.name}' GPIO {pin} is {pin_mode or 'unknown'}."
+            )
+        if node["kind"] == "set_value" and pin_mode != PinMode.PWM.value:
+            raise AutomationGraphValidationError(
+                f"set_value actions require a PWM pin. Device '{device.name}' GPIO {pin} is {pin_mode or 'unknown'}."
+            )
+
+
+def normalize_automation_graph(
+    raw_graph: object,
+    *,
+    device_scope: Mapping[str, Device] | None = None,
+) -> dict[str, Any]:
+    graph = _normalize_graph_payload(raw_graph)
+    nodes = [_normalize_graph_node(node) for node in graph["nodes"]]
+    node_ids = [node["id"] for node in nodes]
+    if len(node_ids) != len(set(node_ids)):
+        raise AutomationGraphValidationError("Graph node ids must be unique.")
+
+    node_by_id = {node["id"]: node for node in nodes}
+    edges = [_normalize_graph_edge(edge, node_ids=set(node_by_id)) for edge in graph["edges"]]
+
+    unique_edges: set[tuple[str, str, str, str]] = set()
+    outgoing: dict[str, list[dict[str, Any]]] = {node_id: [] for node_id in node_by_id}
+    incoming_count: dict[str, int] = {node_id: 0 for node_id in node_by_id}
+
+    for edge in edges:
+        key = (
+            edge["source_node_id"],
+            edge["source_port"],
+            edge["target_node_id"],
+            edge["target_port"],
+        )
+        if key in unique_edges:
+            raise AutomationGraphValidationError("Duplicate graph edges are not allowed.")
+        unique_edges.add(key)
+
+        source_node = node_by_id[edge["source_node_id"]]
+        target_node = node_by_id[edge["target_node_id"]]
+        if source_node["type"] == "trigger":
+            if edge["source_port"] != TRIGGER_PORT:
+                raise AutomationGraphValidationError("Trigger nodes must emit from port 'event_out'.")
+        elif source_node["type"] == "condition":
+            if edge["source_port"] != CONDITION_PASS_PORT:
+                raise AutomationGraphValidationError("Condition nodes must emit from port 'pass_out'.")
+        else:
+            raise AutomationGraphValidationError("Action nodes cannot have outgoing edges.")
+
+        if target_node["type"] not in {"condition", "action"} or edge["target_port"] != FLOW_INPUT_PORT:
+            raise AutomationGraphValidationError("Edges must connect into a condition/action 'event_in' port.")
+
+        outgoing[edge["source_node_id"]].append(edge)
+        incoming_count[edge["target_node_id"]] += 1
+
+    trigger_nodes = [node for node in nodes if node["type"] == "trigger"]
+    action_nodes = [node for node in nodes if node["type"] == "action"]
+    if len(trigger_nodes) != 1:
+        raise AutomationGraphValidationError("Automation graphs require exactly one trigger node.")
+    if not action_nodes:
+        raise AutomationGraphValidationError("Automation graphs require at least one action node.")
+
+    trigger_node = trigger_nodes[0]
+    if not outgoing[trigger_node["id"]]:
+        raise AutomationGraphValidationError("The trigger node must connect to at least one downstream node.")
+
+    for node in nodes:
+        node_id = node["id"]
+        if node["type"] == "trigger":
+            if incoming_count[node_id] != 0:
+                raise AutomationGraphValidationError("Trigger nodes cannot have incoming edges.")
+            continue
+
+        if incoming_count[node_id] != 1:
+            raise AutomationGraphValidationError(
+                f"Node '{node_id}' must have exactly one incoming edge to avoid ambiguous graph joins."
+            )
+
+        if node["type"] == "condition" and not outgoing[node_id]:
+            raise AutomationGraphValidationError(f"Condition node '{node_id}' must connect to a downstream node.")
+        if node["type"] == "action" and outgoing[node_id]:
+            raise AutomationGraphValidationError(f"Action node '{node_id}' cannot connect to downstream nodes.")
+
+    visited: set[str] = set()
+    stack: set[str] = set()
+
+    def dfs(node_id: str) -> None:
+        if node_id in stack:
+            raise AutomationGraphValidationError("Automation graphs must be acyclic.")
+        if node_id in visited:
+            return
+
+        stack.add(node_id)
+        for edge in outgoing[node_id]:
+            dfs(edge["target_node_id"])
+        stack.remove(node_id)
+        visited.add(node_id)
+
+    dfs(trigger_node["id"])
+    if visited != set(node_by_id):
+        unreachable = sorted(set(node_by_id) - visited)
+        raise AutomationGraphValidationError(
+            f"Every node must be reachable from the trigger. Unreachable nodes: {', '.join(unreachable)}."
+        )
+
+    normalized_graph = {"nodes": nodes, "edges": edges}
+    _validate_device_bindings(normalized_graph, device_scope=device_scope)
+    return normalized_graph
+
+
+def deserialize_automation_graph(raw_graph: object) -> dict[str, Any]:
+    return normalize_automation_graph(raw_graph, device_scope=None)
+
+
+def serialize_graph_for_storage(graph: Mapping[str, Any]) -> str:
+    return json.dumps(graph, separators=(",", ":"), ensure_ascii=True)
+
+
+def serialize_execution_log(log: AutomationExecutionLog) -> dict[str, Any]:
+    return {
+        "id": log.id,
+        "automation_id": log.automation_id,
+        "triggered_at": log.triggered_at,
+        "status": _enum_value(log.status, default=ExecutionStatus.failed.value),
+        "trigger_source": _enum_value(log.trigger_source, default="manual"),
+        "log_output": log.log_output,
+        "error_message": log.error_message,
+    }
+
+
+def _latest_execution_log(automation: Automation) -> AutomationExecutionLog | None:
+    logs = list(getattr(automation, "logs", []) or [])
+    if not logs:
+        return None
+    return max(
+        logs,
+        key=lambda row: (
+            row.triggered_at or datetime.min,
+            row.id or 0,
+        ),
+    )
+
+
+def serialize_automation(automation: Automation) -> dict[str, Any]:
+    graph = {"nodes": [], "edges": []}
+    try:
+        graph = deserialize_automation_graph(getattr(automation, "script_code", None))
+    except AutomationGraphValidationError:
+        pass
+
+    latest_log = _latest_execution_log(automation)
+    return {
+        "id": automation.id,
+        "creator_id": automation.creator_id,
+        "name": automation.name,
+        "is_enabled": automation.is_enabled,
+        "graph": graph,
+        "last_triggered": automation.last_triggered,
+        "last_execution": serialize_execution_log(latest_log) if latest_log is not None else None,
+    }
+
+
+def _load_latest_state_payloads(db: Session, device_ids: set[str]) -> dict[str, dict[str, Any]]:
+    payloads: dict[str, dict[str, Any]] = {}
+    for device_id in device_ids:
+        latest_state = (
+            db.query(DeviceHistory)
+            .filter(
+                DeviceHistory.device_id == device_id,
+                DeviceHistory.event_type == EventType.state_change,
+            )
+            .order_by(DeviceHistory.timestamp.desc(), DeviceHistory.id.desc())
+            .first()
+        )
+        decoded = _decode_history_payload(latest_state.payload if latest_state else None)
+        if decoded is not None:
+            payloads[device_id] = decoded
+    return payloads
+
+
+def _extract_pin_snapshot(state_payload: Mapping[str, Any] | None, pin: int) -> dict[str, Any] | None:
+    if not isinstance(state_payload, Mapping):
+        return None
+
+    pins = state_payload.get("pins")
+    if isinstance(pins, list):
+        for row in pins:
+            if isinstance(row, Mapping) and row.get("pin") == pin:
+                return dict(row)
+
+    if state_payload.get("pin") == pin:
+        return {
+            "pin": pin,
+            "value": state_payload.get("value"),
+            "brightness": state_payload.get("brightness"),
+        }
+
+    return None
+
+
+def _extract_numeric_value(snapshot: Mapping[str, Any] | None) -> float | None:
+    if not isinstance(snapshot, Mapping):
+        return None
+    for key in ("brightness", "value"):
+        value = snapshot.get(key)
+        if isinstance(value, bool):
+            return 1.0 if value else 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+    return None
+
+
+def _evaluate_condition_node(
+    node: Mapping[str, Any],
+    *,
+    state_payloads: Mapping[str, dict[str, Any]],
+) -> tuple[bool, str]:
+    config = node["config"]
+    device_id = config["device_id"]
+    pin = config["pin"]
+    snapshot = _extract_pin_snapshot(state_payloads.get(device_id), pin)
+
+    if snapshot is None:
+        return False, f"{node['id']}: no live state for {device_id} GPIO {pin}"
+
+    if node["kind"] == "state_equals":
+        actual = _normalize_binary_state(snapshot.get("brightness"))
+        if actual is None:
+            actual = _normalize_binary_state(snapshot.get("value"))
+        if actual is None:
+            return False, f"{node['id']}: GPIO {pin} is not a boolean-like state"
+        expected = config["expected"] == "on"
+        result = actual == expected
+        return result, f"{node['id']}: GPIO {pin} expected {config['expected']} -> {str(result).lower()}"
+
+    numeric_value = _extract_numeric_value(snapshot)
+    if numeric_value is None:
+        return False, f"{node['id']}: GPIO {pin} is not numeric"
+
+    operator = config["operator"]
+    target_value = float(config["value"])
+    if operator == "gt":
+        result = numeric_value > target_value
+    elif operator == "gte":
+        result = numeric_value >= target_value
+    elif operator == "lt":
+        result = numeric_value < target_value
+    elif operator == "lte":
+        result = numeric_value <= target_value
+    else:
+        secondary_value = float(config["secondary_value"])
+        result = target_value <= numeric_value <= secondary_value
+
+    return result, f"{node['id']}: GPIO {pin} {operator} check with {numeric_value} -> {str(result).lower()}"
+
+
+def _dispatch_action(
+    db: Session,
+    *,
+    node: Mapping[str, Any],
+    publish_command: Callable[[str, dict[str, Any]], bool],
+    device_lookup: Mapping[str, Device],
+) -> tuple[bool, str]:
+    config = node["config"]
+    device_id = config["device_id"]
+    device = device_lookup.get(device_id)
+    if device is None:
+        return False, f"{node['id']}: target device '{device_id}' is missing"
+    if device.auth_status != AuthStatus.approved:
+        return False, f"{node['id']}: target device '{device.name}' is not approved"
+
+    command: dict[str, Any] = {
+        "kind": "action",
+        "pin": config["pin"],
+        "command_id": str(uuid.uuid4()),
+    }
+    if node["kind"] == "set_output":
+        command["value"] = int(config["value"])
+        human_action = "on" if int(config["value"]) else "off"
+    else:
+        numeric_value = config["value"]
+        if float(numeric_value).is_integer():
+            numeric_value = int(numeric_value)
+        command["brightness"] = numeric_value
+        human_action = str(numeric_value)
+
+    success = publish_command(device_id, command)
+    db.add(
+        DeviceHistory(
+            device_id=device_id,
+            event_type=EventType.command_requested if success else EventType.command_failed,
+            payload=json.dumps(command),
+            changed_by=None,
+        )
+    )
+
+    action_summary = f"{node['id']}: {device.name} GPIO {config['pin']} -> {human_action}"
+    if success:
+        return True, action_summary
+    return False, f"{action_summary} (MQTT publish failed)"
+
+
+def _evaluate_graph_execution(
+    db: Session,
+    *,
+    automation: Automation,
+    normalized_graph: Mapping[str, Any],
+    trigger_source: str,
+    state_payloads: Mapping[str, dict[str, Any]],
+    device_lookup: Mapping[str, Device],
+    publish_command: Callable[[str, dict[str, Any]], bool],
+    triggered_at: datetime | None = None,
+) -> AutomationExecutionLog:
+    if trigger_source not in SUPPORTED_TRIGGER_SOURCES:
+        raise AutomationGraphValidationError(f"Unsupported trigger source '{trigger_source}'.")
+
+    node_by_id = {node["id"]: node for node in normalized_graph["nodes"]}
+    outgoing: dict[str, list[dict[str, Any]]] = {node_id: [] for node_id in node_by_id}
+    for edge in normalized_graph["edges"]:
+        outgoing[edge["source_node_id"]].append(edge)
+
+    trigger_node = next(node for node in normalized_graph["nodes"] if node["type"] == "trigger")
+    evaluation_summaries: list[str] = []
+    action_summaries: list[str] = []
+    failures: list[str] = []
+    executed_actions: set[str] = set()
+
+    def walk(node_id: str) -> None:
+        for edge in outgoing[node_id]:
+            target = node_by_id[edge["target_node_id"]]
+            if target["type"] == "condition":
+                passed, summary = _evaluate_condition_node(target, state_payloads=state_payloads)
+                evaluation_summaries.append(summary)
+                if passed:
+                    walk(target["id"])
+                else:
+                    failures.append(summary)
+            elif target["type"] == "action":
+                if target["id"] in executed_actions:
+                    continue
+                success, summary = _dispatch_action(
+                    db,
+                    node=target,
+                    publish_command=publish_command,
+                    device_lookup=device_lookup,
+                )
+                action_summaries.append(summary)
+                executed_actions.add(target["id"])
+                if not success:
+                    failures.append(summary)
+
+    walk(trigger_node["id"])
+    status = ExecutionStatus.success if action_summaries and not failures else ExecutionStatus.failed
+    if not action_summaries:
+        error_message = "No action applied because no branch passed all conditions."
+    elif failures:
+        error_message = "; ".join(failures)
+    else:
+        error_message = None
+
+    automation.last_triggered = triggered_at or datetime.now(timezone.utc).replace(tzinfo=None)
+    log_payload = {
+        "evaluations": evaluation_summaries,
+        "actions": action_summaries,
+    }
+    execution_log = AutomationExecutionLog(
+        automation_id=automation.id,
+        triggered_at=automation.last_triggered,
+        status=SqlExecutionStatus.success if status == ExecutionStatus.success else SqlExecutionStatus.failed,
+        trigger_source=trigger_source,
+        log_output=json.dumps(log_payload, ensure_ascii=True),
+        error_message=error_message,
+    )
+    db.add(execution_log)
+    db.flush()
+    return execution_log
+
+
+def trigger_automation_manually(
+    db: Session,
+    *,
+    automation: Automation,
+    publish_command: Callable[[str, dict[str, Any]], bool],
+    device_scope: Mapping[str, Device] | None = None,
+    triggered_at: datetime | None = None,
+) -> AutomationExecutionLog:
+    normalized_graph = normalize_automation_graph(
+        automation.script_code,
+        device_scope=device_scope,
+    )
+    referenced_device_ids = {
+        node["config"]["device_id"]
+        for node in normalized_graph["nodes"]
+        if "device_id" in node["config"]
+    }
+    device_lookup = dict(device_scope or {})
+    if referenced_device_ids:
+        runtime_devices = (
+            db.query(Device)
+            .filter(Device.device_id.in_(sorted(referenced_device_ids)))
+            .all()
+        )
+        device_lookup.update({device.device_id: device for device in runtime_devices})
+
+    state_payloads = _load_latest_state_payloads(db, referenced_device_ids)
+    return _evaluate_graph_execution(
+        db,
+        automation=automation,
+        normalized_graph=normalized_graph,
+        trigger_source="manual",
+        state_payloads=state_payloads,
+        device_lookup=device_lookup,
+        publish_command=publish_command,
+        triggered_at=triggered_at,
+    )
+
+
+def _trigger_matches_state_event(normalized_graph: Mapping[str, Any], *, device_id: str, state_payload: Mapping[str, Any]) -> bool:
+    trigger_node = next(node for node in normalized_graph["nodes"] if node["type"] == "trigger")
+    config = trigger_node["config"]
+    if config["device_id"] != device_id:
+        return False
+    return _extract_pin_snapshot(state_payload, config["pin"]) is not None
+
+
+def process_state_event_for_automations(
+    db: Session,
+    *,
+    device_id: str,
+    state_payload: Mapping[str, Any],
+    publish_command: Callable[[str, dict[str, Any]], bool],
+    triggered_at: datetime | None = None,
+) -> list[AutomationExecutionLog]:
+    execution_logs: list[AutomationExecutionLog] = []
+    enabled_automations = (
+        db.query(Automation)
+        .filter(Automation.is_enabled.is_(True))
+        .order_by(Automation.id.asc())
+        .all()
+    )
+
+    for automation in enabled_automations:
+        try:
+            normalized_graph = deserialize_automation_graph(automation.script_code)
+        except AutomationGraphValidationError:
+            continue
+
+        if not _trigger_matches_state_event(normalized_graph, device_id=device_id, state_payload=state_payload):
+            continue
+
+        referenced_device_ids = {
+            node["config"]["device_id"]
+            for node in normalized_graph["nodes"]
+            if "device_id" in node["config"]
+        }
+        state_payloads = _load_latest_state_payloads(db, referenced_device_ids)
+        state_payloads[device_id] = dict(state_payload)
+        device_lookup = {
+            device.device_id: device
+            for device in db.query(Device).filter(Device.device_id.in_(sorted(referenced_device_ids))).all()
+        }
+        execution_logs.append(
+            _evaluate_graph_execution(
+                db,
+                automation=automation,
+                normalized_graph=normalized_graph,
+                trigger_source="device_state",
+                state_payloads=state_payloads,
+                device_lookup=device_lookup,
+                publish_command=publish_command,
+                triggered_at=triggered_at,
+            )
+        )
+
+    return execution_logs

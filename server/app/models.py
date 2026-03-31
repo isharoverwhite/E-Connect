@@ -64,6 +64,37 @@ class SerialSessionStatus(str, Enum):
     locked = "locked"
     released = "released"
 
+
+class AutomationNodeType(str, Enum):
+    trigger = "trigger"
+    condition = "condition"
+    action = "action"
+
+
+class AutomationTriggerSource(str, Enum):
+    manual = "manual"
+    device_state = "device_state"
+
+
+class AutomationGraphNode(BaseModel):
+    id: str = Field(..., min_length=1)
+    type: AutomationNodeType
+    kind: str = Field(..., min_length=1)
+    label: Optional[str] = None
+    config: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AutomationGraphEdge(BaseModel):
+    source_node_id: str = Field(..., min_length=1)
+    source_port: str = Field(..., min_length=1)
+    target_node_id: str = Field(..., min_length=1)
+    target_port: str = Field(..., min_length=1)
+
+
+class AutomationGraph(BaseModel):
+    nodes: List[AutomationGraphNode] = Field(default_factory=list)
+    edges: List[AutomationGraphEdge] = Field(default_factory=list)
+
 # --- User & Auth ---
 class UserBase(BaseModel):
     fullname: str
@@ -228,16 +259,12 @@ class DeviceApprovalRequest(BaseModel):
 # --- Automation ---
 class AutomationCreate(BaseModel):
     name: str
-    script_code: str
     is_enabled: bool = True
+    graph: AutomationGraph
 
-class AutomationResponse(AutomationCreate):
-    id: int
-    creator_id: int
-    last_triggered: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+class AutomationUpdate(AutomationCreate):
+    pass
 
 class ExecutionStatus(str, Enum):
     success = "success"
@@ -248,8 +275,19 @@ class AutomationLogResponse(BaseModel):
     automation_id: int
     triggered_at: datetime
     status: ExecutionStatus
+    trigger_source: AutomationTriggerSource = AutomationTriggerSource.manual
     log_output: Optional[str] = None
     error_message: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class AutomationResponse(AutomationCreate):
+    id: int
+    creator_id: int
+    last_triggered: Optional[datetime]
+    last_execution: Optional[AutomationLogResponse] = None
 
     class Config:
         from_attributes = True
