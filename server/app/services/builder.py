@@ -50,8 +50,9 @@ _FIRMWARE_MQTT_BROKER_ENV = "FIRMWARE_MQTT_BROKER"
 _FIRMWARE_MQTT_PORT_ENV = "FIRMWARE_MQTT_PORT"
 _DEFAULT_WEBAPP_PROTOCOL = "http"
 _DEFAULT_WEBAPP_PORT = 3000
+_HTTPS_COMPANION_PORT = 3443
 _DEFAULT_FIRMWARE_PUBLIC_PORT = "3000"
-_DEFAULT_FIRMWARE_PUBLIC_SCHEME = "https"
+_DEFAULT_FIRMWARE_PUBLIC_SCHEME = "http"
 _DEFAULT_MQTT_PORT = "1883"
 _COMMON_DOCKER_BRIDGE_SUBNETS = tuple(
     ipaddress.ip_network(cidr)
@@ -205,6 +206,14 @@ def _format_runtime_host(hostname: str) -> str:
     return hostname
 
 
+def _format_api_base_url(hostname: str, scheme: str, port: int | None) -> str:
+    if port is None:
+        netloc = _format_runtime_host(hostname)
+    else:
+        netloc = _format_runtime_netloc(hostname, port)
+    return f"{scheme}://{netloc}/api/v1"
+
+
 def _resolve_runtime_mqtt_broker(advertised_host: str) -> str:
     for candidate in (
         os.getenv(_FIRMWARE_MQTT_BROKER_ENV),
@@ -220,6 +229,50 @@ def _resolve_runtime_mqtt_broker(advertised_host: str) -> str:
             continue
 
     return advertised_host
+
+
+def _normalize_request_derived_transport(hostname: str, scheme: str, port: int | None) -> tuple[str, int | None]:
+    normalized_scheme = scheme.strip().lower()
+    normalized_port = port
+
+    # Boards should use the standard LAN HTTP origin for OTA downloads even
+    # when the browser is temporarily using the secure companion transport.
+    if normalized_scheme == "https" and normalized_port in {_DEFAULT_WEBAPP_PORT, _HTTPS_COMPANION_PORT}:
+        return _DEFAULT_WEBAPP_PROTOCOL, _DEFAULT_WEBAPP_PORT
+
+    return normalized_scheme, normalized_port
+
+
+def _build_request_derived_firmware_targets(raw_value: str, *, default_scheme: str) -> dict[str, object]:
+    candidate = raw_value.strip()
+    parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}", scheme=default_scheme)
+    netloc = parsed.netloc or parsed.path
+    hostname = parsed.hostname
+    scheme = parsed.scheme or default_scheme
+
+    if not netloc or not hostname:
+        raise ValueError(f"Could not parse host value '{raw_value}'.")
+
+    normalized_host = hostname.strip().lower()
+    _validate_advertised_hostname(normalized_host)
+
+    try:
+        parsed_port = parsed.port
+    except ValueError as exc:
+        raise ValueError(f"Could not parse host value '{raw_value}'.") from exc
+
+    normalized_scheme, normalized_port = _normalize_request_derived_transport(
+        normalized_host,
+        scheme,
+        parsed_port,
+    )
+
+    return build_firmware_network_targets(
+        normalized_host,
+        _format_api_base_url(normalized_host, normalized_scheme, normalized_port),
+        mqtt_broker=_resolve_runtime_mqtt_broker(normalized_host),
+        mqtt_port=_resolve_runtime_mqtt_port(),
+    )
 
 
 def build_firmware_target_key(targets: Mapping[str, object]) -> str:
@@ -620,14 +673,7 @@ def infer_firmware_network_targets(
             continue
 
         try:
-            netloc, hostname, scheme = _parse_host_candidate(raw_value, default_scheme=default_scheme)
-            _validate_advertised_hostname(hostname)
-            return build_firmware_network_targets(
-                hostname,
-                f"{scheme}://{netloc.rstrip('/')}/api/v1",
-                mqtt_broker=_resolve_runtime_mqtt_broker(hostname),
-                mqtt_port=_resolve_runtime_mqtt_port(),
-            )
+            return _build_request_derived_firmware_targets(raw_value, default_scheme=default_scheme)
         except ValueError as exc:
             errors.append(f"{source}: {exc}")
 

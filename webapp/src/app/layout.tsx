@@ -4,6 +4,7 @@ import "./globals.css";
 import AuthProvider from "@/components/AuthProvider";
 import { ToastProvider } from "@/components/ToastContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import MqttWarningBanner from "@/components/MqttWarningBanner";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const fira_code = Fira_Code({ subsets: ["latin"], variable: "--font-fira-code" });
@@ -30,6 +31,7 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
           <AuthProvider>
             <ToastProvider>
+              <MqttWarningBanner />
               {children}
             </ToastProvider>
           </AuthProvider>

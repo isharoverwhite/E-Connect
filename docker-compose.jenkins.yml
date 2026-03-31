@@ -12,6 +12,7 @@ services:
     restart: always
     network_mode: host
     environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
       MDNS_HOSTNAME: ${DISCOVERY_MDNS_HOSTNAME:-}
       MDNS_ADVERTISED_IPS: ${DISCOVERY_MDNS_ADVERTISED_IPS:-}
       MDNS_DISCOVERY_PORT: ${DISCOVERY_MDNS_DISCOVERY_PORT:-8000}

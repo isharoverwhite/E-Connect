@@ -4,6 +4,7 @@ services:
     container_name: e-connect-db
     restart: always
     environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_password}
       MYSQL_DATABASE: ${DB_NAME:-e_connect_db}
       MYSQL_USER: ${DB_USER:-econnect}
@@ -25,6 +26,8 @@ services:
     image: econnect-mqtt
     container_name: e-connect-mqtt
     restart: always
+    environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
     ports:
       - "1883:1883"
 
@@ -38,9 +41,13 @@ services:
       - "80:8000"
       - "8000:8000"
     environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
       DATABASE_URL: mysql+pymysql://${DB_USER:-econnect}:${DB_PASSWORD:-root_password}@${DB_HOST:-db}:3306/${DB_NAME:-e_connect_db}
       SECRET_KEY: ${SECRET_KEY:-supersecretkey}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-43200}
+      # Keep the runtime client pointed at a stable alias even though the broker
+      # defaults to the in-stack broker alias. Use the host-network override when
+      # Mosquitto must bind directly on the Docker host.
       MQTT_BROKER: ${MQTT_BROKER:-mqtt}
       MQTT_PORT: ${MQTT_PORT:-1883}
       MQTT_NAMESPACE: ${MQTT_NAMESPACE:-local}
@@ -89,6 +96,7 @@ services:
     volumes:
       - webapp_tls:/app/.local-https
     environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
       ALLOW_INSECURE_HTTP: "1"
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
       BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://server:8000}
@@ -116,6 +124,8 @@ services:
     image: econnect-find-website
     container_name: e-connect-find-website
     restart: always
+    environment:
+      TZ: ${TZ:-Asia/Ho_Chi_Minh}
     ports:
       - "${FIND_WEBSITE_PORT:-9123}:9123"
     depends_on:

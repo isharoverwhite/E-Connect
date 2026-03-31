@@ -1,0 +1,9 @@
+services:
+  mqtt:
+    network_mode: host
+    ports: []
+
+  server:
+    extra_hosts:
+      - "mqtt:host-gateway"
+      - "host.docker.internal:host-gateway"
