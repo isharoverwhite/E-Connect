@@ -226,7 +226,7 @@ export async function sendDeviceCommand(
 
 export async function saveDeviceConfig(
     uuid: string,
-    config: { pins: unknown[]; password: string }
+    config: { pins: unknown[]; password: string; wifi_credential_id?: number | null }
 ): Promise<{ status: string; job_id?: string; message?: string }> {
     try {
         const token = getToken();

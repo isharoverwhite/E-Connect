@@ -25,13 +25,15 @@ import {
 } from "@/lib/rooms";
 import Sidebar from "@/components/Sidebar";
 import { ConfigsPanel } from "./ConfigsPanel";
+import { WifiCredentialsPanel } from "./WifiCredentialsPanel";
+import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastContext";
 
 function formatAccountTypeLabel(accountType?: string | null) {
     return accountType === "admin" ? "admin" : "user";
 }
 
-type SettingsPanel = "general" | "users" | "rooms" | "configs";
+type SettingsPanel = "general" | "users" | "rooms" | "wifi" | "configs";
 type AccountType = ManagedUser["account_type"];
 
 
@@ -514,6 +516,18 @@ export default function SettingsPage() {
                             Configs
                         </button>
                     ) : null}
+                    {isAdmin ? (
+                        <button
+                            onClick={() => setActivePanel("wifi")}
+                            className={`py-4 text-sm font-semibold transition-colors ${
+                                activePanel === "wifi"
+                                    ? "border-b-[3px] border-primary text-primary"
+                                    : "text-slate-500 hover:text-primary dark:text-slate-400"
+                            }`}
+                        >
+                            Wi-Fi
+                        </button>
+                    ) : null}
                 </div>
 
                 <div className="flex-1 overflow-y-auto bg-slate-50/60 p-6 dark:bg-background-dark">
@@ -536,6 +550,23 @@ export default function SettingsPage() {
 
                         {activePanel === "general" ? (
                             <div className="grid gap-6">
+                                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                        <div>
+                                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Appearance</p>
+                                            <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Theme Preference</h2>
+                                            <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
+                                                Choose your preferred lighting mode for the E-Connect interface.
+                                            </p>
+                                        </div>
+                                        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                                            <div className="border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-800">
+                                                <ThemeToggle />
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
+
                                 {isAdmin ? (
                                     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
                                         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
@@ -761,47 +792,51 @@ export default function SettingsPage() {
                                                                             </div>
                                                                         </div>
                                                                     </td>
-                                                                    <td className="px-6 py-4 flex gap-2 items-center">
-                                                                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 capitalize border border-slate-200 dark:border-slate-700">
-                                                                            {formatAccountTypeLabel(managedUser.account_type)}
-                                                                        </span>
-                                                                        {managedUser.approval_status !== "approved" && (
-                                                                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize border ${managedUser.approval_status === "pending" ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/10 dark:text-amber-500 dark:border-amber-500/30" : "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/30"}`}>
-                                                                                {managedUser.approval_status}
+                                                                    <td className="px-6 py-4">
+                                                                        <div className="flex gap-2 items-center">
+                                                                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 capitalize border border-slate-200 dark:border-slate-700">
+                                                                                {formatAccountTypeLabel(managedUser.account_type)}
                                                                             </span>
-                                                                        )}
+                                                                            {managedUser.approval_status !== "approved" && (
+                                                                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize border ${managedUser.approval_status === "pending" ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/10 dark:text-amber-500 dark:border-amber-500/30" : "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/30"}`}>
+                                                                                    {managedUser.approval_status}
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
                                                                     </td>
-                                                                    <td className="px-6 py-4 text-right flex justify-end gap-2">
-                                                                        {managedUser.approval_status === "pending" && (
-                                                                            <button 
-                                                                                onClick={() => handleStatusChange(managedUser, "approve")}
-                                                                                disabled={actionUserId === managedUser.user_id}
-                                                                                className="text-slate-400 hover:text-emerald-500 transition-colors disabled:opacity-30 p-2 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-500/10 inline-flex items-center justify-center"
-                                                                                title="Approve access"
-                                                                            >
-                                                                                {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">check_circle</span>}
-                                                                            </button>
-                                                                        )}
-                                                                        {managedUser.account_type !== "admin" && managedUser.approval_status === "approved" ? (
-                                                                            <button 
-                                                                                onClick={() => setPromoteModalTarget(managedUser)}
-                                                                                disabled={actionUserId === managedUser.user_id || managedUser.user_id === user?.user_id}
-                                                                                className="text-slate-400 hover:text-blue-500 transition-colors disabled:opacity-30 p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-500/10 inline-flex items-center justify-center"
-                                                                                title="Promote to admin"
-                                                                            >
-                                                                                {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">arrow_upward</span>}
-                                                                            </button>
-                                                                        ) : null}
-                                                                        {managedUser.approval_status !== "revoked" && (
-                                                                            <button 
-                                                                                onClick={() => setRevokeModalTarget(managedUser)}
-                                                                                disabled={actionUserId === managedUser.user_id || managedUser.user_id === user?.user_id}
-                                                                                className="text-slate-400 hover:text-rose-500 transition-colors disabled:opacity-30 p-2 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-500/10 inline-flex items-center justify-center"
-                                                                                title="Revoke access"
-                                                                            >
-                                                                                {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">block</span>}
-                                                                            </button>
-                                                                        )}
+                                                                    <td className="px-6 py-4 text-right">
+                                                                        <div className="flex justify-end gap-2">
+                                                                            {managedUser.approval_status === "pending" && (
+                                                                                <button
+                                                                                    onClick={() => handleStatusChange(managedUser, "approve")}
+                                                                                    disabled={actionUserId === managedUser.user_id}
+                                                                                    className="text-slate-400 hover:text-emerald-500 transition-colors disabled:opacity-30 p-2 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-500/10 inline-flex items-center justify-center"
+                                                                                    title="Approve access"
+                                                                                >
+                                                                                    {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">check_circle</span>}
+                                                                                </button>
+                                                                            )}
+                                                                            {managedUser.account_type !== "admin" && managedUser.approval_status === "approved" ? (
+                                                                                <button
+                                                                                    onClick={() => setPromoteModalTarget(managedUser)}
+                                                                                    disabled={actionUserId === managedUser.user_id || managedUser.user_id === user?.user_id}
+                                                                                    className="text-slate-400 hover:text-blue-500 transition-colors disabled:opacity-30 p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-500/10 inline-flex items-center justify-center"
+                                                                                    title="Promote to admin"
+                                                                                >
+                                                                                    {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">arrow_upward</span>}
+                                                                                </button>
+                                                                            ) : null}
+                                                                            {managedUser.approval_status !== "revoked" && (
+                                                                                <button
+                                                                                    onClick={() => setRevokeModalTarget(managedUser)}
+                                                                                    disabled={actionUserId === managedUser.user_id || managedUser.user_id === user?.user_id}
+                                                                                    className="text-slate-400 hover:text-rose-500 transition-colors disabled:opacity-30 p-2 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-500/10 inline-flex items-center justify-center"
+                                                                                    title="Revoke access"
+                                                                                >
+                                                                                    {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">block</span>}
+                                                                                </button>
+                                                                            )}
+                                                                        </div>
                                                                     </td>
                                                                 </tr>
                                                             ))
@@ -1054,6 +1089,10 @@ export default function SettingsPage() {
 
                         {activePanel === "configs" ? (
                             <ConfigsPanel />
+                        ) : null}
+
+                        {activePanel === "wifi" ? (
+                            <WifiCredentialsPanel />
                         ) : null}
                     </div>
                 </div>

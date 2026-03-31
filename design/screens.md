@@ -29,6 +29,13 @@
   - The create-user form must require a minimum username length of `3` characters and a minimum password length of `8` characters before it sends the request.
 - **`rooms`**: Admin panel for managing room access control.
   - The create-room form must show an inline required-name validation message before it attempts the create request.
+- **`wifi` (New)**: Admin panel for managing saved Wi-Fi credentials.
+  - Only `admin` users may see the Wi-Fi credentials tab or call its backing endpoints.
+  - The panel must show credentials as a list with visible `SSID` and masked password only.
+  - The panel must support create, edit, and delete for saved credentials.
+  - Viewing the real password for one credential must open a confirmation flow that requires the password of the signed-in account before the backend returns the secret.
+  - A wrong or missing account password must keep the secret hidden and show an inline error in the reveal flow.
+  - If no Wi-Fi credentials exist yet, the panel must show an explicit empty state that tells the admin to add the first network before using the DIY provisioning flow.
 - **`configs` (New)**: Admin panel for managing DIY Config projects.
   - Lists all project records.
   - Usage state badges: **`unused`** and **`in_use`**.
@@ -45,6 +52,9 @@
   - Board summaries must show truthful defaults for CPU MHz, flash size, PSRAM, serial bridge, and warnings.
   - Board cards must not show a `Web flash` badge unless the profile still exposes a maintained demo manifest in the active delivery path.
   - The builder collects Wi-Fi credentials only; it must not expose a separate MQTT broker field.
+  - Instead of free-typing SSID/password on each new project, the admin must pick one saved Wi-Fi credential from Settings.
+  - If no saved Wi-Fi credential exists, the builder must show a blocking empty state or inline warning and direct the admin to add one in Settings first.
+  - The selected Wi-Fi credential must persist with the DIY project and reload when the project is reopened.
   - The server-side build flow must prefer the runtime targets detected at backend startup for firmware stamping and only fall back to request-derived headers when startup auto-detect is unavailable.
   - The runtime MQTT broker target may differ from the API host when operators explicitly configure a public firmware-broker override; otherwise firmware may default to the same public host/IP as the API target.
 - **Step 2 / Pin Mapping**:
@@ -73,10 +83,11 @@
 - **`/devices/[id]/config`**:
   - Only `admin` users may open the managed-device reconfiguration screen.
   - The screen must load the linked DIY project board profile and the device's current persisted GPIO mapping, then let the admin edit pins on that same board.
+  - The screen must also show which saved Wi-Fi credential is currently attached to that managed device's linked DIY project and allow the admin to switch to another saved credential before rebuild.
   - The screen must surface inline `validation error`, `warning`, and `success` feedback for pin edits instead of relying on browser alerts alone.
   - Saving a changed pin map is safety-sensitive because an invalid wiring or GPIO role can damage hardware; the save action must open a confirmation modal that requires the password of the signed-in account before the backend accepts the change.
   - A wrong or missing password must keep the device config unchanged and show an inline error inside that confirmation modal.
-  - A successful confirmation must persist the updated pin mapping to the managed DIY project and the linked device record, then start a new firmware rebuild for that device.
+  - A successful confirmation must persist the updated pin mapping and selected Wi-Fi credential to the managed DIY project and the linked device record, then start a new firmware rebuild for that device.
   - The OTA dialog must stay blocked until the rebuild reaches `artifact_ready`, then allow the admin to send the OTA command for that exact build job.
   - The OTA dialog must show `building`, `artifact_ready`, `flashing`, `flashed`, and `flash_failed` states, plus a clear close path when the build itself fails.
   - After the OTA job reaches `flashed`, the dialog must wait for the board to report `online` again on the expected firmware version for that exact build before showing the final success state, then return the admin to the dashboard automatically.

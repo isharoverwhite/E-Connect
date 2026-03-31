@@ -27,13 +27,14 @@ from .models import (
     FirmwareNetworkTargetsResponse,
     SetupResponse, HouseholdResponse, TriggerResponse, ExecutionStatus, AutomationLogResponse,
     DiyProjectCreate, DiyProjectDeleteRequest, DiyProjectResponse, BuildJobResponse, JobStatus, SerialSessionResponse,
-    ManagedUserResponse, UserApprovalStatus, DiyProjectUsageResponse, ProjectDeviceUsage
+    ManagedUserResponse, UserApprovalStatus, DiyProjectUsageResponse, ProjectDeviceUsage,
+    WifiCredentialCreate, WifiCredentialUpdate, WifiCredentialRevealRequest, WifiCredentialResponse, WifiCredentialSecretResponse,
 )
 from .sql_models import (
     User, Device, Automation, DeviceHistory,
     Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
     AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, BuildJob, PinConfiguration, SerialSession, SerialSessionStatus,
-    UserApprovalStatus as SqlUserApprovalStatus
+    UserApprovalStatus as SqlUserApprovalStatus, WifiCredential,
 )
 from .database import SessionLocal, get_db
 from .auth import (
@@ -708,6 +709,111 @@ def _get_managed_membership_or_404(db: Session, admin: User, user_id: int) -> Ho
     return membership
 
 
+def _mask_secret(secret: str) -> str:
+    if not secret:
+        return ""
+    return "*" * max(8, min(len(secret), 16))
+
+
+def _serialize_wifi_credential(credential: WifiCredential, *, usage_count: int = 0) -> dict[str, Any]:
+    return {
+        "id": credential.id,
+        "household_id": credential.household_id,
+        "ssid": credential.ssid,
+        "masked_password": _mask_secret(credential.password),
+        "usage_count": usage_count,
+        "created_at": credential.created_at,
+        "updated_at": credential.updated_at,
+    }
+
+
+def _get_wifi_credential_in_household_or_404(
+    db: Session,
+    current_user: User,
+    credential_id: int,
+) -> WifiCredential:
+    household_id = resolve_household_id_for_user(db, current_user)
+    credential = (
+        db.query(WifiCredential)
+        .filter(
+            WifiCredential.id == credential_id,
+            WifiCredential.household_id == household_id,
+        )
+        .first()
+    )
+    if not credential:
+        raise HTTPException(status_code=404, detail="Wi-Fi credential not found")
+    return credential
+
+
+def _resolve_wifi_credential_for_payload(
+    db: Session,
+    current_user: User,
+    *,
+    requested_credential_id: Optional[int],
+    existing_credential_id: Optional[int] = None,
+    config_payload: Optional[dict[str, Any]] = None,
+    create_from_legacy: bool = False,
+    required: bool = True,
+    missing_message: str = "Select a Wi-Fi credential before continuing.",
+) -> Optional[WifiCredential]:
+    if requested_credential_id is not None:
+        return _get_wifi_credential_in_household_or_404(db, current_user, requested_credential_id)
+
+    if existing_credential_id is not None:
+        return _get_wifi_credential_in_household_or_404(db, current_user, existing_credential_id)
+
+    household_id = resolve_household_id_for_user(db, current_user)
+    if household_id is None:
+        raise HTTPException(status_code=404, detail="Household not found")
+
+    payload = config_payload if isinstance(config_payload, dict) else {}
+    wifi_ssid = payload.get("wifi_ssid")
+    wifi_password = payload.get("wifi_password")
+    if isinstance(wifi_ssid, str) and wifi_ssid.strip() and isinstance(wifi_password, str) and wifi_password:
+        existing = (
+            db.query(WifiCredential)
+            .filter(
+                WifiCredential.household_id == household_id,
+                WifiCredential.ssid == wifi_ssid.strip(),
+                WifiCredential.password == wifi_password,
+            )
+            .order_by(WifiCredential.id.asc())
+            .first()
+        )
+        if existing is not None:
+            return existing
+
+        if create_from_legacy and current_user.account_type == AccountType.admin:
+            created = WifiCredential(
+                household_id=household_id,
+                ssid=wifi_ssid.strip(),
+                password=wifi_password,
+            )
+            db.add(created)
+            db.flush()
+            return created
+
+    if required:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": missing_message},
+        )
+
+    return None
+
+
+def _stamp_wifi_credential_config(
+    config_payload: Optional[dict[str, Any]],
+    credential: WifiCredential,
+) -> dict[str, Any]:
+    stamped = dict(config_payload or {})
+    stamped["wifi_credential_id"] = credential.id
+    stamped["wifi_ssid"] = credential.ssid
+    stamped["wifi_password"] = credential.password
+    return stamped
+
+
 def _raise_legacy_ota_disabled() -> None:
     raise HTTPException(
         status_code=410,
@@ -758,6 +864,12 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 async def get_admin_user(current_user: User = Depends(get_current_user)):
     if not _is_room_admin(current_user):
         raise HTTPException(status_code=403, detail="Admin or Owner privileges required")
+    return current_user
+
+
+async def get_account_admin_user(current_user: User = Depends(get_current_user)):
+    if current_user.account_type != AccountType.admin:
+        raise HTTPException(status_code=403, detail="Admin account required")
     return current_user
 
 # --- WebSocket Endpoints ---
@@ -1163,6 +1275,164 @@ async def delete_room(
     return {"message": "Room deleted successfully"}
 
 
+@router.get("/wifi-credentials", response_model=List[WifiCredentialResponse])
+async def list_wifi_credentials(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_account_admin_user),
+):
+    household_id = resolve_household_id_for_user(db, current_user)
+    if household_id is None:
+        return []
+
+    credentials = (
+        db.query(WifiCredential)
+        .filter(WifiCredential.household_id == household_id)
+        .order_by(WifiCredential.ssid.asc(), WifiCredential.id.asc())
+        .all()
+    )
+    if not credentials:
+        return []
+
+    usage_counts: dict[int, int] = {}
+    credential_ids = [credential.id for credential in credentials]
+    for project_credential_id, in (
+        db.query(DiyProject.wifi_credential_id)
+        .filter(DiyProject.wifi_credential_id.in_(credential_ids))
+        .all()
+    ):
+        if project_credential_id is None:
+            continue
+        usage_counts[project_credential_id] = usage_counts.get(project_credential_id, 0) + 1
+
+    return [
+        _serialize_wifi_credential(credential, usage_count=usage_counts.get(credential.id, 0))
+        for credential in credentials
+    ]
+
+
+@router.post("/wifi-credentials", response_model=WifiCredentialResponse)
+async def create_wifi_credential(
+    payload: WifiCredentialCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_account_admin_user),
+):
+    household_id = resolve_household_id_for_user(db, current_user)
+    if household_id is None:
+        raise HTTPException(status_code=404, detail="Household not found")
+
+    normalized_ssid = payload.ssid.strip()
+    if not normalized_ssid:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": "SSID is required."},
+        )
+
+    existing = (
+        db.query(WifiCredential)
+        .filter(
+            WifiCredential.household_id == household_id,
+            WifiCredential.ssid == normalized_ssid,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "conflict", "message": f"Wi-Fi SSID '{normalized_ssid}' already exists."},
+        )
+
+    credential = WifiCredential(
+        household_id=household_id,
+        ssid=normalized_ssid,
+        password=payload.password,
+    )
+    db.add(credential)
+    db.commit()
+    db.refresh(credential)
+    return _serialize_wifi_credential(credential)
+
+
+@router.put("/wifi-credentials/{credential_id}", response_model=WifiCredentialResponse)
+async def update_wifi_credential(
+    credential_id: int,
+    payload: WifiCredentialUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_account_admin_user),
+):
+    credential = _get_wifi_credential_in_household_or_404(db, current_user, credential_id)
+    normalized_ssid = payload.ssid.strip()
+    if not normalized_ssid:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": "SSID is required."},
+        )
+
+    existing = (
+        db.query(WifiCredential)
+        .filter(
+            WifiCredential.household_id == credential.household_id,
+            WifiCredential.ssid == normalized_ssid,
+            WifiCredential.id != credential.id,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "conflict", "message": f"Wi-Fi SSID '{normalized_ssid}' already exists."},
+        )
+
+    credential.ssid = normalized_ssid
+    credential.password = payload.password
+    db.commit()
+    db.refresh(credential)
+    usage_count = db.query(DiyProject).filter(DiyProject.wifi_credential_id == credential.id).count()
+    return _serialize_wifi_credential(credential, usage_count=usage_count)
+
+
+@router.delete("/wifi-credentials/{credential_id}")
+async def delete_wifi_credential(
+    credential_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_account_admin_user),
+):
+    credential = _get_wifi_credential_in_household_or_404(db, current_user, credential_id)
+    usage_count = db.query(DiyProject).filter(DiyProject.wifi_credential_id == credential.id).count()
+    if usage_count:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "conflict",
+                "message": f"Cannot delete Wi-Fi SSID '{credential.ssid}' because it is used by {usage_count} project(s).",
+            },
+        )
+
+    db.delete(credential)
+    db.commit()
+    return {"status": "deleted", "id": credential_id}
+
+
+@router.post("/wifi-credentials/{credential_id}/reveal", response_model=WifiCredentialSecretResponse)
+async def reveal_wifi_credential_password(
+    credential_id: int,
+    payload: WifiCredentialRevealRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_account_admin_user),
+):
+    credential = _get_wifi_credential_in_household_or_404(db, current_user, credential_id)
+    _require_current_user_password(
+        current_user,
+        payload.password if payload is not None else None,
+        missing_action="viewing this Wi-Fi password",
+        invalid_action="view this Wi-Fi password",
+    )
+    return {
+        "id": credential.id,
+        "ssid": credential.ssid,
+        "password": credential.password,
+    }
+
+
 @router.post("/config", response_model=DeviceHandshakeResponse)
 async def register_device_handshake(
     payload: DeviceRegister,
@@ -1337,6 +1607,17 @@ async def update_device_config(
     requested_pins = config.get("pins", []) if isinstance(config, dict) else []
     current_config = dict(project.config)
     current_config["pins"] = requested_pins
+    wifi_credential = _resolve_wifi_credential_for_payload(
+        db,
+        current_user,
+        requested_credential_id=config.get("wifi_credential_id") if isinstance(config, dict) else None,
+        existing_credential_id=project.wifi_credential_id,
+        config_payload=current_config,
+        create_from_legacy=True,
+        required=True,
+        missing_message="Select a Wi-Fi credential before updating this board config.",
+    )
+    current_config = _stamp_wifi_credential_config(current_config, wifi_credential)
 
     validation_warnings = []
     try:
@@ -1380,6 +1661,7 @@ async def update_device_config(
     if network_target_warning:
         validation_warnings.append(network_target_warning)
     project.config = _stamp_project_network_targets(current_config, targets)
+    project.wifi_credential_id = wifi_credential.id
 
     next_pin_configurations: list[PinConfiguration] = []
     for pin in requested_pins:
@@ -1595,7 +1877,8 @@ async def get_latest_command(device_id: str, db: Session = Depends(get_db)):
 async def generate_diy_config(
     request: GenerateConfigRequest,
     http_request: Request,
-    _user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     """
     Generate device config JSON from board and pin mappings.
@@ -1612,11 +1895,23 @@ async def generate_diy_config(
             detail={"error": "validation", "message": str(exc)},
         )
 
+    wifi_credential = _resolve_wifi_credential_for_payload(
+        db,
+        current_user,
+        requested_credential_id=request.wifi_credential_id,
+        config_payload={
+            "wifi_ssid": request.wifi_ssid,
+            "wifi_password": request.wifi_password,
+        },
+        required=True,
+        missing_message="Select a Wi-Fi credential before generating the device config.",
+    )
+
     config = {
         "board": request.board,
         "wifi": {
-            "ssid": request.wifi_ssid or "",
-            "password": request.wifi_password or ""
+            "ssid": wifi_credential.ssid,
+            "password": wifi_credential.password,
         },
         "mqtt": {
             "broker": targets["mqtt_broker"],
@@ -1709,13 +2004,24 @@ async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(ge
         )
 
     room = _get_room_in_household_or_404(db, current_user, project.room_id)
+    wifi_credential = _resolve_wifi_credential_for_payload(
+        db,
+        current_user,
+        requested_credential_id=project.wifi_credential_id,
+        config_payload=project.config,
+        create_from_legacy=True,
+        required=True,
+        missing_message="Select a Wi-Fi credential before creating a device project.",
+    )
+    stamped_config = _stamp_wifi_credential_config(project.config, wifi_credential)
     new_project = DiyProject(
         id=str(uuid.uuid4()),
         user_id=current_user.user_id,
         room_id=room.room_id,
+        wifi_credential_id=wifi_credential.id,
         name=project.name,
         board_profile=project.board_profile,
-        config=project.config
+        config=stamped_config,
     )
     db.add(new_project)
     db.commit()
@@ -1786,6 +2092,7 @@ async def list_diy_projects(
             "id": p.id,
             "user_id": p.user_id,
             "room_id": p.room_id,
+            "wifi_credential_id": p.wifi_credential_id,
             "name": p.name,
             "board_profile": p.board_profile,
             "config": p.config,
@@ -1868,10 +2175,21 @@ async def update_diy_project(project_id: str, project_update: DiyProjectCreate, 
             detail={"error": "validation", "message": "Select a room before saving the device project."},
         )
     room = _get_room_in_household_or_404(db, current_user, project_update.room_id)
+    wifi_credential = _resolve_wifi_credential_for_payload(
+        db,
+        current_user,
+        requested_credential_id=project_update.wifi_credential_id,
+        existing_credential_id=project.wifi_credential_id,
+        config_payload=project_update.config,
+        create_from_legacy=True,
+        required=True,
+        missing_message="Select a Wi-Fi credential before saving the device project.",
+    )
     project.name = project_update.name
     project.board_profile = project_update.board_profile
     project.room_id = room.room_id
-    project.config = project_update.config
+    project.wifi_credential_id = wifi_credential.id
+    project.config = _stamp_wifi_credential_config(project_update.config, wifi_credential)
     db.commit()
     db.refresh(project)
     return project

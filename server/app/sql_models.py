@@ -87,6 +87,7 @@ class Household(Base):
 
     memberships = relationship("HouseholdMembership", back_populates="household", cascade="all, delete-orphan")
     rooms = relationship("Room", back_populates="household")
+    wifi_credentials = relationship("WifiCredential", back_populates="household", cascade="all, delete-orphan")
 
 class HouseholdMembership(Base):
     __tablename__ = "household_memberships"
@@ -213,6 +214,20 @@ class BackupArchive(Base):
 
     device = relationship("Device", back_populates="backup_archives")
 
+
+class WifiCredential(Base):
+    __tablename__ = "wifi_credentials"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    household_id = Column(Integer, ForeignKey("households.household_id"), nullable=False)
+    ssid = Column(String(255), nullable=False)
+    password = Column(String(255), nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    household = relationship("Household", back_populates="wifi_credentials")
+    projects = relationship("DiyProject", back_populates="wifi_credential")
+
 class DeviceHistory(Base):
     __tablename__ = "device_history"
 
@@ -242,6 +257,7 @@ class DiyProject(Base):
     id = Column(String(36), primary_key=True, comment='UUID cho project')
     user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
     room_id = Column(Integer, ForeignKey("rooms.room_id"), nullable=True)
+    wifi_credential_id = Column(Integer, ForeignKey("wifi_credentials.id"), nullable=True)
     name = Column(String(255), nullable=False)
     board_profile = Column(String(100), nullable=False)
     config = Column(JSON, nullable=True, comment='Lưu trữ toàn bộ JSON map cấu hình pins, wifi, mqtt')
@@ -250,6 +266,7 @@ class DiyProject(Base):
 
     owner = relationship("User")
     room = relationship("Room")
+    wifi_credential = relationship("WifiCredential", back_populates="projects")
     build_jobs = relationship("BuildJob", back_populates="project", cascade="all, delete-orphan")
 
 class BuildJob(Base):

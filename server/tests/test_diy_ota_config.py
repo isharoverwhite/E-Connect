@@ -9,7 +9,7 @@ import uuid
 
 from app.api import router
 from app.database import Base, get_db
-from app.sql_models import AuthStatus, User, Household, HouseholdMembership, HouseholdRole, UserApprovalStatus, Room, DiyProject, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration
+from app.sql_models import AuthStatus, User, Household, HouseholdMembership, HouseholdRole, UserApprovalStatus, Room, DiyProject, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration, WifiCredential
 from app.auth import get_password_hash, create_ota_token
 
 # Setup test DB
@@ -323,6 +323,46 @@ def test_put_device_config_rejects_wrong_account_password():
         == "Incorrect password. Enter the password for the signed-in account to update this board config."
     )
     assert db.query(BuildJob).filter(BuildJob.project_id == project.id).count() == 0
+
+def test_put_device_config_updates_selected_wifi_credential():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    wifi_credential = WifiCredential(
+        household_id=room.household_id,
+        ssid="Workshop-WiFi",
+        password="WorkshopPass456",
+    )
+    db.add(wifi_credential)
+    db.commit()
+    db.refresh(wifi_credential)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    payload = {
+        "password": "password",
+        "wifi_credential_id": wifi_credential.id,
+        "pins": [
+            {"gpio": 2, "mode": "OUTPUT", "label": "LED"}
+        ]
+    }
+
+    with patch("app.api.build_firmware_task", return_value=None):
+        res = client.put(
+            f"/api/v1/device/{device.device_id}/config",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"}
+        )
+
+    assert res.status_code == 200, res.text
+    db.refresh(project)
+    assert project.wifi_credential_id == wifi_credential.id
+    assert project.config["wifi_credential_id"] == wifi_credential.id
+    assert project.config["wifi_ssid"] == "Workshop-WiFi"
+    assert project.config["wifi_password"] == "WorkshopPass456"
+    job = db.query(BuildJob).filter(BuildJob.project_id == project.id).one()
+    assert job.status == JobStatus.queued
 
 def test_put_device_config_invalid_payload_does_not_persist_or_create_job():
     db = TestingSessionLocal()
