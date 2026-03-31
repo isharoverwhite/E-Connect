@@ -31,7 +31,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 - onboarding và quản lý thiết bị DIY ESP32/ESP8266
 - no-code SVG pin mapping, server-side firmware build artifact generation, web flash, serial debug
 - MQTT-first device transport
-- automation local và lưu trữ dữ liệu cục bộ
+- automation local kiểu visual rule graph và lưu trữ dữ liệu cục bộ
 - bảo mật theo cơ chế approval + role-based access
 - một control server duy nhất có thể provision và quản lý thiết bị trên nhiều mạng Wi-Fi đã được admin lưu trước
 
@@ -74,7 +74,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 7. DIY builder: chọn board, map GPIO bằng SVG, validate conflict/capability.
 8. DIY config phải có persistence server-side (không chỉ localStorage).
 9. Server nhận config từ WebUI, build firmware `.bin` server-side, trả artifact/log về WebUI để flash (web flasher path) + block build/flash khi config invalid.
-10. Automation CRUD local + execution log tối thiểu (không placeholder-only).
+10. Automation visual rule graph local + execution log tối thiểu (không placeholder-only).
 11. Admin quản lý danh sách Wi-Fi credentials dùng chung cho thiết bị; DIY builder và managed-device reconfiguration chọn mạng từ danh sách đó thay vì nhập tay mỗi lần.
 
 ## 3.2 Post-MVP (R2+)
@@ -141,7 +141,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 | FR-02 | Layout dashboard persist bằng JSON và render lại nhất quán | Must | P3/P4 |
 | FR-03 | Quản lý thiết bị DIY + extensible device integration model | Must | P3/P4 |
 | FR-04 | Python extension framework theo metadata JSON | Should | Post-MVP |
-| FR-05 | Automation local có script editor + lưu bền vững | Must | P3/P4 |
+| FR-05 | Automation local có visual rule graph builder + lưu bền vững | Must | P3/P4 |
 | FR-06 | Lưu trữ dữ liệu vận hành cục bộ | Must | P3 |
 | FR-07 | Offline LAN control vẫn hoạt động khi mất Internet | Must | P4 |
 | FR-08 | User/household management có role-based access | Must | P3/P4 |
@@ -194,7 +194,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 
 ### 8.2 Automation lifecycle
 
-`draft -> validated -> enabled -> triggered -> running -> succeeded/failed -> disabled`
+`draft -> connected -> validated -> enabled -> waiting_event -> evaluating -> action_applied/failed -> disabled`
 
 ### 8.3 Dashboard widget lifecycle
 
@@ -320,19 +320,21 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 
 ---
 
-### WP-07: Automation Minimum Executable Slice
+### WP-07: Automation Visual Rule Graph Slice
 
-**Mục tiêu:** automation không còn chỉ placeholder update timestamp.
+**Mục tiêu:** automation phải là no-code rule graph usable cho flow input/output thật, không còn script editor hay recurring schedule giả lập.
 
 **Coder phải làm:**
-1. Lưu definition + enabled/disabled state rõ ràng.
-2. Có execution log/status (succeeded/failed).
-3. Cho phép trigger test path tạo log thật.
+1. Lưu graph definition + enabled/disabled state rõ ràng.
+2. Hỗ trợ node kiểu `trigger`, `condition`, `action`; tối thiểu phải cover input/sensor state, threshold/on-off checks, và target output `on`/`off`/`set_value`.
+3. Reject graph không hợp lệ như dangling edge, missing target, incompatible port type, hoặc cycle dễ gây retrigger vô hạn.
+4. Ghi execution log/status với trigger source, condition path đã evaluate, và kết quả action.
 
 **Tester phải verify:**
-1. Create/enable/trigger automation có execution record.
-2. Failure script/action có log lỗi quan sát được.
-3. DB check `automations` + execution log table/shape.
+1. Graph kiểu `temperature đạt ngưỡng -> set output` có execution record.
+2. Graph kiểu `switch bật -> bật/tắt output khác` có execution record.
+3. Invalid graph bị reject trước khi enable/save.
+4. DB check `automations` + execution log giữ được graph/action evidence.
 
 ---
 
@@ -362,7 +364,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 | FR-14/15/16/30 | `/devices/diy` | `POST /diy/config/generate`, `POST /diy/build`, `GET /diy/build/{job_id}`, `GET /diy/build/{job_id}/artifact` + draft endpoints | `diy_projects`, `build_jobs` + pin config + artifact storage | validation pass/fail + build artifact/log evidence + DB query |
 | FR-17/27 | `/devices/discovery` | `POST /config`, `POST /device/{id}/approve` | `devices`, `household_memberships` | pending->approved flow |
 | FR-11/28 | dashboard runtime controls | `POST /device/{id}/command` + MQTT consumer | `device_history`, `devices.last_seen` | command/state E2E |
-| FR-05 | `/automation` | `/automation`, `/automations`, `/automation/{id}/trigger` | `automations` + execution logs | create/trigger/failure test |
+| FR-05 | `/automation` | `/automation`, `/automations`, `/automation/{id}/trigger` | `automations` + execution logs | graph save/validation/triggered-action test |
 | FR-22/23 | serial/flash screens | serial & flash session endpoints | flash/serial session records | conflict block test |
 | FR-31 | `/settings`, `/devices/diy`, `/devices/[id]/config` | `/wifi-credentials`, `/wifi-credentials/{id}/reveal`, project/device config update endpoints | `wifi_credentials`, `diy_projects.wifi_credential_id` | admin CRUD + reveal auth + build/rebuild evidence |
 
@@ -392,6 +394,12 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 4. Artifact `.bin` và build log phải traceable qua DB record và durable file storage/volume.
 5. Plaintext Wi-Fi password không được xuất hiện trong list/read model thông thường; chỉ flow reveal đã xác thực lại password mới được trả secret ra ngoài.
 
+### 11.3 Automation Graph Contract (R1)
+
+1. Automation definition phải được persist dưới dạng typed node/edge graph, không phải free-form script và không phải recurring schedule metadata.
+2. Vocabulary tối thiểu cho R1 là `trigger -> condition -> action`, trong đó condition có thể evaluate state boolean hoặc giá trị số, còn action có thể set output boolean hoặc numeric value.
+3. Persisted contract phải giữ được node config, edge wiring, và target references một cách lossless để validation, diff, và execution log giải thích được vì sao action đã chạy.
+
 ---
 
 ## 12. API Contract Baseline (MVP)
@@ -415,7 +423,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 5. `POST /api/v1/device/{device_id}/command`
 6. `POST /api/v1/diy/config/generate`
 7. `POST /api/v1/diy/build`
-8. `POST /api/v1/automation` + `POST /api/v1/automation/{id}/trigger`
+8. `POST /api/v1/automation` + `POST /api/v1/automation/{id}/trigger` (manual test trigger cho saved rule graph)
 
 ### 12.3 API Rules
 
@@ -513,7 +521,7 @@ Gate Decision: PASS / FAIL
 2. DIY config chỉ lưu localStorage, không có server-side durability.
 3. Device approve xong nhưng không traceable capability/binding.
 4. MQTT path chưa có failure handling rõ.
-5. Automation trigger vẫn chỉ placeholder không có execution log.
+5. Automation vẫn chỉ là script/schedule placeholder, chưa có graph validation hoặc execution log thật.
 6. Server chưa build được firmware `.bin` từ config WebUI hoặc chưa trả artifact/log cho WebUI flash.
 
 ---
@@ -547,7 +555,7 @@ Không được tự ý mở rộng scope trong phase Implementation khi chưa a
 
 1. Dashboard layout sẽ tiếp tục lưu ở `users.ui_layout` hay tách bảng dedicated?
 2. `diy_projects` có trở thành source-of-truth chính cho builder không?
-3. Automation execution runtime tối thiểu dùng worker nào trong R1?
+3. Automation rule engine R1 sẽ evaluate từ MQTT/device state stream, persisted state, hay cả hai?
 4. Serial/flash coordination API contract chuẩn hóa ra sao?
 5. Mức độ hỗ trợ board chính thức cho R1 là danh sách nào?
 
