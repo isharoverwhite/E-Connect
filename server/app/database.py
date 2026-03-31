@@ -125,6 +125,54 @@ def _ensure_additive_columns():
             "INTEGER",
             "INT NULL",
         ),
+        (
+            "automations",
+            "schedule_type",
+            "VARCHAR(16) NOT NULL DEFAULT 'manual'",
+            "VARCHAR(16) NOT NULL DEFAULT 'manual'",
+        ),
+        (
+            "automations",
+            "timezone",
+            "VARCHAR(64)",
+            "VARCHAR(64) NULL",
+        ),
+        (
+            "automations",
+            "schedule_hour",
+            "INTEGER",
+            "INT NULL",
+        ),
+        (
+            "automations",
+            "schedule_minute",
+            "INTEGER",
+            "INT NULL",
+        ),
+        (
+            "automations",
+            "schedule_weekdays",
+            "TEXT",
+            "JSON NULL",
+        ),
+        (
+            "automations",
+            "next_run_at",
+            "DATETIME",
+            "DATETIME NULL",
+        ),
+        (
+            "automation_execution_logs",
+            "trigger_source",
+            "VARCHAR(16) NOT NULL DEFAULT 'manual'",
+            "VARCHAR(16) NOT NULL DEFAULT 'manual'",
+        ),
+        (
+            "automation_execution_logs",
+            "scheduled_for",
+            "DATETIME",
+            "DATETIME NULL",
+        ),
     ]
 
     for table_name, column_name, sqlite_definition, maria_definition in column_guards:

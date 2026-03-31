@@ -45,6 +45,22 @@
   - Clicking a config triggers a detailed dialog showing JSON mapping and device usage lists.
   - Deleting a config successfully cleans up backend records and is updated responsively on the UI.
 
+## Automation Page
+- **Stitch Reference:** Project `13695840913426182114`, Screen `c22331a5ca494ab3839da9da688a1f6e` (Automation Rule Builder).
+- The automation page must keep the shared application shell and visual language already used by `/settings`, `/devices`, and other admin surfaces.
+- Creating or editing an automation must happen in a visual graph builder with draggable blocks and typed input/output ports, similar to a Blender-style node editor.
+- The automation canvas must support pan/zoom so larger flows remain readable.
+- The main node families for R1 are:
+  - `Trigger`: device input/state update, sensor telemetry update, or manual test event
+  - `Condition`: boolean state match, numeric threshold/range check, and logical combination when multiple conditions are needed
+  - `Action`: turn a target output on/off or set a numeric output value on another circuit/device
+- The UI must let the user bind real source devices/inputs and target devices/outputs directly from the current inventory. It must not expose a free-form script editor or recurring schedule form as the primary authoring model.
+- Invalid graphs such as dangling edges, incompatible port connections, missing targets, or cycles must surface inline validation before save/enable.
+- Each automation card/detail view must show whether the automation is enabled, a summary of the source trigger path, the target action summary, and the last execution result.
+- The page must keep explicit `loading`, `empty`, `success`, `validation error`, and `server error` states.
+- If no compatible devices or IO points exist yet, the page must show a blocking empty state that directs the user to onboard devices first.
+- Any manual test control must execute against the saved graph model and surface a real execution log rather than a fake preview-only result.
+
 ## DIY Builder
 - **Step 1 / Boards**:
   - The board-family picker must expose `ESP8266` as a first-class family next to the existing ESP32 families.

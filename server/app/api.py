@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Any, Callable, Literal, Union
 import ast
 import json
+import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -20,7 +21,7 @@ from .ws_manager import manager as ws_manager
 from .models import (
     UserCreate, UserResponse, Token, TokenData, InitialServerRequest, RefreshTokenRequest,
     DeviceApprovalRequest, DeviceAvailabilityResponse, DeviceHandshakeResponse, DeviceRegister, DeviceResponse, PinConfigCreate,
-    AutomationCreate, AutomationResponse,
+    AutomationCreate, AutomationResponse, AutomationUpdate,
     DeviceHistoryCreate, DeviceHistoryResponse,
     FirmwareResponse, DeviceMode, AccountType, EventType,
     RoomAccessUpdate, RoomUpdate, RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
@@ -71,9 +72,19 @@ from .services.user_management import ensure_temp_support_account, resolve_house
 from .services.provisioning import derive_project_secret
 from .services.i2c_registry import I2CLibrary, get_i2c_catalog
 from .services.system_metrics import collect_system_metrics
+from .services.automation_runtime import (
+    AutomationGraphValidationError,
+    normalize_automation_graph,
+    process_state_event_for_automations,
+    serialize_automation,
+    serialize_execution_log,
+    serialize_graph_for_storage,
+    trigger_automation_manually,
+)
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
+logger = logging.getLogger(__name__)
 ACTIVE_BUILD_JOB_STATUSES = (
     JobStatus.queued,
     JobStatus.building,
@@ -84,9 +95,6 @@ DEVICE_HEARTBEAT_TIMEOUT_SECONDS = max(
     int(os.getenv("DEVICE_HEARTBEAT_TIMEOUT_SECONDS", "15")),
 )
 DEVICE_HEARTBEAT_TIMEOUT = timedelta(seconds=DEVICE_HEARTBEAT_TIMEOUT_SECONDS)
-AUTOMATION_SANDBOX_BLOCK_MESSAGE = (
-    "Automation execution is disabled until a sandbox worker is implemented."
-)
 
 
 def _get_primary_membership(db: Session, user: User) -> Optional[HouseholdMembership]:
@@ -423,6 +431,68 @@ def _raise_user_approval_error(status: SqlUserApprovalStatus):
             "message": "Account access has been revoked by an administrator.",
         },
     )
+
+
+def _raise_automation_graph_http_error(exc: AutomationGraphValidationError) -> None:
+    raise HTTPException(
+        status_code=400,
+        detail={
+            "error": exc.code,
+            "message": exc.message,
+        },
+    ) from exc
+
+
+def _get_user_automation(db: Session, automation_id: int, user: User) -> Automation:
+    automation = (
+        db.query(Automation)
+        .filter(Automation.id == automation_id, Automation.creator_id == user.user_id)
+        .first()
+    )
+    if automation is None:
+        raise HTTPException(status_code=404, detail="Automation not found")
+    return automation
+
+
+def _automation_response_model(automation: Automation) -> AutomationResponse:
+    return AutomationResponse.model_validate(serialize_automation(automation))
+
+
+def _automation_log_response_model(log: AutomationExecutionLog) -> AutomationLogResponse:
+    return AutomationLogResponse.model_validate(serialize_execution_log(log))
+
+
+def _apply_automation_payload(
+    automation: Automation,
+    payload: AutomationCreate | AutomationUpdate,
+    *,
+    device_scope: dict[str, Device] | None = None,
+) -> Automation:
+    try:
+        normalized_graph = normalize_automation_graph(
+            payload.graph,
+            device_scope=device_scope,
+        )
+    except AutomationGraphValidationError as exc:
+        _raise_automation_graph_http_error(exc)
+
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": "Automation name is required."},
+        )
+
+    automation.name = name
+    automation.script_code = serialize_graph_for_storage(normalized_graph)
+    automation.is_enabled = payload.is_enabled
+    automation.schedule_type = "manual"
+    automation.timezone = None
+    automation.schedule_hour = None
+    automation.schedule_minute = None
+    automation.schedule_weekdays = []
+    automation.next_run_at = None
+    return automation
 
 
 def _serialize_managed_user(user: User, membership: HouseholdMembership) -> User:
@@ -1546,6 +1616,11 @@ def _load_visible_devices(
     return [_attach_room_name(_attach_runtime_state(db, device)) for device in devices]
 
 
+def _automation_device_scope_for_user(db: Session, current_user: User) -> dict[str, Device]:
+    visible_devices = _load_visible_devices(db, current_user, AuthStatus.approved)
+    return {device.device_id: device for device in visible_devices}
+
+
 @router.get("/devices", response_model=List[Union[DeviceResponse, DeviceAvailabilityResponse]])
 async def list_devices(
     auth_status: Optional[AuthStatus] = None,
@@ -2550,6 +2625,18 @@ async def push_history(device_id: str, entry: DeviceHistoryCreate, db: Session =
         # changed_by=None (since it's from device/automation)
     )
     db.add(history)
+    decoded_payload = _decode_history_payload(entry.payload) if entry.event_type == EventType.state_change else None
+    if decoded_payload is not None:
+        try:
+            process_state_event_for_automations(
+                db,
+                device_id=device_id,
+                state_payload=decoded_payload,
+                publish_command=mqtt_manager.publish_command,
+                triggered_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+        except Exception:
+            logger.exception("Automation graph evaluation failed for device history event %s", device_id)
     db.commit()
     db.refresh(history)
     return history
@@ -2587,55 +2674,90 @@ async def export_history_csv(device_id: str, db: Session = Depends(get_db), _adm
 
 # --- Automation ---
 
+@router.get("/automation/schedule-context")
+async def get_automation_schedule_context(user: User = Depends(get_current_user)):
+    _ = user
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "error": "deprecated",
+            "message": "Automation scheduling was removed. Use the graph-based automation builder contract instead.",
+        },
+    )
+
+
 @router.post("/automation", response_model=AutomationResponse)
 async def create_automation(auto: AutomationCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    new_auto = Automation(
-        creator_id=user.user_id,
-        name=auto.name,
-        script_code=auto.script_code,
-        is_enabled=auto.is_enabled
+    new_auto = Automation(creator_id=user.user_id)
+    device_scope = _automation_device_scope_for_user(db, user)
+    _apply_automation_payload(
+        new_auto,
+        auto,
+        device_scope=device_scope,
     )
     db.add(new_auto)
     db.commit()
     db.refresh(new_auto)
-    return new_auto
+    return _automation_response_model(new_auto)
 
 @router.get("/automations", response_model=List[AutomationResponse])
 async def list_automations(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    return db.query(Automation).filter(Automation.creator_id == user.user_id).all()
+    automations = (
+        db.query(Automation)
+        .filter(Automation.creator_id == user.user_id)
+        .order_by(Automation.id.asc())
+        .all()
+    )
+    return [_automation_response_model(automation) for automation in automations]
+
+
+@router.put("/automation/{automation_id}", response_model=AutomationResponse)
+async def update_automation(
+    automation_id: int,
+    payload: AutomationUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    automation = _get_user_automation(db, automation_id, user)
+    device_scope = _automation_device_scope_for_user(db, user)
+    _apply_automation_payload(
+        automation,
+        payload,
+        device_scope=device_scope,
+    )
+    db.commit()
+    db.refresh(automation)
+    return _automation_response_model(automation)
 
 @router.post("/automation/{automation_id}/trigger", response_model=TriggerResponse)
 async def trigger_automation(automation_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """
-    Manually trigger an automation definition.
-    Execution is blocked until a sandboxed worker exists.
+    Manually trigger a saved automation graph against the latest persisted device state.
     """
-    auto = db.query(Automation).filter(Automation.id == automation_id, Automation.creator_id == user.user_id).first()
-    if not auto:
-        raise HTTPException(status_code=404, detail="Automation not found")
-
-    auto.last_triggered = datetime.utcnow()
-    status = ExecutionStatus.failed
-    error_msg = AUTOMATION_SANDBOX_BLOCK_MESSAGE
-    log_output = "Execution skipped by policy: sandbox worker unavailable."
-
-    execution_log = AutomationExecutionLog(
-        automation_id=auto.id,
-        triggered_at=auto.last_triggered,
-        status=status,
-        log_output=log_output,
-        error_message=error_msg
+    auto = _get_user_automation(db, automation_id, user)
+    device_scope = _automation_device_scope_for_user(db, user)
+    execution_log = trigger_automation_manually(
+        db,
+        automation=auto,
+        publish_command=mqtt_manager.publish_command,
+        device_scope=device_scope,
+        triggered_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
-
-    db.add(execution_log)
     db.commit()
+    db.refresh(auto)
     db.refresh(execution_log)
-
-    msg = f"Automation '{auto.name}' was blocked: sandbox worker required."
+    raw_status = execution_log.status.value if hasattr(execution_log.status, "value") else str(execution_log.status)
+    success = raw_status == ExecutionStatus.success.value
+    if success:
+        msg = f"Automation '{auto.name}' executed successfully."
+        response_status = ExecutionStatus.success
+    else:
+        msg = execution_log.error_message or f"Automation '{auto.name}' did not apply any action."
+        response_status = ExecutionStatus.failed
     return TriggerResponse(
-        status=status,
+        status=response_status,
         message=msg,
-        log=AutomationLogResponse.model_validate(execution_log)
+        log=_automation_log_response_model(execution_log),
     )
 
 # --- OTA (Simplified from previous) ---
@@ -2673,7 +2795,7 @@ async def system_backup_endpoint(db: Session = Depends(get_db), admin: User = De
         "timestamp": str(datetime.utcnow()),
         "users": [{"username": u.username, "layout": u.ui_layout} for u in users],
         "devices": [{"id": d.device_id, "name": d.name, "mac": d.mac_address} for d in devices],
-        "automations": [{"name": a.name, "script": a.script_code} for a in automations]
+        "automations": [{"name": a.name, "graph": serialize_automation(a)["graph"]} for a in automations]
     }
     return backup_data
 

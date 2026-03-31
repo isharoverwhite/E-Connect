@@ -78,6 +78,13 @@ env/
 /design/flows/TASK-PACKET-*.md
 /design/flows/REPORT_*.md
 /design/change-requests/CR-*.md
+!/design/
+!/design/flows/
+!/design/change-requests/
+/design/flows/*
+/design/change-requests/CR-*.md
+!/design/flows/automation-rule-graph.md
+!/design/change-requests/CR-AUTOMATION-RULE-GRAPH-001.md
 !/design/change-requests/CR-DEPLOY-FULL-STACK-JENKINS-001.md
 AGENTS.md
 PRD.md
