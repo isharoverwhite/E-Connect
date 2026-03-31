@@ -542,8 +542,6 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   if (!hasWifiCredentialSelection) {
     validation.errors.push("Select a saved Wi-Fi credential before rebuilding this board.");
   }
-  const selectedWifiCredential =
-    wifiCredentials.find((credential) => credential.id === selectedWifiCredentialId) ?? null;
   const hasChanges =
     serializePins(pins) !== serializePins(savedPins) ||
     selectedWifiCredentialId !== savedWifiCredentialId;
@@ -703,166 +701,124 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   };
 
   return (
-    <div className="h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100">
-      <header className="border-b border-slate-200 bg-white/95 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
-        <div className="mx-auto flex max-w-7xl flex-col gap-6 px-6 py-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="space-y-3">
+    <div className="h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 overflow-hidden">
+      <header className="border-b border-slate-200 bg-white/95 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 shrink-0 z-10 shadow-sm relative">
+        <div className="flex flex-col gap-4 px-4 py-3 md:flex-row md:items-center md:justify-between w-full">
+          <div className="flex items-center gap-3">
             <button
-              className="inline-flex items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+              className="rounded-full flex items-center justify-center p-2 text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800 transition"
               onClick={() => router.push("/devices")}
               type="button"
             >
-              <span className="material-icons-round text-base">arrow_back</span>
-              Back to devices
+              <span className="material-icons-round text-[20px]">arrow_back</span>
             </button>
-            <div className="space-y-2">
-              <div className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">
-                <span className="material-icons-round text-sm">developer_board</span>
-                Managed device config
-              </div>
-              <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-white">
+            <div className="flex flex-col justify-center">
+              <h1 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white leading-tight">
                 {device.name}
               </h1>
-              <p className="max-w-3xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-                Edit the persisted GPIO mapping for <span className="font-semibold">{boardProfile.name}</span>.
-                Saving changes requires your account password because an unsafe pin assignment can
-                short peripherals, break boot, or damage the board.
-              </p>
+              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5">
+                <span className="material-icons-round text-[14px]">developer_board</span>
+                <span>{boardProfile.name}</span>
+                <span className="mx-1 text-slate-300 dark:text-slate-600">•</span>
+                <span className="flex items-center gap-1">
+                  <span className={`h-2 w-2 rounded-full ${device.conn_status === "online" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-slate-400"}`} />
+                  {device.conn_status === "online" ? "Online" : "Offline"}
+                </span>
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end">
-            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
-              <span
-                className={`h-2.5 w-2.5 rounded-full ${
-                  device.conn_status === "online"
-                    ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]"
-                    : "bg-slate-400"
-                }`}
-              />
-              {device.conn_status === "online" ? "Device online" : "Device offline"}
+          <div className="flex flex-wrap items-center gap-3 md:justify-end">
+            {/* Wi-Fi Selector in header */}
+            <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-300">
+              <span className="material-icons-round text-[16px] text-slate-400">wifi</span>
+              <select
+                className="bg-transparent text-slate-900 dark:text-white outline-none w-[140px] appearance-none"
+                disabled={wifiCredentialsLoading || isSaving || wifiCredentials.length === 0}
+                value={selectedWifiCredentialId ?? ""}
+                onChange={(event) =>
+                  setSelectedWifiCredentialId(event.target.value ? Number(event.target.value) : null)
+                }
+              >
+                <option value="">
+                  {wifiCredentialsLoading
+                    ? "Loading Wi-Fi..."
+                    : wifiCredentials.length === 0
+                      ? "No Wi-Fi credentials"
+                      : "Select Wi-Fi..."}
+                </option>
+                {wifiCredentials.map((credential) => (
+                  <option key={credential.id} value={credential.id}>
+                    {credential.ssid}
+                  </option>
+                ))}
+              </select>
+              <span className="material-icons-round text-[14px] text-slate-400 pointer-events-none">expand_more</span>
             </div>
-            <div className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
-              <span className="material-icons-round text-sm">tune</span>
-              {pins.length} mapped pin{pins.length === 1 ? "" : "s"}
-            </div>
+
             <div
-              className={`inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-semibold ${
+              className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold uppercase tracking-wider ${
                 hasChanges
-                  ? "border border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200"
-                  : "border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-200"
+                  ? "bg-amber-100/50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
+                  : "bg-emerald-100/50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
               }`}
             >
-              <span className="material-icons-round text-sm">
+              <span className="material-icons-round text-[14px]">
                 {hasChanges ? "pending_actions" : "task_alt"}
               </span>
-              {hasChanges ? "Unsaved changes" : "Saved"}
+              {hasChanges ? "Unsaved" : "Saved"}
             </div>
+            
             <button
-              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-full bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
               disabled={isSaving || !hasChanges || validation.errors.length > 0}
               onClick={openConfirmModal}
               type="button"
             >
-              <span className="material-icons-round text-lg">verified_user</span>
-              Review & rebuild
+              <span className="material-icons-round text-[16px]">how_to_reg</span>
+              Rebuild
             </button>
           </div>
         </div>
       </header>
 
-      <main className="flex-grow flex flex-col relative w-full overflow-hidden">
-        <div className="absolute inset-0 overflow-y-auto overflow-x-hidden flex flex-col md:flex-row">
-          <div className="flex-grow flex flex-col p-6 gap-6 relative">
+      <main className="flex-1 flex flex-col relative w-full overflow-hidden">
+        <div className="absolute inset-0 flex flex-col">
+          {/* Messages container - strictly bounded height if messages exist */}
+          <div className="flex-shrink-0 flex flex-col px-4 pt-4 gap-2 empty:p-0">
             {statusMessage && (
               <section className={statusMessageClassName}>
                 {statusMessage}
               </section>
             )}
-
-            <section className="rounded-2xl border border-slate-200 bg-white px-5 py-4 dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-                <div className="space-y-2">
-                  <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
-                    Wi-Fi Credential
-                  </h2>
-                  <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
-                    Choose which saved Wi-Fi network the rebuilt firmware should use when this board boots again.
-                  </p>
-                  {selectedWifiCredential ? (
-                    <p className="text-sm font-medium text-slate-900 dark:text-white">
-                      Current selection: {selectedWifiCredential.ssid}
-                    </p>
-                  ) : null}
-                </div>
-
-                <div className="w-full max-w-md">
-                  <select
-                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-                    disabled={wifiCredentialsLoading || isSaving || wifiCredentials.length === 0}
-                    value={selectedWifiCredentialId ?? ""}
-                    onChange={(event) =>
-                      setSelectedWifiCredentialId(event.target.value ? Number(event.target.value) : null)
-                    }
-                  >
-                    <option value="">
-                      {wifiCredentialsLoading
-                        ? "Loading saved Wi-Fi credentials..."
-                        : wifiCredentials.length === 0
-                          ? "No saved Wi-Fi credentials available"
-                          : "Select a saved Wi-Fi credential"}
-                    </option>
-                    {wifiCredentials.map((credential) => (
-                      <option key={credential.id} value={credential.id}>
-                        {credential.ssid}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {wifiCredentialsError ? (
-                <p className="mt-3 text-sm text-rose-600 dark:text-rose-300">{wifiCredentialsError}</p>
-              ) : null}
-            </section>
+            
+            {wifiCredentialsError && (
+              <p className="px-4 py-2 text-sm text-white bg-rose-600 rounded-lg shadow-sm">{wifiCredentialsError}</p>
+            )}
 
             {validation.errors.length > 0 && (
-              <section className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 dark:border-rose-500/20 dark:bg-rose-500/10">
-                <div className="flex items-start gap-3">
-                  <span className="material-icons-round mt-0.5 text-rose-500">report</span>
-                  <div className="space-y-2">
-                    <h2 className="text-sm font-semibold text-rose-800 dark:text-rose-100">
-                      Fix these wiring issues before rebuilding
-                    </h2>
-                    <ul className="space-y-1 text-sm text-rose-700 dark:text-rose-200">
-                      {validation.errors.map((validationError) => (
-                        <li key={validationError}>• {validationError}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
+              <section className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-500/20 dark:bg-rose-500/10 shadow-sm flex items-center gap-3">
+                <span className="material-icons-round text-rose-500 text-[20px]">report</span>
+                <p className="text-sm text-rose-800 dark:text-rose-100 m-0">
+                  <span className="font-semibold mr-1">Wiring errors:</span>
+                  {validation.errors.join("; ")}
+                </p>
               </section>
             )}
 
             {validation.warnings.length > 0 && (
-              <section className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 dark:border-amber-500/20 dark:bg-amber-500/10">
-                <div className="flex items-start gap-3">
-                  <span className="material-icons-round mt-0.5 text-amber-500">warning</span>
-                  <div className="space-y-2">
-                    <h2 className="text-sm font-semibold text-amber-800 dark:text-amber-100">
-                      Review these hardware safety warnings
-                    </h2>
-                    <ul className="space-y-1 text-sm text-amber-700 dark:text-amber-200">
-                      {validation.warnings.map((warning) => (
-                        <li key={warning}>• {warning}</li>
-                      ))}
-                    </ul>
-                  </div>
-                </div>
+              <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-500/20 dark:bg-amber-500/10 shadow-sm flex items-center gap-3">
+                <span className="material-icons-round text-amber-500 text-[20px]">warning</span>
+                <p className="text-sm text-amber-800 dark:text-amber-100 m-0">
+                  <span className="font-semibold mr-1">Safety warnings:</span>
+                  {validation.warnings.join("; ")}
+                </p>
               </section>
             )}
+          </div>
 
-            <div className="w-full flex-grow flex shadow-sm rounded-3xl overflow-hidden bg-white border border-slate-200 dark:border-slate-800 dark:bg-slate-900">
+          <div className="flex-1 min-h-0 relative p-4 flex">
+            <div className="w-full flex-1 flex shadow-[0_0_24px_rgba(0,0,0,0.02)] border border-slate-200 dark:border-slate-800 dark:bg-slate-900 rounded-2xl overflow-hidden min-h-0 bg-white">
               <Step2Pins
                 board={boardProfile}
                 boardPins={[...boardProfile.leftPins, ...boardProfile.rightPins]}
