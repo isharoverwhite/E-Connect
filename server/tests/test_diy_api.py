@@ -449,10 +449,10 @@ def test_trigger_build_stamps_reachable_server_host_into_project_config():
     assert project is not None
     db.refresh(project)
     assert project.config["advertised_host"] == "192.168.50.10"
-    assert project.config["api_base_url"] == "https://192.168.50.10:3000/api/v1"
+    assert project.config["api_base_url"] == "http://192.168.50.10:3000/api/v1"
     assert project.config["mqtt_broker"] == "192.168.50.10"
     assert project.config["mqtt_port"] == 1883
-    assert project.config["target_key"] == "192.168.50.10|https://192.168.50.10:3000/api/v1|192.168.50.10|1883"
+    assert project.config["target_key"] == "192.168.50.10|http://192.168.50.10:3000/api/v1|192.168.50.10|1883"
 
 def test_trigger_build_rejects_localhost_request_host():
     db = TestingSessionLocal()
@@ -536,10 +536,10 @@ def test_trigger_build_stamps_distinct_public_mqtt_target(monkeypatch):
     assert project is not None
     db.refresh(project)
     assert project.config["advertised_host"] == "192.168.50.10"
-    assert project.config["api_base_url"] == "https://192.168.50.10:3000/api/v1"
+    assert project.config["api_base_url"] == "http://192.168.50.10:3000/api/v1"
     assert project.config["mqtt_broker"] == "mqtt-lan.local"
     assert project.config["mqtt_port"] == 2883
-    assert project.config["target_key"] == "192.168.50.10|https://192.168.50.10:3000/api/v1|mqtt-lan.local|2883"
+    assert project.config["target_key"] == "192.168.50.10|http://192.168.50.10:3000/api/v1|mqtt-lan.local|2883"
 
 
 def test_trigger_build_prefers_configured_public_base_url_over_localhost_request(monkeypatch):
@@ -619,7 +619,7 @@ def test_trigger_build_prefers_browser_origin_header_over_internal_proxy_host():
             headers={
                 "Authorization": f"Bearer {token}",
                 "Host": "server:8000",
-                "X-EConnect-Origin": "https://192.168.8.4:3000",
+                "X-EConnect-Origin": "https://192.168.8.4:3443",
             },
         )
 
@@ -628,7 +628,7 @@ def test_trigger_build_prefers_browser_origin_header_over_internal_proxy_host():
     assert project is not None
     db.refresh(project)
     assert project.config["advertised_host"] == "192.168.8.4"
-    assert project.config["api_base_url"] == "https://192.168.8.4:3000/api/v1"
+    assert project.config["api_base_url"] == "http://192.168.8.4:3000/api/v1"
     assert project.config["mqtt_broker"] == "192.168.8.4"
     assert project.config["mqtt_port"] == 1883
 
@@ -643,7 +643,7 @@ def test_get_diy_network_targets_uses_browser_origin_header():
         headers={
             "Authorization": f"Bearer {token}",
             "Host": "server:8000",
-            "X-EConnect-Origin": "https://192.168.8.4:3000",
+            "X-EConnect-Origin": "https://192.168.8.4:3443",
         },
     )
 
@@ -651,10 +651,10 @@ def test_get_diy_network_targets_uses_browser_origin_header():
     payload = response.json()
     assert payload["advertised_host"] == "192.168.8.4"
     assert payload["mqtt_broker"] == "192.168.8.4"
-    assert payload["api_base_url"] == "https://192.168.8.4:3000/api/v1"
-    assert payload["webapp_protocol"] == "https"
+    assert payload["api_base_url"] == "http://192.168.8.4:3000/api/v1"
+    assert payload["webapp_protocol"] == "http"
     assert payload["webapp_port"] == 3000
-    assert payload["target_key"] == "192.168.8.4|https://192.168.8.4:3000/api/v1|192.168.8.4|1883"
+    assert payload["target_key"] == "192.168.8.4|http://192.168.8.4:3000/api/v1|192.168.8.4|1883"
 
 
 def test_get_diy_network_targets_falls_back_when_host_storage_mount_is_missing(monkeypatch):
