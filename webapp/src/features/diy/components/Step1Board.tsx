@@ -77,7 +77,7 @@ export function Step1Board({
             <div className="flex flex-col gap-4 mb-10">
                 <label
                     htmlFor="diy-project-name"
-                    className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider"
+                    className="block text-sm font-bold text-slate-700 dark:text-slate-300 dark:text-slate-300 uppercase tracking-wider"
                 >
                     Project Name
                 </label>
@@ -86,13 +86,13 @@ export function Step1Board({
                     name="projectName"
                     value={projectName}
                     onChange={(event) => setProjectName(event.target.value)}
-                    className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-lg text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                    className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
                     placeholder="e.g. Kitchen Relay Node"
                 />
             </div>
 
             <div className="flex flex-col gap-4 mb-10">
-                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 dark:text-slate-300 uppercase tracking-wider">
                     Wi-Fi Configuration (Required for initial boot)
                 </label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -101,7 +101,7 @@ export function Step1Board({
                         name="wifiSsid"
                         value={wifiSsid}
                         onChange={(event) => setWifiSsid(event.target.value)}
-                        className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-lg text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                        className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
                         placeholder="Wi-Fi SSID"
                     />
                     <input
@@ -109,21 +109,21 @@ export function Step1Board({
                         name="wifiPassword"
                         value={wifiPassword}
                         onChange={(event) => setWifiPassword(event.target.value)}
-                        className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-lg text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                        className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
                         placeholder="Wi-Fi Password"
                     />
                 </div>
             </div>
 
-            <div className="flex flex-col gap-4 mb-10 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900/50">
+            <div className="flex flex-col gap-4 mb-10 rounded-2xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark p-5 dark:border-slate-800 dark:bg-slate-900/50">
                 <div>
                     <label
                         htmlFor="diy-room-id"
-                        className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider"
+                        className="block text-sm font-bold text-slate-700 dark:text-slate-300 dark:text-slate-300 uppercase tracking-wider"
                     >
                         Device Room
                     </label>
-                    <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                    <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-400">
                         New devices must be assigned to a room before the server build can be approved and paired.
                     </p>
                 </div>
@@ -132,7 +132,7 @@ export function Step1Board({
                     id="diy-room-id"
                     value={selectedRoomId ?? ""}
                     onChange={(event) => setSelectedRoomId(event.target.value ? Number(event.target.value) : null)}
-                    className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-lg text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                    className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
                     disabled={roomsLoading}
                 >
                     <option value="">{roomsLoading ? "Loading rooms..." : "Select a room"}</option>
@@ -148,7 +148,7 @@ export function Step1Board({
                         type="text"
                         value={newRoomName}
                         onChange={(event) => setNewRoomName(event.target.value)}
-                        className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-base text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                        className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-base text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
                         placeholder="Create a new room here"
                     />
                     <button
@@ -175,7 +175,7 @@ export function Step1Board({
                             onClick={() => setFamily(item.id)}
                             className={`group relative flex flex-col gap-4 p-5 rounded-xl border-2 transition-all cursor-pointer ${isSelected
                                 ? "border-primary bg-primary/5 dark:bg-primary/10"
-                                : "border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/50 hover:border-primary/50"
+                                : "border-border-light dark:border-border-dark dark:border-slate-800 bg-surface-light dark:bg-surface-dark dark:bg-slate-900/50 hover:border-primary/50"
                                 }`}
                         >
                             {isSelected && (
@@ -202,18 +202,18 @@ export function Step1Board({
                                 />
                             </div>
                             <div>
-                                <h3 className="text-slate-900 dark:text-white text-lg font-bold mb-1">{item.title}</h3>
-                                <p className="text-slate-500 dark:text-slate-400 text-sm mb-4 h-10">{item.subtitle}</p>
-                                <div className="space-y-2 bg-slate-50 dark:bg-slate-800/50 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
-                                    <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                                <h3 className="text-slate-900 dark:text-white dark:text-white text-lg font-bold mb-1">{item.title}</h3>
+                                <p className="text-slate-500 dark:text-slate-400 dark:text-slate-400 text-sm mb-4 h-10">{item.subtitle}</p>
+                                <div className="space-y-2 bg-slate-50 dark:bg-slate-800/50 dark:bg-slate-800/50 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
+                                    <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 dark:text-slate-300">
                                         <span className="material-symbols-outlined text-sm text-slate-400">memory</span>
                                         <span className="font-medium">{item.specs.core}</span>
                                     </div>
-                                    <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                                    <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 dark:text-slate-300">
                                         <span className="material-symbols-outlined text-sm text-slate-400">speed</span>
                                         <span className="font-medium">{item.specs.clock}</span>
                                     </div>
-                                    <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                                    <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400 dark:text-slate-300">
                                         <span className="material-symbols-outlined text-sm text-slate-400">wifi</span>
                                         <span className="font-medium truncate" title={item.specs.wireless}>{item.specs.wireless}</span>
                                     </div>
@@ -225,7 +225,7 @@ export function Step1Board({
             </div>
 
             <div className="mt-2 mb-8">
-                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-4">
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 dark:text-slate-300 uppercase tracking-wider mb-4">
                     Specific Board Profile
                 </label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -235,13 +235,13 @@ export function Step1Board({
                             onClick={() => setBoardId(profile.id)}
                             className={`w-full rounded-xl border-2 px-6 py-4 text-left transition ${board.id === profile.id
                                 ? "border-primary bg-primary/5 dark:bg-primary/10 shadow-sm"
-                                : "border-slate-200 bg-white hover:border-primary/50 dark:border-slate-800 dark:bg-slate-900/50"
+                                : "border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark hover:border-primary/50 dark:border-slate-800 dark:bg-slate-900/50"
                                 }`}
                         >
                             <div className="flex items-center justify-between gap-4">
                                 <div>
                                     <p className="text-base font-bold text-slate-950 dark:text-white">{profile.name}</p>
-                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{profile.description}</p>
+                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-400">{profile.description}</p>
                                 </div>
                                 {profile.demoFirmware ? (
                                     <span className="rounded-full bg-emerald-100 text-emerald-700 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] dark:bg-emerald-500/20 dark:text-emerald-300">
@@ -255,16 +255,16 @@ export function Step1Board({
             </div>
 
             <div className="mt-2 mb-8">
-                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-4">
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 dark:text-slate-300 uppercase tracking-wider mb-4">
                     Detailed Board Config
                 </label>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-5 rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/50">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-5 rounded-2xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark dark:border-slate-800 dark:bg-slate-900/50">
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">CPU Frequency</label>
+                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider mb-2">CPU Frequency</label>
                         <select
                             value={cpuMhz === null ? "" : cpuMhz}
                             onChange={(e) => setCpuMhz(e.target.value ? Number(e.target.value) : null)}
-                            className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                            className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-sm text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
                         >
                             <option value="">Default ({defaultCpu} MHz)</option>
                             <option value="240">240 MHz (Max Perf)</option>
@@ -273,11 +273,11 @@ export function Step1Board({
                         </select>
                     </div>
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">Flash Size</label>
+                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider mb-2">Flash Size</label>
                         <select
                             value={flashSize === null ? "" : flashSize}
                             onChange={(e) => setFlashSize(e.target.value || null)}
-                            className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                            className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-sm text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
                         >
                             <option value="">Default ({defaultFlash})</option>
                             <option value="2MB">2MB</option>
@@ -287,11 +287,11 @@ export function Step1Board({
                         </select>
                     </div>
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-2">PSRAM</label>
+                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider mb-2">PSRAM</label>
                         <select
                             value={psramSize === null ? "" : psramSize}
                             onChange={(e) => setPsramSize(e.target.value || null)}
-                            className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                            className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-3 py-2 text-sm text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
                         >
                             <option value="">Default ({defaultPsram})</option>
                             <option value="None">None</option>
@@ -303,20 +303,20 @@ export function Step1Board({
                 </div>
             </div>
 
-            <div className="flex flex-col md:flex-row items-center justify-between gap-6 p-6 rounded-xl bg-slate-100 dark:bg-slate-900/80 border border-slate-200 dark:border-slate-800">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-6 p-6 rounded-xl bg-slate-100 dark:bg-slate-800 dark:bg-slate-900/80 border border-border-light dark:border-border-dark dark:border-slate-800">
                 <div className="flex items-center gap-4">
                     <div className="p-3 bg-primary/10 rounded-full">
                         <span className="material-symbols-outlined text-primary">info</span>
                     </div>
                     <div>
-                        <p className="text-slate-900 dark:text-white font-bold">Selected: {board.name}</p>
-                        <p className="text-slate-500 dark:text-slate-400 text-xs">
+                        <p className="text-slate-900 dark:text-white dark:text-white font-bold">Selected: {board.name}</p>
+                        <p className="text-slate-500 dark:text-slate-400 dark:text-slate-400 text-xs">
                           {board.chipLabel} · {board.layoutLabel} · {board.serialBridge}
                         </p>
-                        <p className="text-slate-500 dark:text-slate-400 text-xs mt-1">
+                        <p className="text-slate-500 dark:text-slate-400 dark:text-slate-400 text-xs mt-1">
                           GPIO Count: {totalGpios} pins · Default CPU: {defaultCpu} MHz · Flash: {defaultFlash} · PSRAM: {defaultPsram}
                         </p>
-                        <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+                        <p className="mt-2 text-xs text-slate-400 dark:text-slate-500 dark:text-slate-400">
                             {projectSyncMessage}
                         </p>
                     </div>
@@ -325,7 +325,7 @@ export function Step1Board({
                     <button
                         onClick={() => void onSaveDraft()}
                         disabled={projectSyncState === "saving"}
-                        className="flex-1 md:flex-none px-6 py-3 rounded-lg border border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-800 transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                        className="flex-1 md:flex-none px-6 py-3 rounded-lg border border-slate-300 dark:border-slate-600 dark:border-slate-700 text-slate-600 dark:text-slate-400 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-800 transition-all disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         {projectSyncState === "saving" ? "Saving..." : "Save Draft"}
                     </button>
