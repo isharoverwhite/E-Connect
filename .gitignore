@@ -35,6 +35,8 @@ env/
 /download_stitch_screens.sh
 /fix_db.py
 /fix_db_enum.py
+/fix_other_steps.mjs
+/fix_theme.mjs
 /server/patch_builder.py
 /server/reset_db.py
 /server/reset_pwd.py
@@ -72,6 +74,7 @@ env/
 /GEMINI.md
 
 # Agent-generated planning docs; keep canonical design baseline files trackable
+/design/
 /design/flows/TASK-PACKET-*.md
 /design/flows/REPORT_*.md
 /design/change-requests/CR-*.md
