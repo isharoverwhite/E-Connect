@@ -124,6 +124,40 @@ def _raise_secure_pairing_error(message: str) -> None:
     )
 
 
+def _normalize_device_name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _normalize_mac_address(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = value.strip().replace("-", ":").upper()
+    return normalized or None
+
+
+def _resolve_project_secure_device_name(secure_project: DiyProject | None) -> str | None:
+    if secure_project:
+        config_json = secure_project.config if isinstance(secure_project.config, dict) else {}
+        candidate = config_json.get("project_name") or secure_project.name or "E-Connect Node"
+        return _normalize_device_name(str(candidate))
+    return None
+
+
+def _resolve_allowed_secure_device_names(secure_project: DiyProject | None, device: Device | None) -> set[str]:
+    allowed_names: set[str] = set()
+    project_name = _resolve_project_secure_device_name(secure_project)
+    if project_name:
+        allowed_names.add(project_name)
+    if device:
+        stored_name = _normalize_device_name(device.name)
+        if stored_name:
+            allowed_names.add(stored_name)
+    return allowed_names
+
+
 def build_pairing_request_event_payload(device: Device) -> dict[str, Any]:
     auth_status = device.auth_status.value if hasattr(device.auth_status, "value") else str(device.auth_status)
     conn_status = device.conn_status.value if hasattr(device.conn_status, "value") else str(device.conn_status)
@@ -154,6 +188,8 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
     pairing_requested = False
     requested_at = datetime.utcnow()
     force_pairing_request = bool(payload.force_pairing_request)
+    normalized_payload_name = _normalize_device_name(payload.name)
+    normalized_payload_mac = _normalize_mac_address(payload.mac_address)
 
     if payload.device_id:
         device = db.query(Device).filter(Device.device_id == payload.device_id).first()
@@ -189,7 +225,24 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
             device = db.query(Device).filter(Device.device_id == expected_device_id).first()
 
     if not device and not secret_verified:
-        device = db.query(Device).filter(Device.mac_address == payload.mac_address).first()
+        device = db.query(Device).filter(Device.mac_address == normalized_payload_mac).first()
+
+    if secret_verified:
+        if not normalized_payload_name or not normalized_payload_mac:
+            _raise_secure_pairing_error("Provisioned devices must report UUID, name, and MAC address.")
+
+        allowed_names = _resolve_allowed_secure_device_names(secure_project, device)
+        if allowed_names and normalized_payload_name not in allowed_names:
+            _raise_secure_pairing_error("Trusted device name mismatch for provisioned device.")
+
+        if device:
+            expected_mac = _normalize_mac_address(device.mac_address)
+            if expected_mac and normalized_payload_mac != expected_mac:
+                _raise_secure_pairing_error("Trusted MAC address mismatch for provisioned device.")
+        else:
+            mac_bound_device = db.query(Device).filter(Device.mac_address == normalized_payload_mac).first()
+            if mac_bound_device and mac_bound_device.device_id != payload.device_id:
+                _raise_secure_pairing_error("MAC address is already bound to another device.")
 
     existing_auth_status = device.auth_status if device else None
 
@@ -205,8 +258,8 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
         should_start_pending = force_pairing_request or not secret_verified
         device = Device(
             device_id=resolved_device_id,
-            mac_address=payload.mac_address,
-            name=payload.name,
+            mac_address=normalized_payload_mac or payload.mac_address,
+            name=normalized_payload_name or payload.name,
             room_id=secure_project.room_id if secure_project else None,
             owner_id=secure_owner_id,
             auth_status=AuthStatus.pending if should_start_pending else AuthStatus.approved,
@@ -225,8 +278,19 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
         db.add(device)
         db.flush()
     else:
-        device.mac_address = payload.mac_address
-        device.name = payload.name
+        if normalized_payload_mac:
+            device.mac_address = normalized_payload_mac
+        elif payload.mac_address:
+            device.mac_address = payload.mac_address
+
+        if secret_verified:
+            if normalized_payload_name:
+                device.name = normalized_payload_name
+        elif normalized_payload_name:
+            device.name = normalized_payload_name
+        elif payload.name:
+            device.name = payload.name
+
         device.firmware_revision = payload.firmware_revision
         device.firmware_version = payload.firmware_version
         device.ip_address = payload.ip_address or device.ip_address
