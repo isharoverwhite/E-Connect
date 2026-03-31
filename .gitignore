@@ -62,6 +62,7 @@ env/
 /weekly_github_changes_*.md
 /phase*_report.md
 /setup-login-register-e2e.md
+/test-results/
 /write-*.md
 /TASK_REPORT.md
 /TASK_REPORT_WS.md

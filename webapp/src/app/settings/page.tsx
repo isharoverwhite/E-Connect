@@ -51,6 +51,8 @@ export default function SettingsPage() {
     const [networkLoading, setNetworkLoading] = useState(true);
     const [networkError, setNetworkError] = useState("");
     const [roomFormName, setRoomFormName] = useState("");
+    const [createRoomNameError, setCreateRoomNameError] = useState("");
+    const [userFormErrors, setUserFormErrors] = useState<Record<string, string>>({});
     const [editingRoomId, setEditingRoomId] = useState<number | null>(null);
     const [editingRoomName, setEditingRoomName] = useState("");
     const [roomSubmitting, setRoomSubmitting] = useState(false);
@@ -205,7 +207,30 @@ export default function SettingsPage() {
     async function handleCreateUser(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         setSubmitError("");
+        setUserFormErrors({});
         setNotice("");
+
+        const errors: Record<string, string> = {};
+        if (!formState.username.trim()) {
+            errors.username = "Username is required.";
+        } else if (formState.username.trim().length < 3) {
+            errors.username = "Username minimally 3 characters.";
+        }
+
+        if (!formState.fullname.trim()) {
+            errors.fullname = "Full name is required.";
+        }
+        
+        if (!formState.password) {
+            errors.password = "Password is required.";
+        } else if (formState.password.length < 8) {
+            errors.password = "Password minimally 8 characters.";
+        }
+
+        if (Object.keys(errors).length > 0) {
+            setUserFormErrors(errors);
+            return;
+        }
 
         const token = getToken();
         if (!token) {
@@ -337,6 +362,7 @@ export default function SettingsPage() {
     async function handleCreateRoom(event: FormEvent<HTMLFormElement>) {
         event.preventDefault();
         setRoomsError("");
+        setCreateRoomNameError("");
         setNotice("");
 
         const token = getToken();
@@ -346,7 +372,7 @@ export default function SettingsPage() {
         }
 
         if (!roomFormName.trim()) {
-            setRoomsError("Enter a room name before creating it.");
+            setCreateRoomNameError("Please enter a room name.");
             return;
         }
 
@@ -593,41 +619,63 @@ export default function SettingsPage() {
                                                 </div>
                                             ) : null}
                                         </div>
-                                        <form className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-6 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl" onSubmit={handleCreateUser}>
+                                        <form className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-6 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl" onSubmit={handleCreateUser} noValidate>
                                             <div className="flex flex-col gap-2">
-                                                <label className="text-sm font-medium dark:text-slate-300 text-slate-700">Username</label>
+                                                <label className={`text-sm font-medium ${userFormErrors.username ? 'text-rose-500' : 'dark:text-slate-300 text-slate-700'}`}>Username</label>
                                                 <input 
-                                                    className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/50 rounded-lg px-4 py-2.5 text-sm focus:ring-primary focus:border-primary outline-none transition-shadow text-slate-900 dark:text-white" 
+                                                    className={`bg-white dark:bg-slate-800 border rounded-lg px-4 py-2.5 text-sm focus:ring-primary focus:border-primary outline-none transition-shadow text-slate-900 dark:text-white ${userFormErrors.username ? 'border-rose-500 focus:ring-rose-500/20' : 'border-slate-200 dark:border-slate-700/50'}`} 
                                                     placeholder="e.g. jdoe" 
                                                     type="text"
                                                     value={formState.username}
-                                                    onChange={(event) => setFormState((current) => ({ ...current, username: event.target.value }))}
-                                                    required
-                                                    minLength={3}
+                                                    onChange={(event) => {
+                                                        setFormState((current) => ({ ...current, username: event.target.value }));
+                                                        if (userFormErrors.username) setUserFormErrors(prev => ({ ...prev, username: "" }));
+                                                    }}
                                                 />
+                                                {userFormErrors.username ? (
+                                                    <p className="text-xs font-medium text-rose-500 flex items-center">
+                                                        <span className="material-icons-round text-[14px] mr-1">error_outline</span>
+                                                        {userFormErrors.username}
+                                                    </p>
+                                                ) : null}
                                             </div>
                                             <div className="flex flex-col gap-2">
-                                                <label className="text-sm font-medium dark:text-slate-300 text-slate-700">Full Name</label>
+                                                <label className={`text-sm font-medium ${userFormErrors.fullname ? 'text-rose-500' : 'dark:text-slate-300 text-slate-700'}`}>Full Name</label>
                                                 <input 
-                                                    className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/50 rounded-lg px-4 py-2.5 text-sm focus:ring-primary focus:border-primary outline-none transition-shadow text-slate-900 dark:text-white" 
+                                                    className={`bg-white dark:bg-slate-800 border rounded-lg px-4 py-2.5 text-sm focus:ring-primary focus:border-primary outline-none transition-shadow text-slate-900 dark:text-white ${userFormErrors.fullname ? 'border-rose-500 focus:ring-rose-500/20' : 'border-slate-200 dark:border-slate-700/50'}`} 
                                                     placeholder="John Doe" 
                                                     type="text"
                                                     value={formState.fullname}
-                                                    onChange={(event) => setFormState((current) => ({ ...current, fullname: event.target.value }))}
-                                                    required
+                                                    onChange={(event) => {
+                                                        setFormState((current) => ({ ...current, fullname: event.target.value }));
+                                                        if (userFormErrors.fullname) setUserFormErrors(prev => ({ ...prev, fullname: "" }));
+                                                    }}
                                                 />
+                                                {userFormErrors.fullname ? (
+                                                    <p className="text-xs font-medium text-rose-500 flex items-center">
+                                                        <span className="material-icons-round text-[14px] mr-1">error_outline</span>
+                                                        {userFormErrors.fullname}
+                                                    </p>
+                                                ) : null}
                                             </div>
                                             <div className="flex flex-col gap-2">
-                                                <label className="text-sm font-medium dark:text-slate-300 text-slate-700">Initial Password</label>
+                                                <label className={`text-sm font-medium ${userFormErrors.password ? 'text-rose-500' : 'dark:text-slate-300 text-slate-700'}`}>Initial Password</label>
                                                 <input 
-                                                    className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/50 rounded-lg px-4 py-2.5 text-sm focus:ring-primary focus:border-primary outline-none transition-shadow text-slate-900 dark:text-white" 
+                                                    className={`bg-white dark:bg-slate-800 border rounded-lg px-4 py-2.5 text-sm focus:ring-primary focus:border-primary outline-none transition-shadow text-slate-900 dark:text-white ${userFormErrors.password ? 'border-rose-500 focus:ring-rose-500/20' : 'border-slate-200 dark:border-slate-700/50'}`} 
                                                     placeholder="••••••••" 
                                                     type="password"
                                                     value={formState.password}
-                                                    onChange={(event) => setFormState((current) => ({ ...current, password: event.target.value }))}
-                                                    required
-                                                    minLength={8}
+                                                    onChange={(event) => {
+                                                        setFormState((current) => ({ ...current, password: event.target.value }));
+                                                        if (userFormErrors.password) setUserFormErrors(prev => ({ ...prev, password: "" }));
+                                                    }}
                                                 />
+                                                {userFormErrors.password ? (
+                                                    <p className="text-xs font-medium text-rose-500 flex items-center">
+                                                        <span className="material-icons-round text-[14px] mr-1">error_outline</span>
+                                                        {userFormErrors.password}
+                                                    </p>
+                                                ) : null}
                                             </div>
                                             <div className="flex flex-col gap-2">
                                                 <label className="text-sm font-medium dark:text-slate-300 text-slate-700">Role Selection</label>
@@ -792,17 +840,25 @@ export default function SettingsPage() {
                                             <span className="material-icons-round rounded-2xl bg-primary/10 p-3 text-2xl text-primary">meeting_room</span>
                                         </div>
 
-                                        <form className="mt-6 space-y-5" onSubmit={handleCreateRoom}>
+                                        <form className="mt-6 space-y-5" onSubmit={handleCreateRoom} noValidate>
                                             <div>
-                                                <label className="mb-1.5 block text-sm font-medium text-slate-700 dark:text-slate-300">Room name</label>
+                                                <label className={`mb-1.5 block text-sm font-medium ${createRoomNameError ? 'text-rose-500' : 'text-slate-700 dark:text-slate-300'}`}>Room name</label>
                                                 <input
                                                     type="text"
                                                     value={roomFormName}
-                                                    onChange={(event) => setRoomFormName(event.target.value)}
-                                                    className="w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900/80 dark:text-white"
+                                                    onChange={(event) => {
+                                                        setRoomFormName(event.target.value);
+                                                        if (createRoomNameError) setCreateRoomNameError("");
+                                                    }}
+                                                    className={`w-full rounded-2xl border bg-white px-4 py-3 text-slate-900 outline-none transition dark:bg-slate-900/80 dark:text-white ${createRoomNameError ? 'border-rose-500 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20' : 'border-slate-300 focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700'}`}
                                                     placeholder="Living room"
-                                                    required
                                                 />
+                                                {createRoomNameError ? (
+                                                    <p className="mt-2 text-sm font-medium text-rose-500 flex items-center">
+                                                        <span className="material-icons-round text-[18px] mr-1">error_outline</span>
+                                                        {createRoomNameError}
+                                                    </p>
+                                                ) : null}
                                             </div>
 
                                             <button
