@@ -212,16 +212,22 @@ def _approve_device_response(headers: dict[str, str], *, device_id: str, room_id
     )
 
 
-def _insert_diy_project(*, user_id: int, room_id: int) -> dict[str, str]:
+def _insert_diy_project(
+    *,
+    user_id: int,
+    room_id: int,
+    name: str = "Recovery Project",
+    project_name: str | None = None,
+) -> dict[str, str]:
     db = TestingSessionLocal()
     project_id = str(uuid.uuid4())
     project = DiyProject(
         id=project_id,
         user_id=user_id,
         room_id=room_id,
-        name="Recovery Project",
+        name=name,
         board_profile="esp32-devkit-v1",
-        config={"pins": []},
+        config={"pins": [], "project_name": project_name or name},
     )
     db.add(project)
     db.commit()
@@ -352,7 +358,11 @@ def test_unpair_stays_hidden_until_board_requests_pairing_again():
     )
 
     room = _create_room(admin_headers, name="Workshop")
-    project = _insert_diy_project(user_id=admin["user_id"], room_id=room["room_id"])
+    project = _insert_diy_project(
+        user_id=admin["user_id"],
+        room_id=room["room_id"],
+        project_name="Workshop Controller",
+    )
 
     handshake_payload = {
         "device_id": project["device_id"],
@@ -408,7 +418,11 @@ def test_secure_handshake_persists_firmware_revision_for_device_directory():
     )
 
     room = _create_room(admin_headers, name="Firmware Lab")
-    project = _insert_diy_project(user_id=admin["user_id"], room_id=room["room_id"])
+    project = _insert_diy_project(
+        user_id=admin["user_id"],
+        room_id=room["room_id"],
+        project_name="Revision Board",
+    )
 
     handshake_payload = {
         "device_id": project["device_id"],
@@ -435,6 +449,173 @@ def test_secure_handshake_persists_firmware_revision_for_device_directory():
     assert devices[0]["device_id"] == project["device_id"]
     assert devices[0]["firmware_revision"] == "1.0.0"
     assert devices[0]["firmware_version"] == "build-a1b2c3d4"
+
+
+def test_secure_handshake_rejects_unexpected_provisioned_name():
+    household, admin, _member, _observer = _seed_household(prefix="secure-name")
+
+    room = _create_room(
+        _auth_headers(
+            admin["username"],
+            account_type=admin["account_type"],
+            household_id=household["household_id"],
+            household_role=HouseholdRole.owner.value,
+        ),
+        name="Secure Name Lab",
+    )
+    project = _insert_diy_project(
+        user_id=admin["user_id"],
+        room_id=room["room_id"],
+        project_name="Website Trusted Node",
+    )
+
+    response = client.post(
+        "/api/v1/config",
+        json={
+            "device_id": project["device_id"],
+            "project_id": project["project_id"],
+            "secret_key": project["secret_key"],
+            "mac_address": "AA:BB:CC:00:11:22",
+            "name": "Phishing Node",
+            "mode": "no-code",
+            "firmware_version": "build-trusted01",
+            "pins": [],
+        },
+    )
+
+    assert response.status_code == 401, response.text
+    payload = response.json()["detail"]
+    assert payload["error"] == "unauthorized_device"
+    assert "Trusted device name mismatch" in payload["message"]
+
+    db = TestingSessionLocal()
+    assert db.query(Device).filter(Device.device_id == project["device_id"]).first() is None
+    db.close()
+
+
+def test_secure_handshake_rejects_mac_mismatch_for_existing_trusted_device():
+    household, admin, _member, _observer = _seed_household(prefix="secure-mac")
+    room = _create_room(
+        _auth_headers(
+            admin["username"],
+            account_type=admin["account_type"],
+            household_id=household["household_id"],
+            household_role=HouseholdRole.owner.value,
+        ),
+        name="Secure Mac Lab",
+    )
+    project = _insert_diy_project(
+        user_id=admin["user_id"],
+        room_id=room["room_id"],
+        project_name="Locked MAC Node",
+    )
+
+    first_response = client.post(
+        "/api/v1/config",
+        json={
+            "device_id": project["device_id"],
+            "project_id": project["project_id"],
+            "secret_key": project["secret_key"],
+            "mac_address": "AA:BB:CC:11:22:33",
+            "name": "Locked MAC Node",
+            "mode": "no-code",
+            "firmware_version": "build-lock001",
+            "pins": [],
+        },
+    )
+    assert first_response.status_code == 200, first_response.text
+    assert first_response.json()["auth_status"] == "approved"
+
+    mismatch_response = client.post(
+        "/api/v1/config",
+        json={
+            "device_id": project["device_id"],
+            "project_id": project["project_id"],
+            "secret_key": project["secret_key"],
+            "mac_address": "AA:BB:CC:99:88:77",
+            "name": "Locked MAC Node",
+            "mode": "no-code",
+            "firmware_version": "build-lock002",
+            "pins": [],
+        },
+    )
+
+    assert mismatch_response.status_code == 401, mismatch_response.text
+    payload = mismatch_response.json()["detail"]
+    assert payload["error"] == "unauthorized_device"
+    assert "Trusted MAC address mismatch" in payload["message"]
+
+    db = TestingSessionLocal()
+    device = db.query(Device).filter(Device.device_id == project["device_id"]).first()
+    assert device is not None
+    assert device.mac_address == "AA:BB:CC:11:22:33"
+    assert device.name == "Locked MAC Node"
+    db.close()
+
+
+def test_secure_handshake_allows_system_renamed_name_with_same_uuid_and_mac():
+    household, admin, _member, _observer = _seed_household(prefix="secure-rename")
+    room = _create_room(
+        _auth_headers(
+            admin["username"],
+            account_type=admin["account_type"],
+            household_id=household["household_id"],
+            household_role=HouseholdRole.owner.value,
+        ),
+        name="Secure Rename Lab",
+    )
+    project = _insert_diy_project(
+        user_id=admin["user_id"],
+        room_id=room["room_id"],
+        project_name="Original Trusted Node",
+    )
+
+    first_response = client.post(
+        "/api/v1/config",
+        json={
+            "device_id": project["device_id"],
+            "project_id": project["project_id"],
+            "secret_key": project["secret_key"],
+            "mac_address": "AA:BB:CC:10:20:30",
+            "name": "Original Trusted Node",
+            "mode": "no-code",
+            "firmware_version": "build-rename01",
+            "pins": [],
+        },
+    )
+    assert first_response.status_code == 200, first_response.text
+
+    db = TestingSessionLocal()
+    project_row = db.query(DiyProject).filter(DiyProject.id == project["project_id"]).first()
+    assert project_row is not None
+    project_row.config = {"pins": [], "project_name": "Renamed Trusted Node"}
+    db.commit()
+    db.close()
+
+    second_response = client.post(
+        "/api/v1/config",
+        json={
+            "device_id": project["device_id"],
+            "project_id": project["project_id"],
+            "secret_key": project["secret_key"],
+            "mac_address": "AA:BB:CC:10:20:30",
+            "name": "Renamed Trusted Node",
+            "mode": "no-code",
+            "firmware_version": "build-rename02",
+            "pins": [],
+        },
+    )
+
+    assert second_response.status_code == 200, second_response.text
+    assert second_response.json()["auth_status"] == "approved"
+    assert second_response.json()["name"] == "Renamed Trusted Node"
+
+    db = TestingSessionLocal()
+    device = db.query(Device).filter(Device.device_id == project["device_id"]).first()
+    assert device is not None
+    assert device.name == "Renamed Trusted Node"
+    assert device.mac_address == "AA:BB:CC:10:20:30"
+    db.close()
 
 
 def test_approve_device_broadcasts_pairing_queue_refresh(monkeypatch):
@@ -619,7 +800,11 @@ def test_force_pairing_request_keeps_unknown_secure_device_pending():
     )
 
     room = _create_room(admin_headers, name="Recovery Lab")
-    project = _insert_diy_project(user_id=admin["user_id"], room_id=room["room_id"])
+    project = _insert_diy_project(
+        user_id=admin["user_id"],
+        room_id=room["room_id"],
+        project_name="Recovered Board",
+    )
 
     handshake_payload = {
         "device_id": project["device_id"],
