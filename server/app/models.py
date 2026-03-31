@@ -283,6 +283,7 @@ class PinMappingItem(BaseModel):
 class GenerateConfigRequest(BaseModel):
     board: str
     pins: List[PinMappingItem]
+    wifi_credential_id: Optional[int] = None
     wifi_ssid: Optional[str] = None
     wifi_password: Optional[str] = None
     mqtt_broker: Optional[str] = None
@@ -312,6 +313,7 @@ class DiyProjectBase(BaseModel):
     name: str
     board_profile: str
     room_id: Optional[int] = None
+    wifi_credential_id: Optional[int] = None
     config: Optional[Dict[str, Any]] = None
 
 class DiyProjectCreate(DiyProjectBase):
@@ -343,6 +345,36 @@ class ProjectDeviceUsage(BaseModel):
 class DiyProjectUsageResponse(DiyProjectResponse):
     usage_state: Literal["unused", "in_use"]
     devices: List[ProjectDeviceUsage] = []
+
+
+class WifiCredentialBase(BaseModel):
+    ssid: str = Field(..., min_length=1)
+
+
+class WifiCredentialCreate(WifiCredentialBase):
+    password: str = Field(..., min_length=1)
+
+
+class WifiCredentialUpdate(WifiCredentialCreate):
+    pass
+
+
+class WifiCredentialRevealRequest(BaseModel):
+    password: Optional[str] = None
+
+
+class WifiCredentialResponse(WifiCredentialBase):
+    id: int
+    household_id: int
+    masked_password: str
+    usage_count: int = 0
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class WifiCredentialSecretResponse(WifiCredentialBase):
+    id: int
+    password: str
 
 class BuildJobResponse(BaseModel):
     id: str

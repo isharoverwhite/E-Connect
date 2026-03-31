@@ -119,6 +119,12 @@ def _ensure_additive_columns():
             "INTEGER",
             "INT NULL",
         ),
+        (
+            "diy_projects",
+            "wifi_credential_id",
+            "INTEGER",
+            "INT NULL",
+        ),
     ]
 
     for table_name, column_name, sqlite_definition, maria_definition in column_guards:
@@ -167,6 +173,68 @@ def _backfill_room_household_ids():
             logger.warning("Room household backfill failed (non-fatal): %s", exc)
 
 
+def _backfill_project_wifi_credentials():
+    from .sql_models import DiyProject, HouseholdMembership, WifiCredential
+
+    db = SessionLocal()
+    try:
+        projects = (
+            db.query(DiyProject)
+            .filter(DiyProject.wifi_credential_id.is_(None))
+            .all()
+        )
+        changed = False
+
+        for project in projects:
+            config_json = project.config if isinstance(project.config, dict) else {}
+            wifi_ssid = config_json.get("wifi_ssid")
+            wifi_password = config_json.get("wifi_password")
+            if not isinstance(wifi_ssid, str) or not wifi_ssid.strip():
+                continue
+            if not isinstance(wifi_password, str) or not wifi_password.strip():
+                continue
+
+            membership = (
+                db.query(HouseholdMembership)
+                .filter(HouseholdMembership.user_id == project.user_id)
+                .order_by(HouseholdMembership.id.asc())
+                .first()
+            )
+            if not membership:
+                continue
+
+            credential = (
+                db.query(WifiCredential)
+                .filter(
+                    WifiCredential.household_id == membership.household_id,
+                    WifiCredential.ssid == wifi_ssid.strip(),
+                    WifiCredential.password == wifi_password,
+                )
+                .order_by(WifiCredential.id.asc())
+                .first()
+            )
+
+            if credential is None:
+                credential = WifiCredential(
+                    household_id=membership.household_id,
+                    ssid=wifi_ssid.strip(),
+                    password=wifi_password,
+                )
+                db.add(credential)
+                db.flush()
+
+            project.wifi_credential_id = credential.id
+            changed = True
+
+        if changed:
+            db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("DIY project Wi-Fi credential backfill failed (non-fatal): %s", exc)
+    finally:
+        db.close()
+
+
 def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
     last_error = None
 
@@ -175,6 +243,7 @@ def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
             Base.metadata.create_all(bind=engine)
             _ensure_additive_columns()
             _backfill_room_household_ids()
+            _backfill_project_wifi_credentials()
             logger.info("Database schema is ready")
             return True, None
         except SQLAlchemyError as exc:

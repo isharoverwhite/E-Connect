@@ -5,7 +5,7 @@
 **Version:** 2.0 (Waterfall Baseline)  
 **Status:** Active / Execution  
 **Owner:** Product + Project Management  
-**Last Updated:** 2026-03-10  
+**Last Updated:** 2026-03-31
 **Primary Consumers:** Product Owner, Project Manager, Antigravity (Coder + Tester)
 
 ---
@@ -33,6 +33,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 - MQTT-first device transport
 - automation local và lưu trữ dữ liệu cục bộ
 - bảo mật theo cơ chế approval + role-based access
+- một control server duy nhất có thể provision và quản lý thiết bị trên nhiều mạng Wi-Fi đã được admin lưu trước
 
 ### 2.1 Product Principles (Không được vi phạm)
 
@@ -74,6 +75,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 8. DIY config phải có persistence server-side (không chỉ localStorage).
 9. Server nhận config từ WebUI, build firmware `.bin` server-side, trả artifact/log về WebUI để flash (web flasher path) + block build/flash khi config invalid.
 10. Automation CRUD local + execution log tối thiểu (không placeholder-only).
+11. Admin quản lý danh sách Wi-Fi credentials dùng chung cho thiết bị; DIY builder và managed-device reconfiguration chọn mạng từ danh sách đó thay vì nhập tay mỗi lần.
 
 ## 3.2 Post-MVP (R2+)
 
@@ -165,6 +167,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 | FR-28 | Heartbeat, offline detection, reconnect | Must | P3/P4 |
 | FR-29 | Device migration khi thay board | Could | Long-term |
 | FR-30 | Server phải build firmware `.bin` từ config WebUI và cung cấp artifact/log để WebUI flash | Must | P3/P4 |
+| FR-31 | Một control server có thể lưu nhiều Wi-Fi credential và cho admin chọn mạng cho từng DIY config / managed device | Must | P3/P4 |
 
 ---
 
@@ -176,7 +179,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 | NFR-02 | Device control success rate | > 95% |
 | NFR-03 | Time-to-first-working-DIY-device | < 15 phút |
 | NFR-04 | Dashboard save/load consistency | 100% schema-compatible |
-| NFR-05 | Security | No hardcoded production secrets, approval-based onboarding bắt buộc |
+| NFR-05 | Security | No hardcoded production secrets, approval-based onboarding bắt buộc, Wi-Fi credential reveal phải có password confirmation của tài khoản đang đăng nhập |
 | NFR-06 | Reliability | Retry-safe, idempotent cho endpoint dễ bị retry |
 | NFR-07 | Usability | Có loading/empty/error/success state cho flow chính |
 | NFR-08 | Maintainability | Module hóa theo domain, traceable logs |
@@ -285,14 +288,17 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 
 **Coder phải làm:**
 1. Persist draft/project config vào DB (`diy_projects` hoặc equivalent).
-2. Đồng bộ trạng thái pin mapping với server read/write.
-3. Validation conflict/capability/reserved pin ở cả UI + backend boundary.
-4. Block flash/build command nếu config invalid.
+2. Liên kết mỗi DIY project với đúng một Wi-Fi credential đã được admin quản lý thay vì chỉ giữ SSID/password ad hoc trong local draft.
+3. Đồng bộ trạng thái pin mapping + selected Wi-Fi credential với server read/write.
+4. Validation conflict/capability/reserved pin ở cả UI + backend boundary.
+5. Block flash/build command nếu config invalid hoặc chưa chọn Wi-Fi credential hợp lệ.
 
 **Tester phải verify:**
 1. Map pin hợp lệ/lỗi I2C/lỗi boot-sensitive warning.
 2. Refresh/browser restart vẫn giữ project state từ DB.
-3. DB check project/config JSON shape.
+3. Chỉ admin mới CRUD Wi-Fi credentials; danh sách credential hiển thị dạng masked list trong Settings.
+4. Reveal password yêu cầu đúng mật khẩu của tài khoản đang đăng nhập.
+5. DB check project/config JSON shape + `wifi_credential_id` link đúng.
 
 ---
 
@@ -330,6 +336,24 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 
 ---
 
+### WP-08: Wi-Fi Credential Vault + Network Selection
+
+**Mục tiêu:** một server duy nhất có thể quản lý nhiều mạng Wi-Fi cho device provisioning và reconfiguration mà vẫn giữ role guard + password confirmation.
+
+**Coder phải làm:**
+1. Thêm bảng lưu `SSID`/`password` theo household và chỉ cho admin CRUD.
+2. Thêm menu trong `Settings` để list/create/update/delete credential; password luôn masked ở danh sách.
+3. Thêm flow reveal password yêu cầu nhập lại password của tài khoản đang đăng nhập trước khi backend trả secret.
+4. Cho DIY builder và managed-device reconfiguration chọn Wi-Fi credential đã lưu trước khi build/rebuild firmware.
+
+**Tester phải verify:**
+1. Admin CRUD credential thành công; non-admin không thấy menu và bị chặn ở API.
+2. Reveal password sai hoặc thiếu account password bị reject và không lộ secret.
+3. DIY builder chọn credential rồi build firmware thành công với credential đã chọn.
+4. Managed-device reconfiguration đổi Wi-Fi credential rồi rebuild/OTA flow vẫn giữ behavior đúng.
+
+---
+
 ## 10. Requirement Traceability Matrix (RTM)
 
 | FR | UI Surface | API Surface | Persistence | Test Evidence |
@@ -340,6 +364,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 | FR-11/28 | dashboard runtime controls | `POST /device/{id}/command` + MQTT consumer | `device_history`, `devices.last_seen` | command/state E2E |
 | FR-05 | `/automation` | `/automation`, `/automations`, `/automation/{id}/trigger` | `automations` + execution logs | create/trigger/failure test |
 | FR-22/23 | serial/flash screens | serial & flash session endpoints | flash/serial session records | conflict block test |
+| FR-31 | `/settings`, `/devices/diy`, `/devices/[id]/config` | `/wifi-credentials`, `/wifi-credentials/{id}/reveal`, project/device config update endpoints | `wifi_credentials`, `diy_projects.wifi_credential_id` | admin CRUD + reveal auth + build/rebuild evidence |
 
 ---
 
@@ -355,8 +380,9 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 6. `device_history`
 7. `automations`
 8. `diy_projects` (bắt buộc dùng nếu DIY persistence đã có)
-9. `rooms` (nếu dùng)
-10. `build_jobs` (bắt buộc nếu server-side build được claim complete)
+9. `wifi_credentials` (bắt buộc nếu một server phải quản lý nhiều mạng Wi-Fi cho device provisioning)
+10. `rooms` (nếu dùng)
+11. `build_jobs` (bắt buộc nếu server-side build được claim complete)
 
 ### 11.2 Quy tắc dữ liệu bắt buộc
 
@@ -364,6 +390,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 2. Task chạm persistence phải có DB verification **before + after**.
 3. Mọi state transition quan trọng phải observable qua record/log.
 4. Artifact `.bin` và build log phải traceable qua DB record và durable file storage/volume.
+5. Plaintext Wi-Fi password không được xuất hiện trong list/read model thông thường; chỉ flow reveal đã xác thực lại password mới được trả secret ra ngoài.
 
 ---
 

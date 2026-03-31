@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { ThemeToggle } from '@/components/ThemeToggle';
 
 export default function Sidebar() {
     const { user, logout } = useAuth();
@@ -73,9 +72,6 @@ export default function Sidebar() {
                     <span className="material-icons-round flex-shrink-0 text-[24px]">settings</span>
                     {!isCollapsed && <span className="ml-3 transition-opacity duration-300 whitespace-nowrap">Settings</span>}
                 </Link>
-                <div className={isCollapsed ? '' : 'w-full'}>
-                    <ThemeToggle isCollapsed={isCollapsed} />
-                </div>
 
                 <div className={`group flex ${isCollapsed ? 'flex-col gap-3 justify-center items-center mt-2' : 'items-center justify-between'} px-4 py-3`}>
                     <div className={`flex items-center min-w-0 ${isCollapsed ? 'justify-center pr-0' : 'pr-2'}`}>

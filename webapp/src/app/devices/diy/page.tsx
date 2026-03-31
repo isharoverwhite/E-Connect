@@ -7,6 +7,7 @@ import { getToken, removeToken } from "@/lib/auth";
 import { API_URL } from "@/lib/api";
 import { createRoom, fetchRooms, type RoomRecord } from "@/lib/rooms";
 import { buildProvisioningHeaders } from "@/lib/secure-origin";
+import { fetchWifiCredentials, type WifiCredentialRecord } from "@/lib/wifi-credentials";
 import {
   BOARD_PROFILES,
   MODE_METADATA,
@@ -71,13 +72,12 @@ interface SerializedDraft {
   projectId?: string;
   projectName?: string;
   roomId?: number | null;
+  wifiCredentialId?: number | null;
   family?: ChipFamily;
   boardId?: string;
   pins?: PinMapping[];
   flashSource?: string;
   serialPort?: string;
-  wifiSsid?: string;
-  wifiPassword?: string;
   cpuMhz?: number | null;
   flashSize?: string | null;
   psramSize?: string | null;
@@ -87,6 +87,7 @@ interface DiyProjectRecord {
   id: string;
   user_id: number;
   room_id?: number | null;
+  wifi_credential_id?: number | null;
   name: string;
   board_profile: string;
   config?: Record<string, unknown> | null;
@@ -231,9 +232,9 @@ function buildConfigKey({
   boardId,
   projectName,
   roomId,
+  wifiCredentialId,
+  wifiCredentialVersion,
   pins,
-  wifiSsid,
-  wifiPassword,
   cpuMhz,
   flashSize,
   psramSize,
@@ -242,9 +243,9 @@ function buildConfigKey({
   boardId: string;
   projectName: string;
   roomId: number | null;
+  wifiCredentialId: number | null;
+  wifiCredentialVersion: string | null;
   pins: PinMapping[];
-  wifiSsid: string;
-  wifiPassword: string;
   cpuMhz: number | null;
   flashSize: string | null;
   psramSize: string | null;
@@ -258,8 +259,8 @@ function buildConfigKey({
     psramSize,
     projectName: projectName.trim(),
     roomId,
-    wifiSsid: wifiSsid.trim(),
-    wifiPassword: wifiPassword.trim(),
+    wifiCredentialId,
+    wifiCredentialVersion,
     pins: pins.map((mapping) => ({
       gpio_pin: mapping.gpio_pin,
       mode: mapping.mode,
@@ -274,13 +275,12 @@ function createProjectPayload({
   board,
   projectName,
   roomId,
+  wifiCredentialId,
   flashSource,
   pins,
   serialPort,
   buildJobId,
   buildKey,
-  wifiSsid,
-  wifiPassword,
   cpuMhz,
   flashSize,
   psramSize,
@@ -288,13 +288,12 @@ function createProjectPayload({
   board: BoardProfile;
   projectName: string;
   roomId: number | null;
+  wifiCredentialId: number | null;
   flashSource: FlashSource;
   pins: PinMapping[];
   serialPort: string;
   buildJobId: string | null;
   buildKey: string | null;
-  wifiSsid: string;
-  wifiPassword: string;
   cpuMhz: number | null;
   flashSize: string | null;
   psramSize: string | null;
@@ -310,6 +309,7 @@ function createProjectPayload({
     cpu_mhz: cpuMhz,
     flash_size: flashSize,
     psram_size: psramSize,
+    wifi_credential_id: wifiCredentialId,
     pins: pins.map((mapping) => ({
       gpio_pin: mapping.gpio_pin,
       mode: mapping.mode,
@@ -317,8 +317,6 @@ function createProjectPayload({
       label: mapping.label ?? `GPIO ${mapping.gpio_pin}`,
       extra_params: mapping.extra_params ?? undefined,
     })),
-    wifi_ssid: wifiSsid,
-    wifi_password: wifiPassword,
   };
 
   if (buildJobId && buildKey) {
@@ -330,6 +328,7 @@ function createProjectPayload({
     name: projectName.trim() || board.name,
     board_profile: board.id,
     room_id: roomId,
+    wifi_credential_id: wifiCredentialId,
     config,
   };
 }
@@ -393,8 +392,10 @@ export default function DIYBuilderPage() {
   const [roomError, setRoomError] = useState("");
   const [newRoomName, setNewRoomName] = useState("");
   const [creatingRoom, setCreatingRoom] = useState(false);
-  const [wifiSsid, setWifiSsid] = useState("");
-  const [wifiPassword, setWifiPassword] = useState("");
+  const [wifiCredentials, setWifiCredentials] = useState<WifiCredentialRecord[]>([]);
+  const [wifiCredentialsLoading, setWifiCredentialsLoading] = useState(true);
+  const [wifiCredentialsError, setWifiCredentialsError] = useState("");
+  const [selectedWifiCredentialId, setSelectedWifiCredentialId] = useState<number | null>(null);
   const [family, setFamily] = useState<ChipFamily>(
     () => getBoardProfile(DEFAULT_BOARD_ID)?.family ?? BOARD_PROFILES[0].family,
   );
@@ -437,10 +438,13 @@ export default function DIYBuilderPage() {
   );
   const board = getBoardProfile(boardId) ?? familyOptions[0] ?? BOARD_PROFILES[0];
   const boardPins = useMemo(() => [...board.leftPins, ...board.rightPins], [board]);
+  const selectedWifiCredential = useMemo(
+    () => wifiCredentials.find((credential) => credential.id === selectedWifiCredentialId) ?? null,
+    [selectedWifiCredentialId, wifiCredentials],
+  );
   const validation = validatePinMappings(board, pins, {
     requireWifiCredentials: true,
-    wifiSsid,
-    wifiPassword,
+    hasWifiCredential: selectedWifiCredentialId !== null,
   });
   const fallbackFirmwareTargetKey = useMemo(() => {
     if (typeof window === "undefined") {
@@ -467,15 +471,26 @@ export default function DIYBuilderPage() {
         boardId: board.id,
         projectName,
         roomId,
+        wifiCredentialId: selectedWifiCredentialId,
+        wifiCredentialVersion: selectedWifiCredential?.updated_at ?? null,
         pins,
-        wifiSsid,
-        wifiPassword,
         cpuMhz,
         flashSize,
         psramSize,
         networkTargetKey: currentFirmwareTargetKey,
       }),
-    [board.id, currentFirmwareTargetKey, pins, projectName, roomId, wifiPassword, wifiSsid, cpuMhz, flashSize, psramSize],
+    [
+      board.id,
+      currentFirmwareTargetKey,
+      selectedWifiCredential?.updated_at,
+      selectedWifiCredentialId,
+      pins,
+      projectName,
+      roomId,
+      cpuMhz,
+      flashSize,
+      psramSize,
+    ],
   );
   const activeBuildJobId =
     serverBuild.configKey === currentBuildConfigKey ? serverBuild.jobId : null;
@@ -489,18 +504,30 @@ export default function DIYBuilderPage() {
         board,
         projectName,
         roomId,
+        wifiCredentialId: selectedWifiCredentialId,
         flashSource,
         pins,
         serialPort,
         buildJobId: activeBuildJobId,
         buildKey: activeBuildKey,
-        wifiSsid,
-        wifiPassword,
         cpuMhz,
         flashSize,
         psramSize,
       }),
-    [activeBuildJobId, activeBuildKey, board, flashSource, pins, projectName, roomId, serialPort, wifiSsid, wifiPassword, cpuMhz, flashSize, psramSize],
+    [
+      activeBuildJobId,
+      activeBuildKey,
+      board,
+      flashSource,
+      pins,
+      projectName,
+      roomId,
+      selectedWifiCredentialId,
+      serialPort,
+      cpuMhz,
+      flashSize,
+      psramSize,
+    ],
   );
   const projectPayloadJson = useMemo(() => JSON.stringify(projectPayload), [projectPayload]);
   const draftConfig = projectPayload.config as Record<string, unknown>;
@@ -668,6 +695,12 @@ export default function DIYBuilderPage() {
       return null;
     }
 
+    if (!selectedWifiCredentialId) {
+      setProjectSyncState("idle");
+      setProjectSyncMessage("Select a saved Wi-Fi credential before syncing this device project to the server.");
+      return null;
+    }
+
     const token = getToken();
     if (!token) {
       handleBuildAuthFailure(
@@ -735,7 +768,7 @@ export default function DIYBuilderPage() {
       }
       return null;
     }
-  }, [board.id, handleBuildAuthFailure, projectId, roomId]);
+  }, [board.id, handleBuildAuthFailure, projectId, roomId, selectedWifiCredentialId]);
 
   const loadRooms = useCallback(async (token: string) => {
     setRoomsLoading(true);
@@ -754,6 +787,31 @@ export default function DIYBuilderPage() {
       setRoomError(getErrorMessage(error));
     } finally {
       setRoomsLoading(false);
+    }
+  }, []);
+
+  const loadWifiCredentials = useCallback(async (token: string, preferredCredentialId?: number | null) => {
+    setWifiCredentialsLoading(true);
+    setWifiCredentialsError("");
+
+    try {
+      const nextCredentials = await fetchWifiCredentials(token);
+      setWifiCredentials(nextCredentials);
+      setSelectedWifiCredentialId((currentId) => {
+        const preferredId =
+          typeof preferredCredentialId === "number" ? preferredCredentialId : currentId;
+        if (preferredId && nextCredentials.some((credential) => credential.id === preferredId)) {
+          return preferredId;
+        }
+        if (currentId && nextCredentials.some((credential) => credential.id === currentId)) {
+          return currentId;
+        }
+        return nextCredentials[0]?.id ?? null;
+      });
+    } catch (error) {
+      setWifiCredentialsError(getErrorMessage(error));
+    } finally {
+      setWifiCredentialsLoading(false);
     }
   }, []);
 
@@ -1021,8 +1079,12 @@ export default function DIYBuilderPage() {
       Array.isArray(config.pins) ? (config.pins as PinMapping[]) : [],
       MODE_METADATA,
     );
-    const nextWifiSsid = typeof config.wifi_ssid === "string" ? config.wifi_ssid : "";
-    const nextWifiPassword = typeof config.wifi_password === "string" ? config.wifi_password : "";
+    const nextWifiCredentialId =
+      typeof project.wifi_credential_id === "number"
+        ? project.wifi_credential_id
+        : typeof config.wifi_credential_id === "number"
+          ? config.wifi_credential_id
+          : null;
     const nextCpuMhz = typeof config.cpu_mhz === "number" ? config.cpu_mhz : null;
     const nextFlashSize = typeof config.flash_size === "string" ? config.flash_size : null;
     const nextPsramSize = typeof config.psram_size === "string" ? config.psram_size : null;
@@ -1046,6 +1108,7 @@ export default function DIYBuilderPage() {
           ? config.room_id
           : null,
     );
+    setSelectedWifiCredentialId(nextWifiCredentialId);
     setFamily(nextBoard.family);
     setBoardId(nextBoard.id);
     setPins(nextPins);
@@ -1059,8 +1122,6 @@ export default function DIYBuilderPage() {
         ? config.serial_port
         : DEFAULT_SERIAL_PORT,
     );
-    setWifiSsid(nextWifiSsid);
-    setWifiPassword(nextWifiPassword);
     setServerBuild({
       ...createEmptyBuildState(),
       jobId: savedBuildJobId,
@@ -1077,6 +1138,7 @@ export default function DIYBuilderPage() {
             : typeof config.room_id === "number"
               ? config.room_id
               : null,
+        wifiCredentialId: nextWifiCredentialId,
         flashSource: nextFlashSource,
         pins: nextPins,
         serialPort:
@@ -1085,8 +1147,6 @@ export default function DIYBuilderPage() {
             : DEFAULT_SERIAL_PORT,
         buildJobId: savedBuildJobId,
         buildKey: savedBuildJobId ? savedBuildKey : null,
-        wifiSsid: nextWifiSsid,
-        wifiPassword: nextWifiPassword,
         cpuMhz: nextCpuMhz,
         flashSize: nextFlashSize,
         psramSize: nextPsramSize,
@@ -1141,6 +1201,7 @@ export default function DIYBuilderPage() {
     async function hydrateDraft() {
       if (!isAdmin) {
         setRoomsLoading(false);
+        setWifiCredentialsLoading(false);
         setDraftLoaded(true);
         setProjectHydrated(true);
         return;
@@ -1169,6 +1230,9 @@ export default function DIYBuilderPage() {
         setProjectId(preferredProjectId);
         setProjectName(savedDraft.projectName || "Living Room Relay Node");
         setRoomId(typeof savedDraft.roomId === "number" ? savedDraft.roomId : null);
+        setSelectedWifiCredentialId(
+          typeof savedDraft.wifiCredentialId === "number" ? savedDraft.wifiCredentialId : null,
+        );
         setFamily(
           savedDraft.family && getBoardFamily(savedDraft.family)
             ? savedDraft.family
@@ -1181,8 +1245,6 @@ export default function DIYBuilderPage() {
         setPins(Array.isArray(savedDraft.pins) ? sanitizePins(savedDraft.pins, MODE_METADATA) : []);
         setFlashSource(normalizeFlashSource(savedDraft.flashSource, Boolean(nextBoard.demoFirmware)));
         setSerialPort(savedDraft.serialPort || DEFAULT_SERIAL_PORT);
-        setWifiSsid(savedDraft.wifiSsid || "");
-        setWifiPassword(savedDraft.wifiPassword || "");
       }
 
       const token = getToken();
@@ -1198,6 +1260,7 @@ export default function DIYBuilderPage() {
       }
 
       await loadRooms(token);
+      await loadWifiCredentials(token, savedDraft?.wifiCredentialId ?? null);
 
       setProjectSyncState("loading");
       setProjectSyncMessage("Loading DIY draft from server...");
@@ -1253,7 +1316,7 @@ export default function DIYBuilderPage() {
       cancelled = true;
       hasHydratedRef.current = false;
     };
-  }, [isAdmin, loadRooms]);
+  }, [isAdmin, loadRooms, loadWifiCredentials]);
 
   useEffect(() => {
     if (!draftLoaded || !projectHydrated || !isAdmin) {
@@ -1294,16 +1357,15 @@ export default function DIYBuilderPage() {
           projectId: projectId ?? undefined,
           projectName,
           roomId,
+          wifiCredentialId: selectedWifiCredentialId,
           family,
           boardId,
           pins,
         flashSource,
         serialPort,
-        wifiSsid,
-        wifiPassword,
       } satisfies SerializedDraft),
     );
-  }, [boardId, draftLoaded, family, flashSource, pins, projectId, projectName, roomId, serialPort, wifiSsid, wifiPassword]);
+  }, [boardId, draftLoaded, family, flashSource, pins, projectId, projectName, roomId, selectedWifiCredentialId, serialPort]);
 
   useEffect(() => {
     if (!draftLoaded || !projectHydrated) {
@@ -1682,9 +1744,9 @@ export default function DIYBuilderPage() {
         boardId: board.id,
         projectName,
         roomId,
+        wifiCredentialId: selectedWifiCredentialId,
+        wifiCredentialVersion: selectedWifiCredential?.updated_at ?? null,
         pins,
-        wifiSsid,
-        wifiPassword,
         cpuMhz,
         flashSize,
         psramSize,
@@ -1726,13 +1788,12 @@ export default function DIYBuilderPage() {
             board,
             projectName,
             roomId,
+            wifiCredentialId: selectedWifiCredentialId,
             flashSource: "server",
             pins,
             serialPort,
             buildJobId: job.id,
             buildKey: nextBuildConfigKey,
-            wifiSsid,
-            wifiPassword,
             cpuMhz,
             flashSize,
             psramSize,
@@ -1973,10 +2034,11 @@ export default function DIYBuilderPage() {
             setFlashSize={setFlashSize}
             psramSize={psramSize}
             setPsramSize={setPsramSize}
-            wifiSsid={wifiSsid}
-            setWifiSsid={setWifiSsid}
-            wifiPassword={wifiPassword}
-            setWifiPassword={setWifiPassword}
+            wifiCredentials={wifiCredentials}
+            wifiCredentialsLoading={wifiCredentialsLoading}
+            wifiCredentialsError={wifiCredentialsError}
+            selectedWifiCredentialId={selectedWifiCredentialId}
+            setSelectedWifiCredentialId={setSelectedWifiCredentialId}
             family={family}
             setFamily={setFamily}
             board={board}

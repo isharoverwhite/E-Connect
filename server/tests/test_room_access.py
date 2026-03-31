@@ -25,6 +25,7 @@ from app.sql_models import (
     RoomPermission,
     User,
     UserApprovalStatus,
+    WifiCredential,
 )
 from main import app
 
@@ -221,13 +222,35 @@ def _insert_diy_project(
 ) -> dict[str, str]:
     db = TestingSessionLocal()
     project_id = str(uuid.uuid4())
+    membership = (
+        db.query(HouseholdMembership)
+        .filter(HouseholdMembership.user_id == user_id)
+        .order_by(HouseholdMembership.id.asc())
+        .first()
+    )
+    assert membership is not None
+    credential_name = (project_name or name).strip().replace(" ", "-").lower()
+    wifi_credential = WifiCredential(
+        household_id=membership.household_id,
+        ssid=f"{credential_name}-wifi",
+        password="RoomAccessPass123",
+    )
+    db.add(wifi_credential)
+    db.flush()
     project = DiyProject(
         id=project_id,
         user_id=user_id,
         room_id=room_id,
+        wifi_credential_id=wifi_credential.id,
         name=name,
         board_profile="esp32-devkit-v1",
-        config={"pins": [], "project_name": project_name or name},
+        config={
+            "pins": [],
+            "project_name": project_name or name,
+            "wifi_credential_id": wifi_credential.id,
+            "wifi_ssid": wifi_credential.ssid,
+            "wifi_password": wifi_credential.password,
+        },
     )
     db.add(project)
     db.commit()

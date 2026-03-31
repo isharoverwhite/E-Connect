@@ -1,14 +1,16 @@
 import { BOARD_PROFILES, BOARD_FAMILIES, type ChipFamily, type BoardProfile } from "../board-profiles";
 import type { ProjectSyncState } from "../types";
 import type { RoomRecord } from "@/lib/rooms";
+import type { WifiCredentialRecord } from "@/lib/wifi-credentials";
 
 interface Step1BoardProps {
     projectName: string;
     setProjectName: (val: string) => void;
-    wifiSsid: string;
-    setWifiSsid: (val: string) => void;
-    wifiPassword: string;
-    setWifiPassword: (val: string) => void;
+    wifiCredentials: WifiCredentialRecord[];
+    wifiCredentialsLoading: boolean;
+    wifiCredentialsError: string;
+    selectedWifiCredentialId: number | null;
+    setSelectedWifiCredentialId: (value: number | null) => void;
     family: ChipFamily;
     setFamily: (val: ChipFamily) => void;
     setBoardId: (val: string) => void;
@@ -38,10 +40,11 @@ interface Step1BoardProps {
 export function Step1Board({
     projectName,
     setProjectName,
-    wifiSsid,
-    setWifiSsid,
-    wifiPassword,
-    setWifiPassword,
+    wifiCredentials,
+    wifiCredentialsLoading,
+    wifiCredentialsError,
+    selectedWifiCredentialId,
+    setSelectedWifiCredentialId,
     family,
     setFamily,
     setBoardId,
@@ -91,28 +94,52 @@ export function Step1Board({
                 />
             </div>
 
-            <div className="flex flex-col gap-4 mb-10">
-                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 dark:text-slate-300 uppercase tracking-wider">
-                    Wi-Fi Configuration (Required for initial boot)
-                </label>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <input
-                        type="text"
-                        name="wifiSsid"
-                        value={wifiSsid}
-                        onChange={(event) => setWifiSsid(event.target.value)}
-                        className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
-                        placeholder="Wi-Fi SSID"
-                    />
-                    <input
-                        type="password"
-                        name="wifiPassword"
-                        value={wifiPassword}
-                        onChange={(event) => setWifiPassword(event.target.value)}
-                        className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
-                        placeholder="Wi-Fi Password"
-                    />
+            <div className="flex flex-col gap-4 mb-10 rounded-2xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark p-5 dark:border-slate-800 dark:bg-slate-900/50">
+                <div>
+                    <label
+                        htmlFor="diy-wifi-credential-id"
+                        className="block text-sm font-bold text-slate-700 dark:text-slate-300 dark:text-slate-300 uppercase tracking-wider"
+                    >
+                        Wi-Fi Network (Required for initial boot)
+                    </label>
+                    <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-400">
+                        Select one of the admin-managed Wi-Fi credentials saved in Settings. The builder keeps the selected
+                        network with this project so rebuilds stay consistent.
+                    </p>
                 </div>
+
+                <select
+                    id="diy-wifi-credential-id"
+                    value={selectedWifiCredentialId ?? ""}
+                    onChange={(event) =>
+                        setSelectedWifiCredentialId(event.target.value ? Number(event.target.value) : null)
+                    }
+                    className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                    disabled={wifiCredentialsLoading || wifiCredentials.length === 0}
+                >
+                    <option value="">
+                        {wifiCredentialsLoading
+                            ? "Loading saved Wi-Fi credentials..."
+                            : wifiCredentials.length === 0
+                                ? "No saved Wi-Fi credentials available"
+                                : "Select a saved Wi-Fi credential"}
+                    </option>
+                    {wifiCredentials.map((credential) => (
+                        <option key={credential.id} value={credential.id}>
+                            {credential.ssid}
+                        </option>
+                    ))}
+                </select>
+
+                {wifiCredentialsError ? (
+                    <p className="text-sm text-rose-600 dark:text-rose-300">{wifiCredentialsError}</p>
+                ) : null}
+
+                {!wifiCredentialsLoading && wifiCredentials.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-amber-300 bg-amber-50 px-4 py-4 text-sm text-amber-700 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+                        Add at least one Wi-Fi credential in Settings before continuing with DIY provisioning.
+                    </div>
+                ) : null}
             </div>
 
             <div className="flex flex-col gap-4 mb-10 rounded-2xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark p-5 dark:border-slate-800 dark:bg-slate-900/50">
@@ -331,7 +358,7 @@ export function Step1Board({
                     </button>
                     <button
                         onClick={onNext}
-                        disabled={!selectedRoomId}
+                        disabled={!selectedRoomId || !selectedWifiCredentialId}
                         className="flex-1 md:flex-none px-8 py-3 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         <span>Next: Choose Config</span>
