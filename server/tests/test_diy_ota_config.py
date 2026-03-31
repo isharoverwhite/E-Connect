@@ -186,7 +186,7 @@ def test_put_device_config_prefers_forwarded_host_for_firmware_target():
     assert project.config["mqtt_broker"] == "smart-home.local"
     assert project.config["mqtt_port"] == 1883
 
-def test_put_device_config_prefers_browser_origin_header_over_internal_proxy_host():
+def test_put_device_config_normalizes_secure_companion_origin_to_http_lan_transport():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
 
@@ -207,14 +207,14 @@ def test_put_device_config_prefers_browser_origin_header_over_internal_proxy_hos
             headers={
                 "Authorization": f"Bearer {token}",
                 "Host": "server:8000",
-                "X-EConnect-Origin": "https://192.168.8.4:3000",
+                "X-EConnect-Origin": "https://192.168.8.4:3443",
             },
         )
 
     assert res.status_code == 200, res.text
     db.refresh(project)
     assert project.config["advertised_host"] == "192.168.8.4"
-    assert project.config["api_base_url"] == "https://192.168.8.4:3000/api/v1"
+    assert project.config["api_base_url"] == "http://192.168.8.4:3000/api/v1"
     assert project.config["mqtt_broker"] == "192.168.8.4"
     assert project.config["mqtt_port"] == 1883
 

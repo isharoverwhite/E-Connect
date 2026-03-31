@@ -36,10 +36,10 @@ def test_resolve_runtime_firmware_network_state_autodetects_startup_ip(monkeypat
     assert state["error"] is None
     assert state["targets"] == {
         "advertised_host": "192.168.8.4",
-        "api_base_url": "https://192.168.8.4:3000/api/v1",
+        "api_base_url": "http://192.168.8.4:3000/api/v1",
         "mqtt_broker": "192.168.8.4",
         "mqtt_port": 1883,
-        "target_key": "192.168.8.4|https://192.168.8.4:3000/api/v1|192.168.8.4|1883",
+        "target_key": "192.168.8.4|http://192.168.8.4:3000/api/v1|192.168.8.4|1883",
     }
 
 
@@ -56,10 +56,10 @@ def test_resolve_runtime_firmware_network_state_uses_public_mqtt_override(monkey
 
     assert state["targets"] == {
         "advertised_host": "192.168.8.4",
-        "api_base_url": "https://192.168.8.4:3000/api/v1",
+        "api_base_url": "http://192.168.8.4:3000/api/v1",
         "mqtt_broker": "mqtt-lan.local",
         "mqtt_port": 2883,
-        "target_key": "192.168.8.4|https://192.168.8.4:3000/api/v1|mqtt-lan.local|2883",
+        "target_key": "192.168.8.4|http://192.168.8.4:3000/api/v1|mqtt-lan.local|2883",
     }
 
 
@@ -96,10 +96,30 @@ def test_infer_firmware_network_targets_can_fallback_to_request_when_runtime_sta
 
     assert targets == {
         "advertised_host": "192.168.1.50",
-        "api_base_url": "https://192.168.1.50:3000/api/v1",
+        "api_base_url": "http://192.168.1.50:3000/api/v1",
         "mqtt_broker": "192.168.1.50",
         "mqtt_port": 1883,
-        "target_key": "192.168.1.50|https://192.168.1.50:3000/api/v1|192.168.1.50|1883",
+        "target_key": "192.168.1.50|http://192.168.1.50:3000/api/v1|192.168.1.50|1883",
+    }
+
+
+def test_infer_firmware_network_targets_normalizes_https_companion_origin_to_http_lan_transport(monkeypatch):
+    monkeypatch.delenv("FIRMWARE_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("FIRMWARE_MQTT_BROKER", raising=False)
+    monkeypatch.delenv("FIRMWARE_MQTT_PORT", raising=False)
+
+    targets = builder.infer_firmware_network_targets(
+        {"x-econnect-origin": "https://192.168.1.50:3443"},
+        "https",
+        {"source": "startup_auto", "targets": None, "error": "Docker bridge fallback."},
+    )
+
+    assert targets == {
+        "advertised_host": "192.168.1.50",
+        "api_base_url": "http://192.168.1.50:3000/api/v1",
+        "mqtt_broker": "192.168.1.50",
+        "mqtt_port": 1883,
+        "target_key": "192.168.1.50|http://192.168.1.50:3000/api/v1|192.168.1.50|1883",
     }
 
 

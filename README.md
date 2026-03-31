@@ -69,9 +69,12 @@ DB_NAME=e_connect_db
 DB_USER=econnect
 DB_PASSWORD=secure_password
 SECRET_KEY=change-me-in-production
+TZ=Asia/Ho_Chi_Minh
 NEXT_PUBLIC_API_URL=/api/v1
 BACKEND_INTERNAL_URL=http://server:8000
 ```
+
+Use a valid IANA timezone for `TZ`, for example `Asia/Ho_Chi_Minh`.
 
 #### 3. Run the Self-hosted Stack
 This command launches the official approved topology for self-hosted environments:
@@ -86,6 +89,13 @@ Once the stack is up:
 - **Backend Health**: `http://localhost:8000/health`
 - **MQTT Broker**: `localhost:1883`
 - **Database**: `localhost:3306`
+
+Optional MQTT host networking:
+- The default Compose stack publishes `1883:1883`, which is the safest cross-platform choice and keeps local development working on Docker Desktop.
+- If you need Mosquitto to bind with `network_mode: host`, start the stack with the override file: `docker compose -f docker-compose.yml -f docker-compose.mqtt-host.yml up -d --build db mqtt server webapp`
+- Use that override on Linux hosts, or on Docker Desktop only after enabling `Settings -> Resources -> Network -> Enable host networking`.
+- The override keeps the `server` container pointed at the host-bound broker through a `host-gateway` mapping for the `mqtt` hostname.
+- On Docker Desktop with the default published-port path, Mosquitto connection logs may show the Docker forwarding proxy address instead of the real LAN client IP. Treat the device's provisioned broker target and server-side `last_seen` updates as the authoritative LAN-path signals.
 
 #### 4. Developer Validation
 To run the full repository including the public discovery portal (for local testing/pipelines):
@@ -172,9 +182,12 @@ DB_NAME=e_connect_db
 DB_USER=econnect
 DB_PASSWORD=mat_khau_db
 SECRET_KEY=khoa-bi-mat-cua-ban
+TZ=Asia/Ho_Chi_Minh
 NEXT_PUBLIC_API_URL=/api/v1
 BACKEND_INTERNAL_URL=http://server:8000
 ```
+
+Hãy dùng timezone IANA hợp lệ cho `TZ`, ví dụ `Asia/Ho_Chi_Minh`.
 
 #### 3. Khởi chạy hệ thống Self-Hosted tiêu chuẩn
 Câu lệnh được dùng để chuẩn bị cấu hình kiến trúc self-hosted nguyên bản:
@@ -189,6 +202,13 @@ Khi chạy xong:
 - **Kiểm tra Backend**: `http://localhost:8000/health`
 - **MQTT Broker Address**: Cùng trên IP cổng `1883`
 - **Database MariaDB**: Truy cập ở `localhost:3306`
+
+Tùy chọn MQTT host networking:
+- Stack Compose mặc định publish `1883:1883`, đây là lựa chọn an toàn hơn cho môi trường đa nền tảng và không làm hỏng local development trên Docker Desktop.
+- Nếu cần để Mosquitto bind bằng `network_mode: host`, hãy chạy thêm file override: `docker compose -f docker-compose.yml -f docker-compose.mqtt-host.yml up -d --build db mqtt server webapp`
+- Chỉ nên dùng override này trên Linux, hoặc trên Docker Desktop khi đã bật `Settings -> Resources -> Network -> Enable host networking`.
+- Override vẫn giữ cho container `server` kết nối tới broker host-bound thông qua mapping `host-gateway` cho hostname `mqtt`.
+- Trên Docker Desktop với đường publish port mặc định, log kết nối của Mosquitto có thể hiện địa chỉ proxy/forwarder của Docker thay vì IP LAN thật của client. Khi cần xác nhận đường LAN, hãy ưu tiên target broker đã provision cho thiết bị và các lần cập nhật `last_seen` phía server.
 
 #### 4. Khởi chạy toàn bộ hệ thống (Cho Developer Testing)
 Với nhóm lập trình kiểm tra toàn bộ pipeline, câu chạy có thể bao quát luôn công đoạn build discovery:
