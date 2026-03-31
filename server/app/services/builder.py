@@ -899,6 +899,20 @@ def _resolve_mqtt_port(config_json: dict) -> int:
     return _resolve_runtime_mqtt_port()
 
 
+def _resolve_project_wifi_credentials(project) -> tuple[str, str]:
+    credential = getattr(project, "wifi_credential", None)
+    if credential is not None:
+        wifi_ssid = str(getattr(credential, "ssid", "") or "").strip()
+        wifi_password = str(getattr(credential, "password", "") or "")
+        if wifi_ssid and wifi_password:
+            return wifi_ssid, wifi_password
+
+    config_json = project.config if isinstance(project.config, dict) else {}
+    wifi_ssid = str(config_json.get("wifi_ssid") or "").strip()
+    wifi_password = str(config_json.get("wifi_password") or "")
+    return wifi_ssid, wifi_password
+
+
 def write_generated_firmware_config(project, job_id: str, project_dir: str):
     config_json = project.config if isinstance(project.config, dict) else {}
     include_dir = os.path.join(project_dir, "include")
@@ -907,8 +921,7 @@ def write_generated_firmware_config(project, job_id: str, project_dir: str):
     device_id, secret_key = build_project_firmware_identity(project.id)
     project_name = str(config_json.get("project_name") or project.name or "E-Connect Node").strip()
     firmware_version = build_job_firmware_version(job_id)
-    wifi_ssid = str(config_json.get("wifi_ssid") or "")
-    wifi_password = str(config_json.get("wifi_password") or "")
+    wifi_ssid, wifi_password = _resolve_project_wifi_credentials(project)
     mqtt_broker = _resolve_mqtt_broker(config_json)
     mqtt_port = _resolve_mqtt_port(config_json)
     mqtt_namespace = str(os.getenv("FIRMWARE_MQTT_NAMESPACE", os.getenv("MQTT_NAMESPACE", "local")))

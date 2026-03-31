@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from app.api import router
 from app.database import Base, get_db
 from app.sql_models import (
+    AccountType,
     User,
     Household,
     HouseholdMembership,
@@ -25,6 +26,7 @@ from app.sql_models import (
     JobStatus,
     SerialSession,
     SerialSessionStatus,
+    WifiCredential,
 )
 from app.auth import get_password_hash
 
@@ -60,12 +62,19 @@ def setup_db():
     yield
     close_all_sessions()
 
-def create_test_user(db, username="testuser"):
+def create_test_user(
+    db,
+    username="testuser",
+    *,
+    account_type=AccountType.admin,
+    household_role=HouseholdRole.owner,
+):
     user = User(
         username=username,
         fullname="Test User",
         authentication=get_password_hash("password"),
-        approval_status=UserApprovalStatus.approved
+        approval_status=UserApprovalStatus.approved,
+        account_type=account_type,
     )
     db.add(user)
     db.commit()
@@ -76,7 +85,11 @@ def create_test_user(db, username="testuser"):
     db.commit()
     db.refresh(household)
     
-    membership = HouseholdMembership(user_id=user.user_id, household_id=household.household_id, role=HouseholdRole.owner)
+    membership = HouseholdMembership(
+        user_id=user.user_id,
+        household_id=household.household_id,
+        role=household_role,
+    )
     db.add(membership)
     
     room = Room(name="Test Room", user_id=user.user_id, household_id=household.household_id)
@@ -111,6 +124,179 @@ def create_test_project(token: str, room_id: int, *, name: str = "Test Project")
     )
     assert response.status_code == 200, response.text
     return response.json()["id"]
+
+
+def test_wifi_credentials_are_masked_in_list_and_reveal_requires_password():
+    db = TestingSessionLocal()
+    _user, _room = create_test_user(db, username="wifi-admin")
+    token = get_token(username="wifi-admin")
+
+    create_response = client.post(
+        "/api/v1/wifi-credentials",
+        json={"ssid": "Office-2G", "password": "OfficePass123"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 200, create_response.text
+    credential_id = create_response.json()["id"]
+
+    list_response = client.get(
+        "/api/v1/wifi-credentials",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert list_response.status_code == 200, list_response.text
+    payload = list_response.json()
+    assert payload == [
+        {
+            "id": credential_id,
+            "household_id": payload[0]["household_id"],
+            "ssid": "Office-2G",
+            "masked_password": "*************",
+            "usage_count": 0,
+            "created_at": payload[0]["created_at"],
+            "updated_at": payload[0]["updated_at"],
+        }
+    ]
+
+    wrong_reveal = client.post(
+        f"/api/v1/wifi-credentials/{credential_id}/reveal",
+        json={"password": "wrong-password"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert wrong_reveal.status_code == 403
+    assert wrong_reveal.json()["detail"]["error"] == "invalid_password"
+
+    reveal_response = client.post(
+        f"/api/v1/wifi-credentials/{credential_id}/reveal",
+        json={"password": "password"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert reveal_response.status_code == 200, reveal_response.text
+    assert reveal_response.json() == {
+        "id": credential_id,
+        "ssid": "Office-2G",
+        "password": "OfficePass123",
+    }
+
+
+def test_owner_role_without_admin_account_cannot_crud_wifi_credentials():
+    db = TestingSessionLocal()
+    user = User(
+        username="owner-no-admin",
+        fullname="Owner But Not Admin",
+        authentication=get_password_hash("password"),
+        approval_status=UserApprovalStatus.approved,
+        account_type=AccountType.parent,
+    )
+    household = Household(name="Owner Household")
+    db.add_all([user, household])
+    db.commit()
+    db.refresh(user)
+    db.refresh(household)
+    db.add(
+        HouseholdMembership(
+            user_id=user.user_id,
+            household_id=household.household_id,
+            role=HouseholdRole.owner,
+        )
+    )
+    db.commit()
+
+    token = get_token(username="owner-no-admin")
+
+    list_response = client.get(
+        "/api/v1/wifi-credentials",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert list_response.status_code == 403
+
+    create_response = client.post(
+        "/api/v1/wifi-credentials",
+        json={"ssid": "ShouldFail", "password": "ShouldFail123"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 403
+
+
+def test_owner_role_without_admin_account_cannot_create_project_from_legacy_wifi_payload():
+    db = TestingSessionLocal()
+    _user, room = create_test_user(
+        db,
+        username="legacy-owner-no-admin",
+        account_type=AccountType.parent,
+        household_role=HouseholdRole.owner,
+    )
+    token = get_token(username="legacy-owner-no-admin")
+
+    response = client.post(
+        "/api/v1/diy/projects",
+        json={
+            "name": "Owner Legacy Project",
+            "board_profile": "esp32-devkit-v1",
+            "room_id": room.room_id,
+            "config": {
+                "wifi_ssid": "Owner-WiFi",
+                "wifi_password": "OwnerPass123",
+                "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}],
+            },
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "error": "validation",
+        "message": "Select a Wi-Fi credential before creating a device project.",
+    }
+    assert db.query(WifiCredential).count() == 0
+
+
+def test_create_project_creates_and_links_wifi_credential_from_legacy_payload():
+    db = TestingSessionLocal()
+    _user, room = create_test_user(db, username="legacy-project")
+    token = get_token(username="legacy-project")
+
+    response = client.post(
+        "/api/v1/diy/projects",
+        json={
+            "name": "Legacy WiFi Project",
+            "board_profile": "esp32-devkit-v1",
+            "room_id": room.room_id,
+            "config": {
+                "wifi_ssid": "Builder-WiFi",
+                "wifi_password": "BuilderPass123",
+                "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}],
+            },
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+
+    project_id = response.json()["id"]
+    project = db.query(DiyProject).filter(DiyProject.id == project_id).first()
+    assert project is not None
+    assert project.wifi_credential_id is not None
+    assert project.config["wifi_credential_id"] == project.wifi_credential_id
+    credential = db.query(WifiCredential).filter(WifiCredential.id == project.wifi_credential_id).first()
+    assert credential is not None
+    assert credential.ssid == "Builder-WiFi"
+    assert credential.password == "BuilderPass123"
+
+
+def test_delete_wifi_credential_conflicts_when_in_use_by_project():
+    db = TestingSessionLocal()
+    _user, room = create_test_user(db, username="wifi-delete-conflict")
+    token = get_token(username="wifi-delete-conflict")
+    project_id = create_test_project(token, room.room_id, name="Delete Conflict Project")
+
+    project = db.query(DiyProject).filter(DiyProject.id == project_id).first()
+    assert project is not None
+    assert project.wifi_credential_id is not None
+
+    response = client.delete(
+        f"/api/v1/wifi-credentials/{project.wifi_credential_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "conflict"
 
 def test_system_status():
     response = client.get("/api/v1/system/status")
@@ -574,16 +760,13 @@ def test_get_diy_network_targets_includes_startup_audit_warning():
 
 def test_get_diy_network_targets_rejects_authenticated_non_admin_user():
     db = TestingSessionLocal()
-    user, _room = create_test_user(db, username="networkviewer")
-    assert user.account_type.value == "parent"
-    membership = (
-        db.query(HouseholdMembership)
-        .filter(HouseholdMembership.user_id == user.user_id)
-        .first()
+    user, _room = create_test_user(
+        db,
+        username="networkviewer",
+        account_type=AccountType.parent,
+        household_role=HouseholdRole.member,
     )
-    assert membership is not None
-    membership.role = HouseholdRole.member
-    db.commit()
+    assert user.account_type.value == "parent"
     token = get_token(username="networkviewer")
 
     app.state.firmware_network_state = {

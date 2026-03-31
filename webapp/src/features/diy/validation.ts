@@ -3,8 +3,7 @@ import type { PinMapping, ValidationResult } from "./types";
 
 interface ValidatePinMappingsOptions {
   requireWifiCredentials?: boolean;
-  wifiSsid?: string;
-  wifiPassword?: string;
+  hasWifiCredential?: boolean;
 }
 
 export function validatePinMappings(
@@ -20,12 +19,8 @@ export function validatePinMappings(
   const usedLabels = new Map<string, number>();
   let i2cPins = 0;
 
-  if (options.requireWifiCredentials && !options.wifiSsid?.trim()) {
-    errors.push("Enter the Wi-Fi SSID before building or flashing firmware.");
-  }
-
-  if (options.requireWifiCredentials && !options.wifiPassword?.trim()) {
-    errors.push("Enter the Wi-Fi password before building or flashing firmware.");
+  if (options.requireWifiCredentials && !options.hasWifiCredential) {
+    errors.push("Select a saved Wi-Fi credential before building or flashing firmware.");
   }
 
   if (pins.length === 0) {

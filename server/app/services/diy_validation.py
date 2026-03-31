@@ -310,12 +310,15 @@ def validate_diy_config(board_profile: str, config: dict[str, Any] | None) -> tu
     used_pins: set[int] = set()
     i2c_role_counts = {"SDA": 0, "SCL": 0}
 
+    wifi_credential_id = config.get("wifi_credential_id")
     wifi_ssid = config.get("wifi_ssid")
     wifi_password = config.get("wifi_password")
-    if not isinstance(wifi_ssid, str) or not wifi_ssid.strip():
-        errors.append("Invalid config: wifi_ssid is required before building firmware")
-    if not isinstance(wifi_password, str) or not wifi_password.strip():
-        errors.append("Invalid config: wifi_password is required before building firmware")
+    has_wifi_credential = isinstance(wifi_credential_id, int) and wifi_credential_id > 0
+    if not has_wifi_credential:
+        if not isinstance(wifi_ssid, str) or not wifi_ssid.strip():
+            errors.append("Invalid config: wifi_ssid is required before building firmware")
+        if not isinstance(wifi_password, str) or not wifi_password.strip():
+            errors.append("Invalid config: wifi_password is required before building firmware")
 
     for index, pin in enumerate(pins, start=1):
         if not isinstance(pin, dict):

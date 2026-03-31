@@ -11,6 +11,7 @@ import {
   sendDeviceCommand,
 } from "@/lib/api";
 import { getToken } from "@/lib/auth";
+import { fetchWifiCredentials, type WifiCredentialRecord } from "@/lib/wifi-credentials";
 import { Step2Pins } from "@/features/diy/components/Step2Pins";
 import type { BoardProfile } from "@/features/diy/board-profiles";
 import { getBoardProfile, resolveBoardProfileId } from "@/features/diy/board-profiles";
@@ -21,6 +22,7 @@ import type { DeviceConfig, PinConfig } from "@/types/device";
 
 interface DiyProjectResponse {
   board_profile: string;
+  wifi_credential_id?: number | null;
 }
 
 interface BuildJobSnapshot {
@@ -154,6 +156,11 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   const [boardProfile, setBoardProfile] = useState<BoardProfile | null>(null);
   const [pins, setPins] = useState<PinMapping[]>([]);
   const [savedPins, setSavedPins] = useState<PinMapping[]>([]);
+  const [wifiCredentials, setWifiCredentials] = useState<WifiCredentialRecord[]>([]);
+  const [wifiCredentialsLoading, setWifiCredentialsLoading] = useState(true);
+  const [wifiCredentialsError, setWifiCredentialsError] = useState<string | null>(null);
+  const [selectedWifiCredentialId, setSelectedWifiCredentialId] = useState<number | null>(null);
+  const [savedWifiCredentialId, setSavedWifiCredentialId] = useState<number | null>(null);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -251,6 +258,9 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         }
 
         const token = getToken();
+        if (!token) {
+          throw new Error("Missing session token. Please sign in again.");
+        }
         const projectResponse = await fetch(
           `${API_URL}/diy/projects/${nextDevice.provisioning_project_id}`,
           {
@@ -265,6 +275,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         }
 
         const nextProject = (await projectResponse.json()) as DiyProjectResponse;
+        const nextWifiCredentials = await fetchWifiCredentials(token);
         const resolvedBoardId =
           resolveBoardProfileId(nextProject.board_profile) ?? nextProject.board_profile;
         const nextBoardProfile = getBoardProfile(resolvedBoardId);
@@ -280,11 +291,19 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         setDevice(nextDevice);
         setProject(nextProject);
         setBoardProfile(nextBoardProfile);
+        setWifiCredentials(nextWifiCredentials);
+        setWifiCredentialsError(null);
+        setWifiCredentialsLoading(false);
         setPins(nextPins);
         setSavedPins(nextPins);
+        setSelectedWifiCredentialId(nextProject.wifi_credential_id ?? null);
+        setSavedWifiCredentialId(nextProject.wifi_credential_id ?? null);
       } catch (nextError) {
         if (!cancelled) {
-          setError(getErrorMessage(nextError));
+          setWifiCredentialsLoading(false);
+          const message = getErrorMessage(nextError);
+          setWifiCredentialsError(message);
+          setError(message);
         }
       } finally {
         if (!cancelled) {
@@ -519,11 +538,20 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   }
 
   const validation = validatePinMappings(boardProfile, pins);
-  const hasChanges = serializePins(pins) !== serializePins(savedPins);
+  const hasWifiCredentialSelection = selectedWifiCredentialId !== null;
+  if (!hasWifiCredentialSelection) {
+    validation.errors.push("Select a saved Wi-Fi credential before rebuilding this board.");
+  }
+  const selectedWifiCredential =
+    wifiCredentials.find((credential) => credential.id === selectedWifiCredentialId) ?? null;
+  const hasChanges =
+    serializePins(pins) !== serializePins(savedPins) ||
+    selectedWifiCredentialId !== savedWifiCredentialId;
   const pinPreview = {
     board_profile: project.board_profile,
     device_id: device.device_id,
     device_name: device.name,
+    wifi_credential_id: selectedWifiCredentialId,
     pins: normalizePins(pins),
   };
   const projectSyncState = isSaving ? "saving" : hasChanges ? "idle" : "saved";
@@ -575,6 +603,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       const result = await saveDeviceConfig(device.device_id, {
         pins,
         password: confirmPassword,
+        wifi_credential_id: selectedWifiCredentialId,
       });
 
       if (result.status !== "success" || !result.job_id) {
@@ -583,6 +612,15 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
 
       const nextSavedPins = normalizePins(pins);
       setSavedPins(nextSavedPins);
+      setSavedWifiCredentialId(selectedWifiCredentialId);
+      setProject((current) =>
+        current
+          ? {
+              ...current,
+              wifi_credential_id: selectedWifiCredentialId,
+            }
+          : current,
+      );
       setDevice((current) =>
         current
           ? {
@@ -741,6 +779,52 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                 {statusMessage}
               </section>
             )}
+
+            <section className="rounded-2xl border border-slate-200 bg-white px-5 py-4 dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                <div className="space-y-2">
+                  <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                    Wi-Fi Credential
+                  </h2>
+                  <p className="text-sm leading-6 text-slate-600 dark:text-slate-300">
+                    Choose which saved Wi-Fi network the rebuilt firmware should use when this board boots again.
+                  </p>
+                  {selectedWifiCredential ? (
+                    <p className="text-sm font-medium text-slate-900 dark:text-white">
+                      Current selection: {selectedWifiCredential.ssid}
+                    </p>
+                  ) : null}
+                </div>
+
+                <div className="w-full max-w-md">
+                  <select
+                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                    disabled={wifiCredentialsLoading || isSaving || wifiCredentials.length === 0}
+                    value={selectedWifiCredentialId ?? ""}
+                    onChange={(event) =>
+                      setSelectedWifiCredentialId(event.target.value ? Number(event.target.value) : null)
+                    }
+                  >
+                    <option value="">
+                      {wifiCredentialsLoading
+                        ? "Loading saved Wi-Fi credentials..."
+                        : wifiCredentials.length === 0
+                          ? "No saved Wi-Fi credentials available"
+                          : "Select a saved Wi-Fi credential"}
+                    </option>
+                    {wifiCredentials.map((credential) => (
+                      <option key={credential.id} value={credential.id}>
+                        {credential.ssid}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {wifiCredentialsError ? (
+                <p className="mt-3 text-sm text-rose-600 dark:text-rose-300">{wifiCredentialsError}</p>
+              ) : null}
+            </section>
 
             {validation.errors.length > 0 && (
               <section className="rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 dark:border-rose-500/20 dark:bg-rose-500/10">
