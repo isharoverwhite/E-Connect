@@ -1059,7 +1059,7 @@ async def create_user(user_data: UserCreate, db: Session = Depends(get_db), admi
         username=user_data.username,
         authentication=hashed_password,
         account_type=user_data.account_type,
-        approval_status=SqlUserApprovalStatus.pending,
+        approval_status=SqlUserApprovalStatus.approved,
         ui_layout=user_data.ui_layout or {}
     )
     db.add(new_user)
@@ -1111,27 +1111,38 @@ async def approve_user(user_id: int, db: Session = Depends(get_db), admin: User 
 @router.delete("/users/{user_id}", response_model=dict)
 async def delete_user(user_id: int, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
     if user_id == admin.user_id:
-        raise HTTPException(status_code=400, detail="You cannot revoke your own account")
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
 
     membership = _get_managed_membership_or_404(db, admin, user_id)
     user = membership.user
 
-    user.approval_status = SqlUserApprovalStatus.revoked
+    if user.user_id == 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the initial server account")
+
+    db.delete(user)
     db.commit()
 
-    return {"status": "success", "message": "User access revoked"}
+    return {"status": "success", "message": "User deleted"}
 
 
 @router.post("/users/{user_id}/promote", response_model=ManagedUserResponse)
-async def promote_user(user_id: int, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
+async def toggle_admin_user(user_id: int, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
     if user_id == admin.user_id:
-        raise HTTPException(status_code=400, detail="You cannot promote your own account")
+        raise HTTPException(status_code=400, detail="You cannot modify your own role")
 
     from app.models import AccountType
     membership = _get_managed_membership_or_404(db, admin, user_id)
 
-    # Needs to be explicitly upgraded in User table
-    membership.user.account_type = AccountType.admin
+    if membership.user.user_id == 1:
+        raise HTTPException(status_code=400, detail="Cannot modify the role of the initial server account")
+
+    if membership.user.account_type == AccountType.admin:
+        membership.user.account_type = AccountType.parent
+        membership.role = HouseholdRole.member
+    else:
+        membership.user.account_type = AccountType.admin
+        membership.role = HouseholdRole.admin
+
     db.commit()
     db.refresh(membership.user)
     return _serialize_managed_user(membership.user, membership)

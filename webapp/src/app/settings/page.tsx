@@ -296,11 +296,7 @@ export default function SettingsPage() {
 
             if (action === "revoke") {
                 setManagedUsers((currentUsers) =>
-                    currentUsers.map((entry) => 
-                        entry.user_id === targetUser.user_id 
-                            ? { ...entry, approval_status: "revoked" } 
-                            : entry
-                    ),
+                    currentUsers.filter((entry) => entry.user_id !== targetUser.user_id)
                 );
             } else {
                 setManagedUsers((currentUsers) =>
@@ -312,10 +308,11 @@ export default function SettingsPage() {
                 setNotice(`Approved ${updatedUser.username}.`);
             } else if (action === "promote") {
                 setNotice("");
-                showToast(`Promoted ${updatedUser.username} to Admin.`, "success");
+                const newRole = updatedUser.account_type === "admin" ? "Admin" : "User";
+                showToast(`Changed ${updatedUser.username} role to ${newRole}.`, "success");
             } else {
                 setNotice("");
-                showToast(`Revoked ${targetUser.username}. Their account has been blocked.`, "success");
+                showToast(`Deleted ${targetUser.username}. Their account has been removed.`, "success");
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : `Failed to ${action} user`;
@@ -816,24 +813,24 @@ export default function SettingsPage() {
                                                                                     {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">check_circle</span>}
                                                                                 </button>
                                                                             )}
-                                                                            {managedUser.account_type !== "admin" && managedUser.approval_status === "approved" ? (
+                                                                            {managedUser.approval_status === "approved" && managedUser.user_id !== 1 && managedUser.user_id !== user?.user_id ? (
                                                                                 <button
                                                                                     onClick={() => setPromoteModalTarget(managedUser)}
-                                                                                    disabled={actionUserId === managedUser.user_id || managedUser.user_id === user?.user_id}
+                                                                                    disabled={actionUserId === managedUser.user_id}
                                                                                     className="text-slate-400 hover:text-blue-500 transition-colors disabled:opacity-30 p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-500/10 inline-flex items-center justify-center"
-                                                                                    title="Promote to admin"
+                                                                                    title={managedUser.account_type === "admin" ? "Demote to user" : "Promote to admin"}
                                                                                 >
-                                                                                    {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">arrow_upward</span>}
+                                                                                    {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">{managedUser.account_type === "admin" ? "arrow_downward" : "arrow_upward"}</span>}
                                                                                 </button>
                                                                             ) : null}
-                                                                            {managedUser.approval_status !== "revoked" && (
+                                                                            {managedUser.user_id !== 1 && (
                                                                                 <button
                                                                                     onClick={() => setRevokeModalTarget(managedUser)}
                                                                                     disabled={actionUserId === managedUser.user_id || managedUser.user_id === user?.user_id}
                                                                                     className="text-slate-400 hover:text-rose-500 transition-colors disabled:opacity-30 p-2 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-500/10 inline-flex items-center justify-center"
-                                                                                    title="Revoke access"
+                                                                                    title="Delete account"
                                                                                 >
-                                                                                    {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">block</span>}
+                                                                                    {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">delete</span>}
                                                                                 </button>
                                                                             )}
                                                                         </div>
@@ -1107,8 +1104,8 @@ export default function SettingsPage() {
                                 <div className="w-14 h-14 flex items-center justify-center rounded-full bg-red-500/20 text-red-500 mb-4">
                                     <svg fill="none" height="28" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="28" xmlns="http://www.w3.org/2000/svg"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
                                 </div>
-                                <h3 className="text-lg font-semibold">Revoke Access?</h3>
-                                <p className="text-sm text-slate-400 mt-2 mb-6">Are you sure you want to revoke {revokeModalTarget.username}? Their access will be blocked immediately.</p>
+                                <h3 className="text-lg font-semibold">Delete User?</h3>
+                                <p className="text-sm text-slate-400 mt-2 mb-6">Are you sure you want to delete {revokeModalTarget.username}? This action cannot be undone.</p>
                                 <div className="flex w-full gap-3">
                                     <button 
                                         onClick={() => {
@@ -1117,7 +1114,7 @@ export default function SettingsPage() {
                                         }}
                                         className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg transition-all"
                                     >
-                                        Revoke Access
+                                        Delete User
                                     </button>
                                     <button 
                                         onClick={() => setRevokeModalTarget(null)}
@@ -1142,8 +1139,8 @@ export default function SettingsPage() {
                                     <svg fill="none" height="24" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M20 6 9 17l-5-5"></path></svg>
                                 </div>
                                 <div className="ml-4 flex-1">
-                                    <h3 className="text-lg font-semibold text-white">Promote to Admin?</h3>
-                                    <p className="text-sm text-slate-400 mt-1 mb-6">Are you sure you want to promote {promoteModalTarget.username} to an admin? They will have full system access.</p>
+                                    <h3 className="text-lg font-semibold text-white">{promoteModalTarget.account_type === "admin" ? "Demote to User?" : "Promote to Admin?"}</h3>
+                                    <p className="text-sm text-slate-400 mt-1 mb-6">Are you sure you want to change {promoteModalTarget.username}&apos;s role to {promoteModalTarget.account_type === "admin" ? "user" : "an admin"}?</p>
                                     <div className="flex gap-3">
                                         <button 
                                             onClick={() => {
@@ -1152,7 +1149,7 @@ export default function SettingsPage() {
                                             }}
                                             className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-all"
                                         >
-                                            Promote
+                                            Confirm
                                         </button>
                                         <button 
                                             onClick={() => setPromoteModalTarget(null)}
