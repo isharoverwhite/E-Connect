@@ -51,6 +51,8 @@
   - PWM pins must accept either ascending or descending `min/max` ranges.
   - A descending range such as `255 -> 0` means the board should treat logical `value=0` as the high-duty endpoint and logical `value=1` as the low-duty endpoint for active-low outputs.
   - Dashboard slider controls must still render with a valid numeric range even when the stored PWM endpoints are descending.
+  - The SVG board visualizer must support interactive pan and zoom (scroll/pinch) so that dense pin maps are legible.
+  - The workspace layout must scale responsively, switching from a top-to-bottom layout on mobile to a side-by-side flex representation on desktop widths.
 - **Step 4 / Flash**:
   - The flash step must surface the current server/MQTT host that the next server build will embed into firmware.
   - The flash step must only expose website-managed firmware sources. `Upload Custom Build` is not an allowed source in the DIY wizard.
@@ -122,6 +124,8 @@
 - **Discovery screen**:
   - Discovery reflects only pairing requests that successfully reached the current server; it is not proof of generic LAN or mDNS visibility.
   - If the server moves to a new IP/hostname, boards flashed with older artifacts remain invisible here until rebuilt and reflashed against the new server/MQTT host.
+  - A board flashed from a website-managed server build may skip manual approval only when its secure onboarding identity still matches the system-issued firmware metadata: the `UUID` must match the project-derived device id and the reported `name` must match the firmware-stamped device name.
+  - On the first successful secure onboarding handshake, the backend must bind the reported `MAC address` to that trusted device record. Later secure handshakes must keep `UUID`, stored `name`, and stored `MAC address` aligned; otherwise the request must fail closed instead of silently overwriting the trusted record or auto-provisioning dashboard widgets.
   - The discovery list must only show pending devices whose latest state is an active pairing request.
   - A device that already has an active pending pairing request must stay in `awaiting approval`; heartbeat/state traffic must not push it into a fresh `re-pair required` loop.
   - If an admin unpairs a board by mistake, the board remains hidden until it handshakes again, then re-enters discovery as a fresh pairing candidate.

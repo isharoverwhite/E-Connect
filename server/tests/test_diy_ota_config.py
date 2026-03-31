@@ -868,6 +868,50 @@ def test_mqtt_register_success_ack_can_exceed_legacy_512_byte_parser_budget():
     assert len(serialized_ack) > 512
 
 
+def test_mqtt_register_rejects_trusted_mac_mismatch_without_overwriting_identity():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    _user, _room, project, device = create_test_data(db)
+
+    mgr = MQTTClientManager()
+    mgr.publish_json = MagicMock(return_value=True)
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps(
+        {
+            "device_id": device.device_id,
+            "project_id": project.id,
+            "secret_key": "test-secret",
+            "mac_address": "AA:BB:CC:99:88:77",
+            "name": device.name,
+            "mode": "no-code",
+            "firmware_version": "build-lockmac01",
+            "pins": [],
+        }
+    )
+
+    with patch("app.mqtt.SessionLocal", return_value=db_mock), patch(
+        "app.services.device_registration.verify_project_secret",
+        return_value=True,
+    ):
+        ack_payload = mgr.process_registration_message(device.device_id, payload)
+
+    mgr.publish_json.assert_called_once()
+    topic, published_payload = mgr.publish_json.call_args.args[:2]
+    assert topic == mgr.registration_ack_topic(device.device_id)
+    assert ack_payload == published_payload
+    assert ack_payload["status"] == "error"
+    assert ack_payload["error"] == "unauthorized_device"
+    assert "Trusted MAC address mismatch" in ack_payload["message"]
+
+    db.refresh(device)
+    assert device.mac_address == "00:11:22:33:EE:FF"
+    assert device.name == "OTA Device"
+
+
 def test_mqtt_reconcile_ota_success():
     from app.mqtt import MQTTClientManager
     import json
