@@ -1859,8 +1859,12 @@ export default function DIYBuilderPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 transition-colors dark:bg-[#0b1120] dark:text-slate-100">
-      <header className="sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80">
+    <div className={
+        currentStep === 3
+          ? "h-screen flex flex-col overflow-hidden bg-slate-50 font-sans text-slate-900 transition-colors dark:bg-[#0b1120] dark:text-slate-100"
+          : "min-h-screen flex flex-col bg-slate-50 font-sans text-slate-900 transition-colors dark:bg-[#0b1120] dark:text-slate-100"
+    }>
+      <header className={`sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80 ${currentStep === 3 ? 'flex-none' : ''}`}>
         <div className="mx-auto flex min-h-16 max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-4">
             <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
@@ -1945,7 +1949,11 @@ export default function DIYBuilderPage() {
         </div>
       </header>
 
-      <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
+      <main className={
+        currentStep === 3
+          ? "w-full flex-1 min-h-0 overflow-hidden flex flex-col"
+          : "mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6 lg:px-8 lg:py-12"
+      }>
         {currentStep === 1 && (
           <Step1Board
             projectName={projectName}
@@ -2010,10 +2018,8 @@ export default function DIYBuilderPage() {
             selectedPinId={selectedPinId}
             setSelectedPinId={setSelectedPinId}
             projectName={projectName}
-            draftConfig={draftConfig}
             configBusy={configBusy}
             projectSyncState={projectSyncState}
-            projectSyncMessage={projectSyncMessage}
             onExportConfig={generateConfig}
             onBack={() => setCurrentStep(2)}
             onNext={() => setCurrentStep(4)}
@@ -2113,9 +2119,11 @@ function buildFlashManifest({
     return {
       name: `${projectName || board.name} (${board.name})`,
       version: "server-build",
+      new_install_improv_wait_time: 0,
       builds: [
         {
           chipFamily: board.family,
+          improv: false,
           parts: serverParts,
         },
       ],
@@ -2130,9 +2138,11 @@ function buildFlashManifest({
     return {
       name: `${projectName || board.name} (${board.name})`,
       version: "local-demo",
+      new_install_improv_wait_time: 0,
       builds: [
         {
           chipFamily: board.family,
+          improv: false,
           parts: board.demoFirmware.parts.map((part) => ({
             path: part.path,
             offset: part.offset,

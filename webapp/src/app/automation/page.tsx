@@ -101,7 +101,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 p-12 text-center">
       <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10">
-        <span className="material-symbols-outlined text-4xl text-primary">smart_toy</span>
+        <span className="material-icons-round text-4xl text-primary">smart_toy</span>
       </div>
       <div>
         <h2 className="text-2xl font-bold text-slate-900 dark:text-white">No automations yet</h2>
@@ -112,9 +112,9 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
       <button
         type="button"
         onClick={onCreate}
-        className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition hover:bg-primary/90"
+        className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:bg-blue-600 hover:shadow-lg"
       >
-        <span className="material-symbols-outlined text-base">add</span>
+        <span className="material-icons-round text-sm">add</span>
         Create Automation
       </button>
     </div>
@@ -124,7 +124,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
 function ErrorBanner({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-500/30 dark:bg-rose-500/10">
-      <span className="material-symbols-outlined mt-0.5 text-rose-500 dark:text-rose-400">error</span>
+      <span className="material-icons-round mt-0.5 text-rose-500 dark:text-rose-400">error</span>
       <div className="flex-1">
         <p className="text-sm font-semibold text-rose-700 dark:text-rose-300">{message}</p>
       </div>
@@ -151,8 +151,8 @@ function AutomationListPanel({
   onCreate: () => void;
 }) {
   return (
-    <aside className="flex w-full shrink-0 flex-col border-b border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900/50 lg:w-80 lg:border-b-0 lg:border-r">
-      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 dark:border-slate-800">
+    <aside className="flex w-full shrink-0 flex-col border-b border-slate-200 bg-surface-light dark:border-slate-700 dark:bg-surface-dark lg:w-80 lg:border-b-0 lg:border-r">
+      <div className="flex items-center justify-between border-b border-slate-200 px-4 py-4 dark:border-slate-700">
         <div>
           <h2 className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
             Automations
@@ -165,9 +165,9 @@ function AutomationListPanel({
           type="button"
           onClick={onCreate}
           title="New automation"
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-400 transition hover:border-primary/50 hover:bg-primary/5 hover:text-primary dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-background-light text-slate-400 transition hover:border-primary/50 hover:bg-primary/5 hover:text-primary dark:border-slate-700 dark:bg-background-dark dark:text-slate-500"
         >
-          <span className="material-symbols-outlined text-base">add</span>
+          <span className="material-icons-round text-base">add</span>
         </button>
       </div>
 
@@ -181,14 +181,14 @@ function AutomationListPanel({
               onClick={() => onSelect(auto.id)}
               className={`group rounded-xl border p-4 text-left transition-all ${
                 isSelected
-                  ? "border-primary/60 bg-blue-50/70 shadow-sm dark:border-primary/50 dark:bg-slate-800"
-                  : "border-slate-200 bg-white hover:border-primary/40 dark:border-slate-800 dark:bg-slate-900/50"
+                  ? "border-primary/60 bg-blue-50/70 shadow-sm dark:border-primary/50 dark:bg-background-dark"
+                  : "border-slate-200 bg-surface-light hover:border-primary/40 dark:border-slate-700 dark:bg-surface-dark"
               }`}
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10">
-                    <span className="material-symbols-outlined text-sm text-primary">code</span>
+                    <span className="material-icons-round text-sm text-primary">code</span>
                   </div>
                   <p className="truncate text-sm font-semibold text-slate-900 dark:text-white">
                     {auto.name}
@@ -255,16 +255,16 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-      <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+      <div className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-surface-light shadow-2xl dark:border-slate-700 dark:bg-surface-dark">
         {/* Modal header */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-800">
+        <div className="flex items-center justify-between border-b border-slate-200 px-6 py-4 dark:border-slate-700">
           <h2 className="text-lg font-bold text-slate-900 dark:text-white">New Automation</h2>
           <button
             type="button"
             onClick={onClose}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           >
-            <span className="material-symbols-outlined text-base">close</span>
+            <span className="material-icons-round text-base">close</span>
           </button>
         </div>
 
@@ -286,7 +286,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Soil Moisture Checker"
-              className="w-full rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              className="w-full rounded-xl border-2 border-slate-200 bg-background-light px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-700 dark:bg-background-dark dark:text-white"
             />
           </label>
 
@@ -299,7 +299,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
               onChange={(e) => setScript(e.target.value)}
               rows={14}
               spellCheck={false}
-              className="w-full rounded-xl border-2 border-slate-200 bg-slate-900 px-4 py-3 font-mono text-xs text-emerald-300 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-700"
+              className="w-full rounded-xl border-2 border-slate-200 bg-background-dark px-4 py-3 font-mono text-xs text-emerald-300 outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-700"
             />
           </label>
         </div>
@@ -327,7 +327,7 @@ function CreateModal({ onClose, onCreated }: CreateModalProps) {
               </>
             ) : (
               <>
-                <span className="material-symbols-outlined text-base">add</span>
+                <span className="material-icons-round text-base">add</span>
                 Create
               </>
             )}
@@ -410,31 +410,31 @@ export default function AutomationPage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-200">
+    <div className="flex h-screen w-full overflow-hidden bg-background-light font-sans text-slate-800 transition-colors duration-300 selection:bg-primary selection:text-white dark:bg-background-dark dark:text-slate-200">
       <Sidebar />
-      <main className="flex-1 flex flex-col min-w-0">
+      <main className="relative flex min-w-0 flex-1 flex-col">
         {/* Header */}
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95">
-        <div className="flex h-14 items-center justify-between gap-4 px-4 sm:px-6">
-          <div className="flex items-center gap-3">
-            <span className="material-symbols-outlined text-2xl text-primary">smart_toy</span>
-            <div>
-              <h1 className="text-base font-bold text-slate-900 dark:text-white">Automation</h1>
-              <p className="text-[11px] text-slate-400 dark:text-slate-500 uppercase tracking-widest">
-                Server-side scripts
-              </p>
+        <header className="z-30 flex min-h-16 flex-wrap items-start justify-between gap-x-4 gap-y-3 border-b border-slate-200 bg-surface-light px-6 py-4 shadow-sm dark:border-slate-700 dark:bg-surface-dark lg:items-center">
+            <div className="min-w-0 flex-1">
+                <h1 className="text-lg font-semibold text-slate-800 dark:text-white">
+                    Automation
+                </h1>
+                <p className="max-w-2xl text-xs text-slate-500 dark:text-slate-400">
+                    Server-side scripts and execution logs
+                </p>
             </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setShowCreateModal(true)}
-            className="inline-flex items-center gap-2 rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white shadow-lg shadow-primary/20 transition hover:bg-primary/90"
-          >
-            <span className="material-symbols-outlined text-base">add</span>
-            New Script
-          </button>
-        </div>
-      </header>
+
+            <div className="flex w-full flex-wrap items-center justify-start gap-3 sm:w-auto sm:justify-end">
+                <button
+                    type="button"
+                    onClick={() => setShowCreateModal(true)}
+                    className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white shadow-md transition-all hover:bg-blue-600 hover:shadow-lg"
+                >
+                    <span className="material-icons-round text-sm">add</span>
+                    New Script
+                </button>
+            </div>
+        </header>
 
       {/* Loading state */}
       {pageState === "loading" && (
@@ -501,7 +501,7 @@ export default function AutomationPage() {
                       </>
                     ) : (
                       <>
-                        <span className="material-symbols-outlined text-base">play_arrow</span>
+                        <span className="material-icons-round text-base">play_arrow</span>
                         Run Now
                       </>
                     )}
@@ -594,7 +594,7 @@ export default function AutomationPage() {
           </section>
 
           {/* Right: summary panel */}
-          <aside className="w-full shrink-0 bg-white p-6 dark:bg-slate-900/50 lg:w-80">
+          <aside className="w-full shrink-0 bg-surface-light p-6 dark:bg-surface-dark lg:w-80 overflow-y-auto">
             {selectedAutomation ? (
               <div className="flex flex-col gap-5">
                 <div>

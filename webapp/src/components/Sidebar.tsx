@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useAuth } from '@/components/AuthProvider';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { ThemeToggle } from '@/components/ThemeToggle';
 
 export default function Sidebar() {
     const { user, logout } = useAuth();
@@ -60,7 +61,7 @@ export default function Sidebar() {
                 <nav className={`space-y-1 ${isCollapsed ? 'py-4 px-0' : 'p-4'}`}>
                     {navItems.map((item) => (
                         <Link key={item.href} href={item.href} className={getLinkClass(item.href)} title={isCollapsed ? item.label : undefined}>
-                            <span className="material-icons-round flex-shrink-0">{item.icon}</span>
+                            <span className="material-icons-round flex-shrink-0 text-[24px]">{item.icon}</span>
                             {!isCollapsed && <span className="ml-3 transition-opacity duration-300 whitespace-nowrap">{item.label}</span>}
                         </Link>
                     ))}
@@ -69,9 +70,12 @@ export default function Sidebar() {
 
             <div className={`border-t border-slate-200 ${isCollapsed ? 'py-4 px-0' : 'p-4'} dark:border-slate-700 space-y-2`}>
                 <Link href="/settings" className={getLinkClass('/settings')} title={isCollapsed ? "Settings" : undefined}>
-                    <span className="material-icons-round flex-shrink-0">settings</span>
+                    <span className="material-icons-round flex-shrink-0 text-[24px]">settings</span>
                     {!isCollapsed && <span className="ml-3 transition-opacity duration-300 whitespace-nowrap">Settings</span>}
                 </Link>
+                <div className={isCollapsed ? '' : 'w-full'}>
+                    <ThemeToggle isCollapsed={isCollapsed} />
+                </div>
 
                 <div className={`group flex ${isCollapsed ? 'flex-col gap-3 justify-center items-center mt-2' : 'items-center justify-between'} px-4 py-3`}>
                     <div className={`flex items-center min-w-0 ${isCollapsed ? 'justify-center pr-0' : 'pr-2'}`}>
