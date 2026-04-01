@@ -24,6 +24,11 @@
   - Only `admin` users may view those provisioning targets in Settings; non-admin users must not see the card and must not be allowed to query the backing endpoint.
   - The admin-visible panel must also surface the current `MQTT port` and `API base URL`, plus a clear loading or error state if the runtime network target cannot be resolved.
   - If backend startup audit finds DIY projects or linked boards stamped with older server/MQTT targets, the same panel must show a warning that manual reflash is required before those boards can pair against the current runtime target.
+  - The admin-visible general panel must also expose a server timezone control backed by a bundled IANA timezone list derived from the Wikipedia tz database table.
+  - That timezone control must be a selectable list in the UI, not a free-text input field.
+  - Saving a timezone in Settings must immediately override the current server runtime timezone and show the resulting current timezone plus a current server-time preview.
+  - The Settings UI must not show the raw `.env` / `TZ` fallback timezone as a separate field; if the runtime currently resolves from deployment config, that value is shown only as the current timezone.
+  - Clearing the saved override happens by saving an empty timezone field, and the panel must describe the non-overridden state as the current runtime timezone rather than exposing a dedicated `Use Env` action.
 - **`users`**: Admin user management panel to provision and approve/revoke accounts.
   - The create-user form must show inline client-side validation before submit for missing `username`, `full name`, and `password`.
   - The create-user form must require a minimum username length of `3` characters and a minimum password length of `8` characters before it sends the request.
@@ -50,13 +55,24 @@
 - The automation page must keep the shared application shell and visual language already used by `/settings`, `/devices`, and other admin surfaces.
 - Creating or editing an automation must happen in a visual graph builder with draggable blocks and typed input/output ports, similar to a Blender-style node editor.
 - The automation canvas must support pan/zoom so larger flows remain readable.
+- The automation canvas must expose a right-click context menu: right-clicking empty canvas space adds blocks at the pointer, and right-clicking a block exposes block-level actions such as delete.
 - The main node families for R1 are:
   - `Trigger`: device input/state update, sensor telemetry update, or manual test event
   - `Condition`: boolean state match, numeric threshold/range check, and logical combination when multiple conditions are needed
   - `Action`: turn a target output on/off or set a numeric output value on another circuit/device
 - The UI must let the user bind real source devices/inputs and target devices/outputs directly from the current inventory. It must not expose a free-form script editor or recurring schedule form as the primary authoring model.
+- The left side of `/automation` must behave like a rule library, not just a flat list: it needs search plus quick filtering for enabled vs paused rules, and each row must expose a short workflow summary/status so larger automation collections stay scannable.
+- The main workspace must keep the advanced graph canvas, but it also has to surface a simple `When / And only if / Then do` summary rail for the currently selected rule so the user never loses the high-level recipe while editing nodes.
+- The canvas toolbar must keep zoom, fit/reset, run, and save actions visible in the workspace itself instead of burying navigation inside the inspector.
+- The graph editor must allow selecting any two compatible ports in either click order to create a logical connection, and it must support deleting the currently selected block with the `Backspace` shortcut without stealing keystrokes from active form fields.
 - Invalid graphs such as dangling edges, incompatible port connections, missing targets, or cycles must surface inline validation before save/enable.
 - Each automation card/detail view must show whether the automation is enabled, a summary of the source trigger path, the target action summary, and the last execution result.
+- The automation workspace must let the user rename the currently selected automation without leaving `/automation`; the rename action must preserve the current graph state and show an inline error if the update fails.
+- The automation workspace must let the user delete the currently selected saved automation from `/automation` with an explicit destructive confirmation, and deleting the active rule must immediately reselect another rule or fall back to the empty state.
+- Creating a new automation must start from a local draft rule in the workspace; the page must not POST a placeholder graph to the backend until the graph is configured enough to pass validation and the user explicitly saves.
+- When the saved automation list is empty, clicking `Add Automation` or `New` must switch the page into that local draft workspace immediately; a follow-up refetch that still returns zero rows must not collapse the UI back to the empty-state screen while the draft is active.
+- The inspector must open with rule or node context immediately visible: last-run/runtime facts at the top, linear-rule setup when the graph matches the simple recipe, and node-level editing when the user selects an individual block.
+- Saved graphs that reload without persisted canvas coordinates must auto-arrange into a readable layout and auto-fit into the visible workspace so every connected block remains observable without manual panning first.
 - The page must keep explicit `loading`, `empty`, `success`, `validation error`, and `server error` states.
 - If no compatible devices or IO points exist yet, the page must show a blocking empty state that directs the user to onboard devices first.
 - Any manual test control must execute against the saved graph model and surface a real execution log rather than a fake preview-only result.
@@ -109,6 +125,16 @@
   - After the OTA job reaches `flashed`, the dialog must wait for the board to report `online` again on the expected firmware version for that exact build before showing the final success state, then return the admin to the dashboard automatically.
 
 ## Dashboard And Discovery
+- **Logs & Stats (`/logs`)**:
+  - The page must replace the placeholder surface with a real operational console using the shared application shell.
+  - The top block must show the current server condition at a glance, including overall health, database reachability, MQTT connectivity, uptime, and the live host/IP currently advertised to the stack.
+  - The top block must also surface the active alert count for the current 30-day retention window plus the timestamp of the latest alert-worthy event.
+  - The activity list must render as a searchable table grouped by calendar day so an admin can scan incidents chronologically without losing precise timestamps.
+  - Each row must expose at minimum: time, severity, category, event summary, and any related firmware version / device identity when available.
+  - The page must include explicit filters for `from date`, `to date`, severity, category, and free-text search.
+  - Default behavior should show the newest entries first while keeping the current day visible even when older days also exist.
+  - The page must provide explicit `loading`, `empty`, and `error` states instead of a blank table.
+  - Non-admin users must not see sensitive server diagnostics; if they open `/logs`, the page should fail closed with a clear access message instead of leaking instance internals.
 - **Public discovery page (`find_website`)**:
   - The page is scan-only: no helper download, session code, or CLI instructions appear in the UI.
   - The public host uses a white/light surface with blue accents so the discovery page matches the WebUI theme instead of the older dark/green shell.
@@ -144,6 +170,9 @@
   - The pairing notification card only appears when the server has at least one active board-initiated pairing request.
   - A device that was merely unpaired from the dashboard must not create a pairing notification by itself.
   - Notification badge counts must include both offline alerts and active pairing requests.
+- **Dashboard summary routing**:
+  - The `System Alerts` summary card on `/` must route directly into `/logs` and pre-focus alert-worthy entries rather than behaving like a dead KPI tile.
+  - The notification drawer footer `View Activity Log` must continue routing into `/logs` as the full operational history view.
 - **Dashboard runtime controls**:
   - When a user toggles an on/off control, the switch must stay in an inline loading state until the backend/device reports the requested target state.
   - The switch must not visually flip to the requested state before the confirmed `device_state` / command result arrives.

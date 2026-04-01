@@ -2167,7 +2167,7 @@ export default function DIYBuilderPage() {
             onRefreshSerialStatus={() => refreshSerialStatus()}
             onLogPanelRef={(el) => { logPanelRef.current = el; }}
             onBack={() => setCurrentStep(4)}
-            onProceedToScan={() => router.push("/devices/scan")}
+            onProceedToScan={() => router.push("/devices/discovery")}
             flasherClosed={flasherClosed}
           />
         )}

@@ -5,6 +5,7 @@ import AuthProvider from "@/components/AuthProvider";
 import { ToastProvider } from "@/components/ToastContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import MqttWarningBanner from "@/components/MqttWarningBanner";
+import WifiWarningBanner from "@/components/WifiWarningBanner";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const fira_code = Fira_Code({ subsets: ["latin"], variable: "--font-fira-code" });
@@ -32,6 +33,7 @@ export default function RootLayout({
           <AuthProvider>
             <ToastProvider>
               <MqttWarningBanner />
+              <WifiWarningBanner />
               {children}
             </ToastProvider>
           </AuthProvider>

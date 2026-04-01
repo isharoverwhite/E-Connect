@@ -14,7 +14,13 @@ import {
     deleteManagedUser,
     promoteManagedUser,
 } from "@/lib/auth";
-import { RuntimeNetworkInfo, fetchRuntimeNetworkInfo } from "@/lib/api";
+import {
+    GeneralSettingsResponse,
+    RuntimeNetworkInfo,
+    fetchGeneralSettings,
+    fetchRuntimeNetworkInfo,
+    updateGeneralSettings,
+} from "@/lib/api";
 import {
     RoomRecord,
     createRoom,
@@ -33,6 +39,34 @@ function formatAccountTypeLabel(accountType?: string | null) {
     return accountType === "admin" ? "admin" : "user";
 }
 
+function formatTimezoneSourceLabel(settings: GeneralSettingsResponse | null): string {
+    if (!settings) {
+        return "Unknown";
+    }
+
+    if (settings.timezone_source === "setting") {
+        return "Saved override";
+    }
+    return "Current runtime timezone";
+}
+
+function formatServerTimePreview(value?: string | null, timezone?: string | null): string {
+    if (!value || !timezone) {
+        return "Unknown";
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        timeZone: timezone,
+        timeZoneName: "short",
+    }).format(new Date(value));
+}
+
 type SettingsPanel = "general" | "users" | "rooms" | "wifi" | "configs";
 type AccountType = ManagedUser["account_type"];
 
@@ -49,6 +83,11 @@ export default function SettingsPage() {
     const [rooms, setRooms] = useState<RoomRecord[]>([]);
     const [roomsLoading, setRoomsLoading] = useState(true);
     const [roomsError, setRoomsError] = useState("");
+    const [generalSettings, setGeneralSettings] = useState<GeneralSettingsResponse | null>(null);
+    const [generalSettingsLoading, setGeneralSettingsLoading] = useState(true);
+    const [generalSettingsError, setGeneralSettingsError] = useState("");
+    const [timezoneDraft, setTimezoneDraft] = useState("");
+    const [timezoneSaving, setTimezoneSaving] = useState(false);
     const [runtimeNetwork, setRuntimeNetwork] = useState<RuntimeNetworkInfo | null>(null);
     const [networkLoading, setNetworkLoading] = useState(true);
     const [networkError, setNetworkError] = useState("");
@@ -58,6 +97,13 @@ export default function SettingsPage() {
     const [editingRoomId, setEditingRoomId] = useState<number | null>(null);
     const [editingRoomName, setEditingRoomName] = useState("");
     const [roomSubmitting, setRoomSubmitting] = useState(false);
+    const [hoverToExpandSidebar, setHoverToExpandSidebar] = useState(() => {
+        if (typeof window !== "undefined") {
+            const stored = localStorage.getItem("hoverToExpandSidebar");
+            if (stored !== null) return stored === "true";
+        }
+        return true; // Default enabled
+    });
     const [roomActionId, setRoomActionId] = useState<number | null>(null);
     const [notice, setNotice] = useState("");
     const [submitError, setSubmitError] = useState("");
@@ -151,6 +197,39 @@ export default function SettingsPage() {
         }
     }
 
+    async function loadGeneralSettings() {
+        if (!isAdmin) {
+            setGeneralSettings(null);
+            setGeneralSettingsError("");
+            setGeneralSettingsLoading(false);
+            setTimezoneDraft("");
+            return;
+        }
+
+        const token = getToken();
+        if (!token) {
+            setGeneralSettings(null);
+            setGeneralSettingsError("Missing session token. Please sign in again.");
+            setGeneralSettingsLoading(false);
+            return;
+        }
+
+        setGeneralSettingsLoading(true);
+        setGeneralSettingsError("");
+
+        try {
+            const data = await fetchGeneralSettings(token);
+            setGeneralSettings(data);
+            setTimezoneDraft(data.configured_timezone ?? "");
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to load general settings";
+            setGeneralSettings(null);
+            setGeneralSettingsError(message);
+        } finally {
+            setGeneralSettingsLoading(false);
+        }
+    }
+
     async function loadRuntimeNetworkInfo() {
         if (!isAdmin) {
             setRuntimeNetwork(null);
@@ -191,12 +270,17 @@ export default function SettingsPage() {
         void loadRooms();
     });
 
+    const loadGeneralSettingsForEffect = useEffectEvent(() => {
+        void loadGeneralSettings();
+    });
+
     const loadRuntimeNetworkForEffect = useEffectEvent(() => {
         void loadRuntimeNetworkInfo();
     });
 
     useEffect(() => {
         if (isAdmin && activePanel === "general") {
+            loadGeneralSettingsForEffect();
             loadRuntimeNetworkForEffect();
         }
 
@@ -456,11 +540,59 @@ export default function SettingsPage() {
         }
     }
 
+    async function handleSaveTimezone(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+
+        if (!isAdmin) {
+            return;
+        }
+
+        const token = getToken();
+        if (!token) {
+            setGeneralSettingsError("Missing session token. Please sign in again.");
+            return;
+        }
+
+        const normalizedDraft = timezoneDraft.trim();
+        if (
+            normalizedDraft &&
+            generalSettings &&
+            !generalSettings.timezone_options.includes(normalizedDraft)
+        ) {
+            setGeneralSettingsError("Select a timezone from the supported Wikipedia-based IANA timezone list.");
+            return;
+        }
+
+        setTimezoneSaving(true);
+        setGeneralSettingsError("");
+
+        try {
+            const nextSettings = await updateGeneralSettings(
+                { timezone: normalizedDraft || null },
+                token,
+            );
+            setGeneralSettings(nextSettings);
+            setTimezoneDraft(nextSettings.configured_timezone ?? "");
+            showToast(
+                normalizedDraft
+                    ? `Server timezone updated to ${nextSettings.effective_timezone}.`
+                    : `Server timezone reset to ${nextSettings.effective_timezone}.`,
+                "success",
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to update server timezone";
+            setGeneralSettingsError(message);
+            showToast(message, "error");
+        } finally {
+            setTimezoneSaving(false);
+        }
+    }
+
     return (
-        <div className="flex min-h-screen w-full bg-background-light text-slate-800 dark:bg-background-dark dark:text-slate-200 overflow-hidden font-sans selection:bg-primary selection:text-white">
+        <div className="flex h-screen w-full bg-background-light text-slate-800 dark:bg-background-dark dark:text-slate-200 overflow-hidden font-sans selection:bg-primary selection:text-white">
             <Sidebar />
 
-            <main className="flex min-w-0 flex-1 flex-col">
+            <main className="flex min-w-0 min-h-0 flex-1 flex-col">
                 <header className="px-8 pt-8 pb-4">
                     <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">Settings</h2>
                     <p className="text-slate-500 dark:text-slate-400 mt-1">Admin tools, user lifecycle, and instance notes.</p>
@@ -563,6 +695,114 @@ export default function SettingsPage() {
                                         </div>
                                     </div>
                                 </section>
+
+                                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                        <div>
+                                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Navigation</p>
+                                            <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Expand Sidebar on Hover</h2>
+                                            <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
+                                                Automatically expand the sidebar when hovering over it while collapsed.
+                                            </p>
+                                        </div>
+                                        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                                            <div className="flex items-center justify-end h-full">
+                                                <label className="relative inline-flex items-center cursor-pointer cursor-allowed">
+                                                    <input
+                                                        type="checkbox"
+                                                        className="sr-only peer"
+                                                        checked={hoverToExpandSidebar}
+                                                        onChange={(e) => {
+                                                            const val = e.target.checked;
+                                                            setHoverToExpandSidebar(val);
+                                                            try { localStorage.setItem("hoverToExpandSidebar", String(val)); } catch {}
+                                                            // We could dispatch an event to let Sidebar know immediately, but a page reload is usually expected, or we can use a custom event.
+                                                            if (typeof window !== "undefined") {
+                                                                window.dispatchEvent(new Event("sidebarHoverSettingChanged"));
+                                                            }
+                                                        }}
+                                                    />
+                                                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-primary"></div>
+                                                </label>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
+
+                                {isAdmin ? (
+                                    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                            <div>
+                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Timezone</p>
+                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Server timezone</h2>
+                                                <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
+                                                    Save an optional timezone override for the server. This panel only shows the timezone currently active at runtime.
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {generalSettingsError ? (
+                                            <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+                                                {generalSettingsError}
+                                            </div>
+                                        ) : null}
+
+                                        {generalSettingsLoading ? (
+                                            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-400">
+                                                Loading server timezone settings...
+                                            </div>
+                                        ) : generalSettings ? (
+                                            <div className="mt-6 space-y-6">
+                                                <div className="grid gap-4 md:grid-cols-2">
+                                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
+                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Current Timezone</p>
+                                                        <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{generalSettings.effective_timezone}</p>
+                                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{formatTimezoneSourceLabel(generalSettings)}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
+                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Current Server Time</p>
+                                                        <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{formatServerTimePreview(generalSettings.current_server_time, generalSettings.effective_timezone)}</p>
+                                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Preview of the active runtime timezone.</p>
+                                                    </div>
+                                                </div>
+
+                                                <form className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900/80" onSubmit={handleSaveTimezone}>
+                                                    <div>
+                                                        <label htmlFor="server-timezone" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                                                            Timezone override
+                                                        </label>
+                                                        <select
+                                                            id="server-timezone"
+                                                            value={timezoneDraft}
+                                                            onChange={(event) => setTimezoneDraft(event.target.value)}
+                                                            className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                                                        >
+                                                            <option value="">Use current runtime timezone</option>
+                                                            {generalSettings.timezone_options.map((timezone) => (
+                                                                <option key={timezone} value={timezone}>
+                                                                    {timezone}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                                                            Choose from the bundled Wikipedia tz database zone list validated against the server runtime. Select the runtime option above and save to clear the saved override.
+                                                        </p>
+                                                    </div>
+
+                                                    <div className="flex flex-wrap gap-3">
+                                                        <button
+                                                            type="submit"
+                                                            disabled={timezoneSaving}
+                                                            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                                                        >
+                                                            {timezoneSaving ? "Saving..." : "Save Timezone"}
+                                                        </button>
+                                                    </div>
+                                                </form>
+                                            </div>
+                                        ) : null}
+                                    </section>
+                                ) : null}
 
                                 {isAdmin ? (
                                     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
