@@ -5,7 +5,7 @@ This file documents the baseline schema for E-Connect.
 ## Core Tables
 
 1. `users`: Stores user accounts and auth status (`approval_status`).
-2. `households`: Logical groupings of users and devices.
+2. `households`: Logical groupings of users and devices, including the optional admin-selected server timezone override (`timezone`).
 3. `household_memberships`: Join table linking users to households.
 4. `devices`: Managed devices under E-Connect (`provisioning_project_id`, `ip_address`).
 5. `pin_configurations`: GPIO mapping for devices.
@@ -15,6 +15,7 @@ This file documents the baseline schema for E-Connect.
 9. `wifi_credentials`: Household-scoped SSID/password records selected by DIY projects and managed-device reconfiguration.
 10. `rooms`: Physical or logical grouping within a household (`household_id`).
 11. `build_jobs`: Server-side firmware compilation tracking (`finished_at`, `error_message`).
+12. `system_logs`: 30-day retained operational events for server lifecycle, connectivity, firmware observations, and alert history.
 
 ## Automation Graph Contract
 
@@ -42,10 +43,37 @@ This file documents the baseline schema for E-Connect.
 4. Normal list/read models must expose masked password metadata only; plaintext password disclosure requires explicit password confirmation of the signed-in account.
 5. Firmware build/rebuild paths must resolve the selected Wi-Fi credential from the relational record instead of trusting stale SSID/password fields embedded in arbitrary JSON config payloads.
 
+## Server Timezone Contract
+
+1. `households.timezone` stores an optional IANA timezone override selected from the bundled Wikipedia tz database canonical list.
+2. When `households.timezone` is set, that value becomes the effective server timezone for runtime display/scheduling behavior and must take precedence over the container `TZ` environment variable.
+3. When `households.timezone` is empty, the backend falls back to the deployment `TZ` environment variable if it is a supported timezone; otherwise it falls back to the app default `Asia/Ho_Chi_Minh`.
+4. The backend may apply the effective timezone to the running process, but operational timestamps remain stored in the existing database shape unless a separate persistence change is approved.
+
 ## Auth Session Note
 
 - The refresh-token session flow remains stateless in the current baseline: no new auth-session table is introduced for this slice.
 - User approval and revocation checks remain anchored to the existing `users.approval_status` contract during login, refresh, and authenticated access.
+
+## System Log Contract
+
+1. `system_logs` is the durable audit stream for instance-level operational events shown on `/logs`.
+2. Each row must preserve:
+   - `event_code` for stable machine filtering
+   - `severity` for alerting (`info`, `warning`, `error`, `critical`)
+   - `category` for grouping (`lifecycle`, `connectivity`, `firmware`, `health`)
+   - human-readable `message`
+   - timestamp of occurrence
+   - optional `device_id`, `firmware_version`, and `firmware_revision` when the event is tied to a board
+   - optional structured `details` JSON for inspectable context without relying on free-form strings
+3. The backend must log state transitions, not every heartbeat. Examples include:
+   - server startup and graceful shutdown
+   - suspected unclean shutdown / power loss detected on next boot
+   - MQTT disconnect / reconnect
+   - firmware version or firmware revision changes observed from a device
+   - runtime health warnings that materially affect the instance
+4. Records older than 30 days must be deleted automatically by backend retention cleanup; the active page must not depend on manual pruning.
+5. `/logs` filters operate on timestamp range, severity, category, and free-text search over event code, message, device id, and firmware fields.
 
 **Persistence Rules (from PRD):**
 1. Do not assume enum/table/column without inspecting the real DB.

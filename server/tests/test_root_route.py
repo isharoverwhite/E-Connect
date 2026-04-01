@@ -1,3 +1,4 @@
+import main
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -132,6 +133,42 @@ def test_health_route_exposes_webapp_transport_from_runtime_network_targets(monk
     assert "warning" not in payload
     assert "stale_project_count" not in payload
     assert "stale_device_count" not in payload
+
+
+def test_refresh_runtime_network_state_updates_startup_auto_target(monkeypatch):
+    refreshed_state = {
+        "source": "startup_auto",
+        "targets": {
+            "advertised_host": "192.168.8.55",
+            "api_base_url": "http://192.168.8.55:3000/api/v1",
+            "mqtt_broker": "192.168.8.55",
+            "mqtt_port": 1883,
+            "target_key": "192.168.8.55|http://192.168.8.55:3000/api/v1|192.168.8.55|1883",
+        },
+        "error": None,
+    }
+    captured_states: list[dict[str, object]] = []
+    monkeypatch.setattr("main.resolve_runtime_firmware_network_state", lambda: refreshed_state)
+    monkeypatch.setattr("main.mqtt_manager.set_runtime_network_state", lambda state: captured_states.append(state))
+
+    app.state.firmware_network_state = {
+        "source": "startup_auto",
+        "targets": {
+            "advertised_host": "192.168.2.16",
+            "api_base_url": "http://192.168.2.16:3000/api/v1",
+            "mqtt_broker": "192.168.2.16",
+            "mqtt_port": 1883,
+            "target_key": "192.168.2.16|http://192.168.2.16:3000/api/v1|192.168.2.16|1883",
+        },
+        "error": None,
+    }
+
+    refreshed = main._refresh_runtime_network_state(app)
+
+    assert refreshed == refreshed_state
+    assert app.state.firmware_network_state == refreshed_state
+    assert captured_states == [refreshed_state]
+    app.state.firmware_network_state = None
 
 
 def test_health_route_prefers_mdns_advertised_server_ip_when_runtime_target_uses_alias(monkeypatch):

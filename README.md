@@ -76,6 +76,8 @@ BACKEND_INTERNAL_URL=http://server:8000
 
 Use a valid IANA timezone for `TZ`, for example `Asia/Ho_Chi_Minh`.
 
+`TZ` still defines the deployment runtime timezone when no admin override is saved in `Settings -> General`. The Settings UI only shows the currently active timezone and current server time; it does not expose `TZ` as a separate field.
+
 #### 3. Run the Self-hosted Stack
 This command launches the official approved topology for self-hosted environments:
 ```bash
@@ -188,6 +190,8 @@ BACKEND_INTERNAL_URL=http://server:8000
 ```
 
 Hãy dùng timezone IANA hợp lệ cho `TZ`, ví dụ `Asia/Ho_Chi_Minh`.
+
+`TZ` vẫn là timezone runtime của môi trường triển khai khi chưa có override do admin lưu trong `Settings -> General`. Giao diện Settings chỉ hiển thị timezone đang hoạt động thực tế và giờ server hiện tại, không tách riêng `TZ` thành một trường riêng.
 
 #### 3. Khởi chạy hệ thống Self-Hosted tiêu chuẩn
 Câu lệnh được dùng để chuẩn bị cấu hình kiến trúc self-hosted nguyên bản:

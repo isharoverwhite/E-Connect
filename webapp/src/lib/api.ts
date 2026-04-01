@@ -29,6 +29,58 @@ export interface RuntimeNetworkInfo {
     storage_total: number;
 }
 
+export type SystemLogSeverity = "info" | "warning" | "error" | "critical";
+export type SystemLogCategory = "lifecycle" | "connectivity" | "firmware" | "health";
+export type SystemOverallStatus = "healthy" | "warning" | "critical";
+
+export interface SystemLogEntry {
+    id: number;
+    occurred_at: string;
+    severity: SystemLogSeverity;
+    category: SystemLogCategory;
+    event_code: string;
+    message: string;
+    device_id?: string | null;
+    firmware_version?: string | null;
+    firmware_revision?: string | null;
+    details?: Record<string, unknown> | null;
+}
+
+export interface SystemLogListResponse {
+    entries: SystemLogEntry[];
+    total: number;
+    retention_days: number;
+    oldest_occurred_at?: string | null;
+    latest_occurred_at?: string | null;
+}
+
+export interface SystemStatusResponse {
+    overall_status: SystemOverallStatus;
+    database_status: string;
+    mqtt_status: string;
+    started_at?: string | null;
+    uptime_seconds: number;
+    advertised_host?: string | null;
+    cpu_percent: number;
+    memory_used: number;
+    memory_total: number;
+    storage_used: number;
+    storage_total: number;
+    retention_days: number;
+    active_alert_count: number;
+    latest_alert_at?: string | null;
+    latest_alert_message?: string | null;
+}
+
+export interface GeneralSettingsResponse {
+    household_id: number;
+    configured_timezone?: string | null;
+    effective_timezone: string;
+    timezone_source: "setting" | "runtime";
+    current_server_time: string;
+    timezone_options: string[];
+}
+
 async function parseApiError(response: Response, fallback: string) {
     try {
         const payload = (await response.json()) as {
@@ -69,6 +121,91 @@ export async function fetchRuntimeNetworkInfo(token?: string): Promise<RuntimeNe
 
     if (!response.ok) {
         throw new Error(await parseApiError(response, "Failed to load runtime network targets"));
+    }
+
+    return response.json();
+}
+
+export async function fetchGeneralSettings(token?: string): Promise<GeneralSettingsResponse> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/settings/general`, {
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+        cache: "no-store",
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to load general settings"));
+    }
+
+    return response.json();
+}
+
+export async function updateGeneralSettings(
+    payload: { timezone: string | null },
+    token?: string,
+): Promise<GeneralSettingsResponse> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/settings/general`, {
+        method: "PUT",
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to update general settings"));
+    }
+
+    return response.json();
+}
+
+export async function fetchSystemStatus(token?: string): Promise<SystemStatusResponse> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/system/live-status`, {
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+        cache: "no-store",
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to load system status"));
+    }
+
+    return response.json();
+}
+
+export async function fetchSystemLogs(token?: string, limit = 500): Promise<SystemLogListResponse> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/system/logs?limit=${encodeURIComponent(String(limit))}`, {
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+        cache: "no-store",
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to load system logs"));
     }
 
     return response.json();
