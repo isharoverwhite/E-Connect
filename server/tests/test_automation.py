@@ -288,6 +288,85 @@ def test_create_automation_persists_graph_contract(seeded_context):
         db.close()
 
 
+def test_update_automation_persists_graph_contract(seeded_context):
+    user = seeded_context["user"]
+    automation_id = _create_automation_record(
+        seeded_context["graph"],
+        creator_id=user.user_id,
+        name="Editable Automation",
+    )
+
+    response = client.put(
+        f"/api/v1/automation/{automation_id}",
+        headers=_auth_headers(user),
+        json={
+            "name": "Updated Numeric Rule",
+            "is_enabled": False,
+            "graph": seeded_context["numeric_graph"],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "Updated Numeric Rule"
+    assert payload["is_enabled"] is False
+    assert payload["graph"]["nodes"][1]["kind"] == "numeric_compare"
+    assert "script_code" not in payload
+
+    db = TestingSessionLocal()
+    try:
+        stored = db.query(Automation).filter(Automation.id == automation_id).one()
+        assert stored.is_enabled is False
+        assert json.loads(stored.script_code)["nodes"][2]["kind"] == "set_value"
+        assert stored.schedule_type == "manual"
+        assert stored.next_run_at is None
+    finally:
+        db.close()
+
+
+def test_delete_automation_removes_rule_and_execution_logs(seeded_context):
+    user = seeded_context["user"]
+    automation_id = _create_automation_record(
+        seeded_context["graph"],
+        creator_id=user.user_id,
+        name="Disposable Automation",
+    )
+
+    db = TestingSessionLocal()
+    try:
+        db.add(
+            AutomationExecutionLog(
+                automation_id=automation_id,
+                status=ExecutionStatus.failed,
+                trigger_source="manual",
+                error_message="Smoke failure",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.delete(
+        f"/api/v1/automation/{automation_id}",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"message": "Automation deleted."}
+
+    db = TestingSessionLocal()
+    try:
+        assert db.query(Automation).filter(Automation.id == automation_id).first() is None
+        assert (
+            db.query(AutomationExecutionLog)
+            .filter(AutomationExecutionLog.automation_id == automation_id)
+            .count()
+            == 0
+        )
+    finally:
+        db.close()
+
+
 def test_create_automation_rejects_invalid_graph(seeded_context):
     user = seeded_context["user"]
     invalid_graph = {
@@ -317,6 +396,56 @@ def test_create_automation_rejects_invalid_graph(seeded_context):
     payload = response.json()
     assert payload["detail"]["error"] == "validation"
     assert "Action nodes cannot have outgoing edges." in payload["detail"]["message"]
+
+
+def test_automation_openapi_exposes_graph_contract():
+    response = client.get("/openapi.json")
+
+    assert response.status_code == 200
+    spec = response.json()
+    for schema_name in ("AutomationCreate", "AutomationUpdate", "AutomationResponse"):
+        schema = spec["components"]["schemas"][schema_name]
+        assert "graph" in schema["properties"]
+        assert "script_code" not in schema["properties"]
+
+    create_schema = spec["components"]["schemas"]["AutomationCreate"]
+    update_schema = spec["components"]["schemas"]["AutomationUpdate"]
+    assert create_schema["required"] == ["name", "graph"]
+    assert update_schema["required"] == ["name", "graph"]
+
+
+def test_list_automations_accepts_legacy_schedule_logs(seeded_context):
+    user = seeded_context["user"]
+    automation_id = _create_automation_record(
+        seeded_context["graph"],
+        creator_id=user.user_id,
+        name="Legacy Schedule Automation",
+    )
+
+    db = TestingSessionLocal()
+    try:
+        db.add(
+            AutomationExecutionLog(
+                automation_id=automation_id,
+                status=ExecutionStatus.success,
+                trigger_source="schedule",
+                log_output=json.dumps({"actions": ["legacy run"]}),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        "/api/v1/automations",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert len(payload) == 1
+    assert payload[0]["graph"]["nodes"][0]["kind"] == "device_state"
+    assert payload[0]["last_execution"]["trigger_source"] == "schedule"
 
 
 def test_manual_trigger_executes_graph_and_records_log(monkeypatch, seeded_context):
