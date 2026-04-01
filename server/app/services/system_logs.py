@@ -22,6 +22,11 @@ SYSTEM_LOG_RETENTION = timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
 SYSTEM_START_EVENT_CODE = "server_started"
 SYSTEM_SHUTDOWN_EVENT_CODE = "server_shutdown"
 SYSTEM_UNCLEAN_EVENT_CODE = "server_unclean_shutdown_detected"
+SYSTEM_LOG_ALERT_SEVERITIES = (
+    SystemLogSeverity.warning,
+    SystemLogSeverity.error,
+    SystemLogSeverity.critical,
+)
 
 
 def _normalize_details(details: Any) -> dict[str, Any] | None:

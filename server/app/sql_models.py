@@ -278,8 +278,12 @@ class SystemLog(Base):
     firmware_version = Column(String(64), nullable=True)
     firmware_revision = Column(String(64), nullable=True)
     details = Column(JSON, nullable=True)
+    is_read = Column(Boolean, nullable=False, default=False)
+    read_at = Column(DateTime, nullable=True)
+    read_by_user_id = Column(Integer, ForeignKey("users.user_id"), nullable=True, index=True)
 
     device = relationship("Device")
+    read_by_user = relationship("User", foreign_keys=[read_by_user_id])
 
 # Legacy Firmware table support (optional, keeping for OTA feature)
 class Firmware(Base):

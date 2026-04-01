@@ -352,6 +352,9 @@ class SystemLogResponse(BaseModel):
     firmware_version: Optional[str] = None
     firmware_revision: Optional[str] = None
     details: Optional[Dict[str, Any]] = None
+    is_read: bool = False
+    read_at: Optional[datetime] = None
+    read_by_user_id: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -381,6 +384,10 @@ class SystemStatusResponse(BaseModel):
     active_alert_count: int = 0
     latest_alert_at: Optional[datetime] = None
     latest_alert_message: Optional[str] = None
+
+
+class SystemLogAcknowledgeResponse(BaseModel):
+    updated_count: int = 0
 
 # --- DIY Builder ---
 class PinMappingItem(BaseModel):

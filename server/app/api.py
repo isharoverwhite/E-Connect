@@ -23,7 +23,7 @@ from .models import (
     DeviceApprovalRequest, DeviceAvailabilityResponse, DeviceHandshakeResponse, DeviceRegister, DeviceResponse, PinConfigCreate,
     AutomationCreate, AutomationResponse, AutomationUpdate,
     DeviceHistoryCreate, DeviceHistoryResponse,
-    SystemLogListResponse, SystemStatusResponse,
+    SystemLogAcknowledgeResponse, SystemLogListResponse, SystemStatusResponse,
     GeneralSettingsResponse, GeneralSettingsUpdate,
     FirmwareResponse, DeviceMode, AccountType, EventType,
     RoomAccessUpdate, RoomUpdate, RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
@@ -75,7 +75,11 @@ from .services.user_management import ensure_temp_support_account, resolve_house
 from .services.provisioning import derive_project_secret
 from .services.i2c_registry import I2CLibrary, get_i2c_catalog
 from .services.system_metrics import collect_system_metrics
-from .services.system_logs import SYSTEM_LOG_RETENTION_DAYS, create_system_log
+from .services.system_logs import (
+    SYSTEM_LOG_ALERT_SEVERITIES,
+    SYSTEM_LOG_RETENTION_DAYS,
+    create_system_log,
+)
 from .services.timezone_settings import (
     apply_effective_timezone_context,
     get_current_server_time,
@@ -269,26 +273,12 @@ def _resolve_system_advertised_host(request: Request) -> Optional[str]:
 
 def _calculate_system_overall_status(
     *,
-    database_status: str,
-    mqtt_connected: bool,
-    metrics: dict[str, float | int],
+    unread_alert_severities: list[SqlSystemLogSeverity],
 ) -> Literal["healthy", "warning", "critical"]:
-    cpu_percent = float(metrics.get("cpu_percent", 0.0) or 0.0)
-    memory_total = int(metrics.get("memory_total", 0) or 0)
-    memory_used = int(metrics.get("memory_used", 0) or 0)
-    storage_total = int(metrics.get("storage_total", 0) or 0)
-    storage_used = int(metrics.get("storage_used", 0) or 0)
-
-    memory_ratio = (memory_used / memory_total) if memory_total > 0 else 0.0
-    storage_ratio = (storage_used / storage_total) if storage_total > 0 else 0.0
-
-    if database_status != "ok":
+    if any(severity in {SqlSystemLogSeverity.critical, SqlSystemLogSeverity.error} for severity in unread_alert_severities):
         return "critical"
 
-    if cpu_percent >= 90.0 or memory_ratio >= 0.90 or storage_ratio >= 0.95:
-        return "critical"
-
-    if not mqtt_connected or cpu_percent >= 75.0 or memory_ratio >= 0.80 or storage_ratio >= 0.90:
+    if any(severity == SqlSystemLogSeverity.warning for severity in unread_alert_severities):
         return "warning"
 
     return "healthy"
@@ -2796,20 +2786,20 @@ async def get_system_status(
     retention_cutoff = datetime.utcnow() - timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
     alert_query = db.query(SystemLog).filter(
         SystemLog.occurred_at >= retention_cutoff,
-        SystemLog.severity.in_(
-            [
-                SqlSystemLogSeverity.warning,
-                SqlSystemLogSeverity.error,
-                SqlSystemLogSeverity.critical,
-            ]
-        ),
+        SystemLog.severity.in_(SYSTEM_LOG_ALERT_SEVERITIES),
+        SystemLog.is_read.is_(False),
     )
-    latest_alert = (
+    unread_alert_entries = (
         alert_query
         .order_by(SystemLog.occurred_at.desc(), SystemLog.id.desc())
-        .first()
+        .all()
     )
-    active_alert_count = alert_query.count()
+    latest_alert = (
+        unread_alert_entries[0]
+        if unread_alert_entries
+        else None
+    )
+    active_alert_count = len(unread_alert_entries)
 
     started_at = getattr(request.app.state, "server_started_at", None)
     uptime_seconds = 0
@@ -2822,9 +2812,7 @@ async def get_system_status(
 
     return SystemStatusResponse(
         overall_status=_calculate_system_overall_status(
-            database_status=database_status,
-            mqtt_connected=mqtt_manager.connected,
-            metrics=metrics,
+            unread_alert_severities=[entry.severity for entry in unread_alert_entries],
         ),
         database_status=database_status,
         mqtt_status=mqtt_status,
@@ -2866,6 +2854,55 @@ async def list_system_logs(
         oldest_occurred_at=entries[-1].occurred_at if entries else None,
         latest_occurred_at=entries[0].occurred_at if entries else None,
     )
+
+
+@router.post("/system/logs/{log_id}/read", response_model=SystemLogAcknowledgeResponse)
+async def mark_system_log_read(
+    log_id: int,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    entry = db.query(SystemLog).filter(SystemLog.id == log_id).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="System log not found")
+
+    updated_count = 0
+    if not entry.is_read:
+        entry.is_read = True
+        entry.read_at = datetime.utcnow()
+        entry.read_by_user_id = admin.user_id
+        db.commit()
+        updated_count = 1
+
+    return SystemLogAcknowledgeResponse(updated_count=updated_count)
+
+
+@router.post("/system/logs/mark-all-read", response_model=SystemLogAcknowledgeResponse)
+async def mark_all_system_logs_read(
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_admin_user),
+):
+    retention_cutoff = datetime.utcnow() - timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
+    unread_alert_entries = (
+        db.query(SystemLog)
+        .filter(
+            SystemLog.occurred_at >= retention_cutoff,
+            SystemLog.severity.in_(SYSTEM_LOG_ALERT_SEVERITIES),
+            SystemLog.is_read.is_(False),
+        )
+        .all()
+    )
+
+    read_at = datetime.utcnow()
+    for entry in unread_alert_entries:
+        entry.is_read = True
+        entry.read_at = read_at
+        entry.read_by_user_id = admin.user_id
+
+    if unread_alert_entries:
+        db.commit()
+
+    return SystemLogAcknowledgeResponse(updated_count=len(unread_alert_entries))
 
 
 # --- Telemetry / History ---

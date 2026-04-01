@@ -373,7 +373,7 @@ class MQTTClientManager:
             record_system_log(
                 event_code="mqtt_disconnected",
                 message="MQTT broker connection dropped." if reason_code.is_failure else "MQTT broker connection closed.",
-                severity=SystemLogSeverity.warning if reason_code.is_failure else SystemLogSeverity.info,
+                severity=SystemLogSeverity.critical if reason_code.is_failure else SystemLogSeverity.info,
                 category=SystemLogCategory.connectivity,
                 details={
                     "broker": MQTT_BROKER,
