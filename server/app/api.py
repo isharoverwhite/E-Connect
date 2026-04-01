@@ -190,6 +190,15 @@ def _serialize_general_settings(household: Household, context: dict[str, Any]) -
     )
 
 
+def _serialize_time_context_response(context: dict[str, Any]) -> AutomationScheduleContextResponse:
+    effective_timezone = str(context["effective_timezone"])
+    return AutomationScheduleContextResponse(
+        effective_timezone=effective_timezone,
+        timezone_source=str(context["timezone_source"]),
+        current_server_time=get_current_server_time(effective_timezone),
+    )
+
+
 def _coerce_utc_api_datetime(value: datetime | None) -> datetime | None:
     if value is None:
         return None
@@ -2850,6 +2859,15 @@ async def get_system_status(
     )
 
 
+@router.get("/system/time-context", response_model=AutomationScheduleContextResponse)
+async def get_system_time_context(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    timezone_context = _resolve_effective_timezone_payload(db, current_user)
+    return _serialize_time_context_response(timezone_context)
+
+
 @router.get("/system/logs", response_model=SystemLogListResponse)
 async def list_system_logs(
     limit: int = Query(500, ge=1, le=2000),
@@ -3011,12 +3029,7 @@ async def get_automation_schedule_context(
 ):
     household = _get_current_household_or_404(db, user)
     timezone_context = resolve_effective_timezone_context(household=household)
-    effective_timezone = str(timezone_context["effective_timezone"])
-    return AutomationScheduleContextResponse(
-        effective_timezone=effective_timezone,
-        timezone_source=str(timezone_context["timezone_source"]),
-        current_server_time=get_current_server_time(effective_timezone),
-    )
+    return _serialize_time_context_response(timezone_context)
 
 
 @router.post("/automation", response_model=AutomationResponse)
@@ -3091,7 +3104,7 @@ async def trigger_automation(automation_id: int, db: Session = Depends(get_db), 
     execution_log = trigger_automation_manually(
         db,
         automation=auto,
-        publish_command=mqtt_manager.publish_command,
+        publish_command=mqtt_manager.enqueue_command,
         device_scope=device_scope,
         triggered_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )

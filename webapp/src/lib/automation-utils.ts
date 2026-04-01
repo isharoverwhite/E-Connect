@@ -13,6 +13,7 @@ import {
   DEVICE_ON_OFF_TRIGGER_KIND,
   LEGACY_DEVICE_TRIGGER_KIND
 } from "@/types/automation";
+import { formatServerTimestamp } from "@/lib/server-time";
 
 export interface PortDefinition {
   id: string;
@@ -226,15 +227,17 @@ export function getNodeDisplayName(node: Pick<AutomationGraphNode, "label" | "ki
   return base.replaceAll("_", " ");
 }
 
-export function formatAutomationRunTime(value: string | null | undefined): string {
+export function formatAutomationRunTime(value: string | null | undefined, timezone?: string | null): string {
   if (!value) return "Never run";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return "Unknown run time";
-  return parsed.toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+  return formatServerTimestamp(value, {
+    fallback: "Unknown run time",
+    options: {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    },
+    timezone,
   });
 }
 
@@ -380,16 +383,148 @@ export function formatTimeTriggerSummary(config: AutomationGraphNodeConfig): str
   return `${formatTimeTriggerValue(config)} ${dayLabel}`;
 }
 
-export function formatServerTimePreview(value?: string | null): string {
-  if (!value) return "Unavailable";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString([], {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
+export function formatServerTimePreview(value?: string | null, timezone?: string | null): string {
+  return formatServerTimestamp(value, {
+    fallback: "Unavailable",
+    options: {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    },
+    timezone,
   });
+}
+
+function hasFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function hasNonEmptyText(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+export function getAutomationGraphSaveIssues(graph: AutomationGraph): string[] {
+  const issues = new Set<string>();
+  const nodeById = new Map<string, AutomationGraphNode>();
+  const outgoing = new Map<string, AutomationGraphEdge[]>();
+  const incomingCount = new Map<string, number>();
+
+  for (const node of graph.nodes) {
+    if (nodeById.has(node.id)) {
+      issues.add(`Duplicate node id "${node.id}" blocks saving.`);
+      continue;
+    }
+    nodeById.set(node.id, node);
+    outgoing.set(node.id, []);
+    incomingCount.set(node.id, 0);
+  }
+
+  const triggers = graph.nodes.filter((node) => node.type === "trigger");
+  const actions = graph.nodes.filter((node) => node.type === "action");
+  if (triggers.length !== 1) {
+    issues.add("Automation graphs require exactly one trigger block.");
+  }
+  if (actions.length === 0) {
+    issues.add("Automation graphs require at least one action block.");
+  }
+
+  for (const edge of graph.edges) {
+    const source = nodeById.get(edge.source_node_id);
+    const target = nodeById.get(edge.target_node_id);
+    if (!source || !target) {
+      issues.add("Every connection must point to blocks that still exist on the canvas.");
+      continue;
+    }
+
+    outgoing.set(edge.source_node_id, [...(outgoing.get(edge.source_node_id) ?? []), edge]);
+    incomingCount.set(edge.target_node_id, (incomingCount.get(edge.target_node_id) ?? 0) + 1);
+
+    if (source.type === "action") {
+      issues.add("Action blocks cannot connect to downstream blocks.");
+    }
+    if (target.type === "trigger") {
+      issues.add("Trigger blocks cannot receive incoming connections.");
+    }
+  }
+
+  for (const node of graph.nodes) {
+    const incoming = incomingCount.get(node.id) ?? 0;
+    const nodeOutgoing = outgoing.get(node.id) ?? [];
+
+    if (node.type === "trigger") {
+      if (nodeOutgoing.length === 0) {
+        issues.add("Connect the trigger block to at least one downstream block before saving.");
+      }
+    } else if (incoming !== 1) {
+      issues.add(`Block "${getNodeDisplayName(node)}" must have exactly one incoming connection.`);
+    }
+
+    if (node.type === "condition" && nodeOutgoing.length === 0) {
+      issues.add(`Condition block "${getNodeDisplayName(node)}" must connect to at least one action.`);
+    }
+
+    if (node.type === "trigger") {
+      if (node.kind === TIME_TRIGGER_KIND) {
+        const hour = node.config.hour;
+        const minute = node.config.minute;
+        if (!hasFiniteNumber(hour) || hour < 0 || hour > 23) {
+          issues.add("Choose a valid trigger hour between 00 and 23.");
+        }
+        if (!hasFiniteNumber(minute) || minute < 0 || minute > 59) {
+          issues.add("Choose a valid trigger minute between 00 and 59.");
+        }
+      } else {
+        if (!hasNonEmptyText(node.config.device_id)) {
+          issues.add("Choose a source device before saving the automation.");
+        }
+        if (!hasFiniteNumber(node.config.pin)) {
+          issues.add("Choose a trigger pin before saving the automation.");
+        }
+      }
+      continue;
+    }
+
+    if (!hasNonEmptyText(node.config.device_id)) {
+      issues.add(`Choose a device for "${getNodeDisplayName(node)}" before saving.`);
+    }
+    if (!hasFiniteNumber(node.config.pin)) {
+      issues.add(`Choose a GPIO pin for "${getNodeDisplayName(node)}" before saving.`);
+    }
+
+    if (node.type === "condition") {
+      if (node.kind === "state_equals") {
+        if (!hasNonEmptyText(node.config.expected) || !["on", "off"].includes(node.config.expected.toLowerCase())) {
+          issues.add(`Condition "${getNodeDisplayName(node)}" must expect either on or off.`);
+        }
+      } else {
+        if (!hasNonEmptyText(node.config.operator)) {
+          issues.add(`Condition "${getNodeDisplayName(node)}" needs a comparison operator.`);
+        }
+        if (node.config.value === undefined || node.config.value === null || Number.isNaN(Number(node.config.value))) {
+          issues.add(`Condition "${getNodeDisplayName(node)}" needs a numeric target value.`);
+        }
+        if (node.config.operator === "between" && (node.config.secondary_value === undefined || node.config.secondary_value === null || Number.isNaN(Number(node.config.secondary_value)))) {
+          issues.add(`Condition "${getNodeDisplayName(node)}" needs both numeric bounds.`);
+        }
+      }
+      continue;
+    }
+
+    if (node.kind === "set_output") {
+      const value = Number(node.config.value);
+      if (!Number.isInteger(value) || (value !== 0 && value !== 1)) {
+        issues.add(`Action "${getNodeDisplayName(node)}" must send an on/off value.`);
+      }
+      continue;
+    }
+
+    if (node.config.value === undefined || node.config.value === null || Number.isNaN(Number(node.config.value))) {
+      issues.add(`Action "${getNodeDisplayName(node)}" needs a numeric output value.`);
+    }
+  }
+
+  return [...issues];
 }
 
 export function getTriggerKindLabel(kind: string): string {

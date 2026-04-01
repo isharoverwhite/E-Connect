@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
-import { AutomationRecord, AutomationListFilter } from "@/types/automation";
-import { fetchAutomations } from "@/lib/api-automation";
+import { AutomationRecord, AutomationListFilter, AutomationScheduleContext } from "@/types/automation";
+import { fetchAutomations, fetchAutomationScheduleContext } from "@/lib/api-automation";
 import { getAutomationGraphSummary, getAutomationGraphReadiness, getReadinessClasses, formatAutomationRunTime } from "@/lib/automation-utils";
 
 function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => void }) {
@@ -48,6 +48,7 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
 export default function AutomationListPage() {
   const router = useRouter();
   const [automations, setAutomations] = useState<AutomationRecord[]>([]);
+  const [scheduleContext, setScheduleContext] = useState<AutomationScheduleContext | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -58,14 +59,20 @@ export default function AutomationListPage() {
     try {
       setLoading(true);
       setError("");
-      const data = await fetchAutomations();
+      const [data, nextScheduleContext] = await Promise.all([
+        fetchAutomations(),
+        fetchAutomationScheduleContext().catch(() => null),
+      ]);
       setAutomations(data);
+      setScheduleContext(nextScheduleContext);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load automations");
     } finally {
       setLoading(false);
     }
   };
+
+  const effectiveTimezone = scheduleContext?.effective_timezone ?? null;
 
   useEffect(() => {
     void loadAutomations();
@@ -123,8 +130,8 @@ export default function AutomationListPage() {
                     <span className={`h-1.5 w-1.5 rounded-full ${automation.is_enabled ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`}></span>
                     {automation.is_enabled ? "Enabled" : "Paused"}
                   </span>
-                  <span className={`truncate ${automation.last_execution ? (automation.last_execution.status === 'failed' ? 'text-rose-600 dark:text-rose-400 font-semibold' : 'text-emerald-600 dark:text-emerald-400 font-semibold') : ''}`} title={automation.last_triggered ? formatAutomationRunTime(automation.last_triggered) : "Never run"}>
-                    {automation.last_execution ? `Run: ${automation.last_execution.status}` : (automation.last_triggered ? formatAutomationRunTime(automation.last_triggered) : "Never")}
+                  <span className={`truncate ${automation.last_execution ? (automation.last_execution.status === 'failed' ? 'text-rose-600 dark:text-rose-400 font-semibold' : 'text-emerald-600 dark:text-emerald-400 font-semibold') : ''}`} title={automation.last_triggered ? formatAutomationRunTime(automation.last_triggered, effectiveTimezone) : "Never run"}>
+                    {automation.last_execution ? `Run: ${automation.last_execution.status}` : (automation.last_triggered ? formatAutomationRunTime(automation.last_triggered, effectiveTimezone) : "Never")}
                   </span>
                 </div>
               </button>
@@ -149,6 +156,11 @@ export default function AutomationListPage() {
               <p className="mt-2 max-w-2xl text-base text-slate-500 dark:text-slate-400">
                 Create and manage rules to orchestrate your smart home devices automatically.
               </p>
+              {effectiveTimezone && (
+                <p className="mt-2 text-sm text-slate-400 dark:text-slate-500">
+                  Run timestamps use {effectiveTimezone}.
+                </p>
+              )}
             </div>
             {automations.length > 0 && (
               <button

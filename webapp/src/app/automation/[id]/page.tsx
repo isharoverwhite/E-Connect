@@ -80,7 +80,7 @@ function RealtimeServerClock({ timezone, initialServerTime }: { timezone?: strin
       second: "2-digit"
     });
   } catch {
-    timeStr = formatServerTimePreview(initialServerTime);
+    timeStr = formatServerTimePreview(initialServerTime, timezone);
   }
 
   return (
@@ -107,6 +107,7 @@ import {
   layoutGraphForCanvas, getGraphBounds,
   buildStarterGraph, formatAutomationRunTime,
   buildGraphAutomationPayload, buildRenamePayload,
+  getAutomationGraphSaveIssues,
   getLinearRule, isNumericPin, isSwitchPin,
   getTimeTriggerWeekdays, buildTimeTriggerConfig,
   formatTimeTriggerValue, formatTimeTriggerSummary,
@@ -173,6 +174,7 @@ export default function AutomationPage() {
   const activeAutomation = selectedAutomation ?? draftAutomation;
   const isDraftSelection = rawId === "new";
   const linearRule = activeAutomation ? getLinearRule(nodes, edges) : null;
+  const saveValidationIssues = activeAutomation ? getAutomationGraphSaveIssues({ nodes, edges }) : [];
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null);
@@ -400,6 +402,10 @@ export default function AutomationPage() {
 
   async function handleSaveGraph() {
     if (!activeAutomation) return;
+    if (saveValidationIssues.length > 0) {
+      showToast(saveValidationIssues[0], "error");
+      return;
+    }
     try {
       setSaving(true);
       if (isDraftSelection && draftAutomation) {
@@ -679,7 +685,18 @@ export default function AutomationPage() {
       : "url(#automation-edge-arrow)";
 
     return (
-      <g key={eKey}>
+      <g 
+        key={eKey}
+        className={activeHover ? "" : "group cursor-pointer pointer-events-auto"}
+        onClick={activeHover ? undefined : (e) => { e.stopPropagation(); deleteEdge(eKey); }}
+      >
+        <path
+          d={path}
+          fill="none"
+          stroke="transparent"
+          strokeLinecap="round"
+          strokeWidth="24"
+        />
         <path
           d={path}
           fill="none"
@@ -694,8 +711,7 @@ export default function AutomationPage() {
           stroke={strokeColor} 
           strokeLinecap="round"
           strokeWidth={activeHover ? "4" : "3"} 
-          className={activeHover ? "animate-pulse" : "pointer-events-auto transition-colors cursor-pointer hover:stroke-rose-500"}
-          onClick={activeHover ? undefined : (e) => { e.stopPropagation(); deleteEdge(eKey); }}
+          className={activeHover ? "animate-pulse" : "transition-colors group-hover:stroke-rose-500"}
         />
       </g>
     );
@@ -946,7 +962,7 @@ export default function AutomationPage() {
                                  {/* Ports */}
                                  {ports.map((port) => {
                                     const px = port.offset.x;
-                                    const py = port.type === "in" ? -6 : NODE_HEIGHT - 6;
+                                    const py = port.type === "in" ? -7 : NODE_HEIGHT - 7;
                                     const isPortSelected = connectingFrom?.nodeId === node.id && connectingFrom.portId === port.id;
                                     return (
                                        <div key={port.id} title={port.label}
@@ -955,7 +971,7 @@ export default function AutomationPage() {
                                                 bg-white border-2 border-slate-400 dark:bg-slate-900 dark:border-slate-500
                                                 ${port.type === "in" ? 'hover:border-blue-500' : 'hover:border-amber-500'}
                                                 ${isPortSelected ? 'scale-150 border-primary ring-4 ring-primary/20' : ''}`}
-                                            style={{ left: px - 6, top: py }}
+                                            style={{ left: px - 7, top: py }}
                                             onMouseDown={(e) => e.stopPropagation()}
                                             onClick={(e) => onPortClick(e, node.id, port.id, port.type)}
                                        />
@@ -1082,12 +1098,22 @@ export default function AutomationPage() {
                     <div className="mt-4 grid grid-cols-2 gap-2">
                       <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-950">
                         <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Last Run</div>
-                        <div className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{isDraftSelection ? "Not saved yet" : formatAutomationRunTime(activeAutomation.last_triggered)}</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{isDraftSelection ? "Not saved yet" : formatAutomationRunTime(activeAutomation.last_triggered, scheduleContext?.effective_timezone)}</div>
                       </div>
                       <div className="rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-950">
                         <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Runtime</div>
                         <div className="mt-1 text-sm font-semibold text-slate-800 dark:text-slate-100">{isDraftSelection ? "Draft only" : activeAutomation.is_enabled ? "Enabled" : "Paused"}</div>
                       </div>
+                    </div>
+                  )}
+                  {saveValidationIssues.length > 0 && (
+                    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-3 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
+                      <div className="text-[11px] font-bold uppercase tracking-[0.18em]">Save Checklist</div>
+                      <p className="mt-2 text-sm font-semibold">Complete the required graph fields before saving.</p>
+                      <p className="mt-1 text-sm">{saveValidationIssues[0]}</p>
+                      {saveValidationIssues.length > 1 && (
+                        <p className="mt-1 text-xs opacity-80">+{saveValidationIssues.length - 1} more issue(s) still need attention.</p>
+                      )}
                     </div>
                   )}
                </div>
@@ -1705,7 +1731,7 @@ export default function AutomationPage() {
                                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-700 dark:bg-slate-900/60">
                                      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Server Clock</div>
                                      <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">{scheduleContext?.effective_timezone ?? "Server timezone unavailable"}</p>
-                                     <p className="mt-1 text-xs text-slate-500">Current server time: {formatServerTimePreview(scheduleContext?.current_server_time)}</p>
+                                     <p className="mt-1 text-xs text-slate-500">Current server time: {formatServerTimePreview(scheduleContext?.current_server_time, scheduleContext?.effective_timezone)}</p>
                                  </div>
                              </div>
                          )}

@@ -756,6 +756,64 @@ def test_mqtt_state_unknown_device_requests_repair():
     assert ack_payload["reason"] == "unknown_device"
 
 
+def test_mqtt_enqueue_command_skips_wait_for_publish():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    mgr = MQTTClientManager()
+    mgr.publish_json = MagicMock(return_value=True)
+    payload = {"kind": "action", "pin": 3, "value": 1}
+
+    assert mgr.enqueue_command("device-123", payload) is True
+    mgr.publish_json.assert_called_once_with(
+        mgr.command_topic("device-123"),
+        payload,
+        wait_for_publish=False,
+    )
+
+
+def test_mqtt_state_automation_dispatch_uses_enqueue_command():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    mgr = MQTTClientManager()
+    mgr.publish_json = MagicMock(return_value=True)
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    def fake_process_state_event_for_automations(
+        db_arg,
+        *,
+        device_id,
+        state_payload,
+        publish_command,
+        triggered_at=None,
+    ):
+        assert device_id == device.device_id
+        assert publish_command(
+            device_id,
+            {"kind": "action", "pin": 2, "value": 1},
+        )
+        return []
+
+    payload = json.dumps({"pins": [{"pin": 2, "value": 1}]})
+    with patch("app.mqtt.SessionLocal", return_value=db_mock):
+        with patch(
+            "app.mqtt.process_state_event_for_automations",
+            side_effect=fake_process_state_event_for_automations,
+        ):
+            mgr.process_state_message(device.device_id, payload)
+
+    mgr.publish_json.assert_called_once_with(
+        mgr.command_topic(device.device_id),
+        {"kind": "action", "pin": 2, "value": 1},
+        wait_for_publish=False,
+    )
+
+
 def test_mqtt_state_hidden_pending_device_requests_repair():
     from app.mqtt import MQTTClientManager
     from unittest.mock import MagicMock

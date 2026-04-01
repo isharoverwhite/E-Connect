@@ -542,7 +542,7 @@ class MQTTClientManager:
                         db,
                         device_id=device_id,
                         state_payload=payload_json,
-                        publish_command=self.publish_command,
+                        publish_command=self.enqueue_command,
                         triggered_at=observed_at,
                     )
                 except Exception:
@@ -795,6 +795,15 @@ class MQTTClientManager:
 
     def publish_command(self, device_id: str, payload: dict[str, Any]) -> bool:
         return self.publish_json(self.command_topic(device_id), payload)
+
+    def enqueue_command(self, device_id: str, payload: dict[str, Any]) -> bool:
+        # Automation paths only need broker enqueue confirmation here. Device-level
+        # acknowledgement is handled later via state updates rather than publish blocking.
+        return self.publish_json(
+            self.command_topic(device_id),
+            payload,
+            wait_for_publish=False,
+        )
 
 
 mqtt_manager = MQTTClientManager()

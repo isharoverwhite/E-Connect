@@ -4,7 +4,7 @@ import { startTransition, useCallback, useEffect, useMemo, useRef, useState } fr
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import { getToken, removeToken } from "@/lib/auth";
-import { API_URL } from "@/lib/api";
+import { API_URL, fetchServerTimeContext, type ServerTimeContextResponse } from "@/lib/api";
 import { createRoom, fetchRooms, type RoomRecord } from "@/lib/rooms";
 import { buildProvisioningHeaders } from "@/lib/secure-origin";
 import { fetchWifiCredentials, type WifiCredentialRecord } from "@/lib/wifi-credentials";
@@ -422,6 +422,7 @@ export default function DIYBuilderPage() {
   const [buildBusy, setBuildBusy] = useState(false);
   const [serverBuild, setServerBuild] = useState<ServerBuildState>(() => createEmptyBuildState());
   const [firmwareNetworkTarget, setFirmwareNetworkTarget] = useState<FirmwareNetworkTargetRecord | null>(null);
+  const [serverTimeContext, setServerTimeContext] = useState<ServerTimeContextResponse | null>(null);
   const [serialPort, setSerialPort] = useState(DEFAULT_SERIAL_PORT);
   const [serialBusy, setSerialBusy] = useState(false);
   const [serialLocked, setSerialLocked] = useState(false);
@@ -466,6 +467,7 @@ export default function DIYBuilderPage() {
   }, [firmwareNetworkTarget]);
   const currentFirmwareTargetMqttBroker = firmwareNetworkTarget?.mqtt_broker ?? currentFirmwareTargetHost;
   const currentFirmwareTargetMqttPort = firmwareNetworkTarget?.mqtt_port ?? null;
+  const effectiveTimezone = serverTimeContext?.effective_timezone ?? null;
   const currentBuildConfigKey = useMemo(
     () =>
       buildConfigKey({
@@ -499,6 +501,26 @@ export default function DIYBuilderPage() {
     serverBuild.configKey === currentBuildConfigKey ? serverBuild.configKey : null;
   const hasActiveServerBuild =
     Boolean(serverBuild.jobId) && ACTIVE_BUILD_STATES.has(serverBuild.status as BuildJobStatus);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetchServerTimeContext()
+      .then((context) => {
+        if (!cancelled) {
+          setServerTimeContext(context);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setServerTimeContext(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const projectPayload = useMemo(
     () =>
       createProjectPayload({
@@ -2095,6 +2117,7 @@ export default function DIYBuilderPage() {
             onSaveAsNewConfig={saveProjectAsNewConfig}
             onBack={() => setCurrentStep(1)}
             onNext={() => setCurrentStep(3)}
+            timezone={effectiveTimezone}
           />
         )}
 
@@ -2169,6 +2192,7 @@ export default function DIYBuilderPage() {
             onBack={() => setCurrentStep(4)}
             onProceedToScan={() => router.push("/devices/discovery")}
             flasherClosed={flasherClosed}
+            timezone={effectiveTimezone}
           />
         )}
       </main>

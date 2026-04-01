@@ -4,6 +4,7 @@ import type {
     ProjectSyncState,
     ServerBuildState,
 } from "../types";
+import { formatServerTimestamp } from "@/lib/server-time";
 
 export interface Step4FlashProps {
     board: BoardProfile;
@@ -46,6 +47,7 @@ export interface Step4FlashProps {
     onLogPanelRef?: (element: HTMLDivElement | null) => void;
     onProceedToScan: () => void;
     flasherClosed: boolean;
+    timezone?: string | null;
 }
 
 function toHex(value: number) {
@@ -168,6 +170,7 @@ export function Step4Flash({
     onLogPanelRef,
     onProceedToScan,
     flasherClosed,
+    timezone,
 }: Step4FlashProps) {
     const previewLines = JSON.stringify(draftConfig, null, 2).split("\n");
     const readiness = getReadinessModel({
@@ -229,7 +232,17 @@ export function Step4Flash({
                             </p>
                             {serverBuild.updatedAt && (
                                 <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400">
-                                    Last build update: {new Date(serverBuild.updatedAt).toLocaleString()}
+                                    Last build update: {formatServerTimestamp(serverBuild.updatedAt, {
+                                        fallback: "Unknown update time",
+                                        options: {
+                                            year: "numeric",
+                                            month: "short",
+                                            day: "numeric",
+                                            hour: "2-digit",
+                                            minute: "2-digit",
+                                        },
+                                        timezone,
+                                    })}
                                 </p>
                             )}
                         </div>

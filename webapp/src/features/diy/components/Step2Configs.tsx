@@ -1,5 +1,6 @@
 import type { BoardProfile } from "../board-profiles";
 import type { ProjectSyncState } from "../types";
+import { formatServerTimestamp } from "@/lib/server-time";
 
 export interface SavedBoardConfigOption {
     id: string;
@@ -25,18 +26,19 @@ interface Step2ConfigsProps {
     onSaveAsNewConfig: () => Promise<void>;
     onBack: () => void;
     onNext: () => void;
+    timezone?: string | null;
 }
 
-function formatTimestamp(value: string) {
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) {
-        return "Unknown update time";
-    }
-
-    return new Intl.DateTimeFormat("en", {
-        dateStyle: "medium",
-        timeStyle: "short",
-    }).format(parsed);
+function formatTimestamp(value: string, timezone?: string | null) {
+    return formatServerTimestamp(value, {
+        fallback: "Unknown update time",
+        locale: "en",
+        options: {
+            dateStyle: "medium",
+            timeStyle: "short",
+        },
+        timezone,
+    });
 }
 
 export function Step2Configs({
@@ -55,6 +57,7 @@ export function Step2Configs({
     onSaveAsNewConfig,
     onBack,
     onNext,
+    timezone,
 }: Step2ConfigsProps) {
     return (
         <div className="flex flex-col gap-8">
@@ -128,7 +131,7 @@ export function Step2Configs({
                                                     ) : null}
                                                 </div>
                                                 <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-400">
-                                                    Updated {formatTimestamp(config.updatedAt)}
+                                                    Updated {formatTimestamp(config.updatedAt, timezone)}
                                                 </p>
                                             </div>
                                             <div className="rounded-2xl bg-slate-100 dark:bg-slate-800 px-3 py-2 text-right dark:bg-slate-800">
