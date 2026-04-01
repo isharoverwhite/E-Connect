@@ -48,6 +48,14 @@ export default function Dashboard() {
       return;
     }
 
+    if (
+      (event.type === "device_online" || event.type === "device_state") &&
+      !devices.some((device) => device.device_id === event.device_id)
+    ) {
+      void syncDashboardData();
+      return;
+    }
+
     setDevices((prev) => {
       return prev.map((device) => {
         if (device.device_id === event.device_id) {
