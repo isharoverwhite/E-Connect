@@ -516,6 +516,41 @@ def test_send_command_ota_publish_failure(tmp_path):
     assert job.status == JobStatus.flash_failed
     assert "Failed to publish" in job.error_message
 
+def test_send_command_ota_retry_after_flash_failed_reuses_artifact(tmp_path):
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    job_id = str(uuid.uuid4())
+    failed_at = datetime.utcnow()
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.flash_failed,
+        artifact_path=_write_test_artifact(tmp_path, job_id),
+        error_message="HTTP timeout",
+        finished_at=failed_at,
+    )
+    db.add(job)
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    payload = {"action": "ota", "job_id": job_id, "url": "http://test"}
+
+    with patch("app.api.mqtt_manager.publish_command", return_value=True):
+        res = client.post(
+            f"/api/v1/device/{device.device_id}/command",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert res.status_code == 200, res.text
+    db.refresh(job)
+    assert job.status == JobStatus.flashing
+    assert job.error_message is None
+    assert job.finished_at is None
+
 def test_send_command_ota_rejects_wrong_project_job():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)

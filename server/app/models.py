@@ -48,6 +48,20 @@ class EventType(str, Enum):
     command_requested = "command_requested"
     command_failed = "command_failed"
 
+
+class SystemLogSeverity(str, Enum):
+    info = "info"
+    warning = "warning"
+    error = "error"
+    critical = "critical"
+
+
+class SystemLogCategory(str, Enum):
+    lifecycle = "lifecycle"
+    connectivity = "connectivity"
+    firmware = "firmware"
+    health = "health"
+
 class JobStatus(str, Enum):
     draft_config = "draft_config"
     validated = "validated"
@@ -74,6 +88,7 @@ class AutomationNodeType(str, Enum):
 class AutomationTriggerSource(str, Enum):
     manual = "manual"
     device_state = "device_state"
+    schedule = "schedule"
 
 
 class AutomationGraphNode(BaseModel):
@@ -126,6 +141,7 @@ class HouseholdCreate(HouseholdBase):
 class HouseholdResponse(HouseholdBase):
     household_id: int
     created_at: Optional[datetime]
+    timezone: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -133,6 +149,19 @@ class HouseholdResponse(HouseholdBase):
 class SetupResponse(BaseModel):
     user: UserResponse
     household: HouseholdResponse
+
+
+class GeneralSettingsUpdate(BaseModel):
+    timezone: Optional[str] = Field(default=None, max_length=64)
+
+
+class GeneralSettingsResponse(BaseModel):
+    household_id: int
+    configured_timezone: Optional[str] = None
+    effective_timezone: str
+    timezone_source: Literal["setting", "runtime"]
+    current_server_time: datetime
+    timezone_options: List[str] = Field(default_factory=list)
 
 class InitialServerRequest(UserCreate):
     householdName: Optional[str] = None
@@ -310,6 +339,48 @@ class DeviceHistoryResponse(DeviceHistoryCreate):
 
     class Config:
         from_attributes = True
+
+
+class SystemLogResponse(BaseModel):
+    id: int
+    occurred_at: datetime
+    severity: SystemLogSeverity
+    category: SystemLogCategory
+    event_code: str
+    message: str
+    device_id: Optional[str] = None
+    firmware_version: Optional[str] = None
+    firmware_revision: Optional[str] = None
+    details: Optional[Dict[str, Any]] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SystemLogListResponse(BaseModel):
+    entries: List[SystemLogResponse] = Field(default_factory=list)
+    total: int = 0
+    retention_days: int = 30
+    oldest_occurred_at: Optional[datetime] = None
+    latest_occurred_at: Optional[datetime] = None
+
+
+class SystemStatusResponse(BaseModel):
+    overall_status: Literal["healthy", "warning", "critical"]
+    database_status: str
+    mqtt_status: str
+    started_at: Optional[datetime] = None
+    uptime_seconds: int = 0
+    advertised_host: Optional[str] = None
+    cpu_percent: float = 0.0
+    memory_used: int = 0
+    memory_total: int = 0
+    storage_used: int = 0
+    storage_total: int = 0
+    retention_days: int = 30
+    active_alert_count: int = 0
+    latest_alert_at: Optional[datetime] = None
+    latest_alert_message: Optional[str] = None
 
 # --- DIY Builder ---
 class PinMappingItem(BaseModel):

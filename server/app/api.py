@@ -23,6 +23,8 @@ from .models import (
     DeviceApprovalRequest, DeviceAvailabilityResponse, DeviceHandshakeResponse, DeviceRegister, DeviceResponse, PinConfigCreate,
     AutomationCreate, AutomationResponse, AutomationUpdate,
     DeviceHistoryCreate, DeviceHistoryResponse,
+    SystemLogListResponse, SystemStatusResponse,
+    GeneralSettingsResponse, GeneralSettingsUpdate,
     FirmwareResponse, DeviceMode, AccountType, EventType,
     RoomAccessUpdate, RoomUpdate, RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
     FirmwareNetworkTargetsResponse,
@@ -35,6 +37,7 @@ from .sql_models import (
     User, Device, Automation, DeviceHistory,
     Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
     AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, BuildJob, PinConfiguration, SerialSession, SerialSessionStatus,
+    SystemLog, SystemLogCategory as SqlSystemLogCategory, SystemLogSeverity as SqlSystemLogSeverity,
     UserApprovalStatus as SqlUserApprovalStatus, WifiCredential,
 )
 from .database import SessionLocal, get_db
@@ -72,6 +75,14 @@ from .services.user_management import ensure_temp_support_account, resolve_house
 from .services.provisioning import derive_project_secret
 from .services.i2c_registry import I2CLibrary, get_i2c_catalog
 from .services.system_metrics import collect_system_metrics
+from .services.system_logs import SYSTEM_LOG_RETENTION_DAYS, create_system_log
+from .services.timezone_settings import (
+    apply_effective_timezone_context,
+    get_current_server_time,
+    get_supported_timezones,
+    normalize_supported_timezone,
+    resolve_effective_timezone_context,
+)
 from .services.automation_runtime import (
     AutomationGraphValidationError,
     normalize_automation_graph,
@@ -155,6 +166,23 @@ def _issue_user_session_tokens(
     )
 
 
+def _set_request_timezone_context(request: Request, context: dict[str, Any]) -> None:
+    request.app.state.server_timezone = context["effective_timezone"]
+    request.app.state.server_timezone_source = context["timezone_source"]
+
+
+def _serialize_general_settings(household: Household, context: dict[str, Any]) -> GeneralSettingsResponse:
+    effective_timezone = str(context["effective_timezone"])
+    return GeneralSettingsResponse(
+        household_id=household.household_id,
+        configured_timezone=context.get("configured_timezone"),
+        effective_timezone=effective_timezone,
+        timezone_source=str(context["timezone_source"]),
+        current_server_time=get_current_server_time(effective_timezone),
+        timezone_options=list(get_supported_timezones()),
+    )
+
+
 def _require_current_user_password(
     current_user: User,
     password: Optional[str],
@@ -216,6 +244,56 @@ def _decode_history_payload(payload: Optional[str]) -> Optional[dict[str, Any]]:
             return None
 
 
+def _resolve_system_advertised_host(request: Request) -> Optional[str]:
+    try:
+        targets = infer_firmware_network_targets(
+            request.headers,
+            request.url.scheme,
+            _get_runtime_firmware_network_state(request),
+        )
+    except ValueError:
+        runtime_state = _get_runtime_firmware_network_state(request)
+        if isinstance(runtime_state, dict):
+            raw_targets = runtime_state.get("targets")
+            if isinstance(raw_targets, dict):
+                raw_host = raw_targets.get("advertised_host")
+                if isinstance(raw_host, str) and raw_host.strip():
+                    return raw_host.strip()
+        return None
+
+    advertised_host = targets.get("advertised_host")
+    if isinstance(advertised_host, str) and advertised_host.strip():
+        return advertised_host.strip()
+    return None
+
+
+def _calculate_system_overall_status(
+    *,
+    database_status: str,
+    mqtt_connected: bool,
+    metrics: dict[str, float | int],
+) -> Literal["healthy", "warning", "critical"]:
+    cpu_percent = float(metrics.get("cpu_percent", 0.0) or 0.0)
+    memory_total = int(metrics.get("memory_total", 0) or 0)
+    memory_used = int(metrics.get("memory_used", 0) or 0)
+    storage_total = int(metrics.get("storage_total", 0) or 0)
+    storage_used = int(metrics.get("storage_used", 0) or 0)
+
+    memory_ratio = (memory_used / memory_total) if memory_total > 0 else 0.0
+    storage_ratio = (storage_used / storage_total) if storage_total > 0 else 0.0
+
+    if database_status != "ok":
+        return "critical"
+
+    if cpu_percent >= 90.0 or memory_ratio >= 0.90 or storage_ratio >= 0.95:
+        return "critical"
+
+    if not mqtt_connected or cpu_percent >= 75.0 or memory_ratio >= 0.80 or storage_ratio >= 0.90:
+        return "warning"
+
+    return "healthy"
+
+
 def _attach_runtime_state(db: Session, device: Device) -> Device:
     latest_state = (
         db.query(DeviceHistory)
@@ -256,6 +334,22 @@ def _expire_device_if_stale(db: Session, device: Device, *, reference_time: date
                 }
             ),
         )
+    )
+    create_system_log(
+        db,
+        severity=SqlSystemLogSeverity.warning,
+        category=SqlSystemLogCategory.connectivity,
+        event_code="device_offline",
+        message=f'Device "{device.name}" is offline.',
+        device_id=device.device_id,
+        firmware_version=device.firmware_version,
+        firmware_revision=device.firmware_revision,
+        details={
+            "reason": "heartbeat_timeout",
+            "timeout_seconds": DEVICE_HEARTBEAT_TIMEOUT_SECONDS,
+            "last_seen": device.last_seen.isoformat() if device.last_seen else None,
+            "evaluated_at": reference_time.isoformat(),
+        },
     )
 
     # Broadcast offline event via WebSocket dynamically instead of waiting for full restart
@@ -602,6 +696,21 @@ def _get_room_or_404(db: Session, room_id: int) -> Room:
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
     return room
+
+
+def _get_current_household_or_404(db: Session, current_user: User) -> Household:
+    household_id = resolve_household_id_for_user(db, current_user)
+    if household_id is None:
+        raise HTTPException(status_code=404, detail="Household not found")
+
+    household = (
+        db.query(Household)
+        .filter(Household.household_id == household_id)
+        .first()
+    )
+    if not household:
+        raise HTTPException(status_code=404, detail="Household not found")
+    return household
 
 
 def _get_room_in_household_or_404(db: Session, current_user: User, room_id: int) -> Room:
@@ -1216,6 +1325,68 @@ async def update_layout(layout: Any, db: Session = Depends(get_db), current_user
     db.refresh(current_user)
     return current_user
 
+
+@router.get("/settings/general", response_model=GeneralSettingsResponse)
+async def get_general_settings(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    household = _get_current_household_or_404(db, current_user)
+    timezone_context = apply_effective_timezone_context(household=household)
+    _set_request_timezone_context(request, timezone_context)
+    return _serialize_general_settings(household, timezone_context)
+
+
+@router.put("/settings/general", response_model=GeneralSettingsResponse)
+async def update_general_settings(
+    payload: GeneralSettingsUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    household = _get_current_household_or_404(db, current_user)
+    previous_context = resolve_effective_timezone_context(household=household)
+    requested_timezone = payload.timezone.strip() if isinstance(payload.timezone, str) else ""
+
+    if requested_timezone:
+        normalized_timezone = normalize_supported_timezone(requested_timezone)
+        if normalized_timezone is None:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": "validation",
+                    "message": "Select a valid IANA timezone from the supported timezone list.",
+                },
+            )
+    else:
+        normalized_timezone = None
+
+    household.timezone = normalized_timezone
+    db.add(household)
+    db.flush()
+
+    next_context = apply_effective_timezone_context(household=household)
+    create_system_log(
+        db,
+        severity=SqlSystemLogSeverity.info,
+        category=SqlSystemLogCategory.health,
+        event_code="server_timezone_updated",
+        message=f"Server timezone now resolves to {next_context['effective_timezone']}.",
+        details={
+            "previous_effective_timezone": previous_context["effective_timezone"],
+            "previous_source": previous_context["timezone_source"],
+            "configured_timezone": normalized_timezone,
+            "effective_timezone": next_context["effective_timezone"],
+            "timezone_source": next_context["timezone_source"],
+        },
+    )
+    db.commit()
+    db.refresh(household)
+
+    _set_request_timezone_context(request, next_context)
+    return _serialize_general_settings(household, next_context)
+
 # --- Room Endpoints ---
 
 @router.post("/rooms", response_model=RoomResponse)
@@ -1824,7 +1995,7 @@ async def send_command(device_id: str, command: dict, db: Session = Depends(get_
         ota_job = _get_build_job_in_household_or_404(db, current_user, command["job_id"])
         if ota_job.project_id != device.provisioning_project_id:
             raise HTTPException(status_code=400, detail="Build job does not belong to the target device")
-        if ota_job.status != JobStatus.artifact_ready:
+        if ota_job.status not in {JobStatus.artifact_ready, JobStatus.flash_failed}:
             raise HTTPException(
                 status_code=409,
                 detail={"error": "conflict", "message": "Artifact is not ready for flashing"},
@@ -1846,6 +2017,8 @@ async def send_command(device_id: str, command: dict, db: Session = Depends(get_
         command["signature"] = signature
 
         ota_job.status = JobStatus.flashing
+        ota_job.error_message = None
+        ota_job.finished_at = None
         db.commit()
 
     command_id = str(uuid.uuid4())
@@ -2611,6 +2784,90 @@ async def get_serial_status(port: str = "default", db: Session = Depends(get_db)
         "job_id": active_lock.build_job_id if active_lock else None,
     }
 
+# --- System Logs / Stats ---
+
+@router.get("/system/live-status", response_model=SystemStatusResponse)
+async def get_system_status(
+    request: Request,
+    db: Session = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    metrics = collect_system_metrics()
+    retention_cutoff = datetime.utcnow() - timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
+    alert_query = db.query(SystemLog).filter(
+        SystemLog.occurred_at >= retention_cutoff,
+        SystemLog.severity.in_(
+            [
+                SqlSystemLogSeverity.warning,
+                SqlSystemLogSeverity.error,
+                SqlSystemLogSeverity.critical,
+            ]
+        ),
+    )
+    latest_alert = (
+        alert_query
+        .order_by(SystemLog.occurred_at.desc(), SystemLog.id.desc())
+        .first()
+    )
+    active_alert_count = alert_query.count()
+
+    started_at = getattr(request.app.state, "server_started_at", None)
+    uptime_seconds = 0
+    if isinstance(started_at, datetime):
+        uptime_seconds = max(0, int((datetime.utcnow() - started_at).total_seconds()))
+
+    database_ready = getattr(request.app.state, "database_ready", True)
+    database_status = "ok" if database_ready else "unavailable"
+    mqtt_status = "connected" if mqtt_manager.connected else "disconnected"
+
+    return SystemStatusResponse(
+        overall_status=_calculate_system_overall_status(
+            database_status=database_status,
+            mqtt_connected=mqtt_manager.connected,
+            metrics=metrics,
+        ),
+        database_status=database_status,
+        mqtt_status=mqtt_status,
+        started_at=started_at if isinstance(started_at, datetime) else None,
+        uptime_seconds=uptime_seconds,
+        advertised_host=_resolve_system_advertised_host(request),
+        cpu_percent=float(metrics["cpu_percent"]),
+        memory_used=int(metrics["memory_used"]),
+        memory_total=int(metrics["memory_total"]),
+        storage_used=int(metrics["storage_used"]),
+        storage_total=int(metrics["storage_total"]),
+        retention_days=SYSTEM_LOG_RETENTION_DAYS,
+        active_alert_count=active_alert_count,
+        latest_alert_at=latest_alert.occurred_at if latest_alert else None,
+        latest_alert_message=latest_alert.message if latest_alert else None,
+    )
+
+
+@router.get("/system/logs", response_model=SystemLogListResponse)
+async def list_system_logs(
+    limit: int = Query(500, ge=1, le=2000),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    retention_cutoff = datetime.utcnow() - timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
+    base_query = db.query(SystemLog).filter(SystemLog.occurred_at >= retention_cutoff)
+    entries = (
+        base_query
+        .order_by(SystemLog.occurred_at.desc(), SystemLog.id.desc())
+        .limit(limit)
+        .all()
+    )
+    total = base_query.count()
+
+    return SystemLogListResponse(
+        entries=entries,
+        total=total,
+        retention_days=SYSTEM_LOG_RETENTION_DAYS,
+        oldest_occurred_at=entries[-1].occurred_at if entries else None,
+        latest_occurred_at=entries[0].occurred_at if entries else None,
+    )
+
+
 # --- Telemetry / History ---
 
 @router.post("/device/{device_id}/history", response_model=DeviceHistoryResponse)
@@ -2739,6 +2996,19 @@ async def update_automation(
     db.commit()
     db.refresh(automation)
     return _automation_response_model(automation)
+
+
+@router.delete("/automation/{automation_id}", response_model=dict)
+async def delete_automation(
+    automation_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    automation = _get_user_automation(db, automation_id, user)
+    db.delete(automation)
+    db.commit()
+    return {"message": "Automation deleted."}
+
 
 @router.post("/automation/{automation_id}/trigger", response_model=TriggerResponse)
 async def trigger_automation(automation_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):

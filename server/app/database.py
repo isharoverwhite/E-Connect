@@ -114,6 +114,12 @@ def _ensure_additive_columns():
             "INT NULL",
         ),
         (
+            "households",
+            "timezone",
+            "VARCHAR(64)",
+            "VARCHAR(64) NULL COMMENT 'IANA timezone override for server runtime behavior'",
+        ),
+        (
             "diy_projects",
             "room_id",
             "INTEGER",
