@@ -15,11 +15,14 @@ from app.services.provisioning import build_project_firmware_identity, verify_pr
 from app.sql_models import (
     AccountType,
     AuthStatus,
+    BackupArchive,
     ConnStatus,
     Device,
+    DeviceHistory,
     DiyProject,
     HouseholdRole,
     PinConfiguration,
+    SystemLog,
     User,
 )
 
@@ -158,6 +161,72 @@ def _resolve_allowed_secure_device_names(secure_project: DiyProject | None, devi
     return allowed_names
 
 
+def _can_reclaim_stale_secure_mac_binding(device: Device | None) -> bool:
+    if not device:
+        return False
+
+    return (
+        device.provisioning_project_id is None
+        and device.auth_status == AuthStatus.pending
+        and device.pairing_requested_at is None
+    )
+
+
+def _reclaim_stale_secure_mac_binding(db: Session, device: Device, *, target_device_id: str) -> Device:
+    old_device_id = device.device_id
+    original_mac = device.mac_address
+    owner = db.query(User).filter(User.user_id == device.owner_id).first()
+    remove_device_widgets(owner, old_device_id)
+
+    temporary_mac = ":".join(
+        uuid.uuid4().hex[index : index + 2].upper()
+        for index in range(0, 12, 2)
+    )
+    device.mac_address = temporary_mac
+    db.flush()
+
+    reclaimed_device = Device(
+        device_id=target_device_id,
+        mac_address=original_mac,
+        name=device.name,
+        room_id=device.room_id,
+        owner_id=device.owner_id,
+        auth_status=device.auth_status,
+        conn_status=device.conn_status,
+        mode=device.mode,
+        firmware_revision=device.firmware_revision,
+        firmware_version=device.firmware_version,
+        ip_address=device.ip_address,
+        last_seen=device.last_seen,
+        pairing_requested_at=device.pairing_requested_at,
+        topic_pub=device.topic_pub,
+        topic_sub=device.topic_sub,
+        provisioning_project_id=device.provisioning_project_id,
+    )
+    db.add(reclaimed_device)
+    db.flush()
+
+    db.query(PinConfiguration).filter(PinConfiguration.device_id == old_device_id).update(
+        {PinConfiguration.device_id: target_device_id},
+        synchronize_session=False,
+    )
+    db.query(DeviceHistory).filter(DeviceHistory.device_id == old_device_id).update(
+        {DeviceHistory.device_id: target_device_id},
+        synchronize_session=False,
+    )
+    db.query(BackupArchive).filter(BackupArchive.device_id == old_device_id).update(
+        {BackupArchive.device_id: target_device_id},
+        synchronize_session=False,
+    )
+    db.query(SystemLog).filter(SystemLog.device_id == old_device_id).update(
+        {SystemLog.device_id: target_device_id},
+        synchronize_session=False,
+    )
+    db.delete(device)
+    db.flush()
+    return reclaimed_device
+
+
 def build_pairing_request_event_payload(device: Device) -> dict[str, Any]:
     auth_status = device.auth_status.value if hasattr(device.auth_status, "value") else str(device.auth_status)
     conn_status = device.conn_status.value if hasattr(device.conn_status, "value") else str(device.conn_status)
@@ -186,6 +255,7 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
     secure_project = None
     secret_verified = False
     pairing_requested = False
+    reclaimed_stale_secure_mac = False
     requested_at = datetime.utcnow()
     force_pairing_request = bool(payload.force_pairing_request)
     normalized_payload_name = _normalize_device_name(payload.name)
@@ -242,9 +312,19 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
         else:
             mac_bound_device = db.query(Device).filter(Device.mac_address == normalized_payload_mac).first()
             if mac_bound_device and mac_bound_device.device_id != payload.device_id:
-                _raise_secure_pairing_error("MAC address is already bound to another device.")
+                if _can_reclaim_stale_secure_mac_binding(mac_bound_device):
+                    device = _reclaim_stale_secure_mac_binding(
+                        db,
+                        mac_bound_device,
+                        target_device_id=payload.device_id,
+                    )
+                    reclaimed_stale_secure_mac = True
+                else:
+                    _raise_secure_pairing_error("MAC address is already bound to another device.")
 
     existing_auth_status = device.auth_status if device else None
+    if reclaimed_stale_secure_mac and secret_verified and not force_pairing_request:
+        existing_auth_status = AuthStatus.approved
 
     admin = db.query(User).filter(User.account_type == AccountType.admin).first()
     if not admin:

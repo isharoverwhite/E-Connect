@@ -17,7 +17,9 @@ from app.sql_models import (
     BuildJob,
     ConnStatus,
     Device,
+    DeviceHistory,
     DiyProject,
+    EventType,
     Household,
     HouseholdMembership,
     HouseholdRole,
@@ -855,6 +857,84 @@ def test_force_pairing_request_keeps_unknown_secure_device_pending():
     assert len(pending_devices) == 1
     assert pending_devices[0]["device_id"] == project["device_id"]
 
+
+
+def test_secure_handshake_reclaims_hidden_unpaired_legacy_mac_binding():
+    household, admin, _member, _observer = _seed_household(prefix="secure-reclaim")
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+
+    room = _create_room(admin_headers, name="Secure Reclaim Lab")
+    project = _insert_diy_project(
+        user_id=admin["user_id"],
+        room_id=room["room_id"],
+        project_name="Recovered Secure Node",
+    )
+
+    stale_device_id = str(uuid.uuid4())
+    db = TestingSessionLocal()
+    db.add(
+        Device(
+            device_id=stale_device_id,
+            mac_address="AA:BB:CC:11:22:33",
+            name="Legacy Hidden Node",
+            room_id=room["room_id"],
+            owner_id=admin["user_id"],
+            auth_status=AuthStatus.pending,
+            conn_status=ConnStatus.offline,
+            mode="no-code",
+            pairing_requested_at=None,
+            provisioning_project_id=None,
+        )
+    )
+    db.add(
+        DeviceHistory(
+            device_id=stale_device_id,
+            event_type=EventType.state_change,
+            payload="{}",
+        )
+    )
+    db.commit()
+    db.close()
+
+    response = client.post(
+        "/api/v1/config",
+        json={
+            "device_id": project["device_id"],
+            "project_id": project["project_id"],
+            "secret_key": project["secret_key"],
+            "mac_address": "AA:BB:CC:11:22:33",
+            "name": "Recovered Secure Node",
+            "mode": "no-code",
+            "firmware_version": "build-reclaim01",
+            "pins": [],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["auth_status"] == "approved"
+
+    db = TestingSessionLocal()
+    reclaimed_device = db.query(Device).filter(Device.device_id == project["device_id"]).first()
+    assert reclaimed_device is not None
+    assert reclaimed_device.mac_address == "AA:BB:CC:11:22:33"
+    assert reclaimed_device.provisioning_project_id == project["project_id"]
+    assert reclaimed_device.room_id == room["room_id"]
+    assert reclaimed_device.auth_status == AuthStatus.approved
+
+    stale_device = db.query(Device).filter(Device.device_id == stale_device_id).first()
+    assert stale_device is None
+    assert (
+        db.query(DeviceHistory)
+        .filter(DeviceHistory.device_id == project["device_id"])
+        .count()
+        == 1
+    )
+    db.close()
 
 
 def test_same_household_admin_can_manage_project_and_build_job():
