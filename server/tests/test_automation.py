@@ -676,6 +676,30 @@ def test_schedule_context_returns_effective_server_timezone(seeded_context):
     assert isinstance(payload["current_server_time"], str)
 
 
+def test_system_time_context_returns_effective_server_timezone(seeded_context):
+    user = seeded_context["user"]
+    db = TestingSessionLocal()
+    try:
+        household = db.query(Household).first()
+        assert household is not None
+        household.timezone = "Asia/Tokyo"
+        db.add(household)
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        "/api/v1/system/time-context",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["effective_timezone"] == "Asia/Tokyo"
+    assert payload["timezone_source"] == "setting"
+    assert isinstance(payload["current_server_time"], str)
+
+
 def test_manual_trigger_executes_graph_and_records_log(monkeypatch, seeded_context):
     user = seeded_context["user"]
     automation_id = _create_automation_record(
@@ -689,7 +713,7 @@ def test_manual_trigger_executes_graph_and_records_log(monkeypatch, seeded_conte
         published_commands.append((device_id, command))
         return True
 
-    monkeypatch.setattr(api_module.mqtt_manager, "publish_command", fake_publish)
+    monkeypatch.setattr(api_module.mqtt_manager, "enqueue_command", fake_publish)
 
     db = TestingSessionLocal()
     try:
@@ -744,6 +768,50 @@ def test_manual_trigger_executes_graph_and_records_log(monkeypatch, seeded_conte
         assert command_history.changed_by is None
     finally:
         db.close()
+
+
+def test_manual_trigger_uses_enqueue_command(monkeypatch, seeded_context):
+    user = seeded_context["user"]
+    automation_id = _create_automation_record(
+        seeded_context["graph"],
+        creator_id=user.user_id,
+        name="Manual Trigger Enqueue",
+    )
+    enqueue_calls: list[tuple[str, dict]] = []
+
+    def fake_enqueue(device_id: str, command: dict) -> bool:
+        enqueue_calls.append((device_id, command))
+        return True
+
+    def fail_publish(*args, **kwargs):
+        raise AssertionError("Manual automation trigger should use enqueue_command")
+
+    monkeypatch.setattr(api_module.mqtt_manager, "enqueue_command", fake_enqueue)
+    monkeypatch.setattr(api_module.mqtt_manager, "publish_command", fail_publish)
+
+    db = TestingSessionLocal()
+    try:
+        db.add(
+            DeviceHistory(
+                device_id="source-device",
+                event_type=EventType.state_change,
+                payload=json.dumps({"pins": [{"pin": 4, "value": 1}]}),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/v1/automation/{automation_id}/trigger",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    assert enqueue_calls
+    assert enqueue_calls[0][0] == "target-device"
+    assert enqueue_calls[0][1]["pin"] == 12
+    assert enqueue_calls[0][1]["value"] == 1
 
 
 def test_process_state_event_runs_enabled_automation_for_device_value_trigger(monkeypatch, seeded_context):
@@ -803,6 +871,75 @@ def test_process_state_event_runs_enabled_automation_for_device_value_trigger(mo
         db.close()
 
 
+def test_process_state_event_ignores_duplicate_numeric_snapshot(seeded_context):
+    user = seeded_context["user"]
+    automation_id = _create_automation_record(
+        seeded_context["numeric_graph"],
+        creator_id=user.user_id,
+        name="Numeric Trigger Deduped",
+    )
+    published_commands: list[tuple[str, dict]] = []
+
+    def fake_publish(device_id: str, command: dict) -> bool:
+        published_commands.append((device_id, command))
+        return True
+
+    payload = {"pins": [{"pin": 34, "value": 42}]}
+
+    db = TestingSessionLocal()
+    try:
+        db.add(
+            DeviceHistory(
+                device_id="sensor-device",
+                event_type=EventType.state_change,
+                payload=json.dumps(payload),
+            )
+        )
+        db.flush()
+        first_logs = process_state_event_for_automations(
+            db,
+            device_id="sensor-device",
+            state_payload=payload,
+            publish_command=fake_publish,
+        )
+        db.commit()
+
+        db.add(
+            DeviceHistory(
+                device_id="sensor-device",
+                event_type=EventType.state_change,
+                payload=json.dumps(payload),
+            )
+        )
+        db.flush()
+        second_logs = process_state_event_for_automations(
+            db,
+            device_id="sensor-device",
+            state_payload=payload,
+            publish_command=fake_publish,
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    assert len(first_logs) == 1
+    assert second_logs == []
+    assert len(published_commands) == 1
+
+    db = TestingSessionLocal()
+    try:
+        logs = (
+            db.query(AutomationExecutionLog)
+            .filter(AutomationExecutionLog.automation_id == automation_id)
+            .order_by(AutomationExecutionLog.id.asc())
+            .all()
+        )
+        assert len(logs) == 1
+        assert logs[0].status == ExecutionStatus.success
+    finally:
+        db.close()
+
+
 def test_process_state_event_runs_enabled_automation_for_on_off_trigger(monkeypatch, seeded_context):
     user = seeded_context["user"]
     automation_id = _create_automation_record(
@@ -834,6 +971,186 @@ def test_process_state_event_runs_enabled_automation_for_on_off_trigger(monkeypa
     assert published_commands
     assert published_commands[0][0] == "target-device"
     assert published_commands[0][1]["value"] == 1
+
+
+def test_process_state_event_ignores_duplicate_on_off_snapshot(seeded_context):
+    user = seeded_context["user"]
+    automation_id = _create_automation_record(
+        seeded_context["on_off_graph"],
+        creator_id=user.user_id,
+        name="Switch Event Trigger Deduped",
+    )
+    published_commands: list[tuple[str, dict]] = []
+
+    def fake_publish(device_id: str, command: dict) -> bool:
+        published_commands.append((device_id, command))
+        return True
+
+    payload = {"pins": [{"pin": 4, "value": 1}]}
+
+    db = TestingSessionLocal()
+    try:
+        db.add(
+            DeviceHistory(
+                device_id="source-device",
+                event_type=EventType.state_change,
+                payload=json.dumps(payload),
+            )
+        )
+        db.flush()
+        first_logs = process_state_event_for_automations(
+            db,
+            device_id="source-device",
+            state_payload=payload,
+            publish_command=fake_publish,
+        )
+        db.commit()
+
+        db.add(
+            DeviceHistory(
+                device_id="source-device",
+                event_type=EventType.state_change,
+                payload=json.dumps(payload),
+            )
+        )
+        db.flush()
+        second_logs = process_state_event_for_automations(
+            db,
+            device_id="source-device",
+            state_payload=payload,
+            publish_command=fake_publish,
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    assert len(first_logs) == 1
+    assert second_logs == []
+    assert len(published_commands) == 1
+
+    db = TestingSessionLocal()
+    try:
+        logs = (
+            db.query(AutomationExecutionLog)
+            .filter(AutomationExecutionLog.automation_id == automation_id)
+            .order_by(AutomationExecutionLog.id.asc())
+            .all()
+        )
+        assert len(logs) == 1
+        assert logs[0].status == ExecutionStatus.success
+    finally:
+        db.close()
+
+
+def test_process_state_event_ignores_follow_up_noop_after_self_target_change(seeded_context):
+    user = seeded_context["user"]
+    automation_id = _create_automation_record(
+        {
+            "nodes": [
+                {
+                    "id": "trigger-1",
+                    "type": "trigger",
+                    "kind": "device_value",
+                    "config": {"device_id": "dimmer-device", "pin": 13},
+                },
+                {
+                    "id": "condition-1",
+                    "type": "condition",
+                    "kind": "numeric_compare",
+                    "config": {
+                        "device_id": "dimmer-device",
+                        "pin": 13,
+                        "operator": "lte",
+                        "value": 0,
+                    },
+                },
+                {
+                    "id": "action-1",
+                    "type": "action",
+                    "kind": "set_value",
+                    "config": {"device_id": "dimmer-device", "pin": 13, "value": 180},
+                },
+            ],
+            "edges": [
+                {
+                    "source_node_id": "trigger-1",
+                    "source_port": "event_out",
+                    "target_node_id": "condition-1",
+                    "target_port": "event_in",
+                },
+                {
+                    "source_node_id": "condition-1",
+                    "source_port": "pass_out",
+                    "target_node_id": "action-1",
+                    "target_port": "event_in",
+                },
+            ],
+        },
+        creator_id=user.user_id,
+        name="Self Target Guard",
+    )
+    published_commands: list[tuple[str, dict]] = []
+
+    def fake_publish(device_id: str, command: dict) -> bool:
+        published_commands.append((device_id, command))
+        return True
+
+    initial_payload = {"pins": [{"pin": 13, "value": 0, "brightness": 0}]}
+    follow_up_payload = {"pins": [{"pin": 13, "value": 1, "brightness": 180}]}
+
+    db = TestingSessionLocal()
+    try:
+        db.add(
+            DeviceHistory(
+                device_id="dimmer-device",
+                event_type=EventType.state_change,
+                payload=json.dumps(initial_payload),
+            )
+        )
+        db.flush()
+        first_logs = process_state_event_for_automations(
+            db,
+            device_id="dimmer-device",
+            state_payload=initial_payload,
+            publish_command=fake_publish,
+        )
+        db.commit()
+
+        db.add(
+            DeviceHistory(
+                device_id="dimmer-device",
+                event_type=EventType.state_change,
+                payload=json.dumps(follow_up_payload),
+            )
+        )
+        db.flush()
+        second_logs = process_state_event_for_automations(
+            db,
+            device_id="dimmer-device",
+            state_payload=follow_up_payload,
+            publish_command=fake_publish,
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    assert len(first_logs) == 1
+    assert first_logs[0].status == ExecutionStatus.success
+    assert second_logs == []
+    assert len(published_commands) == 1
+
+    db = TestingSessionLocal()
+    try:
+        logs = (
+            db.query(AutomationExecutionLog)
+            .filter(AutomationExecutionLog.automation_id == automation_id)
+            .order_by(AutomationExecutionLog.id.asc())
+            .all()
+        )
+        assert len(logs) == 1
+        assert logs[0].status == ExecutionStatus.success
+    finally:
+        db.close()
 
 
 def test_process_time_trigger_runs_enabled_automation_once_per_scheduled_minute(seeded_context):

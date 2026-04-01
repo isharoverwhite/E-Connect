@@ -13,6 +13,7 @@ import {
 } from "@/lib/wifi-credentials";
 import { useToast } from "@/components/ToastContext";
 import ConfirmModal from "@/components/ConfirmModal";
+import { formatServerTimestamp } from "@/lib/server-time";
 
 interface EditingState {
   id: number;
@@ -20,7 +21,7 @@ interface EditingState {
   password: string;
 }
 
-export function WifiCredentialsPanel() {
+export function WifiCredentialsPanel({ timezone }: { timezone?: string | null }) {
   const { showToast } = useToast();
   const [credentials, setCredentials] = useState<WifiCredentialRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -489,7 +490,17 @@ export function WifiCredentialsPanel() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       {credential.updated_at
-                        ? new Date(credential.updated_at).toLocaleString()
+                        ? formatServerTimestamp(credential.updated_at, {
+                            fallback: "recently",
+                            options: {
+                              year: "numeric",
+                              month: "short",
+                              day: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            },
+                            timezone,
+                          })
                         : "recently"}
                     </td>
                     <td className="px-6 py-4 text-right">
