@@ -32,7 +32,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 - no-code SVG pin mapping, server-side firmware build artifact generation, web flash, serial debug
 - MQTT-first device transport
 - automation local kiểu visual rule graph và lưu trữ dữ liệu cục bộ
-- bảo mật theo cơ chế approval + role-based access
+- bảo mật theo cơ chế device approval + role-based access
 - một control server duy nhất có thể provision và quản lý thiết bị trên nhiều mạng Wi-Fi đã được admin lưu trước
 
 ### 2.1 Product Principles (Không được vi phạm)
@@ -49,7 +49,8 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
   - `username`: `ryzen30xx`
   - `password`: `Hienkhanh69`
 - Tài khoản này phải ở trạng thái `approved`, xuất hiện trong cùng household đang hoạt động, và dùng được để kiểm thử menu quản lý người dùng trong `Settings`.
-- `Settings` phải cung cấp menu quản lý user cho admin, bao gồm `create`, `approve`, và `revoke` user với trạng thái bền vững ở backend.
+- `Settings` phải cung cấp menu quản lý user cho admin, bao gồm `create` và `revoke` user với trạng thái bền vững ở backend.
+- User được admin tạo trong `Settings` phải mặc định ở trạng thái `approved` và dùng được ngay, không cần approval step riêng.
 - Đây là ngoại lệ tạm thời so với tinh thần của `NFR-05` về hardcoded production secrets, chỉ chấp nhận cho môi trường local/dev hiện tại và phải được gỡ trước release production.
 
 ## 2.3 Deployment Topology Baseline
@@ -144,7 +145,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 | FR-05 | Automation local có visual rule graph builder + lưu bền vững | Must | P3/P4 |
 | FR-06 | Lưu trữ dữ liệu vận hành cục bộ | Must | P3 |
 | FR-07 | Offline LAN control vẫn hoạt động khi mất Internet | Must | P4 |
-| FR-08 | User/household management có role-based access | Must | P3/P4 |
+| FR-08 | User/household management có role-based access; user do admin tạo được active ngay | Must | P3/P4 |
 | FR-09 | OTA firmware management theo identity/version | Should | Post-MVP |
 | FR-10 | Chart + export CSV/Excel từ UI | Should | Post-MVP |
 | FR-11 | MQTT-first connectivity | Must | P3/P4 |
@@ -179,7 +180,7 @@ E-Connect là nền tảng smart home **self-hosted, local-first** tập trung v
 | NFR-02 | Device control success rate | > 95% |
 | NFR-03 | Time-to-first-working-DIY-device | < 15 phút |
 | NFR-04 | Dashboard save/load consistency | 100% schema-compatible |
-| NFR-05 | Security | No hardcoded production secrets, approval-based onboarding bắt buộc, Wi-Fi credential reveal phải có password confirmation của tài khoản đang đăng nhập |
+| NFR-05 | Security | No hardcoded production secrets, approval-based device onboarding bắt buộc, Wi-Fi credential reveal phải có password confirmation của tài khoản đang đăng nhập |
 | NFR-06 | Reliability | Retry-safe, idempotent cho endpoint dễ bị retry |
 | NFR-07 | Usability | Có loading/empty/error/success state cho flow chính |
 | NFR-08 | Maintainability | Module hóa theo domain, traceable logs |

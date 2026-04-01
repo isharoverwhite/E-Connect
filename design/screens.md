@@ -29,7 +29,8 @@
   - Saving a timezone in Settings must immediately override the current server runtime timezone and show the resulting current timezone plus a current server-time preview.
   - The Settings UI must not show the raw `.env` / `TZ` fallback timezone as a separate field; if the runtime currently resolves from deployment config, that value is shown only as the current timezone.
   - Clearing the saved override happens by saving an empty timezone field, and the panel must describe the non-overridden state as the current runtime timezone rather than exposing a dedicated `Use Env` action.
-- **`users`**: Admin user management panel to provision and approve/revoke accounts.
+- **`users`**: Admin user management panel to provision and revoke accounts.
+  - Accounts created by an admin must become usable immediately and must not wait for a separate approval step.
   - The create-user form must show inline client-side validation before submit for missing `username`, `full name`, and `password`.
   - The create-user form must require a minimum username length of `3` characters and a minimum password length of `8` characters before it sends the request.
 - **`rooms`**: Admin panel for managing room access control.
