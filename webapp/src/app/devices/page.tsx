@@ -24,6 +24,7 @@ export default function DevicesPage() {
     const { user } = useAuth();
     const { showToast } = useToast();
     const [devices, setDevices] = useState<DeviceDirectoryEntry[]>([]);
+    const [pairingRequests, setPairingRequests] = useState<DeviceConfig[]>([]);
     const [loading, setLoading] = useState(true);
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
     const [modalConfig, setModalConfig] = useState<{
@@ -39,31 +40,36 @@ export default function DevicesPage() {
         "inline-flex min-h-10 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700";
 
     async function loadDevices() {
-        const data = await fetchDevices();
+        const [data, pending] = await Promise.all([
+            fetchDevices(),
+            isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([])
+        ]);
         setDevices(data);
+        setPairingRequests(pending as DeviceConfig[]);
         setLoading(false);
     }
 
-    const handleRefresh = () => {
-        setLoading(true);
-        void loadDevices();
-    };
+
 
     useEffect(() => {
         let cancelled = false;
 
-        void fetchDevices().then((data) => {
+        void Promise.all([
+            fetchDevices(),
+            isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([])
+        ]).then(([data, pending]) => {
             if (cancelled) {
                 return;
             }
             setDevices(data);
+            setPairingRequests(pending as DeviceConfig[]);
             setLoading(false);
         });
 
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [isAdmin]);
 
     const { isConnected } = useWebSocket((event) => {
         if (event.type === "pairing_requested" || event.type === "pairing_queue_updated") {
@@ -115,11 +121,15 @@ export default function DevicesPage() {
 
         let cancelled = false;
         const timeoutId = window.setTimeout(() => {
-            void fetchDevices().then((data) => {
+            void Promise.all([
+                fetchDevices(),
+                isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([])
+            ]).then(([data, pending]) => {
                 if (cancelled) {
                     return;
                 }
                 setDevices(data);
+                setPairingRequests(pending as DeviceConfig[]);
                 setLoading(false);
             });
         }, 0);
@@ -128,7 +138,7 @@ export default function DevicesPage() {
             cancelled = true;
             window.clearTimeout(timeoutId);
         };
-    }, [isConnected]);
+    }, [isConnected, isAdmin]);
 
     const handleDeleteClick = (deviceId: string, deviceName: string) => {
         setModalConfig({ isOpen: true, deviceId, deviceName });
@@ -182,18 +192,21 @@ export default function DevicesPage() {
                             <>
                                 <Link href="/devices/diy" className={primaryActionButtonClassName}>
                                     <span className="material-icons-round text-sm">hardware</span>
-                                    <span>SVG Builder</span>
+                                    <span>Create New Device</span>
                                 </Link>
-                                <Link href="/devices/discovery" className={secondaryActionButtonClassName}>
-                                    <span className="material-icons-round text-sm">wifi_tethering</span>
-                                    <span>Discover New</span>
+                                <Link href="/devices/discovery" className={`${secondaryActionButtonClassName} relative`}>
+                                    <span className="material-icons-round text-sm">radar</span>
+                                    <span>Scan Device</span>
+                                    {pairingRequests.length > 0 && (
+                                        <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                            <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 border-2 border-white dark:border-slate-800"></span>
+                                        </span>
+                                    )}
                                 </Link>
                             </>
                         ) : null}
-                        <button onClick={handleRefresh} className={primaryActionButtonClassName}>
-                            <span className="material-icons-round text-sm">refresh</span>
-                            <span>Refresh</span>
-                        </button>
+
                     </div>
                 </header>
 
@@ -242,9 +255,15 @@ export default function DevicesPage() {
                                             <span className="material-icons-round mr-2 text-sm">hardware</span>
                                             Configure via SVG
                                         </Link>
-                                        <Link href="/devices/discovery" className="flex min-w-44 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
-                                            <span className="material-icons-round mr-2 text-sm">wifi_tethering</span>
-                                            Discover Existing Device
+                                        <Link href="/devices/discovery" className="relative flex min-w-44 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+                                            <span className="material-icons-round mr-2 text-sm">radar</span>
+                                            Scan Device
+                                            {pairingRequests.length > 0 && (
+                                                <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                                                    <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 border-2 border-white dark:border-slate-800"></span>
+                                                </span>
+                                            )}
                                         </Link>
                                     </div>
                                 ) : null}
