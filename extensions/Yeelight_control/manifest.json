@@ -1,0 +1,24 @@
+{
+    "module_name": "Yeelight Bulb Control Module",
+    "file_path" : "yeelight_control.py",
+    "version" : "1.0.0",
+    "author" : "experience",
+    "description" : "This module controls Yeelight bulbs using the Yeelight API.",
+    "functions" : [
+        "connect()",
+        "toggle()",
+        "get_props()",
+        "set_power()",
+        "set_bright()",
+        "set_rgb()",
+        "set_hue()",
+        "set_sat()",
+        "set_color_mode()"
+    ],
+    "data_type" : [
+        "ip",
+        "toggle",
+        "data_output",
+        ""
+    ]
+}
