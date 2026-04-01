@@ -23,17 +23,20 @@ This file documents the baseline schema for E-Connect.
 2. The R1 automation model is a typed visual node graph, not a free-form script body and not recurring schedule metadata.
 3. The persisted contract must represent at minimum:
    - node identity and type (`trigger`, `condition`, `action`)
-   - node configuration such as source device/input, comparison thresholds or boolean expectations, target device/output, and target value
+   - node configuration such as source device/input, trigger mode (`device_state`, `device_on_off_event`, `device_value`, `time_schedule`), server-time trigger hour/minute plus optional weekdays, comparison thresholds or boolean expectations, target device/output, and target value
    - typed edges between node ports
-4. Trigger nodes originate from server-observed device input/state or telemetry updates, plus an optional manual test source for verification.
-5. Condition nodes evaluate boolean or numeric state. Action nodes issue output mutations such as `on`, `off`, or `set_value`.
-6. Validation must reject dangling edges, incompatible port types, missing target bindings, and feedback loops/cycles that could cause uncontrolled retriggering.
-7. Execution logs must store the trigger source, the evaluated path or rule summary, the target action summary, and the success/failure result.
+4. Trigger nodes originate from server-observed device input/state or telemetry updates, a backend-owned server-time schedule, plus an optional manual test source for verification.
+5. `device_on_off_event` and `device_value` are device-scoped graph trigger kinds only; they still execute via the existing backend `device_state` event runtime.
+6. `time_schedule` executes against the effective server timezone and must not depend on browser time or device clocks.
+7. Condition nodes evaluate boolean or numeric state. Action nodes issue output mutations such as `on`, `off`, or `set_value`.
+8. Validation must reject dangling edges, incompatible port types, missing target bindings, trigger-mode/pin mismatches, invalid time fields, and feedback loops/cycles that could cause uncontrolled retriggering.
+9. Execution logs must store the trigger source, the evaluated path or rule summary, the target action summary, and the success/failure result.
 
 ## Automation Runtime Note
 
-1. The backend rule engine must evaluate automation from server-observed device state/event data. A browser tab must not be the execution truth source.
+1. The backend rule engine must evaluate automation from server-observed device state/event data and the effective server-time scheduler. A browser tab must not be the execution truth source.
 2. The physical schema may store the graph as JSON inside `automations` or through dedicated child tables, but the stored shape must preserve nodes, ports, edges, and target bindings losslessly for audit and re-edit.
+3. The legacy columns `schedule_type`, `timezone`, `schedule_hour`, `schedule_minute`, `schedule_weekdays`, and `next_run_at` may be reused as a derived runtime projection of a `time_schedule` trigger, but `automations.script_code` remains the durable source of truth for the graph definition.
 
 ## Wi-Fi Credential Contract
 

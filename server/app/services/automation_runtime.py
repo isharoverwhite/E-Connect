@@ -3,8 +3,9 @@ from __future__ import annotations
 import ast
 import json
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
+from zoneinfo import ZoneInfo
 
 from sqlalchemy.orm import Session
 
@@ -17,20 +18,29 @@ from ..sql_models import (
     DeviceHistory,
     ExecutionStatus as SqlExecutionStatus,
     EventType,
+    HouseholdMembership,
     PinMode,
+    User,
 )
+from .timezone_settings import DEFAULT_SERVER_TIMEZONE, normalize_supported_timezone
 
 TRIGGER_PORT = "event_out"
 FLOW_INPUT_PORT = "event_in"
 CONDITION_PASS_PORT = "pass_out"
-SUPPORTED_TRIGGER_SOURCES = ("manual", "device_state")
+TIME_TRIGGER_KIND = "time_schedule"
+TIME_TRIGGER_SCHEDULE_TYPE = "time"
+SUPPORTED_TRIGGER_SOURCES = ("manual", "device_state", "schedule")
 SUPPORTED_NODE_TYPES = ("trigger", "condition", "action")
-SUPPORTED_TRIGGER_KINDS = ("device_state",)
+SUPPORTED_TRIGGER_KINDS = ("device_state", "device_value", "device_on_off_event", TIME_TRIGGER_KIND)
 SUPPORTED_CONDITION_KINDS = ("state_equals", "numeric_compare")
 SUPPORTED_ACTION_KINDS = ("set_output", "set_value")
 SUPPORTED_COMPARISON_OPERATORS = ("gt", "gte", "lt", "lte", "between")
 EXPECTED_BINARY_VALUES = {"on", "off"}
 SET_OUTPUT_VALUES = {0, 1}
+NUMERIC_TRIGGER_FUNCTION_KEYWORDS = ("temp", "temperature", "hum", "humidity", "moisture", "analog", "sensor")
+BINARY_TRIGGER_FUNCTION_KEYWORDS = ("switch", "btn", "button", "relay", "contact", "pir", "motion")
+SUPPORTED_TIME_TRIGGER_WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+TIME_TRIGGER_WEEKDAY_INDEX = {value: index for index, value in enumerate(SUPPORTED_TIME_TRIGGER_WEEKDAYS)}
 
 
 class AutomationGraphValidationError(ValueError):
@@ -104,6 +114,70 @@ def _normalize_binary_state(value: object) -> bool | None:
     return None
 
 
+def _coerce_utc_datetime(value: datetime | None) -> datetime:
+    current = value or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        return current.replace(tzinfo=timezone.utc)
+    return current.astimezone(timezone.utc)
+
+
+def _normalize_time_trigger_weekdays(value: object) -> list[str]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list):
+        raise AutomationGraphValidationError("Time trigger weekdays must be an array.")
+
+    normalized: list[str] = []
+    for raw_value in value:
+        if not isinstance(raw_value, str):
+            raise AutomationGraphValidationError("Time trigger weekdays must contain weekday strings.")
+        weekday = raw_value.strip().lower()
+        if weekday not in TIME_TRIGGER_WEEKDAY_INDEX:
+            raise AutomationGraphValidationError(
+                "Time trigger weekdays must use: mon, tue, wed, thu, fri, sat, or sun."
+            )
+        if weekday not in normalized:
+            normalized.append(weekday)
+    return normalized
+
+
+def _effective_timezone_name(value: object) -> str:
+    return normalize_supported_timezone(value) or DEFAULT_SERVER_TIMEZONE
+
+
+def _time_trigger_zoneinfo(value: object) -> ZoneInfo:
+    return ZoneInfo(_effective_timezone_name(value))
+
+
+def _pin_mode_value(pin_config: object) -> str:
+    return _enum_value(getattr(pin_config, "mode", None), default="").upper()
+
+
+def _pin_function_text(pin_config: object) -> str:
+    return str(getattr(pin_config, "function", "") or "").strip().lower()
+
+
+def _pin_matches_function_keywords(pin_config: object, keywords: tuple[str, ...]) -> bool:
+    function_text = _pin_function_text(pin_config)
+    return any(keyword in function_text for keyword in keywords)
+
+
+def _pin_supports_numeric_trigger(pin_config: object) -> bool:
+    pin_mode = _pin_mode_value(pin_config)
+    return pin_mode in {PinMode.ADC.value, PinMode.PWM.value} or _pin_matches_function_keywords(
+        pin_config,
+        NUMERIC_TRIGGER_FUNCTION_KEYWORDS,
+    )
+
+
+def _pin_supports_binary_trigger(pin_config: object) -> bool:
+    pin_mode = _pin_mode_value(pin_config)
+    return pin_mode in {PinMode.INPUT.value, PinMode.OUTPUT.value} or _pin_matches_function_keywords(
+        pin_config,
+        BINARY_TRIGGER_FUNCTION_KEYWORDS,
+    )
+
+
 def _normalize_graph_payload(raw_graph: object) -> dict[str, Any]:
     if hasattr(raw_graph, "model_dump"):
         dumped = getattr(raw_graph, "model_dump")(mode="json")
@@ -131,7 +205,20 @@ def _normalize_graph_payload(raw_graph: object) -> dict[str, Any]:
     return {"nodes": nodes, "edges": edges}
 
 
-def _normalize_trigger_config(config: Mapping[str, Any]) -> dict[str, Any]:
+def _normalize_trigger_config(kind: str, config: Mapping[str, Any]) -> dict[str, Any]:
+    if kind == TIME_TRIGGER_KIND:
+        hour = _normalize_int(config.get("hour"), field_name="Trigger hour")
+        minute = _normalize_int(config.get("minute"), field_name="Trigger minute")
+        if not 0 <= hour <= 23:
+            raise AutomationGraphValidationError("Trigger hour must be between 0 and 23.")
+        if not 0 <= minute <= 59:
+            raise AutomationGraphValidationError("Trigger minute must be between 0 and 59.")
+        return {
+            "hour": hour,
+            "minute": minute,
+            "weekdays": _normalize_time_trigger_weekdays(config.get("weekdays")),
+        }
+
     return {
         "device_id": _normalize_text(config.get("device_id"), field_name="Trigger device_id"),
         "pin": _normalize_int(config.get("pin"), field_name="Trigger pin"),
@@ -203,7 +290,7 @@ def _normalize_graph_node(node: object) -> dict[str, Any]:
     if node_type == "trigger":
         if kind not in SUPPORTED_TRIGGER_KINDS:
             raise AutomationGraphValidationError(f"Unsupported trigger kind '{kind}'.")
-        normalized_config = _normalize_trigger_config(config)
+        normalized_config = _normalize_trigger_config(kind, config)
     elif node_type == "condition":
         if kind not in SUPPORTED_CONDITION_KINDS:
             raise AutomationGraphValidationError(f"Unsupported condition kind '{kind}'.")
@@ -250,6 +337,9 @@ def _validate_device_bindings(normalized_graph: dict[str, Any], *, device_scope:
 
     for node in normalized_graph["nodes"]:
         config = node["config"]
+        if node["type"] == "trigger" and node["kind"] == TIME_TRIGGER_KIND:
+            continue
+
         device_id = config.get("device_id")
         device = device_scope.get(device_id)
         if device is None:
@@ -264,6 +354,17 @@ def _validate_device_bindings(normalized_graph: dict[str, Any], *, device_scope:
             raise AutomationGraphValidationError(
                 f"Automation references GPIO {pin} on device '{device.name}', but that pin is not configured."
             )
+
+        if node["type"] == "trigger":
+            if node["kind"] == "device_value" and not _pin_supports_numeric_trigger(pin_config):
+                raise AutomationGraphValidationError(
+                    f"device_value triggers require a numeric-capable pin. Device '{device.name}' GPIO {pin} is not configured for numeric telemetry."
+                )
+            if node["kind"] == "device_on_off_event" and not _pin_supports_binary_trigger(pin_config):
+                raise AutomationGraphValidationError(
+                    f"device_on_off_event triggers require a boolean-like pin. Device '{device.name}' GPIO {pin} is not configured for on/off events."
+                )
+            continue
 
         if node["type"] != "action":
             continue
@@ -395,6 +496,7 @@ def serialize_execution_log(log: AutomationExecutionLog) -> dict[str, Any]:
         "triggered_at": log.triggered_at,
         "status": _enum_value(log.status, default=ExecutionStatus.failed.value),
         "trigger_source": _enum_value(log.trigger_source, default="manual"),
+        "scheduled_for": log.scheduled_for,
         "log_output": log.log_output,
         "error_message": log.error_message,
     }
@@ -429,7 +531,124 @@ def serialize_automation(automation: Automation) -> dict[str, Any]:
         "graph": graph,
         "last_triggered": automation.last_triggered,
         "last_execution": serialize_execution_log(latest_log) if latest_log is not None else None,
+        "schedule_type": automation.schedule_type,
+        "timezone": automation.timezone,
+        "schedule_hour": automation.schedule_hour,
+        "schedule_minute": automation.schedule_minute,
+        "schedule_weekdays": list(automation.schedule_weekdays or []),
+        "next_run_at": automation.next_run_at,
     }
+
+
+def extract_time_trigger_config(normalized_graph: Mapping[str, Any]) -> dict[str, Any] | None:
+    trigger_node = next((node for node in normalized_graph.get("nodes", []) if node.get("type") == "trigger"), None)
+    if trigger_node is None or trigger_node.get("kind") != TIME_TRIGGER_KIND:
+        return None
+    config = trigger_node.get("config")
+    return dict(config) if isinstance(config, Mapping) else None
+
+
+def compute_next_time_trigger_run(
+    trigger_config: Mapping[str, Any],
+    *,
+    timezone_name: str,
+    reference_time: datetime | None = None,
+) -> datetime | None:
+    tzinfo = _time_trigger_zoneinfo(timezone_name)
+    current_utc = _coerce_utc_datetime(reference_time)
+    current_local_minute = current_utc.astimezone(tzinfo).replace(second=0, microsecond=0)
+    weekdays = {
+        weekday
+        for weekday in trigger_config.get("weekdays", [])
+        if isinstance(weekday, str) and weekday in TIME_TRIGGER_WEEKDAY_INDEX
+    }
+    hour = int(trigger_config["hour"])
+    minute = int(trigger_config["minute"])
+
+    for offset in range(0, 8):
+        candidate_date = (current_local_minute + timedelta(days=offset)).date()
+        if weekdays and SUPPORTED_TIME_TRIGGER_WEEKDAYS[candidate_date.weekday()] not in weekdays:
+            continue
+
+        candidate_local = datetime(
+            candidate_date.year,
+            candidate_date.month,
+            candidate_date.day,
+            hour,
+            minute,
+            tzinfo=tzinfo,
+        )
+        if candidate_local < current_local_minute:
+            continue
+        return candidate_local.astimezone(timezone.utc).replace(tzinfo=None)
+
+    return None
+
+
+def sync_automation_schedule_projection(
+    automation: Automation,
+    normalized_graph: Mapping[str, Any],
+    *,
+    effective_timezone: str,
+    reference_time: datetime | None = None,
+) -> Automation:
+    trigger_config = extract_time_trigger_config(normalized_graph)
+    if trigger_config is None:
+        automation.schedule_type = "manual"
+        automation.timezone = None
+        automation.schedule_hour = None
+        automation.schedule_minute = None
+        automation.schedule_weekdays = []
+        automation.next_run_at = None
+        return automation
+
+    timezone_name = _effective_timezone_name(effective_timezone)
+    automation.schedule_type = TIME_TRIGGER_SCHEDULE_TYPE
+    automation.timezone = timezone_name
+    automation.schedule_hour = int(trigger_config["hour"])
+    automation.schedule_minute = int(trigger_config["minute"])
+    automation.schedule_weekdays = list(trigger_config.get("weekdays", []))
+    automation.next_run_at = compute_next_time_trigger_run(
+        trigger_config,
+        timezone_name=timezone_name,
+        reference_time=reference_time,
+    )
+    return automation
+
+
+def refresh_time_trigger_automations_for_household(
+    db: Session,
+    *,
+    household_id: int,
+    effective_timezone: str,
+    reference_time: datetime | None = None,
+) -> int:
+    automations = (
+        db.query(Automation)
+        .join(User, User.user_id == Automation.creator_id)
+        .join(HouseholdMembership, HouseholdMembership.user_id == User.user_id)
+        .filter(HouseholdMembership.household_id == household_id)
+        .order_by(Automation.id.asc())
+        .all()
+    )
+
+    refreshed = 0
+    for automation in automations:
+        try:
+            normalized_graph = deserialize_automation_graph(automation.script_code)
+        except AutomationGraphValidationError:
+            continue
+
+        sync_automation_schedule_projection(
+            automation,
+            normalized_graph,
+            effective_timezone=effective_timezone,
+            reference_time=reference_time,
+        )
+        db.add(automation)
+        refreshed += 1
+
+    return refreshed
 
 
 def _load_latest_state_payloads(db: Session, device_ids: set[str]) -> dict[str, dict[str, Any]]:
@@ -480,6 +699,15 @@ def _extract_numeric_value(snapshot: Mapping[str, Any] | None) -> float | None:
         if isinstance(value, (int, float)):
             return float(value)
     return None
+
+
+def _extract_binary_value(snapshot: Mapping[str, Any] | None) -> bool | None:
+    if not isinstance(snapshot, Mapping):
+        return None
+    actual = _normalize_binary_state(snapshot.get("brightness"))
+    if actual is not None:
+        return actual
+    return _normalize_binary_state(snapshot.get("value"))
 
 
 def _evaluate_condition_node(
@@ -582,6 +810,7 @@ def _evaluate_graph_execution(
     device_lookup: Mapping[str, Device],
     publish_command: Callable[[str, dict[str, Any]], bool],
     triggered_at: datetime | None = None,
+    scheduled_for: datetime | None = None,
 ) -> AutomationExecutionLog:
     if trigger_source not in SUPPORTED_TRIGGER_SOURCES:
         raise AutomationGraphValidationError(f"Unsupported trigger source '{trigger_source}'.")
@@ -640,6 +869,7 @@ def _evaluate_graph_execution(
         triggered_at=automation.last_triggered,
         status=SqlExecutionStatus.success if status == ExecutionStatus.success else SqlExecutionStatus.failed,
         trigger_source=trigger_source,
+        scheduled_for=scheduled_for,
         log_output=json.dumps(log_payload, ensure_ascii=True),
         error_message=error_message,
     )
@@ -689,10 +919,19 @@ def trigger_automation_manually(
 
 def _trigger_matches_state_event(normalized_graph: Mapping[str, Any], *, device_id: str, state_payload: Mapping[str, Any]) -> bool:
     trigger_node = next(node for node in normalized_graph["nodes"] if node["type"] == "trigger")
+    if trigger_node["kind"] == TIME_TRIGGER_KIND:
+        return False
     config = trigger_node["config"]
     if config["device_id"] != device_id:
         return False
-    return _extract_pin_snapshot(state_payload, config["pin"]) is not None
+    snapshot = _extract_pin_snapshot(state_payload, config["pin"])
+    if snapshot is None:
+        return False
+    if trigger_node["kind"] == "device_value":
+        return _extract_numeric_value(snapshot) is not None
+    if trigger_node["kind"] == "device_on_off_event":
+        return _extract_binary_value(snapshot) is not None
+    return True
 
 
 def process_state_event_for_automations(
@@ -743,5 +982,100 @@ def process_state_event_for_automations(
                 triggered_at=triggered_at,
             )
         )
+
+    return execution_logs
+
+
+def process_time_trigger_automations(
+    db: Session,
+    *,
+    publish_command: Callable[[str, dict[str, Any]], bool],
+    reference_time: datetime | None = None,
+) -> list[AutomationExecutionLog]:
+    execution_logs: list[AutomationExecutionLog] = []
+    current_utc = _coerce_utc_datetime(reference_time)
+    current_minute_utc = current_utc.replace(second=0, microsecond=0)
+    current_minute_naive = current_minute_utc.replace(tzinfo=None)
+
+    enabled_automations = (
+        db.query(Automation)
+        .filter(
+            Automation.is_enabled.is_(True),
+            Automation.schedule_type == TIME_TRIGGER_SCHEDULE_TYPE,
+            Automation.next_run_at.isnot(None),
+            Automation.next_run_at <= current_minute_naive,
+        )
+        .order_by(Automation.next_run_at.asc(), Automation.id.asc())
+        .all()
+    )
+
+    for automation in enabled_automations:
+        try:
+            normalized_graph = deserialize_automation_graph(automation.script_code)
+        except AutomationGraphValidationError:
+            continue
+
+        trigger_config = extract_time_trigger_config(normalized_graph)
+        timezone_name = _effective_timezone_name(automation.timezone)
+
+        if trigger_config is None:
+            sync_automation_schedule_projection(
+                automation,
+                normalized_graph,
+                effective_timezone=timezone_name,
+                reference_time=current_utc,
+            )
+            db.add(automation)
+            continue
+
+        scheduled_for = automation.next_run_at
+        if scheduled_for is None:
+            sync_automation_schedule_projection(
+                automation,
+                normalized_graph,
+                effective_timezone=timezone_name,
+                reference_time=current_utc,
+            )
+            db.add(automation)
+            continue
+
+        if scheduled_for < current_minute_naive:
+            automation.next_run_at = compute_next_time_trigger_run(
+                trigger_config,
+                timezone_name=timezone_name,
+                reference_time=current_minute_utc + timedelta(minutes=1),
+            )
+            db.add(automation)
+            continue
+
+        referenced_device_ids = {
+            node["config"]["device_id"]
+            for node in normalized_graph["nodes"]
+            if "device_id" in node["config"]
+        }
+        state_payloads = _load_latest_state_payloads(db, referenced_device_ids)
+        device_lookup = {
+            device.device_id: device
+            for device in db.query(Device).filter(Device.device_id.in_(sorted(referenced_device_ids))).all()
+        }
+        execution_logs.append(
+            _evaluate_graph_execution(
+                db,
+                automation=automation,
+                normalized_graph=normalized_graph,
+                trigger_source="schedule",
+                state_payloads=state_payloads,
+                device_lookup=device_lookup,
+                publish_command=publish_command,
+                triggered_at=current_utc.replace(tzinfo=None),
+                scheduled_for=scheduled_for,
+            )
+        )
+        automation.next_run_at = compute_next_time_trigger_run(
+            trigger_config,
+            timezone_name=timezone_name,
+            reference_time=current_minute_utc + timedelta(minutes=1),
+        )
+        db.add(automation)
 
     return execution_logs

@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 import asyncio
 import base64
 from contextlib import asynccontextmanager, suppress
-from datetime import datetime
+from datetime import datetime, timezone
 import ipaddress
 import json
 import logging
@@ -30,6 +30,7 @@ from app.services.builder import (
     resolve_runtime_firmware_network_state,
     resolve_webapp_transport,
 )
+from app.services.automation_runtime import process_time_trigger_automations
 from app.services.mdns import MdnsPublisher, resolve_mdns_registration_config
 from app.services.system_metrics import collect_system_metrics
 from app.services.system_logs import (
@@ -52,6 +53,10 @@ RUNTIME_NETWORK_REFRESH_INTERVAL_SECONDS = max(
 SYSTEM_LOG_RETENTION_SWEEP_INTERVAL_SECONDS = max(
     60.0,
     float(os.getenv("SYSTEM_LOG_RETENTION_SWEEP_INTERVAL_SECONDS", "3600")),
+)
+AUTOMATION_TIME_TRIGGER_INTERVAL_SECONDS = max(
+    5.0,
+    min(60.0, float(os.getenv("AUTOMATION_TIME_TRIGGER_INTERVAL_SECONDS", "15"))),
 )
 JSONP_CALLBACK_PATTERN = re.compile(r"^[A-Za-z_$][0-9A-Za-z_$.]*$")
 DISCOVERY_BRIDGE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -374,6 +379,7 @@ async def lifespan(app: FastAPI):
     system_metrics_watchdog_task: asyncio.Task[None] | None = None
     runtime_network_watchdog_task: asyncio.Task[None] | None = None
     system_log_retention_task: asyncio.Task[None] | None = None
+    automation_time_trigger_task: asyncio.Task[None] | None = None
 
     async def stale_device_watchdog() -> None:
         while True:
@@ -417,6 +423,28 @@ async def lifespan(app: FastAPI):
             except Exception:
                 db.rollback()
                 logger.exception("System log retention watchdog failed")
+            finally:
+                db.close()
+
+    async def automation_time_trigger_watchdog() -> None:
+        while True:
+            await asyncio.sleep(AUTOMATION_TIME_TRIGGER_INTERVAL_SECONDS)
+            if _using_overridden_database(app) or not getattr(app.state, "database_ready", False):
+                continue
+
+            db = SessionLocal()
+            try:
+                logs = process_time_trigger_automations(
+                    db,
+                    publish_command=mqtt_manager.publish_command,
+                    reference_time=datetime.now(timezone.utc),
+                )
+                db.commit()
+                if logs:
+                    logger.info("Executed %s automation time trigger(s).", len(logs))
+            except Exception:
+                db.rollback()
+                logger.exception("Automation time-trigger watchdog failed")
             finally:
                 db.close()
 
@@ -517,6 +545,7 @@ async def lifespan(app: FastAPI):
     system_metrics_watchdog_task = asyncio.create_task(system_metrics_watchdog())
     runtime_network_watchdog_task = asyncio.create_task(runtime_network_watchdog())
     system_log_retention_task = asyncio.create_task(system_log_retention_watchdog())
+    automation_time_trigger_task = asyncio.create_task(automation_time_trigger_watchdog())
     app.state.stale_device_watchdog_started = True
 
     try:
@@ -538,6 +567,10 @@ async def lifespan(app: FastAPI):
             system_log_retention_task.cancel()
             with suppress(asyncio.CancelledError):
                 await system_log_retention_task
+        if automation_time_trigger_task is not None:
+            automation_time_trigger_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await automation_time_trigger_task
         if getattr(app.state, "database_ready", False) and not _using_overridden_database(app):
             shutdown_runtime_state = _serialize_firmware_network_state(app)
             db = SessionLocal()
