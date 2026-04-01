@@ -105,8 +105,22 @@ function isDeviceBackOnlineAfterOta(
   device: DeviceConfig | null,
   flashedAt: number | null,
   expectedFirmwareVersion: string | null,
+  otaStartingFirmwareVersion: string | null,
 ): boolean {
-  if (!device || device.conn_status !== "online" || flashedAt === null) {
+  if (!device || device.conn_status !== "online") {
+    return false;
+  }
+
+  const reportedFirmwareVersion = device.firmware_version?.trim() || null;
+  if (
+    expectedFirmwareVersion &&
+    reportedFirmwareVersion === expectedFirmwareVersion &&
+    otaStartingFirmwareVersion !== expectedFirmwareVersion
+  ) {
+    return true;
+  }
+
+  if (flashedAt === null) {
     return false;
   }
 
@@ -177,6 +191,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   const [sendingOta, setSendingOta] = useState(false);
   const [flashCompletedAt, setFlashCompletedAt] = useState<number | null>(null);
   const [boardOnlineAfterOta, setBoardOnlineAfterOta] = useState(false);
+  const [otaStartingFirmwareVersion, setOtaStartingFirmwareVersion] = useState<string | null>(null);
 
   useWebSocket((event) => {
     if (!("device_id" in event) || event.device_id !== deviceId) {
@@ -375,10 +390,24 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       return;
     }
 
-    if (isDeviceBackOnlineAfterOta(device, flashCompletedAt, expectedFirmwareVersion)) {
+    if (
+      isDeviceBackOnlineAfterOta(
+        device,
+        flashCompletedAt,
+        expectedFirmwareVersion,
+        otaStartingFirmwareVersion,
+      )
+    ) {
       setBoardOnlineAfterOta(true);
     }
-  }, [boardOnlineAfterOta, device, expectedFirmwareVersion, flashCompletedAt, jobStatus]);
+  }, [
+    boardOnlineAfterOta,
+    device,
+    expectedFirmwareVersion,
+    flashCompletedAt,
+    jobStatus,
+    otaStartingFirmwareVersion,
+  ]);
 
   useEffect(() => {
     if (
@@ -400,7 +429,14 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       }
 
       setDevice(snapshot);
-      if (isDeviceBackOnlineAfterOta(snapshot, flashCompletedAt, expectedFirmwareVersion)) {
+      if (
+        isDeviceBackOnlineAfterOta(
+          snapshot,
+          flashCompletedAt,
+          expectedFirmwareVersion,
+          otaStartingFirmwareVersion,
+        )
+      ) {
         setBoardOnlineAfterOta(true);
         if (interval !== null) {
           window.clearInterval(interval);
@@ -420,7 +456,15 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         window.clearInterval(interval);
       }
     };
-  }, [boardOnlineAfterOta, deviceId, expectedFirmwareVersion, flashCompletedAt, jobStatus, otaModalOpen]);
+  }, [
+    boardOnlineAfterOta,
+    deviceId,
+    expectedFirmwareVersion,
+    flashCompletedAt,
+    jobStatus,
+    otaModalOpen,
+    otaStartingFirmwareVersion,
+  ]);
 
   useEffect(() => {
     if (!otaModalOpen || jobStatus !== "flashed") {
@@ -539,6 +583,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
 
   const validation = validatePinMappings(boardProfile, pins);
   const hasWifiCredentialSelection = selectedWifiCredentialId !== null;
+  const canInitiateOta = jobStatus === "artifact_ready" || jobStatus === "flash_failed";
   if (!hasWifiCredentialSelection) {
     validation.errors.push("Select a saved Wi-Fi credential before rebuilding this board.");
   }
@@ -644,6 +689,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       setOtaModalOpen(true);
       setFlashCompletedAt(null);
       setBoardOnlineAfterOta(false);
+      setOtaStartingFirmwareVersion(null);
       setStatusMessage(
         "Pin mapping saved. The server started a new firmware rebuild. You can trigger OTA after the artifact becomes ready.",
       );
@@ -664,6 +710,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
     setStatusMessage(null);
     setFlashCompletedAt(null);
     setBoardOnlineAfterOta(false);
+    setOtaStartingFirmwareVersion(device.firmware_version?.trim() || null);
 
     try {
       const snapshot = await fetchBuildJob(jobId);
@@ -685,7 +732,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         job_id: jobId,
       });
 
-      if (commandResult.status !== "success") {
+      if (commandResult.status === "failed") {
         throw new Error(commandResult.message || "Failed to publish OTA command");
       }
 
@@ -1064,8 +1111,8 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
               {jobStatus === "flash_failed" && (
                 <div className="flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
                   <span className="material-icons-round">warning</span>
-                  The device reported an OTA failure. Keep the existing config and inspect the board
-                  before trying again.
+                  The device reported an OTA failure. Inspect the board, then retry this exact
+                  artifact or rebuild if the config changed.
                 </div>
               )}
 
@@ -1093,11 +1140,11 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
               </button>
               <button
                 className="rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={sendingOta || jobStatus !== "artifact_ready"}
+                disabled={sendingOta || !canInitiateOta}
                 onClick={() => void handleInitiateOta()}
                 type="button"
               >
-                {sendingOta ? "Sending OTA..." : "Update via OTA"}
+                {sendingOta ? "Sending OTA..." : jobStatus === "flash_failed" ? "Retry OTA" : "Update via OTA"}
               </button>
             </div>
 

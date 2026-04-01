@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchDashboardDevices, fetchDevices, sendDeviceCommand, rejectDiscoveredDevice } from "@/lib/api";
+import { fetchDashboardDevices, fetchDevices, sendDeviceCommand } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import Sidebar from '@/components/Sidebar';
 import { DeviceConfig, DeviceStatePin, DeviceStateSnapshot } from "@/types/device";
@@ -118,16 +118,7 @@ export default function Dashboard() {
   const offlineDevices = devices.filter(d => !isDeviceOnline(d) && d.auth_status === "approved");
 
   const allNotifications = useMemo(() => {
-    const notifs: Array<{ id: string; type: 'pairing' | 'offline'; device: DeviceConfig }> = [];
-    if (isAdmin) {
-      pairingRequests.forEach(req => {
-        notifs.push({
-          id: `pairing-${req.device_id}`,
-          type: 'pairing' as const,
-          device: req,
-        });
-      });
-    }
+    const notifs: Array<{ id: string; type: 'offline'; device: DeviceConfig }> = [];
     offlineDevices.forEach(dev => {
       notifs.push({
         id: `offline-${dev.device_id}-${dev.last_seen || ''}`,
@@ -136,27 +127,18 @@ export default function Dashboard() {
       });
     });
     return notifs;
-  }, [isAdmin, pairingRequests, offlineDevices]);
+  }, [offlineDevices]);
 
   const visibleNotifications = allNotifications.filter(n => !dismissedNotifIds.has(n.id));
   const alertCount = visibleNotifications.length;
 
   const handleClearAll = async () => {
-    let pairingRejected = false;
     const newDismissed = new Set(dismissedNotifIds);
     for (const n of allNotifications) {
-      if (n.type === 'pairing') {
-        await rejectDiscoveredDevice(n.device.device_id).catch(() => {});
-        pairingRejected = true;
-      } else {
-        newDismissed.add(n.id);
-      }
+      newDismissed.add(n.id);
     }
     setDismissedNotifIds(newDismissed);
     try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(newDismissed))); } catch {}
-    if (pairingRejected) {
-      void syncDashboardData();
-    }
   };
 
   return (
@@ -169,7 +151,7 @@ export default function Dashboard() {
           <div className="flex items-center space-x-4">
             <div className="relative group">
               <button
-                className="p-2 text-primary bg-blue-50 dark:bg-blue-500/10 rounded-full transition-colors relative outline-none ring-2 ring-blue-100 dark:ring-blue-900/30"
+                className="w-10 h-10 flex items-center justify-center text-primary bg-blue-50 dark:bg-blue-500/10 rounded-full transition-colors relative outline-none ring-2 ring-blue-100 dark:ring-blue-900/30"
                 onClick={() => setShowNotifications(!showNotifications)}
               >
                 <span className="material-icons-round">notifications</span>
@@ -203,47 +185,6 @@ export default function Dashboard() {
                       </div>
                     ) : (
                       visibleNotifications.map(notif => {
-                        if (notif.type === 'pairing') {
-                          return (
-                            <div key={notif.id} className="p-4 bg-blue-50/40 dark:bg-blue-900/10 border-b border-slate-100 dark:border-slate-700/50 transition-colors group">
-                              <div className="flex gap-3">
-                                <div className="flex-shrink-0 mt-1">
-                                  <div className="w-8 h-8 rounded-full bg-blue-100 dark:bg-blue-600/20 flex items-center justify-center text-blue-600 dark:text-blue-400">
-                                    <span className="material-icons-round text-lg">sensors</span>
-                                  </div>
-                                </div>
-                                <div className="flex-1">
-                                  <div className="flex justify-between items-start mb-1">
-                                    <p className="text-sm font-semibold text-slate-900 dark:text-white">New Device Found</p>
-                                    <button
-                                      onClick={async () => {
-                                        await rejectDiscoveredDevice(notif.device.device_id).catch(() => {});
-                                        void syncDashboardData();
-                                      }}
-                                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 opacity-0 group-hover:opacity-100 transition-opacity rounded-full hover:bg-slate-100 dark:hover:bg-slate-700"
-                                      title="Reject"
-                                    >
-                                      <span className="material-icons-round text-sm">close</span>
-                                    </button>
-                                  </div>
-                                  <p className="text-xs text-slate-600 dark:text-slate-400 mb-3">
-                                    {notif.device.name
-                                      ? `"${notif.device.name}" requested pairing.`
-                                      : "A board requested pairing and is waiting in discovery."}
-                                  </p>
-                                  <div className="flex gap-2">
-                                    <button
-                                      onClick={() => router.push("/devices/discovery")}
-                                      className="flex-1 bg-primary hover:bg-blue-600 text-white text-xs font-medium py-1.5 px-3 rounded shadow-sm transition-colors flex items-center justify-center gap-1"
-                                    >
-                                      <span className="material-icons-round text-sm">link</span> Pair Now
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        } else {
                           return (
                             <div key={notif.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 transition-colors group">
                               <div className="flex gap-3">
@@ -275,7 +216,6 @@ export default function Dashboard() {
                               </div>
                             </div>
                           );
-                        }
                       })
                     )}
                   </div>
@@ -288,10 +228,16 @@ export default function Dashboard() {
             {isAdmin ? (
               <button
                 onClick={() => router.push("/devices/discovery")}
-                className="flex items-center bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-all shadow-md hover:shadow-lg"
+                className="relative flex items-center bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-all shadow-md hover:shadow-lg"
               >
-                <span className="material-icons-round text-sm mr-2">add</span>
-                Add Device
+                <span className="material-icons-round text-sm mr-2">radar</span>
+                Scan Device
+                {pairingRequests.length > 0 && (
+                  <span className="absolute -top-1 -right-1 flex h-3 w-3">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 border-2 border-white dark:border-slate-800"></span>
+                  </span>
+                )}
               </button>
             ) : null}
           </div>
@@ -342,7 +288,18 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-              <div className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300 cursor-pointer">
+              <div
+                className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300 cursor-pointer"
+                onClick={() => router.push("/logs?view=alerts")}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    router.push("/logs?view=alerts");
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+              >
                 <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
                   <span className="material-icons-round text-6xl text-orange-500 dark:group-hover:text-orange-400 transition-colors">warning</span>
                 </div>
