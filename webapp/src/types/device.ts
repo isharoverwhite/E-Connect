@@ -3,6 +3,17 @@ export type AuthStatus = "pending" | "approved" | "rejected";
 export type ConnStatus = "online" | "offline";
 export type DeviceMode = "no-code" | "library";
 
+export interface PinExtraParams {
+    active_level?: 0 | 1;
+    min_value?: number;
+    max_value?: number;
+    subtype?: "on_off" | "pwm";
+    i2c_role?: "SDA" | "SCL";
+    i2c_address?: string;
+    i2c_library?: string;
+    [key: string]: unknown;
+}
+
 export interface DeviceAvailabilitySummary {
     device_id: string;
     room_id?: number;
@@ -20,25 +31,18 @@ export interface PinConfig {
     function?: string;
     label?: string;
     v_pin?: number;
-    extra_params?: {
-        active_level?: 0 | 1;
-        min_value?: number;
-        max_value?: number;
-        subtype?: "on_off" | "pwm";
-        i2c_role?: "SDA" | "SCL";
-        i2c_address?: string;
-        i2c_library?: string;
-        [key: string]: unknown;
-    } | null;
+    extra_params?: PinExtraParams | null;
 }
 
 export interface DeviceStatePin {
     pin: number;
     mode?: string;
+    function?: string;
     label?: string;
     value?: number | boolean;
     brightness?: number;
     active_level?: 0 | 1;
+    extra_params?: PinExtraParams | null;
     trend?: string;
     unit?: string;
 }

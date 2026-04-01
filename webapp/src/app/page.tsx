@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchDashboardDevices, fetchDevices, sendDeviceCommand } from "@/lib/api";
+import { getActivePinConfigurations, getStatePins as readStatePins } from "@/lib/device-config";
 import { useAuth } from "@/components/AuthProvider";
 import Sidebar from '@/components/Sidebar';
 import { DeviceConfig, DeviceStatePin, DeviceStateSnapshot } from "@/types/device";
@@ -403,21 +404,13 @@ function DeviceToggle({
   );
 }
 
-function getStatePins(state: DeviceStateSnapshot | null | undefined): DeviceStatePin[] {
-  if (!Array.isArray(state?.pins)) {
-    return [];
-  }
-
-  return state.pins.filter((pin): pin is DeviceStatePin => typeof pin?.pin === "number");
-}
-
 function getStatePin(state: DeviceStateSnapshot | null | undefined, gpioPin?: number | null): DeviceStatePin | null {
   if (!state) {
     return null;
   }
 
   if (typeof gpioPin === "number") {
-    const matchedPin = getStatePins(state).find((pin) => pin.pin === gpioPin);
+    const matchedPin = readStatePins(state).find((pin) => pin.pin === gpioPin);
     if (matchedPin) {
       return matchedPin;
     }
@@ -434,7 +427,7 @@ function getStatePin(state: DeviceStateSnapshot | null | undefined, gpioPin?: nu
   }
 
   if (gpioPin == null) {
-    return getStatePins(state)[0] ?? null;
+    return readStatePins(state)[0] ?? null;
   }
 
   return null;
@@ -483,11 +476,12 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
   const [optimisticSliderValue, setOptimisticSliderValue] = useState<number | null>(null);
+  const activePinConfigurations = getActivePinConfigurations(config);
 
-  const pwmPin = config.pin_configurations?.find((p) => p.mode === 'PWM');
-  const outputPin = config.pin_configurations?.find((p) => p.mode === 'OUTPUT');
-  const analogPin = config.pin_configurations?.find((p) => p.mode === 'ADC');
-  const i2cPin = config.pin_configurations?.find((p) => p.mode === 'I2C');
+  const pwmPin = activePinConfigurations.find((p) => p.mode === 'PWM');
+  const outputPin = activePinConfigurations.find((p) => p.mode === 'OUTPUT');
+  const analogPin = activePinConfigurations.find((p) => p.mode === 'ADC');
+  const i2cPin = activePinConfigurations.find((p) => p.mode === 'I2C');
 
   const pwmMin = pwmPin?.extra_params?.min_value ?? 0;
   const pwmMax = pwmPin?.extra_params?.max_value ?? 255;
@@ -608,7 +602,7 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
              <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'}`}></span>
              {isOnline ? 'Connected' : 'Offline'}
            </span>
-           <span>Bus: SDA={config.pin_configurations?.find(p => p.extra_params?.i2c_role === 'SDA')?.gpio_pin} SCL={config.pin_configurations?.find(p => p.extra_params?.i2c_role === 'SCL')?.gpio_pin}</span>
+           <span>Bus: SDA={activePinConfigurations.find(p => p.extra_params?.i2c_role === 'SDA')?.gpio_pin} SCL={activePinConfigurations.find(p => p.extra_params?.i2c_role === 'SCL')?.gpio_pin}</span>
         </div>
       </div>
     );
