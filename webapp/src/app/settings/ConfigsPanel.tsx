@@ -7,6 +7,7 @@ import { API_URL } from "@/lib/api";
 import { resolveBoardProfileId } from "@/features/diy/board-profiles";
 import { SvgPinMapPreview } from "./SvgPinMapPreview";
 import type { PinMapping } from "@/features/diy/types";
+import { formatServerTimestamp } from "@/lib/server-time";
 
 type ConnStatus = "online" | "offline";
 type AuthStatus = "pending" | "approved";
@@ -33,7 +34,7 @@ export interface DiyProjectUsageResponse {
     devices: ProjectDeviceUsage[];
 }
 
-export function ConfigsPanel() {
+export function ConfigsPanel({ timezone }: { timezone?: string | null }) {
     const { user } = useAuth();
     const [configs, setConfigs] = useState<DiyProjectUsageResponse[]>([]);
     const [loading, setLoading] = useState(true);
@@ -262,7 +263,15 @@ export function ConfigsPanel() {
                             )}
 
                             <div className="flex justify-between items-center mt-auto pt-2 border-t border-slate-100 dark:border-slate-800">
-                                <span className="text-xs text-slate-400">Created: {new Date(config.created_at).toLocaleDateString()}</span>
+                                <span className="text-xs text-slate-400">Created: {formatServerTimestamp(config.created_at, {
+                                    fallback: "Unknown date",
+                                    options: {
+                                        year: "numeric",
+                                        month: "short",
+                                        day: "numeric",
+                                    },
+                                    timezone,
+                                })}</span>
                                 <button className="text-primary text-sm font-semibold flex items-center gap-1 hover:text-primary/80 transition-colors">
                                     Details <span className="material-symbols-outlined text-[18px]">chevron_right</span>
                                 </button>

@@ -94,6 +94,12 @@ export interface GeneralSettingsResponse {
     timezone_options: string[];
 }
 
+export interface ServerTimeContextResponse {
+    effective_timezone: string;
+    timezone_source: "setting" | "runtime";
+    current_server_time: string;
+}
+
 async function parseApiError(response: Response, fallback: string) {
     try {
         const payload = (await response.json()) as {
@@ -154,6 +160,26 @@ export async function fetchGeneralSettings(token?: string): Promise<GeneralSetti
 
     if (!response.ok) {
         throw new Error(await parseApiError(response, "Failed to load general settings"));
+    }
+
+    return response.json();
+}
+
+export async function fetchServerTimeContext(token?: string): Promise<ServerTimeContextResponse> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/system/time-context`, {
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+        cache: "no-store",
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to load server time context"));
     }
 
     return response.json();

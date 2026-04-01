@@ -669,6 +669,37 @@ def _load_latest_state_payloads(db: Session, device_ids: set[str]) -> dict[str, 
     return payloads
 
 
+def _load_previous_state_payload(
+    db: Session,
+    device_id: str,
+    *,
+    current_payload: Mapping[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    recent_states = (
+        db.query(DeviceHistory)
+        .filter(
+            DeviceHistory.device_id == device_id,
+            DeviceHistory.event_type == EventType.state_change,
+        )
+        .order_by(DeviceHistory.timestamp.desc(), DeviceHistory.id.desc())
+        .limit(2)
+        .all()
+    )
+    if not recent_states:
+        return None
+
+    latest_payload = _decode_history_payload(recent_states[0].payload)
+    if latest_payload is None:
+        return None
+
+    if current_payload is not None and latest_payload == dict(current_payload):
+        if len(recent_states) < 2:
+            return None
+        return _decode_history_payload(recent_states[1].payload)
+
+    return latest_payload
+
+
 def _extract_pin_snapshot(state_payload: Mapping[str, Any] | None, pin: int) -> dict[str, Any] | None:
     if not isinstance(state_payload, Mapping):
         return None
@@ -687,6 +718,29 @@ def _extract_pin_snapshot(state_payload: Mapping[str, Any] | None, pin: int) -> 
         }
 
     return None
+
+
+def _state_trigger_value_changed(
+    trigger_kind: str,
+    *,
+    current_snapshot: Mapping[str, Any] | None,
+    previous_snapshot: Mapping[str, Any] | None,
+) -> bool:
+    if previous_snapshot is None:
+        return True
+
+    if trigger_kind == "device_value":
+        current_value = _extract_numeric_value(current_snapshot)
+        previous_value = _extract_numeric_value(previous_snapshot)
+    else:
+        current_value = _extract_binary_value(current_snapshot)
+        previous_value = _extract_binary_value(previous_snapshot)
+
+    if current_value is None:
+        return False
+    if previous_value is None:
+        return True
+    return current_value != previous_value
 
 
 def _extract_numeric_value(snapshot: Mapping[str, Any] | None) -> float | None:
@@ -878,6 +932,26 @@ def _evaluate_graph_execution(
     return execution_log
 
 
+def _is_condition_miss_noop(log: AutomationExecutionLog) -> bool:
+    if _enum_value(log.status, default=ExecutionStatus.failed.value) != ExecutionStatus.failed.value:
+        return False
+    if log.error_message != "No action applied because no branch passed all conditions.":
+        return False
+
+    payload = _decode_history_payload(log.log_output)
+    if not isinstance(payload, Mapping):
+        return False
+
+    actions = payload.get("actions")
+    evaluations = payload.get("evaluations")
+    if not isinstance(actions, list) or actions:
+        return False
+    if not isinstance(evaluations, list) or not evaluations:
+        return False
+
+    return all(isinstance(summary, str) and summary.endswith("-> false") for summary in evaluations)
+
+
 def trigger_automation_manually(
     db: Session,
     *,
@@ -917,20 +991,36 @@ def trigger_automation_manually(
     )
 
 
-def _trigger_matches_state_event(normalized_graph: Mapping[str, Any], *, device_id: str, state_payload: Mapping[str, Any]) -> bool:
+def _trigger_matches_state_event(
+    normalized_graph: Mapping[str, Any],
+    *,
+    device_id: str,
+    state_payload: Mapping[str, Any],
+    previous_state_payload: Mapping[str, Any] | None = None,
+) -> bool:
     trigger_node = next(node for node in normalized_graph["nodes"] if node["type"] == "trigger")
     if trigger_node["kind"] == TIME_TRIGGER_KIND:
         return False
     config = trigger_node["config"]
     if config["device_id"] != device_id:
         return False
-    snapshot = _extract_pin_snapshot(state_payload, config["pin"])
-    if snapshot is None:
+    current_snapshot = _extract_pin_snapshot(state_payload, config["pin"])
+    if current_snapshot is None:
         return False
     if trigger_node["kind"] == "device_value":
-        return _extract_numeric_value(snapshot) is not None
+        previous_snapshot = _extract_pin_snapshot(previous_state_payload, config["pin"])
+        return _state_trigger_value_changed(
+            trigger_node["kind"],
+            current_snapshot=current_snapshot,
+            previous_snapshot=previous_snapshot,
+        )
     if trigger_node["kind"] == "device_on_off_event":
-        return _extract_binary_value(snapshot) is not None
+        previous_snapshot = _extract_pin_snapshot(previous_state_payload, config["pin"])
+        return _state_trigger_value_changed(
+            trigger_node["kind"],
+            current_snapshot=current_snapshot,
+            previous_snapshot=previous_snapshot,
+        )
     return True
 
 
@@ -943,6 +1033,12 @@ def process_state_event_for_automations(
     triggered_at: datetime | None = None,
 ) -> list[AutomationExecutionLog]:
     execution_logs: list[AutomationExecutionLog] = []
+    db.flush()
+    previous_state_payload = _load_previous_state_payload(
+        db,
+        device_id,
+        current_payload=state_payload,
+    )
     enabled_automations = (
         db.query(Automation)
         .filter(Automation.is_enabled.is_(True))
@@ -956,7 +1052,12 @@ def process_state_event_for_automations(
         except AutomationGraphValidationError:
             continue
 
-        if not _trigger_matches_state_event(normalized_graph, device_id=device_id, state_payload=state_payload):
+        if not _trigger_matches_state_event(
+            normalized_graph,
+            device_id=device_id,
+            state_payload=state_payload,
+            previous_state_payload=previous_state_payload,
+        ):
             continue
 
         referenced_device_ids = {
@@ -970,18 +1071,24 @@ def process_state_event_for_automations(
             device.device_id: device
             for device in db.query(Device).filter(Device.device_id.in_(sorted(referenced_device_ids))).all()
         }
-        execution_logs.append(
-            _evaluate_graph_execution(
-                db,
-                automation=automation,
-                normalized_graph=normalized_graph,
-                trigger_source="device_state",
-                state_payloads=state_payloads,
-                device_lookup=device_lookup,
-                publish_command=publish_command,
-                triggered_at=triggered_at,
-            )
+        previous_last_triggered = automation.last_triggered
+        execution_log = _evaluate_graph_execution(
+            db,
+            automation=automation,
+            normalized_graph=normalized_graph,
+            trigger_source="device_state",
+            state_payloads=state_payloads,
+            device_lookup=device_lookup,
+            publish_command=publish_command,
+            triggered_at=triggered_at,
         )
+        if _is_condition_miss_noop(execution_log):
+            db.delete(execution_log)
+            automation.last_triggered = previous_last_triggered
+            db.add(automation)
+            continue
+
+        execution_logs.append(execution_log)
 
     return execution_logs
 

@@ -21,6 +21,7 @@ import {
     fetchRuntimeNetworkInfo,
     updateGeneralSettings,
 } from "@/lib/api";
+import { formatServerTimestamp } from "@/lib/server-time";
 import {
     RoomRecord,
     createRoom,
@@ -51,20 +52,19 @@ function formatTimezoneSourceLabel(settings: GeneralSettingsResponse | null): st
 }
 
 function formatServerTimePreview(value?: string | null, timezone?: string | null): string {
-    if (!value || !timezone) {
-        return "Unknown";
-    }
-
-    return new Intl.DateTimeFormat(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        timeZone: timezone,
-        timeZoneName: "short",
-    }).format(new Date(value));
+    return formatServerTimestamp(value, {
+        fallback: "Unknown",
+        options: {
+            year: "numeric",
+            month: "short",
+            day: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            timeZoneName: "short",
+        },
+        timezone,
+    });
 }
 
 type SettingsPanel = "general" | "users" | "rooms" | "wifi" | "configs";
@@ -1325,11 +1325,11 @@ export default function SettingsPage() {
                         ) : null}
 
                         {activePanel === "configs" ? (
-                            <ConfigsPanel />
+                            <ConfigsPanel timezone={generalSettings?.effective_timezone ?? null} />
                         ) : null}
 
                         {activePanel === "wifi" ? (
-                            <WifiCredentialsPanel />
+                            <WifiCredentialsPanel timezone={generalSettings?.effective_timezone ?? null} />
                         ) : null}
                     </div>
                 </div>
