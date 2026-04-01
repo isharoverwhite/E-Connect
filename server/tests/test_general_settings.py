@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import os
+from datetime import datetime, timezone
 
 import main
 from fastapi.testclient import TestClient
@@ -9,9 +11,11 @@ from sqlalchemy.orm import close_all_sessions, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.auth import get_password_hash
+from app import api as api_module
 from app.database import Base, get_db
 from app.sql_models import (
     AccountType,
+    Automation,
     Household,
     HouseholdMembership,
     HouseholdRole,
@@ -166,6 +170,99 @@ def test_update_general_settings_persists_override_and_beats_env(monkeypatch):
         assert latest_log is not None
         assert latest_log.event_code == "server_timezone_updated"
         assert latest_log.details["effective_timezone"] == "Asia/Tokyo"
+    finally:
+        db.close()
+
+
+def test_update_general_settings_reschedules_time_trigger_automations(monkeypatch):
+    monkeypatch.setenv("TZ", "Asia/Ho_Chi_Minh")
+    create_admin_user(household_timezone="Asia/Ho_Chi_Minh")
+
+    db = TestingSessionLocal()
+    try:
+        user = db.query(User).filter(User.username == "timezone-admin").one()
+        household = db.query(Household).one()
+        user_id = user.user_id
+        household_id = household.household_id
+    finally:
+        db.close()
+
+    db = TestingSessionLocal()
+    try:
+        db.add(
+            Automation(
+                creator_id=user_id,
+                name="Morning Schedule",
+                script_code=json.dumps(
+                    {
+                        "nodes": [
+                            {
+                                "id": "trigger-1",
+                                "type": "trigger",
+                                "kind": "time_schedule",
+                                "config": {"hour": 7, "minute": 30, "weekdays": []},
+                            },
+                            {
+                                "id": "action-1",
+                                "type": "action",
+                                "kind": "set_output",
+                                "config": {"device_id": "relay-1", "pin": 12, "value": 1},
+                            },
+                        ],
+                        "edges": [
+                            {
+                                "source_node_id": "trigger-1",
+                                "source_port": "event_out",
+                                "target_node_id": "action-1",
+                                "target_port": "event_in",
+                            }
+                        ],
+                    }
+                ),
+                is_enabled=True,
+                schedule_type="time",
+                timezone="Asia/Ho_Chi_Minh",
+                schedule_hour=7,
+                schedule_minute=30,
+                schedule_weekdays=[],
+                next_run_at=datetime(2026, 4, 2, 0, 30),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    fixed_now = datetime(2026, 4, 2, 0, 0, tzinfo=timezone.utc)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return fixed_now.replace(tzinfo=None)
+            return fixed_now.astimezone(tz)
+
+    monkeypatch.setattr(api_module, "datetime", FixedDateTime)
+
+    with TestClient(main.app) as client:
+        token = get_token(client)
+        response = client.put(
+            "/api/v1/settings/general",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"timezone": "Asia/Tokyo"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["effective_timezone"] == "Asia/Tokyo"
+
+    db = TestingSessionLocal()
+    try:
+        refreshed_household = db.query(Household).filter(Household.household_id == household_id).first()
+        assert refreshed_household is not None
+        assert refreshed_household.timezone == "Asia/Tokyo"
+
+        automation = db.query(Automation).filter(Automation.creator_id == user_id).one()
+        assert automation.timezone == "Asia/Tokyo"
+        assert automation.next_run_at == datetime(2026, 4, 2, 22, 30)
     finally:
         db.close()
 

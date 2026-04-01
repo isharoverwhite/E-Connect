@@ -1,4 +1,5 @@
 import json
+from datetime import datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 from app import api as api_module
 from app.auth import create_access_token
 from app.database import Base, get_db
-from app.services.automation_runtime import process_state_event_for_automations
+from app.services.automation_runtime import process_state_event_for_automations, process_time_trigger_automations
 from app.sql_models import (
     AccountType,
     AuthStatus,
@@ -112,7 +113,16 @@ def seeded_context():
             conn_status=ConnStatus.online,
             mode="library",
         )
-        db.add_all([source_device, target_device, dimmer_device])
+        sensor_device = Device(
+            device_id="sensor-device",
+            mac_address="AA:BB:CC:DD:EE:04",
+            name="Temperature Sensor",
+            owner_id=user.user_id,
+            auth_status=AuthStatus.approved,
+            conn_status=ConnStatus.online,
+            mode="library",
+        )
+        db.add_all([source_device, target_device, dimmer_device, sensor_device])
         db.commit()
 
         db.add_all(
@@ -137,6 +147,13 @@ def seeded_context():
                     mode=PinMode.PWM,
                     function="dimmer",
                     label="Dimmer Output",
+                ),
+                PinConfiguration(
+                    device_id="sensor-device",
+                    gpio_pin=34,
+                    mode=PinMode.ADC,
+                    function="temperature_sensor",
+                    label="Temperature Probe",
                 ),
             ]
         )
@@ -183,21 +200,60 @@ def seeded_context():
                     },
                 ],
             },
+            "on_off_graph": {
+                "nodes": [
+                    {
+                        "id": "trigger-1",
+                        "type": "trigger",
+                        "kind": "device_on_off_event",
+                        "label": "Switch Event",
+                        "config": {"device_id": "source-device", "pin": 4},
+                    },
+                    {
+                        "id": "condition-1",
+                        "type": "condition",
+                        "kind": "state_equals",
+                        "label": "Switch Is On",
+                        "config": {"device_id": "source-device", "pin": 4, "expected": "on"},
+                    },
+                    {
+                        "id": "action-1",
+                        "type": "action",
+                        "kind": "set_output",
+                        "label": "Turn Relay On",
+                        "config": {"device_id": "target-device", "pin": 12, "value": 1},
+                    },
+                ],
+                "edges": [
+                    {
+                        "source_node_id": "trigger-1",
+                        "source_port": "event_out",
+                        "target_node_id": "condition-1",
+                        "target_port": "event_in",
+                    },
+                    {
+                        "source_node_id": "condition-1",
+                        "source_port": "pass_out",
+                        "target_node_id": "action-1",
+                        "target_port": "event_in",
+                    },
+                ],
+            },
             "numeric_graph": {
                 "nodes": [
                     {
                         "id": "trigger-1",
                         "type": "trigger",
-                        "kind": "device_state",
-                        "config": {"device_id": "source-device", "pin": 4},
+                        "kind": "device_value",
+                        "config": {"device_id": "sensor-device", "pin": 34},
                     },
                     {
                         "id": "condition-1",
                         "type": "condition",
                         "kind": "numeric_compare",
                         "config": {
-                            "device_id": "source-device",
-                            "pin": 4,
+                            "device_id": "sensor-device",
+                            "pin": 34,
                             "operator": "gt",
                             "value": 30,
                         },
@@ -207,6 +263,45 @@ def seeded_context():
                         "type": "action",
                         "kind": "set_value",
                         "config": {"device_id": "dimmer-device", "pin": 13, "value": 180},
+                    },
+                ],
+                "edges": [
+                    {
+                        "source_node_id": "trigger-1",
+                        "source_port": "event_out",
+                        "target_node_id": "condition-1",
+                        "target_port": "event_in",
+                    },
+                    {
+                        "source_node_id": "condition-1",
+                        "source_port": "pass_out",
+                        "target_node_id": "action-1",
+                        "target_port": "event_in",
+                    },
+                ],
+            },
+            "time_graph": {
+                "nodes": [
+                    {
+                        "id": "trigger-1",
+                        "type": "trigger",
+                        "kind": "time_schedule",
+                        "label": "Morning Trigger",
+                        "config": {"hour": 7, "minute": 30, "weekdays": []},
+                    },
+                    {
+                        "id": "condition-1",
+                        "type": "condition",
+                        "kind": "state_equals",
+                        "label": "Switch Is On",
+                        "config": {"device_id": "source-device", "pin": 4, "expected": "on"},
+                    },
+                    {
+                        "id": "action-1",
+                        "type": "action",
+                        "kind": "set_output",
+                        "label": "Turn Relay On",
+                        "config": {"device_id": "target-device", "pin": 12, "value": 1},
                     },
                 ],
                 "edges": [
@@ -267,14 +362,14 @@ def test_create_automation_persists_graph_contract(seeded_context):
         json={
             "name": "Switch Mirror",
             "is_enabled": True,
-            "graph": seeded_context["graph"],
+            "graph": seeded_context["on_off_graph"],
         },
     )
 
     assert response.status_code == 200
     payload = response.json()
     assert payload["name"] == "Switch Mirror"
-    assert payload["graph"]["nodes"][0]["kind"] == "device_state"
+    assert payload["graph"]["nodes"][0]["kind"] == "device_on_off_event"
     assert payload["last_execution"] is None
 
     db = TestingSessionLocal()
@@ -310,6 +405,7 @@ def test_update_automation_persists_graph_contract(seeded_context):
     payload = response.json()
     assert payload["name"] == "Updated Numeric Rule"
     assert payload["is_enabled"] is False
+    assert payload["graph"]["nodes"][0]["kind"] == "device_value"
     assert payload["graph"]["nodes"][1]["kind"] == "numeric_compare"
     assert "script_code" not in payload
 
@@ -320,6 +416,41 @@ def test_update_automation_persists_graph_contract(seeded_context):
         assert json.loads(stored.script_code)["nodes"][2]["kind"] == "set_value"
         assert stored.schedule_type == "manual"
         assert stored.next_run_at is None
+    finally:
+        db.close()
+
+
+def test_create_automation_persists_time_trigger_projection(seeded_context):
+    user = seeded_context["user"]
+
+    response = client.post(
+        "/api/v1/automation",
+        headers=_auth_headers(user),
+        json={
+            "name": "Morning Schedule",
+            "is_enabled": True,
+            "graph": seeded_context["time_graph"],
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["graph"]["nodes"][0]["kind"] == "time_schedule"
+    assert payload["schedule_type"] == "time"
+    assert payload["timezone"] == "Asia/Ho_Chi_Minh"
+    assert payload["schedule_hour"] == 7
+    assert payload["schedule_minute"] == 30
+    assert payload["schedule_weekdays"] == []
+    assert payload["next_run_at"] is not None
+
+    db = TestingSessionLocal()
+    try:
+        stored = db.query(Automation).filter(Automation.creator_id == user.user_id).one()
+        assert stored.schedule_type == "time"
+        assert stored.timezone == "Asia/Ho_Chi_Minh"
+        assert stored.schedule_hour == 7
+        assert stored.schedule_minute == 30
+        assert stored.next_run_at is not None
     finally:
         db.close()
 
@@ -398,6 +529,79 @@ def test_create_automation_rejects_invalid_graph(seeded_context):
     assert "Action nodes cannot have outgoing edges." in payload["detail"]["message"]
 
 
+def test_create_automation_rejects_invalid_trigger_mode_for_pin(seeded_context):
+    user = seeded_context["user"]
+    invalid_graph = {
+        "nodes": [
+            {
+                "id": "trigger-1",
+                "type": "trigger",
+                "kind": "device_on_off_event",
+                "config": {"device_id": "sensor-device", "pin": 34},
+            },
+            {
+                "id": "condition-1",
+                "type": "condition",
+                "kind": "numeric_compare",
+                "config": {"device_id": "sensor-device", "pin": 34, "operator": "gt", "value": 30},
+            },
+            {
+                "id": "action-1",
+                "type": "action",
+                "kind": "set_value",
+                "config": {"device_id": "dimmer-device", "pin": 13, "value": 180},
+            },
+        ],
+        "edges": seeded_context["numeric_graph"]["edges"],
+    }
+
+    response = client.post(
+        "/api/v1/automation",
+        headers=_auth_headers(user),
+        json={
+            "name": "Invalid Trigger Mode",
+            "is_enabled": True,
+            "graph": invalid_graph,
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["detail"]["error"] == "validation"
+    assert "device_on_off_event triggers require a boolean-like pin" in payload["detail"]["message"]
+
+
+def test_create_automation_rejects_invalid_time_trigger_weekday(seeded_context):
+    user = seeded_context["user"]
+    invalid_graph = {
+        "nodes": [
+            {
+                "id": "trigger-1",
+                "type": "trigger",
+                "kind": "time_schedule",
+                "config": {"hour": 7, "minute": 30, "weekdays": ["funday"]},
+            },
+            *seeded_context["graph"]["nodes"][1:],
+        ],
+        "edges": seeded_context["graph"]["edges"],
+    }
+
+    response = client.post(
+        "/api/v1/automation",
+        headers=_auth_headers(user),
+        json={
+            "name": "Broken Schedule",
+            "is_enabled": True,
+            "graph": invalid_graph,
+        },
+    )
+
+    assert response.status_code == 400
+    payload = response.json()
+    assert payload["detail"]["error"] == "validation"
+    assert "Time trigger weekdays must use" in payload["detail"]["message"]
+
+
 def test_automation_openapi_exposes_graph_contract():
     response = client.get("/openapi.json")
 
@@ -446,6 +650,30 @@ def test_list_automations_accepts_legacy_schedule_logs(seeded_context):
     assert len(payload) == 1
     assert payload[0]["graph"]["nodes"][0]["kind"] == "device_state"
     assert payload[0]["last_execution"]["trigger_source"] == "schedule"
+
+
+def test_schedule_context_returns_effective_server_timezone(seeded_context):
+    user = seeded_context["user"]
+    db = TestingSessionLocal()
+    try:
+        household = db.query(Household).first()
+        assert household is not None
+        household.timezone = "Asia/Tokyo"
+        db.add(household)
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(
+        "/api/v1/automation/schedule-context",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["effective_timezone"] == "Asia/Tokyo"
+    assert payload["timezone_source"] == "setting"
+    assert isinstance(payload["current_server_time"], str)
 
 
 def test_manual_trigger_executes_graph_and_records_log(monkeypatch, seeded_context):
@@ -518,7 +746,7 @@ def test_manual_trigger_executes_graph_and_records_log(monkeypatch, seeded_conte
         db.close()
 
 
-def test_process_state_event_runs_enabled_automation(monkeypatch, seeded_context):
+def test_process_state_event_runs_enabled_automation_for_device_value_trigger(monkeypatch, seeded_context):
     user = seeded_context["user"]
     automation_id = _create_automation_record(
         seeded_context["numeric_graph"],
@@ -535,8 +763,8 @@ def test_process_state_event_runs_enabled_automation(monkeypatch, seeded_context
     try:
         logs = process_state_event_for_automations(
             db,
-            device_id="source-device",
-            state_payload={"pins": [{"pin": 4, "value": 42}]},
+            device_id="sensor-device",
+            state_payload={"pins": [{"pin": 34, "value": 42}]},
             publish_command=fake_publish,
         )
         db.commit()
@@ -571,5 +799,112 @@ def test_process_state_event_runs_enabled_automation(monkeypatch, seeded_context
         )
         assert log is not None
         assert log.status == ExecutionStatus.success
+    finally:
+        db.close()
+
+
+def test_process_state_event_runs_enabled_automation_for_on_off_trigger(monkeypatch, seeded_context):
+    user = seeded_context["user"]
+    automation_id = _create_automation_record(
+        seeded_context["on_off_graph"],
+        creator_id=user.user_id,
+        name="Switch Event Trigger",
+    )
+    published_commands: list[tuple[str, dict]] = []
+
+    def fake_publish(device_id: str, command: dict) -> bool:
+        published_commands.append((device_id, command))
+        return True
+
+    db = TestingSessionLocal()
+    try:
+        logs = process_state_event_for_automations(
+            db,
+            device_id="source-device",
+            state_payload={"pins": [{"pin": 4, "value": 1}]},
+            publish_command=fake_publish,
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    assert len(logs) == 1
+    assert logs[0].automation_id == automation_id
+    assert logs[0].trigger_source == "device_state"
+    assert published_commands
+    assert published_commands[0][0] == "target-device"
+    assert published_commands[0][1]["value"] == 1
+
+
+def test_process_time_trigger_runs_enabled_automation_once_per_scheduled_minute(seeded_context):
+    user = seeded_context["user"]
+    response = client.post(
+        "/api/v1/automation",
+        headers=_auth_headers(user),
+        json={
+            "name": "Scheduled Trigger",
+            "is_enabled": True,
+            "graph": seeded_context["time_graph"],
+        },
+    )
+    assert response.status_code == 200
+    automation_id = response.json()["id"]
+    published_commands: list[tuple[str, dict]] = []
+
+    def fake_publish(device_id: str, command: dict) -> bool:
+        published_commands.append((device_id, command))
+        return True
+
+    db = TestingSessionLocal()
+    try:
+        db.add(
+            DeviceHistory(
+                device_id="source-device",
+                event_type=EventType.state_change,
+                payload=json.dumps({"pins": [{"pin": 4, "value": 1}]}),
+            )
+        )
+        db.commit()
+
+        first_logs = process_time_trigger_automations(
+            db,
+            publish_command=fake_publish,
+            reference_time=datetime(2026, 4, 2, 0, 30, tzinfo=timezone.utc),
+        )
+        db.commit()
+
+        second_logs = process_time_trigger_automations(
+            db,
+            publish_command=fake_publish,
+            reference_time=datetime(2026, 4, 2, 0, 30, tzinfo=timezone.utc),
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    assert len(first_logs) == 1
+    assert first_logs[0].automation_id == automation_id
+    assert first_logs[0].trigger_source == "schedule"
+    assert first_logs[0].scheduled_for == datetime(2026, 4, 2, 0, 30)
+    assert second_logs == []
+    assert len(published_commands) == 1
+    assert published_commands[0][0] == "target-device"
+    assert published_commands[0][1]["value"] == 1
+
+    db = TestingSessionLocal()
+    try:
+        log = (
+            db.query(AutomationExecutionLog)
+            .filter(AutomationExecutionLog.automation_id == automation_id)
+            .order_by(AutomationExecutionLog.id.desc())
+            .first()
+        )
+        assert log is not None
+        assert log.trigger_source == "schedule"
+        assert log.scheduled_for == datetime(2026, 4, 2, 0, 30)
+
+        automation = db.query(Automation).filter(Automation.id == automation_id).one()
+        assert automation.next_run_at is not None
+        assert automation.next_run_at > datetime(2026, 4, 2, 0, 30)
     finally:
         db.close()
