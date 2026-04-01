@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
 import app.api as api_module
+import app.mqtt as mqtt_module
 import main
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -169,7 +170,7 @@ def test_system_status_and_logs_endpoints_return_recent_admin_view(monkeypatch):
             occurred_at=datetime.utcnow() - timedelta(minutes=5),
             event_code="mqtt_disconnected",
             message="MQTT broker connection dropped.",
-            severity=SystemLogSeverity.warning,
+            severity=SystemLogSeverity.critical,
             category=SystemLogCategory.connectivity,
         )
         create_system_log(
@@ -223,7 +224,7 @@ def test_system_status_and_logs_endpoints_return_recent_admin_view(monkeypatch):
 
     assert status_response.status_code == 200, status_response.text
     status_payload = status_response.json()
-    assert status_payload["overall_status"] == "warning"
+    assert status_payload["overall_status"] == "critical"
     assert status_payload["database_status"] == "ok"
     assert status_payload["mqtt_status"] == "disconnected"
     assert status_payload["advertised_host"] == "192.168.1.44"
@@ -234,3 +235,168 @@ def test_system_status_and_logs_endpoints_return_recent_admin_view(monkeypatch):
     logs_payload = logs_response.json()
     assert logs_payload["total"] == 1
     assert [entry["event_code"] for entry in logs_payload["entries"]] == ["mqtt_disconnected"]
+    assert logs_payload["entries"][0]["severity"] == "critical"
+    assert logs_payload["entries"][0]["is_read"] is False
+
+
+def test_marking_alert_read_removes_it_from_active_status(monkeypatch):
+    create_admin_user()
+
+    db = TestingSessionLocal()
+    try:
+        create_system_log(
+            db,
+            occurred_at=datetime.utcnow() - timedelta(minutes=3),
+            event_code="mqtt_disconnected",
+            message="MQTT broker connection dropped.",
+            severity=SystemLogSeverity.critical,
+            category=SystemLogCategory.connectivity,
+        )
+        db.commit()
+        alert_id = db.query(SystemLog).order_by(SystemLog.id.desc()).first().id
+    finally:
+        db.close()
+
+    monkeypatch.setattr(
+        api_module,
+        "collect_system_metrics",
+        lambda: {
+            "cpu_percent": 22.5,
+            "memory_used": 1024,
+            "memory_total": 2048,
+            "storage_used": 4096,
+            "storage_total": 8192,
+        },
+    )
+    monkeypatch.setattr(api_module.mqtt_manager, "connected", False)
+
+    with TestClient(main.app) as client:
+        main.app.state.server_started_at = datetime.utcnow() - timedelta(minutes=15)
+        main.app.state.database_ready = True
+        token = get_token(client)
+        mark_response = client.post(
+            f"/api/v1/system/logs/{alert_id}/read",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        status_response = client.get(
+            "/api/v1/system/live-status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        logs_response = client.get(
+            "/api/v1/system/logs",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert mark_response.status_code == 200, mark_response.text
+    assert mark_response.json()["updated_count"] == 1
+
+    status_payload = status_response.json()
+    assert status_payload["overall_status"] == "healthy"
+    assert status_payload["active_alert_count"] == 0
+    assert status_payload["latest_alert_message"] is None
+
+    logs_payload = logs_response.json()
+    assert logs_payload["entries"][0]["is_read"] is True
+    assert logs_payload["entries"][0]["read_by_user_id"] is not None
+
+
+def test_mark_all_reads_only_unread_alerts(monkeypatch):
+    create_admin_user()
+
+    db = TestingSessionLocal()
+    try:
+        create_system_log(
+            db,
+            occurred_at=datetime.utcnow() - timedelta(minutes=4),
+            event_code="mqtt_disconnected",
+            message="MQTT broker connection dropped.",
+            severity=SystemLogSeverity.critical,
+            category=SystemLogCategory.connectivity,
+        )
+        create_system_log(
+            db,
+            occurred_at=datetime.utcnow() - timedelta(minutes=2),
+            event_code="runtime_target_warning",
+            message="Runtime network target refresh reported a warning.",
+            severity=SystemLogSeverity.warning,
+            category=SystemLogCategory.health,
+        )
+        create_system_log(
+            db,
+            occurred_at=datetime.utcnow() - timedelta(minutes=1),
+            event_code="server_started",
+            message="Server startup completed.",
+            severity=SystemLogSeverity.info,
+            category=SystemLogCategory.lifecycle,
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(
+        api_module,
+        "collect_system_metrics",
+        lambda: {
+            "cpu_percent": 10.0,
+            "memory_used": 1024,
+            "memory_total": 2048,
+            "storage_used": 4096,
+            "storage_total": 8192,
+        },
+    )
+    monkeypatch.setattr(api_module.mqtt_manager, "connected", True)
+
+    with TestClient(main.app) as client:
+        main.app.state.server_started_at = datetime.utcnow() - timedelta(minutes=15)
+        main.app.state.database_ready = True
+        token = get_token(client)
+        mark_response = client.post(
+            "/api/v1/system/logs/mark-all-read",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        status_response = client.get(
+            "/api/v1/system/live-status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        logs_response = client.get(
+            "/api/v1/system/logs",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert mark_response.status_code == 200, mark_response.text
+    assert mark_response.json()["updated_count"] == 2
+
+    status_payload = status_response.json()
+    assert status_payload["overall_status"] == "healthy"
+    assert status_payload["active_alert_count"] == 0
+
+    logs_payload = logs_response.json()
+    severities_by_event = {entry["event_code"]: entry for entry in logs_payload["entries"]}
+    assert severities_by_event["mqtt_disconnected"]["is_read"] is True
+    assert severities_by_event["runtime_target_warning"]["is_read"] is True
+    assert severities_by_event["server_started"]["is_read"] is False
+
+
+def test_unexpected_mqtt_disconnect_records_critical_alert(monkeypatch):
+    manager = mqtt_module.MQTTClientManager()
+    manager.connected = True
+    captured: dict[str, object] = {}
+
+    def fake_record_system_log(**kwargs):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(mqtt_module, "record_system_log", fake_record_system_log)
+
+    class FailureReasonCode:
+        is_failure = True
+
+        def __str__(self) -> str:
+            return "network_reset"
+
+    manager.on_disconnect(manager.client, None, None, FailureReasonCode())
+
+    assert manager.connected is False
+    assert captured["event_code"] == "mqtt_disconnected"
+    assert captured["message"] == "MQTT broker connection dropped."
+    assert captured["severity"] == SystemLogSeverity.critical
+    assert captured["category"] == SystemLogCategory.connectivity

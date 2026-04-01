@@ -128,6 +128,9 @@
 - **Logs & Stats (`/logs`)**:
   - The page must replace the placeholder surface with a real operational console using the shared application shell.
   - The top block must show the current server condition at a glance, including overall health, database reachability, MQTT connectivity, uptime, and the live host/IP currently advertised to the stack.
+  - A new unread database or MQTT alert must drive the top-block health state away from `healthy`; acknowledged alerts must stop driving the summary while the dependency cards remain truthful.
+  - Each alert row must expose whether it is still `Unread` or has been marked `Read`, and admin users must be able to mark one alert or all current alerts as read without deleting audit history.
+  - Once every current alert is marked read, the top-block summary must return to `Healthy`; however, the database and MQTT metric cards must continue to show their real live connection state so acknowledgement does not masquerade as recovery.
   - The top block must also surface the active alert count for the current 30-day retention window plus the timestamp of the latest alert-worthy event.
   - The activity list must render as a searchable table grouped by calendar day so an admin can scan incidents chronologically without losing precise timestamps.
   - Each row must expose at minimum: time, severity, category, event summary, and any related firmware version / device identity when available.

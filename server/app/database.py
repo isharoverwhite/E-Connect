@@ -168,6 +168,24 @@ def _ensure_additive_columns():
             "DATETIME NULL",
         ),
         (
+            "system_logs",
+            "is_read",
+            "BOOLEAN NOT NULL DEFAULT 0",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        ),
+        (
+            "system_logs",
+            "read_at",
+            "DATETIME",
+            "DATETIME NULL",
+        ),
+        (
+            "system_logs",
+            "read_by_user_id",
+            "INTEGER",
+            "INT NULL",
+        ),
+        (
             "automation_execution_logs",
             "trigger_source",
             "VARCHAR(16) NOT NULL DEFAULT 'manual'",

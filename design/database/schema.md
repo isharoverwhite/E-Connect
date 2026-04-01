@@ -64,6 +64,7 @@ This file documents the baseline schema for E-Connect.
    - `category` for grouping (`lifecycle`, `connectivity`, `firmware`, `health`)
    - human-readable `message`
    - timestamp of occurrence
+   - read-state fields so admins can acknowledge an alert without deleting the audit row: `is_read`, `read_at`, and optional `read_by_user_id`
    - optional `device_id`, `firmware_version`, and `firmware_revision` when the event is tied to a board
    - optional structured `details` JSON for inspectable context without relying on free-form strings
 3. The backend must log state transitions, not every heartbeat. Examples include:
@@ -74,6 +75,7 @@ This file documents the baseline schema for E-Connect.
    - runtime health warnings that materially affect the instance
 4. Records older than 30 days must be deleted automatically by backend retention cleanup; the active page must not depend on manual pruning.
 5. `/logs` filters operate on timestamp range, severity, category, and free-text search over event code, message, device id, and firmware fields.
+6. The `/logs` summary status is driven by unread alert rows only. Marking all current alerts as read must clear the reminder state back to `healthy` without falsifying the live dependency cards for database and MQTT.
 
 **Persistence Rules (from PRD):**
 1. Do not assume enum/table/column without inspecting the real DB.
