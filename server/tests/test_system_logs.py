@@ -62,7 +62,7 @@ def teardown_function():
     close_all_sessions()
 
 
-def create_admin_user(username: str = "logs-admin") -> User:
+def create_admin_user(username: str = "logs-admin", household_timezone: str | None = None) -> User:
     db = TestingSessionLocal()
     try:
         user = User(
@@ -72,7 +72,7 @@ def create_admin_user(username: str = "logs-admin") -> User:
             approval_status=UserApprovalStatus.approved,
             account_type=AccountType.admin,
         )
-        household = Household(name="Logs Household")
+        household = Household(name="Logs Household", timezone=household_timezone)
         db.add_all([user, household])
         db.commit()
         db.refresh(user)
@@ -161,7 +161,7 @@ def test_prune_expired_system_logs_deletes_rows_older_than_retention():
 
 
 def test_system_status_and_logs_endpoints_return_recent_admin_view(monkeypatch):
-    create_admin_user()
+    create_admin_user(household_timezone="Asia/Tokyo")
 
     db = TestingSessionLocal()
     try:
@@ -229,14 +229,22 @@ def test_system_status_and_logs_endpoints_return_recent_admin_view(monkeypatch):
     assert status_payload["mqtt_status"] == "disconnected"
     assert status_payload["advertised_host"] == "192.168.1.44"
     assert status_payload["active_alert_count"] == 1
+    assert status_payload["effective_timezone"] == "Asia/Tokyo"
+    assert status_payload["timezone_source"] == "setting"
+    assert status_payload["current_server_time"].endswith("+09:00")
     assert status_payload["latest_alert_message"] == "MQTT broker connection dropped."
+    assert status_payload["latest_alert_at"].endswith("+00:00") or status_payload["latest_alert_at"].endswith("Z")
 
     assert logs_response.status_code == 200, logs_response.text
     logs_payload = logs_response.json()
     assert logs_payload["total"] == 1
+    assert logs_payload["effective_timezone"] == "Asia/Tokyo"
+    assert logs_payload["timezone_source"] == "setting"
+    assert logs_payload["current_server_time"].endswith("+09:00")
     assert [entry["event_code"] for entry in logs_payload["entries"]] == ["mqtt_disconnected"]
     assert logs_payload["entries"][0]["severity"] == "critical"
     assert logs_payload["entries"][0]["is_read"] is False
+    assert logs_payload["entries"][0]["occurred_at"].endswith("+00:00") or logs_payload["entries"][0]["occurred_at"].endswith("Z")
 
 
 def test_marking_alert_read_removes_it_from_active_status(monkeypatch):

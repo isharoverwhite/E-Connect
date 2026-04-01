@@ -53,6 +53,9 @@ export interface SystemLogListResponse {
     entries: SystemLogEntry[];
     total: number;
     retention_days: number;
+    effective_timezone: string;
+    timezone_source: "setting" | "runtime";
+    current_server_time: string;
     oldest_occurred_at?: string | null;
     latest_occurred_at?: string | null;
 }
@@ -71,6 +74,9 @@ export interface SystemStatusResponse {
     storage_total: number;
     retention_days: number;
     active_alert_count: number;
+    effective_timezone: string;
+    timezone_source: "setting" | "runtime";
+    current_server_time: string;
     latest_alert_at?: string | null;
     latest_alert_message?: string | null;
 }
