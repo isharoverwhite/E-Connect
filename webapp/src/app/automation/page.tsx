@@ -288,6 +288,10 @@ function isEditableTarget(target: EventTarget | null): boolean {
   return target.isContentEditable || tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
 }
 
+function isAutomationPortTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest("[data-automation-port='true']"));
+}
+
 function buildConnectionEdge(first: PortSelection, second: PortSelection): AutomationGraphEdge | null {
   if (first.nodeId === second.nodeId || first.type === second.type) {
     return null;
@@ -1071,11 +1075,11 @@ export default function AutomationPage() {
     }
   };
 
-  const onCanvasMouseUp = () => {
+  const onCanvasMouseUp = (e: React.MouseEvent) => {
     if (dragInfo) {
       setDragInfo(null);
     }
-    if (connectingFrom) {
+    if (connectingFrom && !isAutomationPortTarget(e.target)) {
       setConnectingFrom(null);
       setConnectionPreview(null);
     }
@@ -1612,6 +1616,7 @@ export default function AutomationPage() {
                                     const isPortSelected = connectingFrom?.nodeId === node.id && connectingFrom.portId === port.id;
                                     return (
                                        <div key={port.id} title={port.label}
+                                            data-automation-port="true"
                                             className={`nodrag absolute w-3.5 h-3.5 rounded-full cursor-crosshair hover:scale-150 transition-transform shadow-sm
                                                 bg-white border-2 border-slate-400 dark:bg-slate-900 dark:border-slate-500
                                                 ${port.type === "in" ? 'hover:border-blue-500' : 'hover:border-amber-500'}
