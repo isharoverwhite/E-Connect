@@ -152,7 +152,7 @@ def test_admin_can_create_user():
     data = create_resp.json()
     assert data["username"] == "child1"
     assert data["account_type"] == "parent"
-    assert data["approval_status"] == UserApprovalStatus.pending.value
+    assert data["approval_status"] == UserApprovalStatus.approved.value
 
 def test_non_admin_cannot_create_user():
     # 1. Setup Admin
@@ -169,12 +169,6 @@ def test_non_admin_cannot_create_user():
     )
     assert create_resp.status_code == 200
     created_user = create_resp.json()
-
-    approve_resp = client.post(
-        f"/api/v1/users/{created_user['user_id']}/approve",
-        headers={"Authorization": f"Bearer {token_admin}"},
-    )
-    assert approve_resp.status_code == 200
 
     # 3. Login as User
     login_resp = client.post("/api/v1/auth/token", data={"username": "user1", "password": "password123"})
@@ -198,7 +192,7 @@ def test_unauthenticated_cannot_create_user():
     assert create_resp.status_code == 401
 
 
-def test_pending_user_cannot_log_in_until_approved():
+def test_admin_created_user_can_log_in_immediately():
     client.post(
         "/api/v1/auth/initialserver",
         json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
@@ -212,24 +206,13 @@ def test_pending_user_cannot_log_in_until_approved():
     )
     assert create_resp.status_code == 200
     created = create_resp.json()
-    assert created["approval_status"] == UserApprovalStatus.pending.value
-
-    pending_login = client.post("/api/v1/auth/token", data={"username": "pending1", "password": "password123"})
-    assert pending_login.status_code == 403
-    assert pending_login.json()["detail"]["error"] == "approval_required"
-
-    approve_resp = client.post(
-        f"/api/v1/users/{created['user_id']}/approve",
-        headers={"Authorization": f"Bearer {token_admin}"},
-    )
-    assert approve_resp.status_code == 200
-    assert approve_resp.json()["approval_status"] == UserApprovalStatus.approved.value
+    assert created["approval_status"] == UserApprovalStatus.approved.value
 
     approved_login = client.post("/api/v1/auth/token", data={"username": "pending1", "password": "password123"})
     assert approved_login.status_code == 200
 
 
-def test_revoked_user_cannot_access_authenticated_routes():
+def test_deleted_user_cannot_access_authenticated_routes():
     client.post(
         "/api/v1/auth/initialserver",
         json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
@@ -243,11 +226,6 @@ def test_revoked_user_cannot_access_authenticated_routes():
     )
     created = create_resp.json()
 
-    client.post(
-        f"/api/v1/users/{created['user_id']}/approve",
-        headers={"Authorization": f"Bearer {token_admin}"},
-    )
-
     user_login = client.post("/api/v1/auth/token", data={"username": "revoked1", "password": "password123"})
     assert user_login.status_code == 200
     user_token = user_login.json()["access_token"]
@@ -259,12 +237,12 @@ def test_revoked_user_cannot_access_authenticated_routes():
     assert revoke_resp.status_code == 200
 
     login_again = client.post("/api/v1/auth/token", data={"username": "revoked1", "password": "password123"})
-    assert login_again.status_code == 403
-    assert login_again.json()["detail"]["error"] == "account_revoked"
+    assert login_again.status_code == 401
+    assert login_again.json()["detail"] == "Incorrect username or password"
 
     me_resp = client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {user_token}"})
-    assert me_resp.status_code == 403
-    assert me_resp.json()["detail"]["error"] == "account_revoked"
+    assert me_resp.status_code == 401
+    assert me_resp.json()["detail"] == "Could not validate credentials"
 
 
 def test_initialserver_seeds_temporary_support_admin():
@@ -445,7 +423,7 @@ def test_keep_login_returns_persistent_session_tokens():
     assert "exp" not in refresh_claims
 
 
-def test_revoked_user_cannot_refresh_existing_session():
+def test_deleted_user_cannot_refresh_existing_session():
     client.post(
         "/api/v1/auth/initialserver",
         json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
@@ -458,11 +436,6 @@ def test_revoked_user_cannot_refresh_existing_session():
         json={"fullname": "Revoked User", "username": "revoked2", "password": "password123", "account_type": "parent"}
     )
     created = create_resp.json()
-
-    client.post(
-        f"/api/v1/users/{created['user_id']}/approve",
-        headers={"Authorization": f"Bearer {token_admin}"},
-    )
 
     user_login = client.post(
         "/api/v1/auth/token",
@@ -480,8 +453,8 @@ def test_revoked_user_cannot_refresh_existing_session():
         "/api/v1/auth/refresh",
         json={"refresh_token": user_login.json()["refresh_token"]},
     )
-    assert refresh_resp.status_code == 403
-    assert refresh_resp.json()["detail"]["error"] == "account_revoked"
+    assert refresh_resp.status_code == 401
+    assert refresh_resp.json()["detail"]["error"] == "invalid_refresh_token"
 
 
 def test_create_access_token_still_honors_explicit_override():

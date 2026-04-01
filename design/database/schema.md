@@ -4,7 +4,7 @@ This file documents the baseline schema for E-Connect.
 
 ## Core Tables
 
-1. `users`: Stores user accounts and auth status (`approval_status`).
+1. `users`: Stores user accounts and auth status (`approval_status`), with admin-created accounts defaulting to `approved`.
 2. `households`: Logical groupings of users and devices, including the optional admin-selected server timezone override (`timezone`).
 3. `household_memberships`: Join table linking users to households.
 4. `devices`: Managed devices under E-Connect (`provisioning_project_id`, `ip_address`).
@@ -56,7 +56,7 @@ This file documents the baseline schema for E-Connect.
 ## Auth Session Note
 
 - The refresh-token session flow remains stateless in the current baseline: no new auth-session table is introduced for this slice.
-- User approval and revocation checks remain anchored to the existing `users.approval_status` contract during login, refresh, and authenticated access.
+- Admin-created household users are written with `users.approval_status = approved` immediately; login, refresh, and authenticated access still rely on that durable contract to block revoked or otherwise non-approved accounts.
 
 ## System Log Contract
 
