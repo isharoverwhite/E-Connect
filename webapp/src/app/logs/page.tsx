@@ -1,6 +1,6 @@
 "use client";
 
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -13,6 +13,8 @@ import {
     SystemStatusResponse,
     fetchSystemLogs,
     fetchSystemStatus,
+    markAllSystemLogsRead,
+    markSystemLogRead,
 } from "@/lib/api";
 
 type SeverityFilter = "all" | "alerts" | SystemLogSeverity;
@@ -37,6 +39,10 @@ const statusToneMap: Record<SystemStatusResponse["overall_status"], string> = {
     warning: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300",
     critical: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-300",
 };
+
+function isAlertEntry(entry: SystemLogEntry): boolean {
+    return entry.severity !== "info";
+}
 
 function toLocalDateKey(value: string): string {
     const date = new Date(value);
@@ -135,6 +141,8 @@ export default function LogsPage() {
     const [logs, setLogs] = useState<SystemLogEntry[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [markingAll, setMarkingAll] = useState(false);
+    const [markingIds, setMarkingIds] = useState<Set<number>>(new Set());
     const [error, setError] = useState("");
     const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
     const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
@@ -190,7 +198,7 @@ export default function LogsPage() {
         };
     }, [isAdmin]);
 
-    async function handleRefresh() {
+    const handleRefresh = useCallback(async () => {
         if (!isAdmin) {
             return;
         }
@@ -208,29 +216,103 @@ export default function LogsPage() {
         } finally {
             setRefreshing(false);
         }
-    }
+    }, [isAdmin]);
 
-    useWebSocket((event) => {
-        if (event.type !== "system_metrics" || !event.payload) {
+    async function handleMarkRead(logId: number) {
+        if (!isAdmin) {
             return;
         }
 
-        const metrics = event.payload as Record<string, unknown>;
-        setStatus((current) => {
-            if (!current) {
-                return current;
-            }
+        setError("");
+        setMarkingIds((current) => new Set(current).add(logId));
 
-            return {
-                ...current,
-                cpu_percent: typeof metrics.cpu_percent === "number" ? metrics.cpu_percent : current.cpu_percent,
-                memory_used: typeof metrics.memory_used === "number" ? metrics.memory_used : current.memory_used,
-                memory_total: typeof metrics.memory_total === "number" ? metrics.memory_total : current.memory_total,
-                storage_used: typeof metrics.storage_used === "number" ? metrics.storage_used : current.storage_used,
-                storage_total: typeof metrics.storage_total === "number" ? metrics.storage_total : current.storage_total,
-            };
-        });
+        try {
+            await markSystemLogRead(logId);
+            const { nextStatus, nextLogs } = await requestLogsPageData();
+            setStatus(nextStatus);
+            setLogs(nextLogs);
+        } catch (loadError) {
+            const message = loadError instanceof Error ? loadError.message : "Failed to mark alert as read";
+            setError(message);
+        } finally {
+            setMarkingIds((current) => {
+                const next = new Set(current);
+                next.delete(logId);
+                return next;
+            });
+        }
+    }
+
+    async function handleMarkAllRead() {
+        if (!isAdmin) {
+            return;
+        }
+
+        setError("");
+        setMarkingAll(true);
+
+        try {
+            await markAllSystemLogsRead();
+            const { nextStatus, nextLogs } = await requestLogsPageData();
+            setStatus(nextStatus);
+            setLogs(nextLogs);
+        } catch (loadError) {
+            const message = loadError instanceof Error ? loadError.message : "Failed to mark all alerts as read";
+            setError(message);
+        } finally {
+            setMarkingAll(false);
+        }
+    }
+
+    const { isConnected } = useWebSocket((event) => {
+        if (event.type === "system_metrics" && event.payload) {
+            const metrics = event.payload as Record<string, unknown>;
+            setStatus((current) => {
+                if (!current) {
+                    return current;
+                }
+
+                return {
+                    ...current,
+                    cpu_percent: typeof metrics.cpu_percent === "number" ? metrics.cpu_percent : current.cpu_percent,
+                    memory_used: typeof metrics.memory_used === "number" ? metrics.memory_used : current.memory_used,
+                    memory_total: typeof metrics.memory_total === "number" ? metrics.memory_total : current.memory_total,
+                    storage_used: typeof metrics.storage_used === "number" ? metrics.storage_used : current.storage_used,
+                    storage_total: typeof metrics.storage_total === "number" ? metrics.storage_total : current.storage_total,
+                };
+            });
+            return;
+        }
+
+        if (
+            event.type === "device_online" ||
+            event.type === "device_offline" ||
+            event.type === "pairing_requested" ||
+            event.type === "pairing_queue_updated"
+        ) {
+            if (!refreshing && isAdmin) {
+                void handleRefresh();
+            }
+        }
     });
+
+    useEffect(() => {
+        if (!isConnected || !isAdmin) {
+            return;
+        }
+
+        let cancelled = false;
+        const timeoutId = window.setTimeout(() => {
+            if (!cancelled && !loading) {
+                void handleRefresh();
+            }
+        }, 500);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timeoutId);
+        };
+    }, [isConnected, isAdmin, handleRefresh, loading]);
 
     const filteredLogs = useMemo(() => {
         return logs.filter((entry) => {
@@ -292,7 +374,7 @@ export default function LogsPage() {
             {
                 label: "MQTT",
                 value: status.mqtt_status === "connected" ? "Connected" : "Disconnected",
-                tone: status.mqtt_status === "connected" ? "text-emerald-600 dark:text-emerald-300" : "text-amber-600 dark:text-amber-300",
+                tone: status.mqtt_status === "connected" ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300",
             },
             {
                 label: "CPU",
@@ -322,14 +404,26 @@ export default function LogsPage() {
                             </p>
                         </div>
                         {isAdmin ? (
-                            <button
-                                className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-primary hover:text-primary disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-                                disabled={refreshing}
-                                onClick={() => void handleRefresh()}
-                            >
-                                <span className={`material-icons-round text-[18px] ${refreshing ? "animate-spin" : ""}`}>refresh</span>
-                                Refresh
-                            </button>
+                            <div className="flex flex-wrap items-center gap-3">
+                                <button
+                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-primary hover:text-primary disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                                    disabled={markingAll || refreshing || !status || status.active_alert_count === 0}
+                                    onClick={() => void handleMarkAllRead()}
+                                >
+                                    <span className={`material-icons-round text-[18px] ${markingAll ? "animate-spin" : ""}`}>
+                                        mark_email_read
+                                    </span>
+                                    Mark All Read
+                                </button>
+                                <button
+                                    className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-primary hover:text-primary disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                                    disabled={markingAll || refreshing}
+                                    onClick={() => void handleRefresh()}
+                                >
+                                    <span className={`material-icons-round text-[18px] ${refreshing ? "animate-spin" : ""}`}>refresh</span>
+                                    Refresh
+                                </button>
+                            </div>
                         ) : null}
                     </header>
 
@@ -364,14 +458,14 @@ export default function LogsPage() {
                                             <p className="mt-3 max-w-2xl text-sm opacity-90">
                                                 {status?.latest_alert_message
                                                     ? status.latest_alert_message
-                                                    : "Live server diagnostics are streaming from the active backend runtime."}
+                                                    : "All current alerts are marked as read. Live dependency cards below still show the current runtime state."}
                                             </p>
                                         </div>
                                         <div className="rounded-2xl border border-current/15 bg-white/70 px-4 py-3 text-sm shadow-sm dark:bg-slate-950/30">
                                             <p className="text-xs uppercase tracking-[0.2em] opacity-70">Advertised host</p>
                                             <p className="mt-2 text-lg font-semibold">{status?.advertised_host ?? "Unknown"}</p>
                                             <p className="mt-2 text-xs opacity-70">
-                                                Latest alert: {formatEventDateTime(status?.latest_alert_at)}
+                                                Latest unread alert: {status?.latest_alert_at ? formatEventDateTime(status.latest_alert_at) : "None"}
                                             </p>
                                         </div>
                                     </div>
@@ -393,7 +487,7 @@ export default function LogsPage() {
                                             {status ? status.active_alert_count.toString().padStart(2, "0") : "--"}
                                         </p>
                                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                            Warning, error, and critical events retained for {status?.retention_days ?? 30} days.
+                                            Unread warning, error, and critical events retained for {status?.retention_days ?? 30} days.
                                         </p>
                                     </div>
 
@@ -529,61 +623,105 @@ export default function LogsPage() {
                                                     <span className="text-xs text-slate-400 dark:text-slate-500">{group.entries.length} events</span>
                                                 </div>
 
-                                                <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
-                                                    <table className="min-w-full divide-y divide-slate-200 text-left text-sm dark:divide-slate-800">
-                                                        <thead className="bg-slate-50 dark:bg-slate-900/80">
+                                                <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
+                                                    <table className="min-w-full text-left text-sm whitespace-nowrap">
+                                                        <thead className="border-b border-slate-200 bg-slate-50/50 text-slate-500 dark:border-slate-800/80 dark:bg-slate-900/50 dark:text-slate-400">
                                                             <tr>
-                                                                <th className="px-4 py-3 font-medium text-slate-500 dark:text-slate-400">Time</th>
-                                                                <th className="px-4 py-3 font-medium text-slate-500 dark:text-slate-400">Severity</th>
-                                                                <th className="px-4 py-3 font-medium text-slate-500 dark:text-slate-400">Category</th>
-                                                                <th className="px-4 py-3 font-medium text-slate-500 dark:text-slate-400">Event</th>
-                                                                <th className="px-4 py-3 font-medium text-slate-500 dark:text-slate-400">Firmware</th>
-                                                                <th className="px-4 py-3 font-medium text-slate-500 dark:text-slate-400">Device</th>
+                                                                <th className="px-4 py-3.5 font-medium">Time</th>
+                                                                <th className="px-4 py-3.5 font-medium">Status & Category</th>
+                                                                <th className="px-4 py-3.5 font-medium">Event Detail</th>
+                                                                <th className="px-4 py-3.5 font-medium">Source</th>
+                                                                <th className="px-4 py-3.5 font-medium text-right">Action</th>
                                                             </tr>
                                                         </thead>
-                                                        <tbody className="divide-y divide-slate-100 bg-white dark:divide-slate-800 dark:bg-slate-950">
-                                                            {group.entries.map((entry) => (
-                                                                <tr key={entry.id} className="align-top">
-                                                                    <td className="px-4 py-3 text-slate-500 dark:text-slate-400">
-                                                                        {new Intl.DateTimeFormat(undefined, {
-                                                                            hour: "2-digit",
-                                                                            minute: "2-digit",
-                                                                            second: "2-digit",
-                                                                        }).format(new Date(entry.occurred_at))}
-                                                                    </td>
-                                                                    <td className="px-4 py-3">
-                                                                        <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${severityToneMap[entry.severity]}`}>
-                                                                            {entry.severity}
+                                                        <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                                                            {group.entries.map((entry) => {
+                                                                const isAlert = isAlertEntry(entry);
+                                                                const isMarking = markingIds.has(entry.id);
+
+                                                                return (
+                                                                <tr key={entry.id} className={`transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/20 ${isAlert && entry.is_read ? "opacity-[0.65] bg-slate-50/30 dark:bg-slate-900/20" : ""}`}>
+                                                                    <td className="px-4 py-4 align-top">
+                                                                        <span className="font-medium text-slate-700 dark:text-slate-300">
+                                                                            {new Intl.DateTimeFormat(undefined, {
+                                                                                hour: "2-digit",
+                                                                                minute: "2-digit",
+                                                                                second: "2-digit",
+                                                                            }).format(new Date(entry.occurred_at))}
                                                                         </span>
                                                                     </td>
-                                                                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                                                                        {categoryLabelMap[entry.category]}
-                                                                    </td>
-                                                                    <td className="px-4 py-3">
-                                                                        <div className="min-w-[20rem]">
-                                                                            <p className="font-medium text-slate-900 dark:text-white">{entry.message}</p>
-                                                                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                                                                {entry.event_code} • {formatEventDateTime(entry.occurred_at)}
-                                                                            </p>
+
+                                                                    <td className="px-4 py-4 align-top">
+                                                                        <div className="flex flex-col items-start gap-2">
+                                                                            <span className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${severityToneMap[entry.severity]}`}>
+                                                                                <span className="material-icons-round text-[14px]">
+                                                                                    {entry.severity === 'info' ? 'info' : entry.severity === 'warning' ? 'warning' : entry.severity === 'error' ? 'error' : 'report'}
+                                                                                </span>
+                                                                                {entry.severity}
+                                                                            </span>
+                                                                            <span className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
+                                                                                <span className="material-icons-round text-[12px] opacity-70">label</span>
+                                                                                {categoryLabelMap[entry.category]}
+                                                                            </span>
                                                                         </div>
                                                                     </td>
-                                                                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                                                                        {entry.firmware_version || entry.firmware_revision
-                                                                            ? (
-                                                                                <>
-                                                                                    <div>{entry.firmware_version ?? "Unknown version"}</div>
-                                                                                    <div className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                                                                                        {entry.firmware_revision ?? "No revision"}
-                                                                                    </div>
-                                                                                </>
-                                                                            )
-                                                                            : "—"}
+
+                                                                    <td className="min-w-[18rem] max-w-md whitespace-normal px-4 py-4 align-top">
+                                                                        <div className="flex flex-col gap-1.5">
+                                                                            <p className="font-medium leading-snug text-slate-900 dark:text-white">
+                                                                                {entry.message}
+                                                                            </p>
+                                                                            <div className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+                                                                                <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono dark:bg-slate-800 dark:text-slate-300">
+                                                                                    {entry.event_code}
+                                                                                </span>
+                                                                                {isAlert ? (
+                                                                                    <span className={`inline-flex items-center gap-1 ${entry.is_read ? "text-slate-400" : "font-medium text-blue-600 dark:text-blue-400"}`}>
+                                                                                        <span className="h-1.5 w-1.5 rounded-full bg-current"></span>
+                                                                                        {entry.is_read && entry.read_at
+                                                                                            ? `Read at ${new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(entry.read_at))}`
+                                                                                            : "Unread alert"}
+                                                                                    </span>
+                                                                                ) : null}
+                                                                            </div>
+                                                                        </div>
                                                                     </td>
-                                                                    <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
-                                                                        {entry.device_id ?? "Server"}
+
+                                                                    <td className="px-4 py-4 align-top">
+                                                                        <div className="flex flex-col gap-2 text-xs text-slate-600 dark:text-slate-300">
+                                                                            <span className="inline-flex items-center gap-1.5">
+                                                                                <span className="material-icons-round text-[14px] text-slate-400">memory</span>
+                                                                                {entry.device_id ?? "Server"}
+                                                                            </span>
+                                                                            {(entry.firmware_version || entry.firmware_revision) && (
+                                                                                <span className="inline-flex items-center gap-1.5">
+                                                                                    <span className="material-icons-round text-[14px] text-slate-400">system_update_alt</span>
+                                                                                    <span className="max-w-[120px] truncate" title={entry.firmware_version || "Unknown version"}>
+                                                                                        {entry.firmware_version || "Unknown"}
+                                                                                    </span>
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    </td>
+
+                                                                    <td className="px-4 py-4 align-top text-right">
+                                                                        {isAlert ? (
+                                                                            <button
+                                                                                className="inline-flex min-w-[7.5rem] items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:border-primary dark:hover:bg-slate-800"
+                                                                                disabled={entry.is_read || isMarking || markingAll}
+                                                                                onClick={() => void handleMarkRead(entry.id)}
+                                                                            >
+                                                                                <span className={`material-icons-round text-[14px] ${isMarking ? "animate-spin" : ""}`}>
+                                                                                    {entry.is_read ? "done_all" : "mark_email_read"}
+                                                                                </span>
+                                                                                {entry.is_read ? "Read" : "Mark Read"}
+                                                                            </button>
+                                                                        ) : (
+                                                                            <span className="block px-3 py-1.5 text-xs text-slate-400 dark:text-slate-500">—</span>
+                                                                        )}
                                                                     </td>
                                                                 </tr>
-                                                            ))}
+                                                            )})}
                                                         </tbody>
                                                     </table>
                                                 </div>

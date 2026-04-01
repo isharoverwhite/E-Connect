@@ -44,6 +44,9 @@ export interface SystemLogEntry {
     firmware_version?: string | null;
     firmware_revision?: string | null;
     details?: Record<string, unknown> | null;
+    is_read: boolean;
+    read_at?: string | null;
+    read_by_user_id?: number | null;
 }
 
 export interface SystemLogListResponse {
@@ -70,6 +73,10 @@ export interface SystemStatusResponse {
     active_alert_count: number;
     latest_alert_at?: string | null;
     latest_alert_message?: string | null;
+}
+
+export interface SystemLogAcknowledgeResponse {
+    updated_count: number;
 }
 
 export interface GeneralSettingsResponse {
@@ -206,6 +213,46 @@ export async function fetchSystemLogs(token?: string, limit = 500): Promise<Syst
 
     if (!response.ok) {
         throw new Error(await parseApiError(response, "Failed to load system logs"));
+    }
+
+    return response.json();
+}
+
+export async function markSystemLogRead(logId: number, token?: string): Promise<SystemLogAcknowledgeResponse> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/system/logs/${encodeURIComponent(String(logId))}/read`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to mark alert as read"));
+    }
+
+    return response.json();
+}
+
+export async function markAllSystemLogsRead(token?: string): Promise<SystemLogAcknowledgeResponse> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/system/logs/mark-all-read`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to mark all alerts as read"));
     }
 
     return response.json();
