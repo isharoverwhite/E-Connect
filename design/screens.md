@@ -114,12 +114,12 @@
 ## Managed Device Reconfiguration
 - **`/devices/[id]/config`**:
   - Only `admin` users may open the managed-device reconfiguration screen.
-  - The screen must load the linked DIY project board profile and the device's current persisted GPIO mapping, then let the admin edit pins on that same board.
+  - The screen must load the linked DIY project board profile and the saved DIY project pin map as the editable desired config, while separately showing the board-reported active pin map that currently drives runtime behavior.
   - The screen must also show which saved Wi-Fi credential is currently attached to that managed device's linked DIY project and allow the admin to switch to another saved credential before rebuild.
   - The screen must surface inline `validation error`, `warning`, and `success` feedback for pin edits instead of relying on browser alerts alone.
   - Saving a changed pin map is safety-sensitive because an invalid wiring or GPIO role can damage hardware; the save action must open a confirmation modal that requires the password of the signed-in account before the backend accepts the change.
   - A wrong or missing password must keep the device config unchanged and show an inline error inside that confirmation modal.
-  - A successful confirmation must persist the updated pin mapping and selected Wi-Fi credential to the managed DIY project and the linked device record, then start a new firmware rebuild for that device.
+  - A successful confirmation must persist the updated pin mapping and selected Wi-Fi credential to the managed DIY project, keep the current board-reported runtime map intact until the board reconnects on the rebuilt firmware, and then start a new firmware rebuild for that device.
   - The OTA dialog must stay blocked until the rebuild reaches `artifact_ready`, then allow the admin to send the OTA command for that exact build job.
   - The OTA dialog must show `building`, `artifact_ready`, `flashing`, `flashed`, and `flash_failed` states, plus a clear close path when the build itself fails.
   - After the OTA job reaches `flashed`, the dialog must wait for the board to report `online` again on the expected firmware version for that exact build before showing the final success state, then return the admin to the dashboard automatically.
@@ -177,6 +177,7 @@
   - The `System Alerts` summary card on `/` must route directly into `/logs` and pre-focus alert-worthy entries rather than behaving like a dead KPI tile.
   - The notification drawer footer `View Activity Log` must continue routing into `/logs` as the full operational history view.
 - **Dashboard runtime controls**:
+  - Card type selection and runtime controls on `/` must follow the active pin configuration reported by the board instead of a newer saved pin map that has not been applied on hardware yet.
   - When a user toggles an on/off control, the switch must stay in an inline loading state until the backend/device reports the requested target state.
   - The switch must not visually flip to the requested state before the confirmed `device_state` / command result arrives.
   - If the command fails or times out, the loading state clears and the switch remains at the last confirmed state.

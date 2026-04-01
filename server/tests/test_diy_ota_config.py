@@ -145,14 +145,71 @@ def test_put_device_config_success():
     assert project.config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}]
 
     db.refresh(device)
-    assert len(device.pin_configurations) == 1
-    assert device.pin_configurations[0].gpio_pin == 2
-    assert device.pin_configurations[0].label == "LED"
+    assert len(device.pin_configurations) == 0
 
     db.refresh(user)
-    assert user.ui_layout is not None
-    assert user.ui_layout[0]["deviceId"] == device.device_id
-    assert user.ui_layout[0]["pin"] == 2
+    assert not user.ui_layout
+
+
+def test_put_device_config_preserves_board_reported_pin_map_until_reconnect():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    db.add(
+        PinConfiguration(
+            device_id=device.device_id,
+            gpio_pin=8,
+            mode="PWM",
+            label="Active Dimmer",
+            extra_params={"min_value": 0, "max_value": 255},
+        )
+    )
+    user.ui_layout = [
+        {
+            "i": f"{device.device_id}:8:0",
+            "x": 0,
+            "y": 0,
+            "w": 2,
+            "h": 2,
+            "type": "dimmer",
+            "deviceId": device.device_id,
+            "pin": 8,
+            "label": "Active Dimmer",
+        }
+    ]
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    payload = {
+        "password": "password",
+        "pins": [
+            {"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}
+        ]
+    }
+
+    with patch("app.api.build_firmware_task", return_value=None):
+        res = client.put(
+            f"/api/v1/device/{device.device_id}/config",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"}
+        )
+
+    assert res.status_code == 200, res.text
+
+    db.refresh(project)
+    assert project.config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}]
+
+    db.refresh(device)
+    assert len(device.pin_configurations) == 1
+    assert device.pin_configurations[0].gpio_pin == 8
+    assert device.pin_configurations[0].mode == "PWM"
+    assert device.pin_configurations[0].label == "Active Dimmer"
+
+    db.refresh(user)
+    assert user.ui_layout[0]["pin"] == 8
+    assert user.ui_layout[0]["label"] == "Active Dimmer"
 
 def test_put_device_config_prefers_forwarded_host_for_firmware_target():
     db = TestingSessionLocal()
@@ -1240,7 +1297,7 @@ def test_mqtt_register_reconcile_ota_mismatch_stale():
     assert "OTA timeout/reconciliation" in job.error_message
 
 
-def test_mqtt_register_recent_flashed_job_preserves_saved_pin_map_on_old_firmware():
+def test_mqtt_register_recent_flashed_job_keeps_board_reported_pin_map_on_old_firmware():
     from app.mqtt import MQTTClientManager
     import json
     from unittest.mock import MagicMock
@@ -1248,16 +1305,6 @@ def test_mqtt_register_recent_flashed_job_preserves_saved_pin_map_on_old_firmwar
 
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
-
-    db.add(
-        PinConfiguration(
-            device_id=device.device_id,
-            gpio_pin=8,
-            mode="PWM",
-            label="Desired Dimmer",
-            extra_params={"min_value": 0, "max_value": 255},
-        )
-    )
 
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashed)
@@ -1289,6 +1336,6 @@ def test_mqtt_register_recent_flashed_job_preserves_saved_pin_map_on_old_firmwar
     assert job.status == JobStatus.flash_failed
     assert "OTA verification failed" in job.error_message
     assert len(device.pin_configurations) == 1
-    assert device.pin_configurations[0].gpio_pin == 8
-    assert device.pin_configurations[0].mode == "PWM"
-    assert device.pin_configurations[0].label == "Desired Dimmer"
+    assert device.pin_configurations[0].gpio_pin == 2
+    assert device.pin_configurations[0].mode == "OUTPUT"
+    assert device.pin_configurations[0].label == "Old Relay"

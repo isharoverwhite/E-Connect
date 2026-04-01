@@ -11,6 +11,7 @@ import {
   sendDeviceCommand,
 } from "@/lib/api";
 import { getToken } from "@/lib/auth";
+import { arePinConfigurationsEquivalent, getActivePinConfigurations } from "@/lib/device-config";
 import { fetchWifiCredentials, type WifiCredentialRecord } from "@/lib/wifi-credentials";
 import { Step2Pins } from "@/features/diy/components/Step2Pins";
 import type { BoardProfile } from "@/features/diy/board-profiles";
@@ -21,7 +22,9 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import type { DeviceConfig, PinConfig } from "@/types/device";
 
 interface DiyProjectResponse {
+  config?: Record<string, unknown> | null;
   board_profile: string;
+  name?: string;
   wifi_credential_id?: number | null;
 }
 
@@ -62,6 +65,42 @@ function mapDevicePins(pinConfigurations: PinConfig[]): PinMapping[] {
       label: pin.label,
       extra_params: pin.extra_params ?? {},
     }))
+    .sort((left, right) => left.gpio_pin - right.gpio_pin);
+}
+
+function mapProjectPins(projectConfig: Record<string, unknown> | null | undefined): PinMapping[] {
+  const rawPins = Array.isArray(projectConfig?.pins) ? projectConfig.pins : [];
+  const mappedPins: Array<PinMapping | null> = rawPins.map((pin) => {
+    if (!pin || typeof pin !== "object") {
+      return null;
+    }
+
+    const record = pin as Record<string, unknown>;
+    const gpio =
+      typeof record.gpio_pin === "number"
+        ? record.gpio_pin
+        : typeof record.gpio === "number"
+          ? record.gpio
+          : null;
+    const mode = typeof record.mode === "string" ? record.mode : null;
+    if (gpio === null || mode === null) {
+      return null;
+    }
+
+    return {
+      gpio_pin: gpio,
+      mode: mode as PinMapping["mode"],
+      function: typeof record.function === "string" ? record.function : undefined,
+      label: typeof record.label === "string" ? record.label : undefined,
+      extra_params:
+        record.extra_params && typeof record.extra_params === "object"
+          ? (record.extra_params as Record<string, unknown>)
+          : null,
+    };
+  });
+
+  return mappedPins
+    .filter((pin): pin is PinMapping => pin !== null)
     .sort((left, right) => left.gpio_pin - right.gpio_pin);
 }
 
@@ -298,7 +337,9 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
           throw new Error(`Unknown board profile: ${nextProject.board_profile}`);
         }
 
-        const nextPins = mapDevicePins(nextDevice.pin_configurations);
+        const nextPins = mapProjectPins(nextProject.config);
+        const nextSavedPins =
+          nextPins.length > 0 ? nextPins : mapDevicePins(getActivePinConfigurations(nextDevice));
         if (cancelled) {
           return;
         }
@@ -309,8 +350,8 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         setWifiCredentials(nextWifiCredentials);
         setWifiCredentialsError(null);
         setWifiCredentialsLoading(false);
-        setPins(nextPins);
-        setSavedPins(nextPins);
+        setPins(nextSavedPins);
+        setSavedPins(nextSavedPins);
         setSelectedWifiCredentialId(nextProject.wifi_credential_id ?? null);
         setSavedWifiCredentialId(nextProject.wifi_credential_id ?? null);
       } catch (nextError) {
@@ -597,6 +638,13 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
     wifi_credential_id: selectedWifiCredentialId,
     pins: normalizePins(pins),
   };
+  const activeBoardPinConfigurations = getActivePinConfigurations(device);
+  const activeBoardPins = mapDevicePins(activeBoardPinConfigurations);
+  const hasBoardReportedPins = activeBoardPinConfigurations.length > 0;
+  const boardConfigInSync =
+    hasBoardReportedPins &&
+    arePinConfigurationsEquivalent(activeBoardPinConfigurations, savedPins);
+  const activeFirmwareVersion = device.firmware_version?.trim() || null;
   const projectSyncState = isSaving ? "saving" : hasChanges ? "idle" : "saved";
   const statusMessageClassName =
     jobStatus === "flashed" && !boardOnlineAfterOta
@@ -661,22 +709,11 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
           ? {
               ...current,
               wifi_credential_id: selectedWifiCredentialId,
-            }
-          : current,
-      );
-      setDevice((current) =>
-        current
-          ? {
-              ...current,
-              pin_configurations: nextSavedPins.map((pin, index) => ({
-                id: index + 1,
-                device_id: current.device_id,
-                gpio_pin: pin.gpio_pin,
-                mode: pin.mode,
-                function: pin.function,
-                label: pin.label,
-                extra_params: pin.extra_params ?? null,
-              })),
+              config: {
+                ...(current.config ?? {}),
+                pins: nextSavedPins,
+                wifi_credential_id: selectedWifiCredentialId,
+              },
             }
           : current,
       );
@@ -691,7 +728,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       setBoardOnlineAfterOta(false);
       setOtaStartingFirmwareVersion(null);
       setStatusMessage(
-        "Pin mapping saved. The server started a new firmware rebuild. You can trigger OTA after the artifact becomes ready.",
+        "Saved project config updated. The dashboard will keep following the board-reported active pin map until OTA finishes and the board reconnects on the new firmware.",
       );
     } catch (saveError) {
       setConfirmError(getErrorMessage(saveError));
@@ -842,6 +879,68 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
             {wifiCredentialsError && (
               <p className="px-4 py-2 text-sm text-white bg-rose-600 rounded-lg shadow-sm">{wifiCredentialsError}</p>
             )}
+
+            <section className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
+                    Active Board Config
+                  </p>
+                  <h2 className="mt-1 text-base font-semibold text-slate-900 dark:text-white">
+                    {!hasBoardReportedPins
+                      ? "Waiting for board-reported pin metadata"
+                      : boardConfigInSync
+                        ? "Board config matches the saved project config"
+                        : "Board is still running a different pin map"}
+                  </h2>
+                  <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
+                    {!hasBoardReportedPins
+                      ? "This board has not reported a full pin map yet. Until it reconnects, the server cannot prove which GPIO roles are active on hardware."
+                      : boardConfigInSync
+                        ? "Dashboard controls are aligned with the same pin map currently saved on the server."
+                        : "Dashboard/runtime behavior follows the board-reported pin map. Saved changes stay pending until OTA completes and the board reconnects on the rebuilt firmware."}
+                  </p>
+                </div>
+                <span
+                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${
+                    !hasBoardReportedPins
+                      ? "border border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                      : boardConfigInSync
+                        ? "border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300"
+                        : "border border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300"
+                  }`}
+                >
+                  {!hasBoardReportedPins ? "unknown" : boardConfigInSync ? "synced" : "drift"}
+                </span>
+              </div>
+
+              <div className="mt-4 grid gap-3 md:grid-cols-3">
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-950">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                    Board-reported pins
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">
+                    {hasBoardReportedPins ? `${activeBoardPins.length} active map(s)` : "No pin map yet"}
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-950">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                    Saved project pins
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">
+                    {savedPins.length} saved map(s)
+                  </p>
+                </div>
+                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-950">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                    Active firmware
+                  </p>
+                  <p className="mt-2 break-all font-mono text-sm text-slate-700 dark:text-slate-200">
+                    {activeFirmwareVersion ?? "Unknown"}
+                  </p>
+                </div>
+              </div>
+            </section>
 
             {validation.errors.length > 0 && (
               <section className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-500/20 dark:bg-rose-500/10 shadow-sm flex items-center gap-3">

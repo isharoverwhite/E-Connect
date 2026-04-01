@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useAuth } from "@/components/AuthProvider";
 import Sidebar from "@/components/Sidebar";
 import { fetchDevices, deleteDevice } from "@/lib/api";
+import { getActivePinConfigurations } from "@/lib/device-config";
 import { DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
 import { useToast } from "@/components/ToastContext";
 import ConfirmModal from "@/components/ConfirmModal";
@@ -272,6 +273,7 @@ export default function DevicesPage() {
                             <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
                                 {(devices as DeviceConfig[]).map((device) => {
                                     const isOnline = device.conn_status === "online";
+                                    const activePins = getActivePinConfigurations(device);
                                     const modeColor = device.mode === "no-code"
                                         ? "border-purple-200 bg-purple-50 text-purple-500 dark:border-purple-500/20 dark:bg-purple-500/10"
                                         : "border-blue-200 bg-blue-50 text-blue-500 dark:border-blue-500/20 dark:bg-blue-500/10";
@@ -334,8 +336,8 @@ export default function DevicesPage() {
                                                     <span className="font-mono text-xs text-slate-700 dark:text-slate-300">{deviceIp || "N/A"}</span>
                                                 </div>
                                                 <div className="flex items-center justify-between">
-                                                    <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">memory</span> Pins Used</span>
-                                                    <span className="font-medium text-slate-700 dark:text-slate-300">{device.pin_configurations?.length || 0} Maps</span>
+                                                    <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">memory</span> Board Pins</span>
+                                                    <span className="font-medium text-slate-700 dark:text-slate-300">{activePins.length} Maps</span>
                                                 </div>
                                             </div>
 

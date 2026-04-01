@@ -85,6 +85,7 @@ void subscribeStateAckTopic();
 void initializePinStates();
 void initializeI2CBus();
 int findPinIndex(int gpio);
+void appendPinConfigMetadata(JsonObject pin, const EConnectPinConfig &config);
 bool modeEquals(const char *left, const char *right);
 bool isOutputMode(const char *mode);
 bool isPwmMode(const char *mode);
@@ -358,7 +359,7 @@ bool performSecureHandshake() {
     return false;
   }
 
-  DynamicJsonDocument doc(3072);
+  DynamicJsonDocument doc(4096);
   doc["device_id"] = deviceId;
   doc["project_id"] = ECONNECT_PROJECT_ID;
   doc["secret_key"] = ECONNECT_SECRET_KEY;
@@ -376,12 +377,7 @@ bool performSecureHandshake() {
     JsonObject pin = pins.createNestedObject();
     pin["gpio_pin"] = ECONNECT_PIN_CONFIGS[index].gpio;
     pin["mode"] = ECONNECT_PIN_CONFIGS[index].mode;
-    pin["function"] = ECONNECT_PIN_CONFIGS[index].function_name;
-    pin["label"] = ECONNECT_PIN_CONFIGS[index].label;
-    if (modeEquals(ECONNECT_PIN_CONFIGS[index].mode, "OUTPUT")) {
-      JsonObject extraParams = pin.createNestedObject("extra_params");
-      extraParams["active_level"] = ECONNECT_PIN_CONFIGS[index].active_level;
-    }
+    appendPinConfigMetadata(pin, ECONNECT_PIN_CONFIGS[index]);
   }
 
   String requestBody;
@@ -422,7 +418,7 @@ bool performSecureHandshake() {
 void setupMQTT() {
   mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
   mqttClient.setCallback(mqttCallback);
-  mqttClient.setBufferSize(1024);
+  mqttClient.setBufferSize(4096);
 }
 
 String commandTopic() {
@@ -861,7 +857,7 @@ void publishState(bool applied) {
   const String stateTopic =
       String("econnect/") + MQTT_NAMESPACE + "/device/" + deviceId + "/state";
 
-  DynamicJsonDocument doc(3072);
+  DynamicJsonDocument doc(4096);
   doc["kind"] = "state";
   doc["device_id"] = deviceId;
   doc["applied"] = applied;
@@ -876,11 +872,11 @@ void publishState(bool applied) {
     JsonObject pin = pins.createNestedObject();
     pin["pin"] = pinState.gpio;
     pin["mode"] = pinState.mode;
-    pin["label"] = pinState.label;
     pin["value"] = readRuntimeValue(pinState);
     if (isOutputMode(pinState.mode)) {
       pin["active_level"] = pinState.activeLevel;
     }
+    appendPinConfigMetadata(pin, ECONNECT_PIN_CONFIGS[index]);
 
     const int brightness = readRuntimeBrightness(pinState);
     if (brightness > 0 || isPwmMode(pinState.mode)) {
@@ -905,6 +901,40 @@ void publishState(bool applied) {
     Serial.println(payload);
   } else {
     Serial.println("Failed to publish state payload.");
+  }
+}
+
+void appendPinConfigMetadata(JsonObject pin, const EConnectPinConfig &config) {
+  pin["function"] = config.function_name;
+  pin["label"] = config.label;
+
+  JsonObject extraParams = pin.createNestedObject("extra_params");
+  bool hasExtraParams = false;
+
+  if (modeEquals(config.mode, "OUTPUT")) {
+    extraParams["active_level"] = config.active_level;
+    hasExtraParams = true;
+  } else if (modeEquals(config.mode, "PWM")) {
+    extraParams["min_value"] = config.pwm_min;
+    extraParams["max_value"] = config.pwm_max;
+    hasExtraParams = true;
+  } else if (modeEquals(config.mode, "I2C")) {
+    if (strlen(config.i2c_role) > 0) {
+      extraParams["i2c_role"] = config.i2c_role;
+      hasExtraParams = true;
+    }
+    if (strlen(config.i2c_address) > 0) {
+      extraParams["i2c_address"] = config.i2c_address;
+      hasExtraParams = true;
+    }
+    if (strlen(config.i2c_library) > 0) {
+      extraParams["i2c_library"] = config.i2c_library;
+      hasExtraParams = true;
+    }
+  }
+
+  if (!hasExtraParams) {
+    pin.remove("extra_params");
   }
 }
 

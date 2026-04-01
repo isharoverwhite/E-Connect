@@ -36,7 +36,7 @@ from .models import (
 from .sql_models import (
     User, Device, Automation, DeviceHistory,
     Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
-    AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, BuildJob, PinConfiguration, SerialSession, SerialSessionStatus,
+    AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, BuildJob, SerialSession, SerialSessionStatus,
     SystemLog, SystemLogCategory as SqlSystemLogCategory, SystemLogSeverity as SqlSystemLogSeverity,
     UserApprovalStatus as SqlUserApprovalStatus, WifiCredential,
 )
@@ -1909,33 +1909,6 @@ async def update_device_config(
         validation_warnings.append(network_target_warning)
     project.config = _stamp_project_network_targets(current_config, targets)
     project.wifi_credential_id = wifi_credential.id
-
-    next_pin_configurations: list[PinConfiguration] = []
-    for pin in requested_pins:
-        if not isinstance(pin, dict):
-            continue
-
-        raw_gpio = pin.get("gpio_pin", pin.get("gpio"))
-        mode = pin.get("mode")
-        if not isinstance(raw_gpio, int) or not isinstance(mode, str):
-            continue
-
-        extra_params = pin.get("extra_params")
-        next_pin_configurations.append(
-            PinConfiguration(
-                device_id=device.device_id,
-                gpio_pin=raw_gpio,
-                mode=mode,
-                function=pin.get("function"),
-                label=pin.get("label"),
-                extra_params=extra_params if isinstance(extra_params, dict) else None,
-            )
-        )
-
-    device.pin_configurations = next_pin_configurations
-    owner = db.query(User).filter(User.user_id == device.owner_id).first()
-    if owner:
-        _sync_user_dashboard_widgets(owner, device)
 
     # Trigger rebuild only after validation passes and no active job exists.
     job = BuildJob(id=str(uuid.uuid4()), project_id=project.id, status=JobStatus.queued)
