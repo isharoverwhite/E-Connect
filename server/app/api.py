@@ -23,7 +23,7 @@ from .models import (
     DeviceApprovalRequest, DeviceAvailabilityResponse, DeviceHandshakeResponse, DeviceRegister, DeviceResponse, PinConfigCreate,
     AutomationCreate, AutomationResponse, AutomationUpdate,
     DeviceHistoryCreate, DeviceHistoryResponse,
-    SystemLogAcknowledgeResponse, SystemLogListResponse, SystemStatusResponse,
+    SystemLogAcknowledgeResponse, SystemLogListResponse, SystemLogResponse, SystemStatusResponse,
     GeneralSettingsResponse, GeneralSettingsUpdate,
     FirmwareResponse, DeviceMode, AccountType, EventType,
     RoomAccessUpdate, RoomUpdate, RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
@@ -188,6 +188,37 @@ def _serialize_general_settings(household: Household, context: dict[str, Any]) -
         current_server_time=get_current_server_time(effective_timezone),
         timezone_options=list(get_supported_timezones()),
     )
+
+
+def _coerce_utc_api_datetime(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _serialize_system_log_entry(entry: SystemLog) -> SystemLogResponse:
+    return SystemLogResponse(
+        id=entry.id,
+        occurred_at=_coerce_utc_api_datetime(entry.occurred_at),
+        severity=entry.severity,
+        category=entry.category,
+        event_code=entry.event_code,
+        message=entry.message,
+        device_id=entry.device_id,
+        firmware_version=entry.firmware_version,
+        firmware_revision=entry.firmware_revision,
+        details=entry.details,
+        is_read=entry.is_read,
+        read_at=_coerce_utc_api_datetime(entry.read_at),
+        read_by_user_id=entry.read_by_user_id,
+    )
+
+
+def _resolve_effective_timezone_payload(db: Session, current_user: User) -> dict[str, Any]:
+    household = _get_current_household_or_404(db, current_user)
+    return resolve_effective_timezone_context(household=household)
 
 
 def _require_current_user_password(
@@ -2763,9 +2794,11 @@ async def get_serial_status(port: str = "default", db: Session = Depends(get_db)
 async def get_system_status(
     request: Request,
     db: Session = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    admin: User = Depends(get_admin_user),
 ):
     metrics = collect_system_metrics()
+    timezone_context = _resolve_effective_timezone_payload(db, admin)
+    effective_timezone = str(timezone_context["effective_timezone"])
     retention_cutoff = datetime.utcnow() - timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
     alert_query = db.query(SystemLog).filter(
         SystemLog.occurred_at >= retention_cutoff,
@@ -2799,7 +2832,7 @@ async def get_system_status(
         ),
         database_status=database_status,
         mqtt_status=mqtt_status,
-        started_at=started_at if isinstance(started_at, datetime) else None,
+        started_at=_coerce_utc_api_datetime(started_at) if isinstance(started_at, datetime) else None,
         uptime_seconds=uptime_seconds,
         advertised_host=_resolve_system_advertised_host(request),
         cpu_percent=float(metrics["cpu_percent"]),
@@ -2809,7 +2842,10 @@ async def get_system_status(
         storage_total=int(metrics["storage_total"]),
         retention_days=SYSTEM_LOG_RETENTION_DAYS,
         active_alert_count=active_alert_count,
-        latest_alert_at=latest_alert.occurred_at if latest_alert else None,
+        effective_timezone=effective_timezone,
+        timezone_source=str(timezone_context["timezone_source"]),
+        current_server_time=get_current_server_time(effective_timezone),
+        latest_alert_at=_coerce_utc_api_datetime(latest_alert.occurred_at) if latest_alert else None,
         latest_alert_message=latest_alert.message if latest_alert else None,
     )
 
@@ -2818,22 +2854,28 @@ async def get_system_status(
 async def list_system_logs(
     limit: int = Query(500, ge=1, le=2000),
     db: Session = Depends(get_db),
-    _admin: User = Depends(get_admin_user),
+    admin: User = Depends(get_admin_user),
 ):
+    timezone_context = _resolve_effective_timezone_payload(db, admin)
+    effective_timezone = str(timezone_context["effective_timezone"])
     retention_cutoff = datetime.utcnow() - timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
     base_query = db.query(SystemLog).filter(SystemLog.occurred_at >= retention_cutoff)
-    entries = (
+    raw_entries = (
         base_query
         .order_by(SystemLog.occurred_at.desc(), SystemLog.id.desc())
         .limit(limit)
         .all()
     )
+    entries = [_serialize_system_log_entry(entry) for entry in raw_entries]
     total = base_query.count()
 
     return SystemLogListResponse(
         entries=entries,
         total=total,
         retention_days=SYSTEM_LOG_RETENTION_DAYS,
+        effective_timezone=effective_timezone,
+        timezone_source=str(timezone_context["timezone_source"]),
+        current_server_time=get_current_server_time(effective_timezone),
         oldest_occurred_at=entries[-1].occurred_at if entries else None,
         latest_occurred_at=entries[0].occurred_at if entries else None,
     )

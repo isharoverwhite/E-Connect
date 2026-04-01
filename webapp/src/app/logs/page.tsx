@@ -44,16 +44,38 @@ function isAlertEntry(entry: SystemLogEntry): boolean {
     return entry.severity !== "info";
 }
 
-function toLocalDateKey(value: string): string {
-    const date = new Date(value);
-    const year = date.getFullYear();
-    const month = `${date.getMonth() + 1}`.padStart(2, "0");
-    const day = `${date.getDate()}`.padStart(2, "0");
+function parseApiDate(value?: string | null): Date | null {
+    if (!value) {
+        return null;
+    }
+
+    const normalized = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`;
+    const parsed = new Date(normalized);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function toServerDateKey(value: string, timezone: string): string {
+    const parsed = parseApiDate(value);
+    if (!parsed) {
+        return "";
+    }
+
+    const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: timezone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).formatToParts(parsed);
+
+    const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+    const month = parts.find((part) => part.type === "month")?.value ?? "00";
+    const day = parts.find((part) => part.type === "day")?.value ?? "00";
     return `${year}-${month}-${day}`;
 }
 
-function formatEventDateTime(value?: string | null): string {
-    if (!value) {
+function formatEventDateTime(value: string | null | undefined, timezone: string): string {
+    const parsed = parseApiDate(value);
+    if (!parsed) {
         return "Unknown";
     }
 
@@ -64,16 +86,37 @@ function formatEventDateTime(value?: string | null): string {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
-    }).format(new Date(value));
+        timeZone: timezone,
+    }).format(parsed);
+}
+
+function formatEventTime(value: string | null | undefined, timezone: string): string {
+    const parsed = parseApiDate(value);
+    if (!parsed) {
+        return "Unknown";
+    }
+
+    return new Intl.DateTimeFormat(undefined, {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        timeZone: timezone,
+    }).format(parsed);
 }
 
 function formatDayLabel(value: string): string {
+    const [year, month, day] = value.split("-").map(Number);
+    if (Number.isNaN(year) || Number.isNaN(month) || Number.isNaN(day)) {
+        return value;
+    }
+    const anchor = new Date(Date.UTC(year, Math.max(0, month - 1), day, 12, 0, 0));
     return new Intl.DateTimeFormat(undefined, {
         weekday: "short",
         month: "short",
         day: "numeric",
         year: "numeric",
-    }).format(new Date(`${value}T00:00:00`));
+        timeZone: "UTC",
+    }).format(anchor);
 }
 
 function formatUsageLabel(used: number, total: number): string {
@@ -150,6 +193,7 @@ export default function LogsPage() {
     const [toDate, setToDate] = useState("");
     const [searchTerm, setSearchTerm] = useState("");
     const deferredSearch = useDeferredValue(searchTerm.trim().toLowerCase());
+    const effectiveTimezone = status?.effective_timezone ?? "UTC";
 
     useEffect(() => {
         const requestedView = searchParams.get("view");
@@ -328,11 +372,15 @@ export default function LogsPage() {
                 return false;
             }
 
-            const localDate = toLocalDateKey(entry.occurred_at);
-            if (fromDate && localDate < fromDate) {
+            const serverDate = toServerDateKey(entry.occurred_at, effectiveTimezone);
+            if (!serverDate) {
                 return false;
             }
-            if (toDate && localDate > toDate) {
+
+            if (fromDate && serverDate < fromDate) {
+                return false;
+            }
+            if (toDate && serverDate > toDate) {
                 return false;
             }
 
@@ -342,13 +390,16 @@ export default function LogsPage() {
 
             return true;
         });
-    }, [categoryFilter, deferredSearch, fromDate, logs, severityFilter, toDate]);
+    }, [categoryFilter, deferredSearch, effectiveTimezone, fromDate, logs, severityFilter, toDate]);
 
     const groupedLogs = useMemo(() => {
         const groups = new Map<string, SystemLogEntry[]>();
 
         filteredLogs.forEach((entry) => {
-            const key = toLocalDateKey(entry.occurred_at);
+            const key = toServerDateKey(entry.occurred_at, effectiveTimezone);
+            if (!key) {
+                return;
+            }
             const bucket = groups.get(key);
             if (bucket) {
                 bucket.push(entry);
@@ -362,7 +413,7 @@ export default function LogsPage() {
             label: formatDayLabel(dateKey),
             entries,
         }));
-    }, [filteredLogs]);
+    }, [effectiveTimezone, filteredLogs]);
 
     const metrics = status
         ? [
@@ -465,7 +516,7 @@ export default function LogsPage() {
                                             <p className="text-xs uppercase tracking-[0.2em] opacity-70">Advertised host</p>
                                             <p className="mt-2 text-lg font-semibold">{status?.advertised_host ?? "Unknown"}</p>
                                             <p className="mt-2 text-xs opacity-70">
-                                                Latest unread alert: {status?.latest_alert_at ? formatEventDateTime(status.latest_alert_at) : "None"}
+                                                Latest unread alert: {status?.latest_alert_at ? formatEventDateTime(status.latest_alert_at, effectiveTimezone) : "None"}
                                             </p>
                                         </div>
                                     </div>
@@ -538,6 +589,11 @@ export default function LogsPage() {
                                         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                                             Search and narrow down server history without leaving the last 30-day retention window.
                                         </p>
+                                        {status ? (
+                                            <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
+                                                Timestamps and date filters use {status.effective_timezone}. Current server time: {formatEventDateTime(status.current_server_time, effectiveTimezone)}.
+                                            </p>
+                                        ) : null}
                                     </div>
                                     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                                         <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
@@ -643,11 +699,7 @@ export default function LogsPage() {
                                                                 <tr key={entry.id} className={`transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/20 ${isAlert && entry.is_read ? "opacity-[0.65] bg-slate-50/30 dark:bg-slate-900/20" : ""}`}>
                                                                     <td className="px-4 py-4 align-top">
                                                                         <span className="font-medium text-slate-700 dark:text-slate-300">
-                                                                            {new Intl.DateTimeFormat(undefined, {
-                                                                                hour: "2-digit",
-                                                                                minute: "2-digit",
-                                                                                second: "2-digit",
-                                                                            }).format(new Date(entry.occurred_at))}
+                                                                            {formatEventTime(entry.occurred_at, effectiveTimezone)}
                                                                         </span>
                                                                     </td>
 
@@ -679,7 +731,7 @@ export default function LogsPage() {
                                                                                     <span className={`inline-flex items-center gap-1 ${entry.is_read ? "text-slate-400" : "font-medium text-blue-600 dark:text-blue-400"}`}>
                                                                                         <span className="h-1.5 w-1.5 rounded-full bg-current"></span>
                                                                                         {entry.is_read && entry.read_at
-                                                                                            ? `Read at ${new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date(entry.read_at))}`
+                                                                                            ? `Read at ${formatEventTime(entry.read_at, effectiveTimezone)}`
                                                                                             : "Unread alert"}
                                                                                     </span>
                                                                                 ) : null}

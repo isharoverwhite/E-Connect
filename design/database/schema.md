@@ -78,7 +78,8 @@ This file documents the baseline schema for E-Connect.
    - runtime health warnings that materially affect the instance
 4. Records older than 30 days must be deleted automatically by backend retention cleanup; the active page must not depend on manual pruning.
 5. `/logs` filters operate on timestamp range, severity, category, and free-text search over event code, message, device id, and firmware fields.
-6. The `/logs` summary status is driven by unread alert rows only. Marking all current alerts as read must clear the reminder state back to `healthy` without falsifying the live dependency cards for database and MQTT.
+6. The `/logs` API and UI must expose enough timezone context for clients to interpret day buckets and date-filter boundaries in the effective server timezone instead of the viewer's browser timezone.
+7. The `/logs` summary status is driven by unread alert rows only. Marking all current alerts as read must clear the reminder state back to `healthy` without falsifying the live dependency cards for database and MQTT.
 
 **Persistence Rules (from PRD):**
 1. Do not assume enum/table/column without inspecting the real DB.

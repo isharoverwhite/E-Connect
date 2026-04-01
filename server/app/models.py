@@ -377,6 +377,9 @@ class SystemLogListResponse(BaseModel):
     entries: List[SystemLogResponse] = Field(default_factory=list)
     total: int = 0
     retention_days: int = 30
+    effective_timezone: str
+    timezone_source: Literal["setting", "runtime"]
+    current_server_time: datetime
     oldest_occurred_at: Optional[datetime] = None
     latest_occurred_at: Optional[datetime] = None
 
@@ -395,6 +398,9 @@ class SystemStatusResponse(BaseModel):
     storage_total: int = 0
     retention_days: int = 30
     active_alert_count: int = 0
+    effective_timezone: str
+    timezone_source: Literal["setting", "runtime"]
+    current_server_time: datetime
     latest_alert_at: Optional[datetime] = None
     latest_alert_message: Optional[str] = None
 

@@ -136,6 +136,7 @@
   - Once every current alert is marked read, the top-block summary must return to `Healthy`; however, the database and MQTT metric cards must continue to show their real live connection state so acknowledgement does not masquerade as recovery.
   - The top block must also surface the active alert count for the current 30-day retention window plus the timestamp of the latest alert-worthy event.
   - The activity list must render as a searchable table grouped by calendar day so an admin can scan incidents chronologically without losing precise timestamps.
+  - Calendar-day grouping, row timestamps, latest-alert timestamps, and `from date` / `to date` filtering on `/logs` must follow the effective server timezone from Settings or runtime fallback, not the browser-local timezone of the viewing device.
   - Each row must expose at minimum: time, severity, category, event summary, and any related firmware version / device identity when available.
   - The page must include explicit filters for `from date`, `to date`, severity, category, and free-text search.
   - Default behavior should show the newest entries first while keeping the current day visible even when older days also exist.
