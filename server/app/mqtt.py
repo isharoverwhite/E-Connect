@@ -26,7 +26,6 @@ from app.services.device_registration import (
     build_pairing_request_event_payload,
     build_registration_ack_payload,
     register_device_payload,
-    sync_user_dashboard_widgets,
 )
 from app.services.automation_runtime import process_state_event_for_automations
 from app.sql_models import (
@@ -36,10 +35,8 @@ from app.sql_models import (
     DeviceHistory,
     EventType,
     JobStatus,
-    PinConfiguration,
     SystemLogCategory,
     SystemLogSeverity,
-    User,
 )
 from app.ws_manager import manager as ws_manager
 
@@ -70,49 +67,6 @@ def _mark_ota_job_failed(job, *, now: datetime, message: str) -> None:
     job.error_message = message
     job.finished_at = now
     job.updated_at = now
-
-
-def _snapshot_pin_configurations(device: Device | None) -> list[dict[str, Any]]:
-    if not device:
-        return []
-
-    return [
-        {
-            "gpio_pin": pin.gpio_pin,
-            "mode": pin.mode,
-            "function": pin.function,
-            "label": pin.label,
-            "v_pin": pin.v_pin,
-            "extra_params": pin.extra_params,
-        }
-        for pin in device.pin_configurations
-    ]
-
-
-def _restore_pin_configurations(db: Session, device: Device, pin_snapshot: list[dict[str, Any]]) -> None:
-    db.query(PinConfiguration).filter(PinConfiguration.device_id == device.device_id).delete()
-    for pin in pin_snapshot:
-        db.add(
-            PinConfiguration(
-                device_id=device.device_id,
-                gpio_pin=pin["gpio_pin"],
-                mode=pin["mode"],
-                function=pin.get("function"),
-                label=pin.get("label"),
-                v_pin=pin.get("v_pin"),
-                extra_params=pin.get("extra_params"),
-            )
-        )
-    db.flush()
-    db.refresh(device)
-
-
-def _sync_owner_dashboard_widgets(db: Session, device: Device) -> None:
-    owner = db.query(User).filter(User.user_id == device.owner_id).first()
-    if not owner:
-        return
-
-    sync_user_dashboard_widgets(owner, device)
 
 
 def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> str:
@@ -750,9 +704,6 @@ class MQTTClientManager:
 
         db = SessionLocal()
         try:
-            existing_device = db.query(Device).filter(Device.device_id == device_id).first()
-            previous_pins = _snapshot_pin_configurations(existing_device)
-
             result = register_device_payload(db, payload)
             db.commit()
             db.refresh(result.device)
@@ -766,10 +717,7 @@ class MQTTClientManager:
                 )
 
             if result.device.firmware_version:
-                reconcile_outcome = _reconcile_ota_jobs(db, result.device, result.device.firmware_version)
-                if reconcile_outcome in {"post_flash_mismatch", "timeout_mismatch"} and previous_pins:
-                    _restore_pin_configurations(db, result.device, previous_pins)
-                    _sync_owner_dashboard_widgets(db, result.device)
+                _reconcile_ota_jobs(db, result.device, result.device.firmware_version)
                 db.commit()
 
             ack_payload = self._attach_runtime_network(
