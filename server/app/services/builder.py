@@ -215,18 +215,14 @@ def _format_api_base_url(hostname: str, scheme: str, port: int | None) -> str:
 
 
 def _resolve_runtime_mqtt_broker(advertised_host: str) -> str:
-    for candidate in (
-        os.getenv(_FIRMWARE_MQTT_BROKER_ENV),
-        os.getenv("MQTT_BROKER"),
-    ):
-        if not candidate or not candidate.strip():
-            continue
+    candidate = os.getenv(_FIRMWARE_MQTT_BROKER_ENV)
+    if candidate and candidate.strip():
         try:
             _, hostname, _ = _parse_host_candidate(candidate.strip(), default_scheme="mqtt")
             _validate_advertised_hostname(hostname)
             return hostname
         except ValueError:
-            continue
+            pass
 
     return advertised_host
 

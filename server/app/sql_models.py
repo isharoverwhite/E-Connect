@@ -48,6 +48,20 @@ class EventType(str, enum.Enum):
     command_requested = "command_requested"
     command_failed = "command_failed"
 
+
+class SystemLogSeverity(str, enum.Enum):
+    info = "info"
+    warning = "warning"
+    error = "error"
+    critical = "critical"
+
+
+class SystemLogCategory(str, enum.Enum):
+    lifecycle = "lifecycle"
+    connectivity = "connectivity"
+    firmware = "firmware"
+    health = "health"
+
 class JobStatus(str, enum.Enum):
     draft_config = "draft_config"
     validated = "validated"
@@ -83,6 +97,7 @@ class Household(Base):
 
     household_id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
+    timezone = Column(String(64), nullable=True, comment="IANA timezone override for server runtime behavior")
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     memberships = relationship("HouseholdMembership", back_populates="household", cascade="all, delete-orphan")
@@ -248,6 +263,23 @@ class DeviceHistory(Base):
 
     device = relationship("Device", back_populates="history")
     user = relationship("User", back_populates="history_logs")
+
+
+class SystemLog(Base):
+    __tablename__ = "system_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    occurred_at = Column(TIMESTAMP, server_default=func.now(), nullable=False, index=True)
+    severity = Column(Enum(SystemLogSeverity), nullable=False, default=SystemLogSeverity.info, index=True)
+    category = Column(Enum(SystemLogCategory), nullable=False, default=SystemLogCategory.health, index=True)
+    event_code = Column(String(64), nullable=False, index=True)
+    message = Column(String(512), nullable=False)
+    device_id = Column(String(36), ForeignKey("devices.device_id"), nullable=True, index=True)
+    firmware_version = Column(String(64), nullable=True)
+    firmware_revision = Column(String(64), nullable=True)
+    details = Column(JSON, nullable=True)
+
+    device = relationship("Device")
 
 # Legacy Firmware table support (optional, keeping for OTA feature)
 class Firmware(Base):

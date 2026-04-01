@@ -63,6 +63,26 @@ def test_resolve_runtime_firmware_network_state_uses_public_mqtt_override(monkey
     }
 
 
+def test_resolve_runtime_firmware_network_state_ignores_internal_mqtt_broker_env(monkeypatch):
+    monkeypatch.delenv("FIRMWARE_PUBLIC_BASE_URL", raising=False)
+    monkeypatch.delenv("FIRMWARE_PUBLIC_PORT", raising=False)
+    monkeypatch.delenv("FIRMWARE_PUBLIC_SCHEME", raising=False)
+    monkeypatch.delenv("FIRMWARE_MQTT_BROKER", raising=False)
+    monkeypatch.setenv("MQTT_BROKER", "192.168.2.90")
+    monkeypatch.setattr(builder, "_detect_runtime_advertised_host", lambda: "192.168.8.4")
+    monkeypatch.setattr(builder, "_is_running_in_docker", lambda: False)
+
+    state = builder.resolve_runtime_firmware_network_state()
+
+    assert state["targets"] == {
+        "advertised_host": "192.168.8.4",
+        "api_base_url": "http://192.168.8.4:3000/api/v1",
+        "mqtt_broker": "192.168.8.4",
+        "mqtt_port": 1883,
+        "target_key": "192.168.8.4|http://192.168.8.4:3000/api/v1|192.168.8.4|1883",
+    }
+
+
 def test_resolve_runtime_firmware_network_state_warns_for_docker_bridge(monkeypatch):
     monkeypatch.delenv("FIRMWARE_PUBLIC_BASE_URL", raising=False)
     monkeypatch.delenv("FIRMWARE_PUBLIC_PORT", raising=False)

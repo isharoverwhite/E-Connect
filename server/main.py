@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 import asyncio
 import base64
 from contextlib import asynccontextmanager, suppress
+from datetime import datetime
 import ipaddress
 import json
 import logging
@@ -31,17 +32,123 @@ from app.services.builder import (
 )
 from app.services.mdns import MdnsPublisher, resolve_mdns_registration_config
 from app.services.system_metrics import collect_system_metrics
+from app.services.system_logs import (
+    prune_expired_system_logs,
+    record_server_shutdown,
+    record_server_startup,
+    record_system_log,
+)
+from app.services.timezone_settings import apply_effective_timezone_context
 from app.services.user_management import ensure_temp_support_account
-from app.sql_models import User
+from app.sql_models import Household, SystemLogCategory, SystemLogSeverity, User
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STALE_DEVICE_SWEEP_INTERVAL_SECONDS = max(1, min(DEVICE_HEARTBEAT_TIMEOUT_SECONDS, 2))
+RUNTIME_NETWORK_REFRESH_INTERVAL_SECONDS = max(
+    1.0,
+    float(os.getenv("RUNTIME_NETWORK_REFRESH_INTERVAL_SECONDS", "5")),
+)
+SYSTEM_LOG_RETENTION_SWEEP_INTERVAL_SECONDS = max(
+    60.0,
+    float(os.getenv("SYSTEM_LOG_RETENTION_SWEEP_INTERVAL_SECONDS", "3600")),
+)
 JSONP_CALLBACK_PATTERN = re.compile(r"^[A-Za-z_$][0-9A-Za-z_$.]*$")
 DISCOVERY_BRIDGE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 def _using_overridden_database(app: FastAPI) -> bool:
     return get_db in app.dependency_overrides
+
+
+def _should_refresh_runtime_network_state(runtime_state: object) -> bool:
+    if not isinstance(runtime_state, dict):
+        return True
+
+    source = runtime_state.get("source")
+    return not isinstance(source, str) or source.strip() == "startup_auto"
+
+
+def _runtime_network_state_signature(runtime_state: object) -> tuple[str | None, str | None, str | None]:
+    if not isinstance(runtime_state, dict):
+        return None, None, None
+
+    source = runtime_state.get("source")
+    normalized_source = source.strip() if isinstance(source, str) and source.strip() else None
+
+    targets = extract_runtime_firmware_network_targets(runtime_state)
+    target_key = None
+    if isinstance(targets, dict):
+        raw_target_key = targets.get("target_key")
+        if isinstance(raw_target_key, str) and raw_target_key.strip():
+            target_key = raw_target_key.strip()
+
+    error = runtime_state.get("error")
+    normalized_error = error.strip() if isinstance(error, str) and error.strip() else None
+    return normalized_source, target_key, normalized_error
+
+
+def _refresh_runtime_network_state(app: FastAPI) -> dict[str, object] | None:
+    current_state = getattr(app.state, "firmware_network_state", None)
+    if not _should_refresh_runtime_network_state(current_state):
+        return current_state if isinstance(current_state, dict) else None
+
+    refreshed_state = resolve_runtime_firmware_network_state()
+    current_signature = _runtime_network_state_signature(current_state)
+    refreshed_signature = _runtime_network_state_signature(refreshed_state)
+    if current_signature == refreshed_signature:
+        if not isinstance(current_state, dict):
+            app.state.firmware_network_state = refreshed_state
+            mqtt_manager.set_runtime_network_state(refreshed_state)
+        return refreshed_state
+
+    previous_targets = extract_runtime_firmware_network_targets(current_state)
+    next_targets = extract_runtime_firmware_network_targets(refreshed_state)
+
+    app.state.firmware_network_state = refreshed_state
+    mqtt_manager.set_runtime_network_state(refreshed_state)
+
+    if getattr(app.state, "database_ready", False) and not _using_overridden_database(app):
+        db = SessionLocal()
+        try:
+            app.state.firmware_network_audit = audit_runtime_firmware_target_mismatches(db, refreshed_state)
+        finally:
+            db.close()
+
+    previous_target_key = previous_targets.get("target_key") if isinstance(previous_targets, dict) else None
+    next_target_key = next_targets.get("target_key") if isinstance(next_targets, dict) else None
+    if previous_target_key and next_target_key and previous_target_key != next_target_key:
+        logger.info(
+            "Runtime firmware targets changed automatically: %s -> %s",
+            previous_target_key,
+            next_target_key,
+        )
+        record_system_log(
+            event_code="runtime_target_changed",
+            message=f"Runtime network target changed from {previous_target_key} to {next_target_key}.",
+            severity=SystemLogSeverity.info,
+            category=SystemLogCategory.health,
+            details={
+                "previous_target_key": previous_target_key,
+                "next_target_key": next_target_key,
+            },
+        )
+
+    previous_error = current_signature[2]
+    next_error = refreshed_signature[2]
+    if previous_error != next_error and next_error:
+        logger.warning("Runtime firmware target refresh warning: %s", next_error)
+        record_system_log(
+            event_code="runtime_target_warning",
+            message="Runtime network target refresh reported a warning.",
+            severity=SystemLogSeverity.warning,
+            category=SystemLogCategory.health,
+            details={
+                "warning": next_error,
+                "target_key": next_target_key,
+            },
+        )
+
+    return refreshed_state
 
 
 def _serialize_firmware_network_state(app: FastAPI) -> dict[str, str] | None:
@@ -98,6 +205,11 @@ def _serialize_discovery_webapp_transport(app: FastAPI) -> dict[str, str] | None
         "protocol": str(webapp_transport["webapp_protocol"]),
         "port": str(webapp_transport["webapp_port"]),
     }
+
+
+def _set_app_timezone_context(app: FastAPI, context: dict[str, object]) -> None:
+    app.state.server_timezone = context.get("effective_timezone")
+    app.state.server_timezone_source = context.get("timezone_source")
 
 
 def _normalize_discovery_server_ip(value: object) -> str | None:
@@ -260,6 +372,8 @@ def _format_redirect_netloc(hostname: str, port: int) -> str:
 async def lifespan(app: FastAPI):
     stale_device_watchdog_task: asyncio.Task[None] | None = None
     system_metrics_watchdog_task: asyncio.Task[None] | None = None
+    runtime_network_watchdog_task: asyncio.Task[None] | None = None
+    system_log_retention_task: asyncio.Task[None] | None = None
 
     async def stale_device_watchdog() -> None:
         while True:
@@ -278,10 +392,40 @@ async def lifespan(app: FastAPI):
             except Exception:
                 logger.exception("System metrics watchdog failed")
 
+    async def runtime_network_watchdog() -> None:
+        while True:
+            await asyncio.sleep(RUNTIME_NETWORK_REFRESH_INTERVAL_SECONDS)
+            try:
+                _refresh_runtime_network_state(app)
+            except Exception:
+                logger.exception("Runtime network watchdog failed")
+
+    async def system_log_retention_watchdog() -> None:
+        while True:
+            await asyncio.sleep(SYSTEM_LOG_RETENTION_SWEEP_INTERVAL_SECONDS)
+            if _using_overridden_database(app) or not getattr(app.state, "database_ready", False):
+                continue
+
+            db = SessionLocal()
+            try:
+                deleted = prune_expired_system_logs(db)
+                if deleted:
+                    db.commit()
+                    logger.info("Pruned %s expired system log rows.", deleted)
+                else:
+                    db.rollback()
+            except Exception:
+                db.rollback()
+                logger.exception("System log retention watchdog failed")
+            finally:
+                db.close()
+
     app.state.database_ready = False
     app.state.database_error = None
     app.state.mdns_publisher = None
     app.state.mqtt_started = False
+    _set_app_timezone_context(app, apply_effective_timezone_context())
+    app.state.server_started_at = datetime.utcnow()
     app.state.firmware_network_state = resolve_runtime_firmware_network_state()
     app.state.firmware_network_audit = None
     mqtt_manager.set_runtime_network_state(app.state.firmware_network_state)
@@ -333,11 +477,34 @@ async def lifespan(app: FastAPI):
     if database_ready:
         db = SessionLocal()
         try:
+            primary_household = (
+                db.query(Household)
+                .order_by(Household.household_id.asc())
+                .first()
+            )
+            _set_app_timezone_context(
+                app,
+                apply_effective_timezone_context(household=primary_household),
+            )
             ensure_temp_support_account(db)
             app.state.firmware_network_audit = audit_runtime_firmware_target_mismatches(
                 db,
                 app.state.firmware_network_state,
             )
+            deleted = prune_expired_system_logs(
+                db,
+                reference_time=app.state.server_started_at,
+            )
+            record_server_startup(
+                db,
+                occurred_at=app.state.server_started_at,
+                advertised_host=firmware_network_state.get("advertised_host")
+                if isinstance(firmware_network_state, dict)
+                else None,
+            )
+            db.commit()
+            if deleted:
+                logger.info("Pruned %s expired system log rows at startup.", deleted)
         finally:
             db.close()
         audit_warning = getattr(app.state, "firmware_network_audit", {}).get("warning")
@@ -348,6 +515,8 @@ async def lifespan(app: FastAPI):
     app.state.mqtt_started = True
     stale_device_watchdog_task = asyncio.create_task(stale_device_watchdog())
     system_metrics_watchdog_task = asyncio.create_task(system_metrics_watchdog())
+    runtime_network_watchdog_task = asyncio.create_task(runtime_network_watchdog())
+    system_log_retention_task = asyncio.create_task(system_log_retention_watchdog())
     app.state.stale_device_watchdog_started = True
 
     try:
@@ -361,6 +530,31 @@ async def lifespan(app: FastAPI):
             system_metrics_watchdog_task.cancel()
             with suppress(asyncio.CancelledError):
                 await system_metrics_watchdog_task
+        if runtime_network_watchdog_task is not None:
+            runtime_network_watchdog_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await runtime_network_watchdog_task
+        if system_log_retention_task is not None:
+            system_log_retention_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await system_log_retention_task
+        if getattr(app.state, "database_ready", False) and not _using_overridden_database(app):
+            shutdown_runtime_state = _serialize_firmware_network_state(app)
+            db = SessionLocal()
+            try:
+                record_server_shutdown(
+                    db,
+                    occurred_at=datetime.utcnow(),
+                    advertised_host=shutdown_runtime_state.get("advertised_host")
+                    if isinstance(shutdown_runtime_state, dict)
+                    else None,
+                )
+                db.commit()
+            except Exception:
+                db.rollback()
+                logger.exception("Failed to persist graceful shutdown system log")
+            finally:
+                db.close()
         mdns_publisher = getattr(app.state, "mdns_publisher", None)
         if isinstance(mdns_publisher, MdnsPublisher):
             await mdns_publisher.stop()

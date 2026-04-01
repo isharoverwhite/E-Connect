@@ -21,6 +21,7 @@ from app.services.builder import (
     describe_runtime_firmware_mismatch,
     extract_runtime_firmware_network_targets,
 )
+from app.services.system_logs import create_system_log, record_system_log
 from app.services.device_registration import (
     build_pairing_request_event_payload,
     build_registration_ack_payload,
@@ -28,7 +29,18 @@ from app.services.device_registration import (
     sync_user_dashboard_widgets,
 )
 from app.services.automation_runtime import process_state_event_for_automations
-from app.sql_models import AuthStatus, ConnStatus, Device, DeviceHistory, EventType, JobStatus, PinConfiguration, User
+from app.sql_models import (
+    AuthStatus,
+    ConnStatus,
+    Device,
+    DeviceHistory,
+    EventType,
+    JobStatus,
+    PinConfiguration,
+    SystemLogCategory,
+    SystemLogSeverity,
+    User,
+)
 from app.ws_manager import manager as ws_manager
 
 load_dotenv()
@@ -326,14 +338,28 @@ class MQTTClientManager:
             logger.error("Failed to connect, return code %s", reason_code)
             return
 
+        was_connected = self.connected
         self.connected = True
         logger.info("Successfully connected to MQTT broker")
         client.subscribe(STATE_TOPIC_SUBSCRIPTION)
         client.subscribe(REGISTER_TOPIC_SUBSCRIPTION)
         logger.info("Subscribed to %s", STATE_TOPIC_SUBSCRIPTION)
         logger.info("Subscribed to %s", REGISTER_TOPIC_SUBSCRIPTION)
+        if not was_connected:
+            record_system_log(
+                event_code="mqtt_connected",
+                message="MQTT broker connection established.",
+                severity=SystemLogSeverity.info,
+                category=SystemLogCategory.connectivity,
+                details={
+                    "broker": MQTT_BROKER,
+                    "port": MQTT_PORT,
+                    "namespace": MQTT_NAMESPACE,
+                },
+            )
 
     def on_disconnect(self, client, userdata, disconnect_flags, reason_code, properties=None):
+        was_connected = self.connected
         self.connected = False
         if reason_code.is_failure:
             logger.warning(
@@ -342,6 +368,21 @@ class MQTTClientManager:
             )
         else:
             logger.info("Disconnected from MQTT broker.")
+
+        if was_connected or reason_code.is_failure:
+            record_system_log(
+                event_code="mqtt_disconnected",
+                message="MQTT broker connection dropped." if reason_code.is_failure else "MQTT broker connection closed.",
+                severity=SystemLogSeverity.warning if reason_code.is_failure else SystemLogSeverity.info,
+                category=SystemLogCategory.connectivity,
+                details={
+                    "broker": MQTT_BROKER,
+                    "port": MQTT_PORT,
+                    "namespace": MQTT_NAMESPACE,
+                    "reason_code": str(reason_code),
+                    "unexpected": bool(reason_code.is_failure),
+                },
+            )
 
     def on_message(self, client, userdata, msg):
         try:
@@ -447,6 +488,8 @@ class MQTTClientManager:
 
             observed_at = datetime.utcnow()
             was_offline = device.conn_status != ConnStatus.online
+            previous_revision = device.firmware_revision
+            previous_version = device.firmware_version
             device.conn_status = ConnStatus.online
             device.last_seen = observed_at
             if isinstance(payload_json, dict):
@@ -491,6 +534,46 @@ class MQTTClientManager:
                     )
                 except Exception:
                     pass
+
+                create_system_log(
+                    db,
+                    occurred_at=observed_at,
+                    severity=SystemLogSeverity.info,
+                    category=SystemLogCategory.connectivity,
+                    event_code="device_online",
+                    message=f'Device "{device.name}" is back online.',
+                    device_id=device.device_id,
+                    firmware_version=device.firmware_version,
+                    firmware_revision=device.firmware_revision,
+                    details={
+                        "reason": "mqtt_state",
+                        "reported_at": observed_at.isoformat(),
+                    },
+                )
+
+            firmware_changed = (
+                device.firmware_version != previous_version
+                or device.firmware_revision != previous_revision
+            )
+            if firmware_changed and (device.firmware_version or device.firmware_revision):
+                create_system_log(
+                    db,
+                    occurred_at=observed_at,
+                    severity=SystemLogSeverity.info,
+                    category=SystemLogCategory.firmware,
+                    event_code="device_firmware_reported",
+                    message=f'Device "{device.name}" reported firmware metadata.',
+                    device_id=device.device_id,
+                    firmware_version=device.firmware_version,
+                    firmware_revision=device.firmware_revision,
+                    details={
+                        "previous_firmware_version": previous_version,
+                        "next_firmware_version": device.firmware_version,
+                        "previous_firmware_revision": previous_revision,
+                        "next_firmware_revision": device.firmware_revision,
+                        "ip_address": device.ip_address,
+                    },
+                )
 
             db.add(
                 DeviceHistory(

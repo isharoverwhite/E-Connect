@@ -1,0 +1,217 @@
+from __future__ import annotations
+
+import os
+
+import main
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import close_all_sessions, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+from app.auth import get_password_hash
+from app.database import Base, get_db
+from app.sql_models import (
+    AccountType,
+    Household,
+    HouseholdMembership,
+    HouseholdRole,
+    SystemLog,
+    User,
+    UserApprovalStatus,
+)
+
+
+SQLALCHEMY_DATABASE_URL = "sqlite://"
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool,
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+def override_get_db():
+    try:
+        db = TestingSessionLocal()
+        yield db
+    finally:
+        db.close()
+
+
+def setup_function():
+    os.environ.pop("E_CONNECT_TZ_ENV_FALLBACK", None)
+    close_all_sessions()
+    main.app.dependency_overrides[get_db] = override_get_db
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+
+def teardown_function():
+    os.environ.pop("E_CONNECT_TZ_ENV_FALLBACK", None)
+    main.app.dependency_overrides.clear()
+    main.app.state.server_started_at = None
+    main.app.state.server_timezone = None
+    main.app.state.server_timezone_source = None
+    Base.metadata.drop_all(bind=engine)
+    close_all_sessions()
+
+
+def create_admin_user(*, username: str = "timezone-admin", household_timezone: str | None = None) -> tuple[User, Household]:
+    db = TestingSessionLocal()
+    try:
+        user = User(
+            username=username,
+            fullname="Timezone Admin",
+            authentication=get_password_hash("password"),
+            approval_status=UserApprovalStatus.approved,
+            account_type=AccountType.admin,
+        )
+        household = Household(name="Timezone Household", timezone=household_timezone)
+        db.add_all([user, household])
+        db.commit()
+        db.refresh(user)
+        db.refresh(household)
+
+        db.add(
+            HouseholdMembership(
+                user_id=user.user_id,
+                household_id=household.household_id,
+                role=HouseholdRole.owner,
+            )
+        )
+        db.commit()
+        return user, household
+    finally:
+        db.close()
+
+
+def get_token(client: TestClient, username: str = "timezone-admin") -> str:
+    response = client.post(
+        "/api/v1/auth/token",
+        data={"username": username, "password": "password"},
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["access_token"]
+
+
+def test_general_settings_surfaces_env_timezone_as_current_runtime_timezone(monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Paris")
+    create_admin_user()
+
+    with TestClient(main.app) as client:
+        token = get_token(client)
+        response = client.get(
+            "/api/v1/settings/general",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["configured_timezone"] is None
+    assert payload["effective_timezone"] == "Europe/Paris"
+    assert payload["timezone_source"] == "runtime"
+    assert "env_timezone" not in payload
+    assert "Asia/Ho_Chi_Minh" in payload["timezone_options"]
+    assert main.app.state.server_timezone == "Europe/Paris"
+
+
+def test_general_settings_uses_app_default_when_no_override_or_env(monkeypatch):
+    monkeypatch.delenv("TZ", raising=False)
+    create_admin_user()
+
+    with TestClient(main.app) as client:
+        token = get_token(client)
+        response = client.get(
+            "/api/v1/settings/general",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["configured_timezone"] is None
+    assert payload["effective_timezone"] == "Asia/Ho_Chi_Minh"
+    assert payload["timezone_source"] == "runtime"
+    assert "env_timezone" not in payload
+
+
+def test_update_general_settings_persists_override_and_beats_env(monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Paris")
+    create_admin_user()
+
+    with TestClient(main.app) as client:
+        token = get_token(client)
+        response = client.put(
+            "/api/v1/settings/general",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"timezone": "Asia/Tokyo"},
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["configured_timezone"] == "Asia/Tokyo"
+    assert payload["effective_timezone"] == "Asia/Tokyo"
+    assert payload["timezone_source"] == "setting"
+    assert "env_timezone" not in payload
+    assert os.environ["TZ"] == "Asia/Tokyo"
+    assert main.app.state.server_timezone == "Asia/Tokyo"
+    assert main.app.state.server_timezone_source == "setting"
+
+    db = TestingSessionLocal()
+    try:
+        household = db.query(Household).first()
+        assert household is not None
+        assert household.timezone == "Asia/Tokyo"
+
+        latest_log = db.query(SystemLog).order_by(SystemLog.id.desc()).first()
+        assert latest_log is not None
+        assert latest_log.event_code == "server_timezone_updated"
+        assert latest_log.details["effective_timezone"] == "Asia/Tokyo"
+    finally:
+        db.close()
+
+
+def test_clearing_general_settings_override_falls_back_to_current_runtime_timezone(monkeypatch):
+    monkeypatch.setenv("TZ", "Europe/Paris")
+    create_admin_user(household_timezone="Asia/Tokyo")
+
+    with TestClient(main.app) as client:
+        token = get_token(client)
+        response = client.put(
+            "/api/v1/settings/general",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"timezone": None},
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["configured_timezone"] is None
+    assert payload["effective_timezone"] == "Europe/Paris"
+    assert payload["timezone_source"] == "runtime"
+    assert "env_timezone" not in payload
+    assert os.environ["TZ"] == "Europe/Paris"
+
+    db = TestingSessionLocal()
+    try:
+        household = db.query(Household).first()
+        assert household is not None
+        assert household.timezone is None
+    finally:
+        db.close()
+
+
+def test_update_general_settings_rejects_unknown_timezone(monkeypatch):
+    monkeypatch.setenv("TZ", "Asia/Ho_Chi_Minh")
+    create_admin_user()
+
+    with TestClient(main.app) as client:
+        token = get_token(client)
+        response = client.put(
+            "/api/v1/settings/general",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"timezone": "Mars/Olympus_Mons"},
+        )
+
+    assert response.status_code == 400, response.text
+    payload = response.json()
+    assert payload["detail"]["error"] == "validation"
+    assert "valid IANA timezone" in payload["detail"]["message"]

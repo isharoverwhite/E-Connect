@@ -19,6 +19,9 @@ from app.sql_models import (
     HouseholdMembership,
     HouseholdRole,
     Room,
+    SystemLog,
+    SystemLogCategory,
+    SystemLogSeverity,
     User,
     UserApprovalStatus,
 )
@@ -113,6 +116,18 @@ def test_expire_stale_online_devices_once_marks_old_devices_offline(monkeypatch)
             .all()
         )
         assert len(history) == 1
+
+        system_logs = (
+            db.query(SystemLog)
+            .filter(
+                SystemLog.device_id == device_id,
+                SystemLog.event_code == "device_offline",
+            )
+            .all()
+        )
+        assert len(system_logs) == 1
+        assert system_logs[0].category == SystemLogCategory.connectivity
+        assert system_logs[0].severity == SystemLogSeverity.warning
     finally:
         db.close()
 
