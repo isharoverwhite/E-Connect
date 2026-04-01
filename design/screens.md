@@ -185,6 +185,7 @@
   - Discovery reflects only pairing requests that successfully reached the current server; it is not proof of generic LAN or mDNS visibility.
   - If the server moves to a new IP/hostname, boards flashed with older artifacts remain invisible here until rebuilt and reflashed against the new server/MQTT host.
   - A board flashed from a website-managed server build may skip manual approval only when its secure onboarding identity still matches the system-issued firmware metadata: the `UUID` must match the project-derived device id and the reported `name` must match the firmware-stamped device name.
+  - When an active scan observes a newly connected board that was auto-approved through that secure server-built onboarding path, the discovery UI must still surface a result card with the board identity and a clear CTA into managed devices instead of dropping straight to the empty state.
   - On the first successful secure onboarding handshake, the backend must bind the reported `MAC address` to that trusted device record. Later secure handshakes must keep `UUID`, stored `name`, and stored `MAC address` aligned; otherwise the request must fail closed instead of silently overwriting the trusted record or auto-provisioning dashboard widgets.
   - The discovery list must only show pending devices whose latest state is an active pairing request.
   - A device that already has an active pending pairing request must stay in `awaiting approval`; heartbeat/state traffic must not push it into a fresh `re-pair required` loop.

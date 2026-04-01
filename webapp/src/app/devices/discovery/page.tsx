@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
@@ -9,9 +9,12 @@ import { approveDiscoveredDevice, fetchDevices, rejectDiscoveredDevice } from "@
 import { createRoom, fetchRooms, type RoomRecord } from "@/lib/rooms";
 import { DeviceConfig } from "@/types/device";
 
+const SCAN_IDLE_DELAY_MS = 3000;
+
 export default function DeviceDiscovery() {
-    const [scanState, setScanState] = useState<"idle" | "scanning" | "found">("scanning");
+    const [scanState, setScanState] = useState<"idle" | "scanning" | "found" | "connected">("scanning");
     const [pendingDevices, setPendingDevices] = useState<DeviceConfig[]>([]);
+    const [autoApprovedDevice, setAutoApprovedDevice] = useState<DeviceConfig | null>(null);
     const [approving, setApproving] = useState(false);
     const [rejecting, setRejecting] = useState(false);
     const [rooms, setRooms] = useState<RoomRecord[]>([]);
@@ -23,11 +26,63 @@ export default function DeviceDiscovery() {
     const router = useRouter();
     const { user } = useAuth();
     const isAdmin = user?.account_type === "admin";
+    const knownApprovedDeviceIdsRef = useRef<Set<string>>(new Set());
+    const scanInitializedRef = useRef(false);
 
-    const refreshPendingDevices = async () => {
-        const pending = (await fetchDevices({ authStatus: "pending" })) as DeviceConfig[];
+    const refreshScanResults = async (options?: { resetKnownApproved?: boolean; keepScanningWhenEmpty?: boolean }) => {
+        const [pending, approved] = await Promise.all([
+            fetchDevices({ authStatus: "pending" }) as Promise<DeviceConfig[]>,
+            fetchDevices() as Promise<DeviceConfig[]>,
+        ]);
+
+        const approvedDevices = approved.filter(
+            (device): device is DeviceConfig => "mac_address" in device,
+        );
+
+        if (options?.resetKnownApproved) {
+            knownApprovedDeviceIdsRef.current = new Set(
+                approvedDevices.map((device) => device.device_id),
+            );
+        }
+
+        const autoApprovedCandidate =
+            approvedDevices
+                .filter(
+                    (device) =>
+                        Boolean(device.provisioning_project_id) &&
+                        device.auth_status === "approved" &&
+                        !knownApprovedDeviceIdsRef.current.has(device.device_id),
+                )
+                .sort((left, right) => {
+                    const leftSeen = left.last_seen ? Date.parse(left.last_seen) : 0;
+                    const rightSeen = right.last_seen ? Date.parse(right.last_seen) : 0;
+                    return rightSeen - leftSeen;
+                })[0] ?? null;
+
         setPendingDevices(pending);
-        setScanState(pending.length > 0 ? "found" : "idle");
+
+        if (pending.length > 0) {
+            setAutoApprovedDevice(null);
+            setScanState("found");
+            return "found";
+        }
+
+        if (autoApprovedCandidate) {
+            setAutoApprovedDevice(autoApprovedCandidate);
+            setScanState("connected");
+            return "connected";
+        }
+
+        setAutoApprovedDevice(null);
+        setScanState(options?.keepScanningWhenEmpty ? "scanning" : "idle");
+        return "idle";
+    };
+
+    const beginScan = () => {
+        setPendingDevices([]);
+        setAutoApprovedDevice(null);
+        scanInitializedRef.current = false;
+        setScanState("scanning");
     };
 
     useEffect(() => {
@@ -76,54 +131,59 @@ export default function DeviceDiscovery() {
             return;
         }
 
-        let timeoutId: number | null = null;
         let cancelled = false;
 
-        async function fetchPending() {
+        async function scanDevices() {
             try {
-                const pending = (await fetchDevices({ authStatus: "pending" })) as DeviceConfig[];
                 if (cancelled) {
                     return;
                 }
 
-                if (pending.length > 0) {
-                    setPendingDevices(pending);
-                    setScanState("found");
-                } else {
-                    setPendingDevices([]);
-                    if (scanState !== "scanning") {
-                        setScanState("idle");
-                        return;
+                if (scanState === "scanning") {
+                    const shouldResetKnownApproved = !scanInitializedRef.current;
+                    scanInitializedRef.current = true;
+                    const result = await refreshScanResults({
+                        resetKnownApproved: shouldResetKnownApproved,
+                        keepScanningWhenEmpty: true,
+                    });
+                    if (!cancelled && result === "idle") {
+                        window.setTimeout(() => {
+                            if (!cancelled) {
+                                void refreshScanResults();
+                            }
+                        }, SCAN_IDLE_DELAY_MS);
                     }
-                    timeoutId = window.setTimeout(() => setScanState("idle"), 3000);
                 }
             } catch (error) {
                 console.error("Failed to fetch devices", error);
-                if (!cancelled && scanState === "scanning") {
+                if (!cancelled) {
                     setScanState("idle");
                 }
             }
         }
 
-        void fetchPending();
+        void scanDevices();
 
         return () => {
             cancelled = true;
-            if (timeoutId !== null) {
-                window.clearTimeout(timeoutId);
-            }
         };
     }, [isAdmin, scanState]);
 
     useWebSocket((event) => {
         if (
             !isAdmin ||
-            (event.type !== "pairing_requested" && event.type !== "pairing_queue_updated")
+            scanState !== "scanning" ||
+            (
+                event.type !== "pairing_requested" &&
+                event.type !== "pairing_queue_updated" &&
+                event.type !== "device_state" &&
+                event.type !== "device_online"
+            )
         ) {
             return;
         }
 
-        void refreshPendingDevices();
+        void refreshScanResults();
     });
 
     const handleCreateRoom = async () => {
@@ -171,7 +231,7 @@ export default function DeviceDiscovery() {
         try {
             const success = await rejectDiscoveredDevice(deviceId);
             if (success) {
-                await refreshPendingDevices();
+                await refreshScanResults();
             } else {
                 alert("Failed to ignore pairing.");
             }
@@ -234,6 +294,8 @@ export default function DeviceDiscovery() {
                                 <><span className="material-icons-round mr-2 animate-spin-slow text-blue-500">radar</span> Scanning Network</>
                             ) : scanState === "found" ? (
                                 <><span className="material-icons-round mr-2 text-green-500">check_circle</span> Device Found</>
+                            ) : scanState === "connected" ? (
+                                <><span className="material-icons-round mr-2 text-emerald-500">devices</span> Device Connected</>
                             ) : (
                                 <><span className="material-icons-round mr-2 text-slate-400">search_off</span> No Devices Ready</>
                             )}
@@ -361,6 +423,65 @@ export default function DeviceDiscovery() {
                             </div>
                         ) : null}
 
+                        {scanState === "connected" && autoApprovedDevice ? (
+                            <div className="animate-in slide-in-from-bottom-4 fade-in duration-500">
+                                <div className="mb-6 flex justify-center">
+                                    <div className="group relative">
+                                        <div className="absolute -inset-1 rounded-full bg-gradient-to-r from-emerald-500 to-cyan-400 opacity-25 blur transition duration-1000 group-hover:opacity-40 group-hover:duration-200"></div>
+                                        <div className="relative flex h-24 w-24 flex-col items-center justify-center rounded-full border-2 border-emerald-100 bg-white shadow-md dark:border-slate-700 dark:bg-slate-800">
+                                            <span className="material-icons-round text-4xl text-slate-700 dark:text-slate-300">memory</span>
+                                            <span className="absolute bottom-2 right-2 h-4 w-4 rounded-full border-2 border-white bg-emerald-500 dark:border-slate-800"></span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="mb-6 text-center">
+                                    <div className="mb-3 inline-flex items-center rounded-full border border-emerald-200/50 bg-emerald-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:border-emerald-800/50 dark:bg-emerald-900/30 dark:text-emerald-300">
+                                        Auto-Approved Secure Board
+                                    </div>
+                                    <h3 className="mb-1 text-xl font-bold text-slate-900 dark:text-white">{autoApprovedDevice.name || "Unknown Device"}</h3>
+                                    <p className="text-sm text-slate-500 dark:text-slate-400">UUID: {autoApprovedDevice.device_id}</p>
+                                </div>
+
+                                <div className="mb-6 rounded-xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-700/50 dark:bg-slate-800/50">
+                                    <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-700/50">
+                                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">MAC Address</span>
+                                        <span className="text-sm font-mono text-slate-700 dark:text-slate-300">{autoApprovedDevice.mac_address || "N/A"}</span>
+                                    </div>
+                                    <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-700/50">
+                                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Assigned Room</span>
+                                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">{autoApprovedDevice.room_name || "Unassigned"}</span>
+                                    </div>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Status</span>
+                                        <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-300">Connected and managed</span>
+                                    </div>
+                                </div>
+
+                                <div className="mb-6 rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-200">
+                                    This board was built by the server and its secure identity matched the provisioning project, so E-Connect approved it automatically and added it to your managed devices.
+                                </div>
+
+                                <div className="space-y-3">
+                                    <button
+                                        onClick={() => router.push("/devices")}
+                                        className="flex w-full items-center justify-center rounded-xl bg-emerald-600 px-4 py-3 font-medium text-white shadow-[0_4px_14px_0_rgba(5,150,105,0.39)] transition-all hover:bg-emerald-700"
+                                    >
+                                        <span className="material-icons-round mr-2">dashboard</span>
+                                        Open Device List
+                                    </button>
+
+                                    <button
+                                        onClick={beginScan}
+                                        className="flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-3 font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                                    >
+                                        <span className="material-icons-round mr-2">radar</span>
+                                        Scan Again
+                                    </button>
+                                </div>
+                            </div>
+                        ) : null}
+
                         {scanState === "idle" ? (
                             <div className="py-8 text-center">
                                 <span className="material-icons-round mb-4 text-5xl text-slate-300 dark:text-slate-600">search_off</span>
@@ -369,7 +490,7 @@ export default function DeviceDiscovery() {
                                     Discovery only shows boards that successfully reached this server. If you moved the server to a new IP, rebuild and reflash the board so its embedded MQTT/server host matches the new machine.
                                 </p>
                                 <div className="mt-4 flex w-full flex-col gap-3">
-                                    <button onClick={() => setScanState("scanning")} className="flex w-full items-center justify-center rounded-lg bg-blue-100 px-6 py-3 font-medium text-blue-700 shadow-sm transition-colors hover:bg-blue-200">
+                                    <button onClick={beginScan} className="flex w-full items-center justify-center rounded-lg bg-blue-100 px-6 py-3 font-medium text-blue-700 shadow-sm transition-colors hover:bg-blue-200">
                                         <span className="material-icons-round mr-2">search</span> Rescan Network
                                     </button>
                                     <button onClick={() => router.push("/devices/diy")} className="flex w-full items-center justify-center rounded-lg bg-primary px-6 py-3 font-medium text-white shadow-sm transition-colors hover:bg-blue-600">
