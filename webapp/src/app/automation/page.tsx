@@ -44,12 +44,33 @@ export interface AutomationGraph {
   edges: AutomationGraphEdge[];
 }
 
+const LEGACY_DEVICE_TRIGGER_KIND = "device_state";
+const DEVICE_VALUE_TRIGGER_KIND = "device_value";
+const DEVICE_ON_OFF_TRIGGER_KIND = "device_on_off_event";
+const TIME_TRIGGER_KIND = "time_schedule";
+const TIME_TRIGGER_WEEKDAY_OPTIONS = [
+  { value: "mon", label: "Mon" },
+  { value: "tue", label: "Tue" },
+  { value: "wed", label: "Wed" },
+  { value: "thu", label: "Thu" },
+  { value: "fri", label: "Fri" },
+  { value: "sat", label: "Sat" },
+  { value: "sun", label: "Sun" },
+] as const;
+
+type AutomationScheduleContext = {
+  effective_timezone: string;
+  timezone_source: "setting" | "runtime";
+  current_server_time: string;
+};
+
 export interface ExecutionLog {
   id: number;
   automation_id: number;
   triggered_at: string;
   status: ExecutionStatus;
   trigger_source?: "manual" | "device_state" | "schedule";
+  scheduled_for?: string | null;
   log_output: string | null;
   error_message: string | null;
 }
@@ -187,6 +208,15 @@ async function triggerAutomation(id: number): Promise<TriggerResult> {
   });
   if (!res.ok) throw new Error(await readApiError(res, "Trigger failed"));
   return res.json();
+}
+
+async function fetchAutomationScheduleContext(): Promise<AutomationScheduleContext> {
+  const res = await fetch(`${API_URL}/automation/schedule-context`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await readApiError(res, "Failed to load server time context"));
+  return res.json() as Promise<AutomationScheduleContext>;
 }
 
 // --- Subcomponents ---
@@ -464,12 +494,20 @@ function getAutomationGraphReadiness(graph?: AutomationGraph): { label: string; 
   const linear = getLinearRule(graph.nodes, graph.edges);
   if (!linear) return { label: "Custom", tone: "blue" };
 
-  const triggerReady = Boolean(linear.trigger.config.device_id) && linear.trigger.config.pin !== undefined;
+  const triggerReady =
+    linear.trigger.kind === TIME_TRIGGER_KIND
+      ? Number.isInteger(getTimeTriggerHour(linear.trigger.config)) && Number.isInteger(getTimeTriggerMinute(linear.trigger.config))
+      : Boolean(linear.trigger.config.device_id) && linear.trigger.config.pin !== undefined;
   const actionReady = Boolean(linear.action.config.device_id) && linear.action.config.pin !== undefined;
   const conditionReady =
     linear.condition.kind === "numeric_compare"
-      ? linear.condition.config.value !== undefined
-      : linear.condition.config.expected !== undefined || linear.condition.config.pin !== undefined;
+      ? Boolean(linear.condition.config.device_id) &&
+        linear.condition.config.pin !== undefined &&
+        linear.condition.config.value !== undefined &&
+        (linear.condition.config.operator !== "between" || linear.condition.config.secondary_value !== undefined)
+      : Boolean(linear.condition.config.device_id) &&
+        linear.condition.config.pin !== undefined &&
+        linear.condition.config.expected !== undefined;
 
   if (triggerReady && actionReady && conditionReady) return { label: "Ready", tone: "emerald" };
   return { label: "Draft", tone: "amber" };
@@ -540,6 +578,140 @@ export function isSwitchPin(p: { mode?: string; function?: string | null } | und
   return p?.mode === "INPUT" || p?.mode === "OUTPUT" || p?.function?.toLowerCase().includes("switch") || p?.function?.toLowerCase().includes("btn") || p?.function?.toLowerCase().includes("button") || p?.function?.toLowerCase().includes("relay") || p?.function?.toLowerCase().includes("contact") || p?.function?.toLowerCase().includes("pir");
 }
 
+function getTimeTriggerHour(config: AutomationGraphNodeConfig): number {
+  return typeof config.hour === "number" && Number.isFinite(config.hour) ? Math.min(23, Math.max(0, Math.trunc(config.hour))) : 0;
+}
+
+function getTimeTriggerMinute(config: AutomationGraphNodeConfig): number {
+  return typeof config.minute === "number" && Number.isFinite(config.minute) ? Math.min(59, Math.max(0, Math.trunc(config.minute))) : 0;
+}
+
+function getTimeTriggerWeekdays(config: AutomationGraphNodeConfig): string[] {
+  if (!Array.isArray(config.weekdays)) return [];
+  return config.weekdays.filter((weekday): weekday is string => typeof weekday === "string");
+}
+
+function buildTimeTriggerConfig(config: AutomationGraphNodeConfig): AutomationGraphNodeConfig {
+  return {
+    ...config,
+    device_id: undefined,
+    pin: undefined,
+    hour: getTimeTriggerHour(config),
+    minute: getTimeTriggerMinute(config),
+    weekdays: getTimeTriggerWeekdays(config),
+  };
+}
+
+function formatTimeNumber(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+function formatTimeTriggerValue(config: AutomationGraphNodeConfig): string {
+  return `${formatTimeNumber(getTimeTriggerHour(config))}:${formatTimeNumber(getTimeTriggerMinute(config))}`;
+}
+
+function formatTimeTriggerSummary(config: AutomationGraphNodeConfig): string {
+  const weekdays = getTimeTriggerWeekdays(config);
+  const dayLabel = weekdays.length === 0
+    ? "every day"
+    : weekdays
+        .map((weekday) => TIME_TRIGGER_WEEKDAY_OPTIONS.find((option) => option.value === weekday)?.label ?? weekday)
+        .join(", ");
+  return `${formatTimeTriggerValue(config)} ${dayLabel}`;
+}
+
+function formatServerTimePreview(value?: string | null): string {
+  if (!value) return "Unavailable";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function getTriggerKindLabel(kind: string): string {
+  switch (kind) {
+    case TIME_TRIGGER_KIND:
+      return "Server Time";
+    case DEVICE_VALUE_TRIGGER_KIND:
+      return "Device Value";
+    case DEVICE_ON_OFF_TRIGGER_KIND:
+      return "On/Off Event";
+    default:
+      return "Any Device Update";
+  }
+}
+
+function getPreferredTriggerKindForPin(pin: { mode?: string; function?: string | null } | undefined | null): string {
+  if (isNumericPin(pin)) return DEVICE_VALUE_TRIGGER_KIND;
+  if (isSwitchPin(pin)) return DEVICE_ON_OFF_TRIGGER_KIND;
+  return LEGACY_DEVICE_TRIGGER_KIND;
+}
+
+function buildConditionStateForTriggerKind(
+  triggerKind: string,
+  currentKind: string,
+  currentConfig: AutomationGraphNodeConfig,
+  pin: number | undefined,
+): Pick<AutomationGraphNode, "kind" | "config"> {
+  if (triggerKind === DEVICE_VALUE_TRIGGER_KIND) {
+    return {
+      kind: "numeric_compare",
+      config: {
+        ...currentConfig,
+        pin,
+        operator: currentKind === "numeric_compare" && typeof currentConfig.operator === "string" ? currentConfig.operator : "gt",
+        value:
+          currentKind === "numeric_compare" && typeof currentConfig.value === "number"
+            ? currentConfig.value
+            : 0,
+        secondary_value:
+          currentKind === "numeric_compare" && typeof currentConfig.secondary_value === "number"
+            ? currentConfig.secondary_value
+            : undefined,
+        expected: undefined,
+      },
+    };
+  }
+
+  if (triggerKind === DEVICE_ON_OFF_TRIGGER_KIND) {
+    return {
+      kind: "state_equals",
+      config: {
+        ...currentConfig,
+        pin,
+        expected:
+          currentKind === "state_equals" && typeof currentConfig.expected === "string"
+            ? currentConfig.expected
+            : "on",
+        operator: undefined,
+        secondary_value: undefined,
+        value: undefined,
+      },
+    };
+  }
+
+  if (triggerKind === TIME_TRIGGER_KIND) {
+    return {
+      kind: currentKind,
+      config: {
+        ...currentConfig,
+      },
+    };
+  }
+
+  return {
+    kind: currentKind,
+    config: {
+      ...currentConfig,
+      pin,
+    },
+  };
+}
+
 function getNodePorts(type: AutomationNodeType): PortDefinition[] {
   switch (type) {
     case "trigger":
@@ -565,6 +737,7 @@ export default function AutomationPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [draftAutomation, setDraftAutomation] = useState<DraftAutomation | null>(null);
   const [devices, setDevices] = useState<DeviceConfig[]>([]);
+  const [scheduleContext, setScheduleContext] = useState<AutomationScheduleContext | null>(null);
   const [fetchError, setFetchError] = useState("");
 
   const [saving, setSaving] = useState(false);
@@ -706,12 +879,14 @@ export default function AutomationPage() {
   const loadData = useCallback(async () => {
     setPageState("loading");
     try {
-      const [list, dList] = await Promise.all([
+      const [list, dList, nextScheduleContext] = await Promise.all([
         fetchAutomations(),
-        fetchDashboardDevices().catch(() => [])
+        fetchDashboardDevices().catch(() => []),
+        fetchAutomationScheduleContext().catch(() => null),
       ]);
       setAutomations(list);
       setDevices(dList);
+      setScheduleContext(nextScheduleContext);
       if (list.length > 0 && selectedId === null && !draftAutomation) {
         setSelectedId(list[0].id);
         const initialGraph = layoutGraphForCanvas(list[0].graph ?? getEmptyGraph());
@@ -1724,58 +1899,142 @@ export default function AutomationPage() {
                
                {linearRule ? (() => {
                    const { trigger, condition, action } = linearRule;
-                   
+                   const isTimeTrigger = trigger.kind === TIME_TRIGGER_KIND;
+
                    const updateConfigMany = (updates: {id: string, config: Partial<AutomationGraphNodeConfig>}[]) => {
                        setNodes(prev => prev.map(n => {
                            const up = updates.find(u => u.id === n.id);
                            return up ? { ...n, config: { ...n.config, ...up.config } } : n;
                        }));
                    };
-                   
+
+                   const handleSetTriggerSource = (source: "device" | "time") => {
+                       setNodes(prev => prev.map(n => {
+                           if (n.id !== trigger.id) return n;
+                           if (source === "time") {
+                               return { ...n, kind: TIME_TRIGGER_KIND, config: buildTimeTriggerConfig(n.config) };
+                           }
+                           return {
+                               ...n,
+                               kind: getPreferredTriggerKindForPin(undefined),
+                               config: {
+                                   ...n.config,
+                                   hour: undefined,
+                                   minute: undefined,
+                                   weekdays: undefined,
+                               },
+                           };
+                       }));
+                   };
+
                    const handleSetSourceDevice = (devId: string) => {
                        updateConfigMany([
                            { id: trigger.id, config: { device_id: devId, pin: undefined } },
                            { id: condition.id, config: { device_id: devId, pin: undefined } }
                        ]);
                    };
-                   
+
                    const handleSetSourcePin = (pinValue: number, mode: string, func: string) => {
-                       const isNum = isNumericPin({ mode, function: func });
-                       const defaultKind = isNum ? "numeric_compare" : "state_equals";
+                       const nextTriggerKind = getPreferredTriggerKindForPin({ mode, function: func });
                        setNodes(prev => prev.map(n => {
-                           if (n.id === trigger.id) return { ...n, config: { ...n.config, pin: pinValue } };
-                           if (n.id === condition.id) return { 
-                               ...n, 
-                               kind: defaultKind, 
-                               config: { 
-                                   ...n.config, 
-                                   pin: pinValue, 
-                                   operator: isNum ? 'gt' : undefined, 
-                                   value: isNum ? 0 : undefined,
-                                   expected: isNum ? undefined : 'on' 
-                               } 
-                           };
+                           if (n.id === trigger.id) {
+                               return {
+                                   ...n,
+                                   kind: nextTriggerKind,
+                                   config: {
+                                       ...n.config,
+                                       pin: pinValue,
+                                       hour: undefined,
+                                       minute: undefined,
+                                       weekdays: undefined,
+                                   },
+                               };
+                           }
+                           if (n.id === condition.id) {
+                               return {
+                                   ...n,
+                                   ...buildConditionStateForTriggerKind(nextTriggerKind, n.kind, n.config, pinValue),
+                               };
+                           }
                            return n;
                        }));
                    };
 
-                   const handleSetTargetDevice = (devId: string) => {
-                       updateConfigMany([ { id: action.id, config: { device_id: devId, pin: undefined } } ]);
+                   const handleSetTriggerKind = (nextTriggerKind: string) => {
+                       if (trigger.config.pin === undefined) return;
+                       if (nextTriggerKind === DEVICE_VALUE_TRIGGER_KIND && !isNumericSource) return;
+                       if (nextTriggerKind === DEVICE_ON_OFF_TRIGGER_KIND && !isSwitchSource) return;
+                       setNodes(prev => prev.map(n => {
+                           if (n.id === trigger.id) return { ...n, kind: nextTriggerKind };
+                           if (n.id === condition.id) {
+                               return {
+                                   ...n,
+                                   ...buildConditionStateForTriggerKind(nextTriggerKind, n.kind, n.config, trigger.config.pin),
+                               };
+                           }
+                           return n;
+                       }));
                    };
-                   
+
+                   const handleSetTimeValue = (value: string) => {
+                       const [hourRaw, minuteRaw] = value.split(":");
+                       const nextHour = Number.parseInt(hourRaw ?? "", 10);
+                       const nextMinute = Number.parseInt(minuteRaw ?? "", 10);
+                       if (Number.isNaN(nextHour) || Number.isNaN(nextMinute)) return;
+                       updateConfigMany([
+                           {
+                               id: trigger.id,
+                               config: {
+                                   hour: nextHour,
+                                   minute: nextMinute,
+                                   weekdays: getTimeTriggerWeekdays(trigger.config),
+                               },
+                           },
+                       ]);
+                   };
+
+                   const handleToggleTriggerWeekday = (weekday: string) => {
+                       const currentWeekdays = getTimeTriggerWeekdays(trigger.config);
+                       const nextWeekdays = currentWeekdays.includes(weekday)
+                           ? currentWeekdays.filter((value) => value !== weekday)
+                           : [...currentWeekdays, weekday];
+                       updateConfigMany([{ id: trigger.id, config: { weekdays: nextWeekdays } }]);
+                   };
+
+                   const handleSetConditionDevice = (devId: string) => {
+                       updateConfigMany([{ id: condition.id, config: { device_id: devId, pin: undefined } }]);
+                   };
+
+                   const handleSetConditionPin = (pinValue: number, mode: string, func: string) => {
+                       const nextTriggerKind = isNumericPin({ mode, function: func })
+                           ? DEVICE_VALUE_TRIGGER_KIND
+                           : DEVICE_ON_OFF_TRIGGER_KIND;
+                       setNodes(prev => prev.map(n => {
+                           if (n.id !== condition.id) return n;
+                           return {
+                               ...n,
+                               ...buildConditionStateForTriggerKind(nextTriggerKind, n.kind, n.config, pinValue),
+                           };
+                       }));
+                   };
+
+                   const handleSetTargetDevice = (devId: string) => {
+                       updateConfigMany([{ id: action.id, config: { device_id: devId, pin: undefined } }]);
+                   };
+
                    const handleSetTargetPin = (pinValue: number, mode: string) => {
                        const defaultKind = mode === "PWM" ? "set_value" : "set_output";
                        setNodes(prev => prev.map(n => {
-                           if (n.id === action.id) return { 
-                               ...n, 
-                               kind: defaultKind, 
-                               config: { 
-                                   ...n.config, 
-                                   pin: pinValue, 
-                                   value: defaultKind === "set_output" ? 1 : 0 
-                               } 
+                           if (n.id !== action.id) return n;
+                           return {
+                               ...n,
+                               kind: defaultKind,
+                               config: {
+                                   ...n.config,
+                                   pin: pinValue,
+                                   value: defaultKind === "set_output" ? 1 : 0,
+                               },
                            };
-                           return n;
                        }));
                    };
 
@@ -1783,8 +2042,20 @@ export default function AutomationPage() {
                    const sourcePinObj = sourceDev?.pin_configurations.find(p => p.gpio_pin === trigger.config.pin);
                    const isNumericSource = isNumericPin(sourcePinObj);
                    const isSwitchSource = isSwitchPin(sourcePinObj);
-
+                   const conditionDev = devices.find(d => d.device_id === condition.config.device_id);
+                   const conditionPinObj = conditionDev?.pin_configurations.find(p => p.gpio_pin === condition.config.pin);
+                   const isNumericConditionSource = isNumericPin(conditionPinObj);
+                   const isSwitchConditionSource = isSwitchPin(conditionPinObj);
                    const targetDev = devices.find(d => d.device_id === action.config.device_id);
+                   const conditionConfigured =
+                       condition.kind === "numeric_compare"
+                           ? Boolean(condition.config.device_id) &&
+                             condition.config.pin !== undefined &&
+                             condition.config.value !== undefined &&
+                             (condition.config.operator !== "between" || condition.config.secondary_value !== undefined)
+                           : Boolean(condition.config.device_id) &&
+                             condition.config.pin !== undefined &&
+                             condition.config.expected !== undefined;
 
                    return (
                        <div className="p-4 space-y-6">
@@ -1792,80 +2063,204 @@ export default function AutomationPage() {
                                <div className="flex bg-blue-50 dark:bg-blue-900/20 px-3 py-1.5 rounded-lg border border-blue-100 dark:border-blue-800/50 w-fit">
                                    <span className="text-xs font-bold text-blue-700 dark:text-blue-400">1. WHEN</span>
                                </div>
-                               
-                               <span className="text-xs font-bold text-slate-500 block">Detect changes on:</span>
-                               <select name="rule-source-device" value={trigger.config.device_id || ""} onChange={(e) => handleSetSourceDevice(e.target.value)} className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary">
-                                  <option value="">Select source device...</option>
-                                  {devices.map(d => <option key={d.device_id} value={d.device_id}>{d.name}</option>)}
-                               </select>
 
-                               {sourceDev && (
-                                   <div className="grid grid-cols-2 gap-2 mt-2">
-                                       {sourceDev.pin_configurations.map(pin => (
-                                           <button 
-                                               key={pin.gpio_pin}
-                                               onClick={() => handleSetSourcePin(pin.gpio_pin, pin.mode, pin.function || "")}
-                                               className={`flex flex-col text-left p-2 border rounded-lg transition-colors ${trigger.config.pin === pin.gpio_pin ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-slate-900'}`}
-                                           >
-                                               <div className="flex items-center justify-between mb-1 w-full gap-2">
-                                                   <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">GPIO {pin.gpio_pin}</span>
-                                                   <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0">{pin.mode}</span>
+                               <span className="text-xs font-bold text-slate-500 block">Trigger source</span>
+                               <div className="flex gap-2">
+                                   <button
+                                       type="button"
+                                       onClick={() => handleSetTriggerSource("device")}
+                                       className={`flex-1 py-2 rounded-lg font-bold text-[11px] border transition shadow-sm ${!isTimeTrigger ? "bg-blue-600 border-blue-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300"}`}
+                                   >
+                                       Device Event
+                                   </button>
+                                   <button
+                                       type="button"
+                                       onClick={() => handleSetTriggerSource("time")}
+                                       className={`flex-1 py-2 rounded-lg font-bold text-[11px] border transition shadow-sm ${isTimeTrigger ? "bg-blue-600 border-blue-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300"}`}
+                                   >
+                                       Server Time
+                                   </button>
+                               </div>
+
+                               {isTimeTrigger ? (
+                                   <div className="space-y-3">
+                                       <label className="block">
+                                           <span className="text-xs font-bold text-slate-500 block mb-2">Run at</span>
+                                           <input
+                                               name="rule-trigger-time"
+                                               type="time"
+                                               value={formatTimeTriggerValue(trigger.config)}
+                                               onChange={(e) => handleSetTimeValue(e.target.value)}
+                                               className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary font-mono"
+                                           />
+                                       </label>
+                                       <div className="space-y-2">
+                                           <span className="text-xs font-bold text-slate-500 block">Weekdays</span>
+                                           <div className="flex flex-wrap gap-2">
+                                               {TIME_TRIGGER_WEEKDAY_OPTIONS.map((option) => {
+                                                   const active = getTimeTriggerWeekdays(trigger.config).includes(option.value);
+                                                   return (
+                                                       <button
+                                                           key={option.value}
+                                                           type="button"
+                                                           onClick={() => handleToggleTriggerWeekday(option.value)}
+                                                           className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border transition ${active ? "bg-blue-600 border-blue-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300"}`}
+                                                       >
+                                                           {option.label}
+                                                       </button>
+                                                   );
+                                               })}
+                                           </div>
+                                           <p className="text-[11px] text-slate-500">
+                                               Leave all days unselected to run every day.
+                                           </p>
+                                       </div>
+                                       <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-700 dark:bg-slate-900/60">
+                                           <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Server Clock</div>
+                                           <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
+                                               {scheduleContext?.effective_timezone ?? "Server timezone unavailable"}
+                                           </p>
+                                           <p className="mt-1 text-xs text-slate-500">
+                                               Current server time: {formatServerTimePreview(scheduleContext?.current_server_time)}
+                                           </p>
+                                       </div>
+                                   </div>
+                               ) : (
+                                   <>
+                                       <span className="text-xs font-bold text-slate-500 block">Detect changes on:</span>
+                                       <select name="rule-source-device" value={trigger.config.device_id || ""} onChange={(e) => handleSetSourceDevice(e.target.value)} className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary">
+                                          <option value="">Select source device...</option>
+                                          {devices.map(d => <option key={d.device_id} value={d.device_id}>{d.name}</option>)}
+                                       </select>
+
+                                       {sourceDev && (
+                                           <div className="grid grid-cols-2 gap-2 mt-2">
+                                               {sourceDev.pin_configurations.map(pin => (
+                                                   <button
+                                                       key={pin.gpio_pin}
+                                                       onClick={() => handleSetSourcePin(pin.gpio_pin, pin.mode, pin.function || "")}
+                                                       className={`flex flex-col text-left p-2 border rounded-lg transition-colors ${trigger.config.pin === pin.gpio_pin ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-slate-900'}`}
+                                                   >
+                                                       <div className="flex items-center justify-between mb-1 w-full gap-2">
+                                                           <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">GPIO {pin.gpio_pin}</span>
+                                                           <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0">{pin.mode}</span>
+                                                       </div>
+                                                       <span className="text-[10px] text-slate-500 truncate w-full">{pin.label || pin.function || "Unnamed"}</span>
+                                                   </button>
+                                               ))}
+                                           </div>
+                                       )}
+
+                                       {trigger.config.pin !== undefined && (
+                                           <div className="space-y-2 mt-2">
+                                               <span className="text-xs font-bold text-slate-500 block">Trigger Mode</span>
+                                               <div className="flex gap-2">
+                                                   <button
+                                                       type="button"
+                                                       onClick={() => handleSetTriggerKind(DEVICE_ON_OFF_TRIGGER_KIND)}
+                                                       disabled={!isSwitchSource}
+                                                       className={`flex-1 py-2 rounded-lg font-bold text-[11px] border transition shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${trigger.kind === DEVICE_ON_OFF_TRIGGER_KIND ? "bg-blue-600 border-blue-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300"}`}
+                                                   >
+                                                       On/Off Event
+                                                   </button>
+                                                   <button
+                                                       type="button"
+                                                       onClick={() => handleSetTriggerKind(DEVICE_VALUE_TRIGGER_KIND)}
+                                                       disabled={!isNumericSource}
+                                                       className={`flex-1 py-2 rounded-lg font-bold text-[11px] border transition shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${trigger.kind === DEVICE_VALUE_TRIGGER_KIND ? "bg-blue-600 border-blue-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300"}`}
+                                                   >
+                                                       Device Value
+                                                   </button>
                                                </div>
-                                               <span className="text-[10px] text-slate-500 truncate w-full">{pin.label || pin.function || "Unnamed"}</span>
-                                           </button>
-                                       ))}
+                                               {trigger.kind === LEGACY_DEVICE_TRIGGER_KIND && (
+                                                   <p className="text-[11px] text-slate-500">
+                                                       Legacy `device_state` trigger loaded. Pick a device-specific mode to save the stricter contract.
+                                                   </p>
+                                               )}
+                                           </div>
+                                       )}
+                                   </>
+                               )}
+                           </div>
+
+                           <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+                               <div className="flex bg-amber-50 dark:bg-amber-900/20 px-3 py-1.5 rounded-lg border border-amber-100 dark:border-amber-800/50 w-fit mb-2">
+                                   <span className="text-xs font-bold text-amber-700 dark:text-amber-400">2. AND ONLY IF</span>
+                               </div>
+
+                               {isTimeTrigger && (
+                                   <>
+                                       <span className="text-xs font-bold text-slate-500 block">Condition source</span>
+                                       <select name="rule-condition-device" value={condition.config.device_id || ""} onChange={(e) => handleSetConditionDevice(e.target.value)} className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary">
+                                           <option value="">Select condition device...</option>
+                                           {devices.map(d => <option key={d.device_id} value={d.device_id}>{d.name}</option>)}
+                                       </select>
+
+                                       {conditionDev && (
+                                           <div className="grid grid-cols-2 gap-2 mt-2">
+                                               {conditionDev.pin_configurations.map(pin => (
+                                                   <button
+                                                       key={pin.gpio_pin}
+                                                       onClick={() => handleSetConditionPin(pin.gpio_pin, pin.mode, pin.function || "")}
+                                                       className={`flex flex-col text-left p-2 border rounded-lg transition-colors ${condition.config.pin === pin.gpio_pin ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-slate-900'}`}
+                                                   >
+                                                       <div className="flex items-center justify-between mb-1 w-full gap-2">
+                                                           <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">GPIO {pin.gpio_pin}</span>
+                                                           <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0">{pin.mode}</span>
+                                                       </div>
+                                                       <span className="text-[10px] text-slate-500 truncate w-full">{pin.label || pin.function || "Unnamed"}</span>
+                                                   </button>
+                                               ))}
+                                           </div>
+                                       )}
+                                   </>
+                               )}
+
+                               {condition.kind === "numeric_compare" && isNumericConditionSource ? (
+                                   <div className="space-y-3">
+                                       <div className="flex flex-wrap gap-1.5">
+                                           {['gt', 'gte', 'lt', 'lte', 'between'].map(op => (
+                                               <button
+                                                  key={op}
+                                                  onClick={() => updateConfigMany([{id: condition.id, config: {operator: op}}])}
+                                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold font-mono border transition shadow-sm ${condition.config.operator === op ? 'bg-primary text-white border-primary' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400'}`}
+                                               >
+                                                  {op === 'gt' ? '>' : op === 'gte' ? '>=' : op === 'lt' ? '<' : op === 'lte' ? '<=' : 'between'}
+                                               </button>
+                                           ))}
+                                       </div>
+                                       <div className="flex gap-2 items-center">
+                                           <input name="rule-condition-value" type="number" value={String(condition.config.value ?? "")} onChange={(e) => updateConfigMany([{id: condition.id, config: {value: Number.parseFloat(e.target.value)}}])} placeholder="Value" className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary font-mono shadow-sm" />
+                                           {condition.config.operator === "between" && (
+                                               <>
+                                                   <span className="text-sm font-semibold text-slate-400">and</span>
+                                                   <input name="rule-condition-secondary-value" type="number" value={String(condition.config.secondary_value ?? "")} onChange={(e) => updateConfigMany([{id: condition.id, config: {secondary_value: Number.parseFloat(e.target.value)}}])} placeholder="Max" className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary font-mono shadow-sm" />
+                                               </>
+                                           )}
+                                       </div>
+                                   </div>
+                               ) : condition.kind === "state_equals" && isSwitchConditionSource ? (
+                                   <div className="flex gap-2">
+                                       <button onClick={() => updateConfigMany([{id: condition.id, config: {expected: 'on'}}])} className={`flex-1 py-2 rounded-lg font-bold text-[11px] border transition shadow-sm ${condition.config.expected === "on" ? 'bg-emerald-500 border-emerald-600 text-white dark:bg-emerald-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300'}`}>Is ON</button>
+                                       <button onClick={() => updateConfigMany([{id: condition.id, config: {expected: 'off'}}])} className={`flex-1 py-2 rounded-lg font-bold text-[11px] border transition shadow-sm ${condition.config.expected === "off" ? 'bg-slate-800 border-slate-900 text-white dark:bg-slate-700 dark:border-slate-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300'}`}>Is OFF</button>
+                                   </div>
+                               ) : (
+                                   <div className="p-3 rounded-lg bg-slate-100 dark:bg-slate-800/50">
+                                        <p className="text-xs text-slate-500">
+                                            {isTimeTrigger
+                                                ? "Pick a condition device and pin to define what the scheduler should verify at runtime."
+                                                : "Pick a valid trigger source to define conditions."}
+                                        </p>
                                    </div>
                                )}
                            </div>
 
-                           {trigger.config.pin !== undefined && (
-                               <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
-                                   <div className="flex bg-amber-50 dark:bg-amber-900/20 px-3 py-1.5 rounded-lg border border-amber-100 dark:border-amber-800/50 w-fit mb-2">
-                                       <span className="text-xs font-bold text-amber-700 dark:text-amber-400">2. AND ONLY IF</span>
-                                   </div>
-                                   
-                                   {isNumericSource ? (
-                                       <div className="space-y-3">
-                                           <div className="flex flex-wrap gap-1.5">
-                                               {['gt', 'gte', 'lt', 'lte', 'between'].map(op => (
-                                                   <button 
-                                                      key={op} 
-                                                      onClick={() => updateConfigMany([{id: condition.id, config: {operator: op}}])}
-                                                      className={`px-3 py-1.5 rounded-lg text-xs font-bold font-mono border transition shadow-sm ${condition.config.operator === op ? 'bg-primary text-white border-primary' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400'}`}
-                                                   >
-                                                      {op === 'gt' ? '>' : op === 'gte' ? '>=' : op === 'lt' ? '<' : op === 'lte' ? '<=' : 'between'}
-                                                   </button>
-                                               ))}
-                                           </div>
-                                           <div className="flex gap-2 items-center">
-                                               <input name="rule-condition-value" type="number" value={String(condition.config.value ?? "")} onChange={(e) => updateConfigMany([{id: condition.id, config: {value: parseFloat(e.target.value)}}])} placeholder="Value" className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary font-mono shadow-sm" />
-                                               {condition.config.operator === "between" && (
-                                                   <>
-                                                       <span className="text-sm font-semibold text-slate-400">and</span>
-                                                       <input name="rule-condition-secondary-value" type="number" value={String(condition.config.secondary_value ?? "")} onChange={(e) => updateConfigMany([{id: condition.id, config: {secondary_value: parseFloat(e.target.value)}}])} placeholder="Max" className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary font-mono shadow-sm" />
-                                                   </>
-                                               )}
-                                           </div>
-                                       </div>
-                                   ) : isSwitchSource ? (
-                                       <div className="flex gap-2">
-                                           <button onClick={() => updateConfigMany([{id: condition.id, config: {expected: 'on'}}])} className={`flex-1 py-2 rounded-lg font-bold text-[11px] border transition shadow-sm ${condition.config.expected === "on" ? 'bg-emerald-500 border-emerald-600 text-white dark:bg-emerald-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300'}`}>Is ON</button>
-                                           <button onClick={() => updateConfigMany([{id: condition.id, config: {expected: 'off'}}])} className={`flex-1 py-2 rounded-lg font-bold text-[11px] border transition shadow-sm ${condition.config.expected === "off" ? 'bg-slate-800 border-slate-900 text-white dark:bg-slate-700 dark:border-slate-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300'}`}>Is OFF</button>
-                                       </div>
-                                   ) : (
-                                       <div className="p-3 rounded-lg bg-slate-100 dark:bg-slate-800/50">
-                                            <p className="text-xs text-slate-500">Pick a valid trigger source to define conditions.</p>
-                                       </div>
-                                   )}
-                               </div>
-                           )}
-
-                           {(isNumericSource ? condition.config.value !== undefined : trigger.config.pin !== undefined) && (
+                           {conditionConfigured && (
                                <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
                                    <div className="flex bg-emerald-50 dark:bg-emerald-900/20 px-3 py-1.5 rounded-lg border border-emerald-100 dark:border-emerald-800/50 w-fit mb-2">
                                        <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">3. THEN DO</span>
                                    </div>
-                                   
+
                                    <span className="text-xs font-bold text-slate-500 block">Target Device:</span>
                                    <select name="rule-target-device" value={action.config.device_id || ""} onChange={(e) => handleSetTargetDevice(e.target.value)} className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary">
                                       <option value="">Select target device...</option>
@@ -1875,7 +2270,7 @@ export default function AutomationPage() {
                                    {targetDev && (
                                        <div className="grid grid-cols-2 gap-2 mt-2">
                                            {targetDev.pin_configurations.filter(p => p.mode === "OUTPUT" || p.mode === "PWM").map(pin => (
-                                               <button 
+                                               <button
                                                    key={pin.gpio_pin}
                                                    onClick={() => handleSetTargetPin(pin.gpio_pin, pin.mode)}
                                                    className={`flex flex-col text-left p-2 border rounded-lg transition-colors ${action.config.pin === pin.gpio_pin ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-slate-900'}`}
@@ -1909,8 +2304,8 @@ export default function AutomationPage() {
                                            <div>
                                                <span className="text-xs font-bold text-slate-500 block mb-2">Set PWM Value</span>
                                                <div className="flex gap-3 items-center">
-                                                   <input name="rule-target-pwm-range" type="range" min="0" max="255" value={String(action.config.value ?? 0)} onChange={(e) => updateConfigMany([{id: action.id, config: {value: parseFloat(e.target.value)}}])} className="flex-1 accent-primary" />
-                                                   <input name="rule-target-pwm-value" type="number" min="0" max="255" value={String(action.config.value ?? 0)} onChange={(e) => updateConfigMany([{id: action.id, config: {value: parseFloat(e.target.value)}}])} className="w-16 text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 outline-none font-mono text-center" />
+                                                   <input name="rule-target-pwm-range" type="range" min="0" max="255" value={String(action.config.value ?? 0)} onChange={(e) => updateConfigMany([{id: action.id, config: {value: Number.parseFloat(e.target.value)}}])} className="flex-1 accent-primary" />
+                                                   <input name="rule-target-pwm-value" type="number" min="0" max="255" value={String(action.config.value ?? 0)} onChange={(e) => updateConfigMany([{id: action.id, config: {value: Number.parseFloat(e.target.value)}}])} className="w-16 text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 outline-none font-mono text-center" />
                                                </div>
                                            </div>
                                        )}
@@ -1919,18 +2314,21 @@ export default function AutomationPage() {
                                </div>
                            )}
 
-                           {action.config.pin !== undefined && (
+                           {conditionConfigured && action.config.pin !== undefined && (
                                <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800">
                                    <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 dark:bg-primary/10 shadow-inner">
                                        <span className="text-[10px] font-bold uppercase tracking-widest text-primary mb-2 block">Rule Summary</span>
                                        <p className="text-sm font-medium text-slate-800 dark:text-slate-200 leading-relaxed">
-                                           <span className="text-blue-600 dark:text-blue-400 font-bold">When</span> {sourcePinObj?.label || `GPIO ${trigger.config.pin}`} on {sourceDev?.name}
-                                           {' '}
+                                           <span className="text-blue-600 dark:text-blue-400 font-bold">When</span>{" "}
+                                           {isTimeTrigger
+                                               ? `server time reaches ${formatTimeTriggerSummary(trigger.config)}${scheduleContext?.effective_timezone ? ` (${scheduleContext.effective_timezone})` : ""}`
+                                               : `${getTriggerKindLabel(trigger.kind).toLowerCase()} on ${sourcePinObj?.label || `GPIO ${trigger.config.pin}`} from ${sourceDev?.name}`}
+                                           {" "}
                                            <span className="text-amber-600 dark:text-amber-500 font-bold">
-                                             {condition.kind === 'state_equals' ? (condition.config.expected === 'on' ? 'is ON' : 'is OFF') : 
+                                             {condition.kind === 'state_equals' ? (condition.config.expected === 'on' ? 'is ON' : 'is OFF') :
                                               condition.kind === 'numeric_compare' ? `is ${condition.config.operator === 'between' ? 'between ' + condition.config.value + ' AND ' + condition.config.secondary_value : (condition.config.operator === 'gt' ? '>' : condition.config.operator === 'lt' ? '<' : condition.config.operator === 'gte' ? '>=' : '<=') + ' ' + condition.config.value}` : 'changes'}
                                            </span>
-                                           , <br/><span className="text-emerald-600 dark:text-emerald-500 font-bold">Then</span> set {targetDev?.pin_configurations.find(p=>p.gpio_pin === action.config.pin)?.label || `GPIO ${action.config.pin}`} on {targetDev?.name} to <span className="font-bold">{action.kind === 'set_output' ? (action.config.value ? 'ON' : 'OFF') : action.config.value}</span>.
+                                           , <br/><span className="text-emerald-600 dark:text-emerald-500 font-bold">Then</span> set {targetDev?.pin_configurations.find(p => p.gpio_pin === action.config.pin)?.label || `GPIO ${action.config.pin}`} on {targetDev?.name} to <span className="font-bold">{action.kind === 'set_output' ? (action.config.value ? 'ON' : 'OFF') : action.config.value}</span>.
                                        </p>
                                    </div>
                                </div>
@@ -1949,37 +2347,51 @@ export default function AutomationPage() {
                    };
 
                    const handleKindChange = (kind: string) => {
-                       setNodes(prev => prev.map(n => n.id === node.id ? { ...n, kind, config: { ui: n.config.ui, device_id: n.config.device_id, pin: n.config.pin } } : n));
+                       setNodes(prev => prev.map(n => {
+                           if (n.id !== node.id) return n;
+                           if (n.type === "trigger" && kind === TIME_TRIGGER_KIND) {
+                               return { ...n, kind, config: { ui: n.config.ui, ...buildTimeTriggerConfig(n.config) } };
+                           }
+                           return { ...n, kind, config: { ui: n.config.ui, device_id: n.config.device_id, pin: n.config.pin } };
+                       }));
                    };
                    
                    const handleSetDevice = (device_id: string) => {
                        setNodes(prev => prev.map(n => n.id === node.id ? { ...n, config: { ui: n.config.ui, device_id } } : n));
                    };
                    
-                   const handleSetPin = (pin: number) => {
+                   const handleSetPin = (pin: number, pinMeta?: { mode?: string; function?: string | null }) => {
                        setNodes(prev => prev.map(n => {
                            if (n.id === node.id) {
+                               const nextKind = n.type === "trigger" ? getPreferredTriggerKindForPin(pinMeta) : n.kind;
                                const newConfig = { ...n.config, pin };
                                delete newConfig.operator;
                                delete newConfig.value;
                                delete newConfig.secondary_value;
                                delete newConfig.expected;
-                               if (node.kind === 'state_equals') newConfig.expected = 'on';
-                               if (node.kind === 'numeric_compare') { newConfig.operator = 'gt'; newConfig.value = 0; }
-                               if (node.kind === 'set_output') newConfig.value = 1;
-                               if (node.kind === 'set_value') newConfig.value = 0;
-                               return { ...n, config: newConfig };
+                               if (nextKind === 'state_equals') newConfig.expected = 'on';
+                               if (nextKind === 'numeric_compare') { newConfig.operator = 'gt'; newConfig.value = 0; }
+                               if (nextKind === 'set_output') newConfig.value = 1;
+                               if (nextKind === 'set_value') newConfig.value = 0;
+                               return { ...n, kind: nextKind, config: newConfig };
                            }
                            return n;
                        }));
                    };
 
+                   const isTimeTriggerNode = node.type === "trigger" && node.kind === TIME_TRIGGER_KIND;
                    const selectedDevice = devices.find(d => d.device_id === node.config.device_id);
+                   const selectedPinObj = selectedDevice?.pin_configurations.find(p => p.gpio_pin === node.config.pin);
                    const compatiblePins = selectedDevice?.pin_configurations.filter(p => {
                        if (node.type === "action" && node.kind === "set_output") return p.mode === "OUTPUT";
                        if (node.type === "action" && node.kind === "set_value") return p.mode === "PWM";
                        return true;
                    }) || [];
+                   const triggerKindOptions = [
+                     { k: TIME_TRIGGER_KIND, l: "Server Time", enabled: true },
+                     { k: DEVICE_ON_OFF_TRIGGER_KIND, l: "On/Off Event", enabled: !selectedPinObj || isSwitchPin(selectedPinObj) },
+                     { k: DEVICE_VALUE_TRIGGER_KIND, l: "Device Value", enabled: !selectedPinObj || isNumericPin(selectedPinObj) },
+                   ];
 
                    return (
                      <div className="p-4 space-y-6">
@@ -1988,7 +2400,17 @@ export default function AutomationPage() {
                              <div>
                                  <span className="text-xs font-bold text-slate-500 block mb-2">Purpose</span>
                                  <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
-                                     {node.type === "trigger" && <button className="flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold bg-white dark:bg-slate-700 shadow-sm text-slate-800 dark:text-slate-200">Device State</button>}
+                                     {node.type === "trigger" && triggerKindOptions.map(opt => (
+                                         <button
+                                            key={opt.k}
+                                            type="button"
+                                            disabled={!opt.enabled}
+                                            onClick={() => opt.enabled && handleKindChange(opt.k)}
+                                            className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50 ${node.kind === opt.k ? 'bg-white dark:bg-slate-700 shadow-sm text-slate-800 dark:text-slate-200' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+                                         >
+                                            {opt.l}
+                                         </button>
+                                     ))}
                                      {node.type === "condition" && [
                                          { k: "state_equals", l: "State Equals" },
                                          { k: "numeric_compare", l: "Numeric Compare" }
@@ -2015,16 +2437,18 @@ export default function AutomationPage() {
                          </div>
 
                          {/* 2. Device Selection */}
-                         <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
-                             <span className="text-xs font-bold text-slate-500 block">Target Device</span>
-                             <select name="node-target-device" value={node.config.device_id || ""} onChange={(e) => handleSetDevice(e.target.value)} className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary cursor-pointer">
-                                <option value="">Select a device...</option>
-                                {devices.map(d => <option key={d.device_id} value={d.device_id}>{d.name} {d.conn_status === "online" ? "🟢" : "⚪"}</option>)}
-                             </select>
-                         </div>
+                         {!isTimeTriggerNode && (
+                             <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+                                 <span className="text-xs font-bold text-slate-500 block">Target Device</span>
+                                 <select name="node-target-device" value={node.config.device_id || ""} onChange={(e) => handleSetDevice(e.target.value)} className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary cursor-pointer">
+                                    <option value="">Select a device...</option>
+                                    {devices.map(d => <option key={d.device_id} value={d.device_id}>{d.name} {d.conn_status === "online" ? "🟢" : "⚪"}</option>)}
+                                 </select>
+                             </div>
+                         )}
 
                          {/* 3. Pin Selection */}
-                         {node.config.device_id && (
+                         {!isTimeTriggerNode && node.config.device_id && (
                              <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
                                  <span className="text-xs font-bold text-slate-500 block">Target Pin / Function</span>
                                  {compatiblePins.length === 0 ? (
@@ -2039,7 +2463,7 @@ export default function AutomationPage() {
                                         {compatiblePins.map(pin => (
                                             <button 
                                                 key={pin.gpio_pin}
-                                                onClick={() => handleSetPin(pin.gpio_pin)}
+                                                onClick={() => handleSetPin(pin.gpio_pin, pin)}
                                                 className={`flex flex-col text-left p-2 border rounded-lg transition-colors ${node.config.pin === pin.gpio_pin ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-slate-900'}`}
                                             >
                                                 <div className="flex items-center justify-between mb-1 w-full gap-2">
@@ -2055,7 +2479,51 @@ export default function AutomationPage() {
                          )}
 
                          {/* 4. Logic/Action Configuration */}
-                         {node.config.pin !== undefined && (
+                         {isTimeTriggerNode && (
+                             <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+                                 <div>
+                                     <span className="text-xs font-bold text-slate-500 block mb-2">Run at</span>
+                                     <input
+                                         name="node-trigger-time"
+                                         type="time"
+                                         value={formatTimeTriggerValue(node.config)}
+                                         onChange={(e) => {
+                                             const [hourRaw, minuteRaw] = e.target.value.split(":");
+                                             updateConfig("hour", Number.parseInt(hourRaw ?? "0", 10));
+                                             updateConfig("minute", Number.parseInt(minuteRaw ?? "0", 10));
+                                         }}
+                                         className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary font-mono"
+                                     />
+                                 </div>
+                                 <div>
+                                     <span className="text-xs font-bold text-slate-500 block mb-2">Weekdays</span>
+                                     <div className="flex flex-wrap gap-2">
+                                         {TIME_TRIGGER_WEEKDAY_OPTIONS.map((option) => {
+                                             const weekdays = getTimeTriggerWeekdays(node.config);
+                                             const active = weekdays.includes(option.value);
+                                             return (
+                                                 <button
+                                                     key={option.value}
+                                                     type="button"
+                                                     onClick={() => updateConfig("weekdays", active ? weekdays.filter((value) => value !== option.value) : [...weekdays, option.value])}
+                                                     className={`px-3 py-1.5 rounded-lg text-[11px] font-bold border transition ${active ? 'bg-blue-600 border-blue-700 text-white' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300'}`}
+                                                 >
+                                                     {option.label}
+                                                 </button>
+                                             );
+                                         })}
+                                     </div>
+                                     <p className="mt-2 text-[11px] text-slate-500">Leave empty to run every day using the current server timezone.</p>
+                                 </div>
+                                 <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 dark:border-slate-700 dark:bg-slate-900/60">
+                                     <div className="text-[11px] uppercase tracking-[0.18em] text-slate-400">Server Clock</div>
+                                     <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">{scheduleContext?.effective_timezone ?? "Server timezone unavailable"}</p>
+                                     <p className="mt-1 text-xs text-slate-500">Current server time: {formatServerTimePreview(scheduleContext?.current_server_time)}</p>
+                                 </div>
+                             </div>
+                         )}
+
+                         {!isTimeTriggerNode && node.config.pin !== undefined && (
                              <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-800">
                                  {node.kind === "state_equals" && (
                                      <div>
@@ -2121,7 +2589,7 @@ export default function AutomationPage() {
                                 <span className="material-icons-round text-[14px]">info</span>
                                 <span className="text-[10px] font-mono">ID: {node.id.split('_')[1]}</span>
                              </div>
-                             {node.config.pin !== undefined && (
+                             {(isTimeTriggerNode || node.config.pin !== undefined) && (
                                 <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-400 text-[10px] font-bold uppercase">Ready</span>
                              )}
                          </div>

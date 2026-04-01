@@ -57,10 +57,13 @@
 - The automation canvas must support pan/zoom so larger flows remain readable.
 - The automation canvas must expose a right-click context menu: right-clicking empty canvas space adds blocks at the pointer, and right-clicking a block exposes block-level actions such as delete.
 - The main node families for R1 are:
-  - `Trigger`: device input/state update, sensor telemetry update, or manual test event
+  - `Trigger`: server-time schedule, device `on/off event`, device `value` update, or manual test event
   - `Condition`: boolean state match, numeric threshold/range check, and logical combination when multiple conditions are needed
   - `Action`: turn a target output on/off or set a numeric output value on another circuit/device
 - The UI must let the user bind real source devices/inputs and target devices/outputs directly from the current inventory. It must not expose a free-form script editor or recurring schedule form as the primary authoring model.
+- Trigger-mode editing must stay inside the current rule builder: server-time scheduling uses an HH:MM picker plus optional weekday chips tied to the effective server timezone, while device triggers continue to bind real devices/pins.
+- The automation inspector must surface the active effective server timezone and a current server-time preview whenever the selected trigger uses server time.
+- The UI must not expose raw cron syntax, free-form recurrence strings, or any control that implies the device clock is the scheduling source.
 - The left side of `/automation` must behave like a rule library, not just a flat list: it needs search plus quick filtering for enabled vs paused rules, and each row must expose a short workflow summary/status so larger automation collections stay scannable.
 - The main workspace must keep the advanced graph canvas, but it also has to surface a simple `When / And only if / Then do` summary rail for the currently selected rule so the user never loses the high-level recipe while editing nodes.
 - The canvas toolbar must keep zoom, fit/reset, run, and save actions visible in the workspace itself instead of burying navigation inside the inspector.

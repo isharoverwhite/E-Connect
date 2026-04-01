@@ -29,6 +29,7 @@ from .models import (
     RoomAccessUpdate, RoomUpdate, RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
     FirmwareNetworkTargetsResponse,
     SetupResponse, HouseholdResponse, TriggerResponse, ExecutionStatus, AutomationLogResponse,
+    AutomationScheduleContextResponse,
     DiyProjectCreate, DiyProjectDeleteRequest, DiyProjectResponse, BuildJobResponse, JobStatus, SerialSessionResponse,
     ManagedUserResponse, UserApprovalStatus, DiyProjectUsageResponse, ProjectDeviceUsage,
     WifiCredentialCreate, WifiCredentialUpdate, WifiCredentialRevealRequest, WifiCredentialResponse, WifiCredentialSecretResponse,
@@ -90,10 +91,12 @@ from .services.timezone_settings import (
 from .services.automation_runtime import (
     AutomationGraphValidationError,
     normalize_automation_graph,
+    refresh_time_trigger_automations_for_household,
     process_state_event_for_automations,
     serialize_automation,
     serialize_execution_log,
     serialize_graph_for_storage,
+    sync_automation_schedule_projection,
     trigger_automation_manually,
 )
 
@@ -551,6 +554,7 @@ def _apply_automation_payload(
     payload: AutomationCreate | AutomationUpdate,
     *,
     device_scope: dict[str, Device] | None = None,
+    effective_timezone: str,
 ) -> Automation:
     try:
         normalized_graph = normalize_automation_graph(
@@ -570,12 +574,12 @@ def _apply_automation_payload(
     automation.name = name
     automation.script_code = serialize_graph_for_storage(normalized_graph)
     automation.is_enabled = payload.is_enabled
-    automation.schedule_type = "manual"
-    automation.timezone = None
-    automation.schedule_hour = None
-    automation.schedule_minute = None
-    automation.schedule_weekdays = []
-    automation.next_run_at = None
+    sync_automation_schedule_projection(
+        automation,
+        normalized_graph,
+        effective_timezone=effective_timezone,
+        reference_time=datetime.now(timezone.utc),
+    )
     return automation
 
 
@@ -1357,6 +1361,12 @@ async def update_general_settings(
     db.flush()
 
     next_context = apply_effective_timezone_context(household=household)
+    refresh_time_trigger_automations_for_household(
+        db,
+        household_id=household.household_id,
+        effective_timezone=str(next_context["effective_timezone"]),
+        reference_time=datetime.now(timezone.utc),
+    )
     create_system_log(
         db,
         severity=SqlSystemLogSeverity.info,
@@ -2952,15 +2962,18 @@ async def export_history_csv(device_id: str, db: Session = Depends(get_db), _adm
 
 # --- Automation ---
 
-@router.get("/automation/schedule-context")
-async def get_automation_schedule_context(user: User = Depends(get_current_user)):
-    _ = user
-    raise HTTPException(
-        status_code=410,
-        detail={
-            "error": "deprecated",
-            "message": "Automation scheduling was removed. Use the graph-based automation builder contract instead.",
-        },
+@router.get("/automation/schedule-context", response_model=AutomationScheduleContextResponse)
+async def get_automation_schedule_context(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    household = _get_current_household_or_404(db, user)
+    timezone_context = resolve_effective_timezone_context(household=household)
+    effective_timezone = str(timezone_context["effective_timezone"])
+    return AutomationScheduleContextResponse(
+        effective_timezone=effective_timezone,
+        timezone_source=str(timezone_context["timezone_source"]),
+        current_server_time=get_current_server_time(effective_timezone),
     )
 
 
@@ -2968,10 +2981,13 @@ async def get_automation_schedule_context(user: User = Depends(get_current_user)
 async def create_automation(auto: AutomationCreate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     new_auto = Automation(creator_id=user.user_id)
     device_scope = _automation_device_scope_for_user(db, user)
+    household = _get_current_household_or_404(db, user)
+    timezone_context = resolve_effective_timezone_context(household=household)
     _apply_automation_payload(
         new_auto,
         auto,
         device_scope=device_scope,
+        effective_timezone=str(timezone_context["effective_timezone"]),
     )
     db.add(new_auto)
     db.commit()
@@ -2998,10 +3014,13 @@ async def update_automation(
 ):
     automation = _get_user_automation(db, automation_id, user)
     device_scope = _automation_device_scope_for_user(db, user)
+    household = _get_current_household_or_404(db, user)
+    timezone_context = resolve_effective_timezone_context(household=household)
     _apply_automation_payload(
         automation,
         payload,
         device_scope=device_scope,
+        effective_timezone=str(timezone_context["effective_timezone"]),
     )
     db.commit()
     db.refresh(automation)

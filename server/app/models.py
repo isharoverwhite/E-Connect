@@ -305,6 +305,7 @@ class AutomationLogResponse(BaseModel):
     triggered_at: datetime
     status: ExecutionStatus
     trigger_source: AutomationTriggerSource = AutomationTriggerSource.manual
+    scheduled_for: Optional[datetime] = None
     log_output: Optional[str] = None
     error_message: Optional[str] = None
 
@@ -317,6 +318,12 @@ class AutomationResponse(AutomationCreate):
     creator_id: int
     last_triggered: Optional[datetime]
     last_execution: Optional[AutomationLogResponse] = None
+    schedule_type: Optional[str] = None
+    timezone: Optional[str] = None
+    schedule_hour: Optional[int] = None
+    schedule_minute: Optional[int] = None
+    schedule_weekdays: List[str] = Field(default_factory=list)
+    next_run_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -325,6 +332,12 @@ class TriggerResponse(BaseModel):
     status: ExecutionStatus
     message: str
     log: Optional[AutomationLogResponse] = None
+
+
+class AutomationScheduleContextResponse(BaseModel):
+    effective_timezone: str
+    timezone_source: Literal["setting", "runtime"]
+    current_server_time: datetime
 
 # --- History / Sensor Data ---
 class DeviceHistoryCreate(BaseModel):
