@@ -237,9 +237,9 @@ export function Step2Pins({
     const gap = totalRows === 1 ? 0 : (bottom - top) / (totalRows - 1);
 
     return (
-        <div className="flex flex-col md:flex-row h-full w-full bg-slate-50 text-slate-700 dark:text-slate-300 border-t border-border-light dark:border-border-dark overflow-hidden">
-            {/* Left Sidebar: Pin List & Config */}
-            <div className="w-full md:w-[350px] lg:w-[420px] flex-shrink-0 flex flex-col h-[40vh] md:h-full bg-surface-light dark:bg-surface-dark border-b md:border-b-0 md:border-r border-border-light dark:border-border-dark z-10 shadow-[4px_0_24px_rgba(0,0,0,0.05)] text-slate-800 dark:text-slate-200">
+        <div className="flex flex-col md:flex-row-reverse h-full w-full bg-slate-50 text-slate-700 dark:text-slate-300 border-t border-border-light dark:border-border-dark overflow-hidden z-10">
+            {/* Right Sidebar: Pin List & Config */}
+            <div className="w-full md:w-[350px] lg:w-[420px] flex-shrink-0 flex flex-col h-[40vh] md:h-full bg-surface-light dark:bg-surface-dark border-b md:border-b-0 md:border-l border-border-light dark:border-border-dark z-20 shadow-[-4px_0_24px_rgba(0,0,0,0.05)] text-slate-800 dark:text-slate-200">
                 {/* Header inside sidebar */}
                 <div className="p-6 border-b border-border-light dark:border-border-dark flex-shrink-0">
                     <h1 className="text-slate-900 dark:text-white text-2xl font-bold tracking-tight">Pin Configuration</h1>

@@ -525,6 +525,26 @@ class BuildJobResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
+class ConfigHistoryEntryResponse(BaseModel):
+    id: str
+    project_id: str
+    status: JobStatus
+    config_name: str
+    assigned_device_id: Optional[str] = None
+    assigned_device_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    finished_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+    expected_firmware_version: Optional[str] = None
+    is_pending: bool = False
+    is_committed: bool = False
+    config: Dict[str, Any] = Field(default_factory=dict)
+
+class ConfigHistoryRenameRequest(BaseModel):
+    config_name: str
+
 class SerialSessionResponse(BaseModel):
     id: int
     port: str

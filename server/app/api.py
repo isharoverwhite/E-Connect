@@ -3,6 +3,7 @@ from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Any, Callable, Literal, Union
 import ast
@@ -12,6 +13,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 import anyio
 import asyncio
 import hashlib
@@ -32,9 +34,10 @@ from .models import (
     FirmwareNetworkTargetsResponse,
     SetupResponse, HouseholdResponse, TriggerResponse, ExecutionStatus, AutomationLogResponse,
     AutomationScheduleContextResponse,
-    DiyProjectCreate, DiyProjectDeleteRequest, DiyProjectResponse, BuildJobResponse, JobStatus, SerialSessionResponse,
+    DiyProjectCreate, DiyProjectDeleteRequest, DiyProjectResponse, BuildJobResponse, ConfigHistoryEntryResponse, JobStatus, SerialSessionResponse,
     ManagedUserResponse, DiyProjectUsageResponse, ProjectDeviceUsage,
     WifiCredentialCreate, WifiCredentialUpdate, WifiCredentialRevealRequest, WifiCredentialResponse, WifiCredentialSecretResponse,
+    ConfigHistoryRenameRequest
 )
 from .sql_models import (
     User, Device, Automation, DeviceHistory,
@@ -116,6 +119,7 @@ ACTIVE_BUILD_JOB_STATUSES = (
     JobStatus.building,
     JobStatus.flashing,
 )
+CONFIG_HISTORY_LIMIT = 3
 DEFAULT_OTA_PUBLIC_SCHEME = "http"
 DEFAULT_OTA_PUBLIC_PORT = 8000
 DEVICE_HEARTBEAT_TIMEOUT_SECONDS = max(
@@ -502,6 +506,14 @@ def _trimmed_string(value: Any) -> Optional[str]:
     return normalized or None
 
 
+def _normalize_config_name(raw_value: Any, *, fallback_name: str) -> str:
+    normalized = _trimmed_string(raw_value)
+    if normalized:
+        return normalized[:255]
+    fallback = fallback_name.strip() or "Saved config"
+    return fallback[:255]
+
+
 def _build_direct_ota_api_base_url(advertised_host: str | None) -> Optional[str]:
     normalized_host = _trimmed_string(advertised_host)
     if not normalized_host:
@@ -582,6 +594,23 @@ def _project_response_model(project: DiyProject) -> DiyProjectResponse:
     )
 
 
+def _stamp_config_history_metadata(
+    config: dict[str, Any],
+    *,
+    config_id: str,
+    config_name: str,
+    device: Device,
+    saved_at: datetime,
+) -> dict[str, Any]:
+    stamped = dict(config)
+    stamped["config_id"] = config_id
+    stamped["config_name"] = config_name
+    stamped["assigned_device_id"] = device.device_id
+    stamped["assigned_device_name"] = device.name
+    stamped["saved_at"] = saved_at.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return stamped
+
+
 def _build_ota_download_url(api_base_url: str, job_id: str, token: str) -> str:
     normalized_base_url = api_base_url.strip().rstrip("/")
     query = urlencode({"token": token})
@@ -623,6 +652,155 @@ def _resolve_job_ota_download_url(job: BuildJob, token: str, request: Request | 
         return None
 
     return _build_ota_download_url(str(targets["api_base_url"]), job.id, token)
+
+
+def _delete_file_if_exists(path: str | None) -> None:
+    normalized_path = _trimmed_string(path)
+    if not normalized_path:
+        return
+
+    candidate = Path(normalized_path)
+    try:
+        if candidate.exists():
+            candidate.unlink()
+    except OSError:
+        logger.warning("Failed to delete retained config artifact/log %s", normalized_path, exc_info=True)
+
+
+def _delete_build_job_files(job: BuildJob) -> None:
+    _delete_file_if_exists(job.artifact_path)
+    _delete_file_if_exists(job.log_path)
+    for artifact_name in ("firmware", "bootloader", "partitions"):
+        try:
+            _delete_file_if_exists(get_durable_artifact_path(job.id, artifact_name))
+        except ValueError:
+            continue
+
+
+def _scrub_legacy_build_refs_from_payload(
+    payload: Any,
+    *,
+    removed_job_ids: set[str],
+) -> tuple[Any, bool]:
+    if not isinstance(payload, dict):
+        return payload, False
+
+    normalized = dict(payload)
+    referenced_job_id = _trimmed_string(normalized.get("latest_build_job_id"))
+    changed = False
+    if referenced_job_id in removed_job_ids:
+        for legacy_key in ("latest_build_job_id", "latest_build_config_key"):
+            if legacy_key in normalized:
+                normalized.pop(legacy_key, None)
+                changed = True
+
+    if referenced_job_id is None and "latest_build_config_key" in normalized:
+        normalized.pop("latest_build_config_key", None)
+        changed = True
+
+    return normalized if changed else payload, changed
+
+
+def _prune_project_config_history(db: Session, project_id: str, *, keep: int = CONFIG_HISTORY_LIMIT) -> None:
+    history_jobs = (
+        db.query(BuildJob)
+        .filter(BuildJob.project_id == project_id)
+        .order_by(BuildJob.created_at.desc(), BuildJob.updated_at.desc(), BuildJob.id.desc())
+        .all()
+    )
+    obsolete_jobs = history_jobs[keep:]
+    if not obsolete_jobs:
+        return
+
+    obsolete_ids = [job.id for job in obsolete_jobs]
+    removed_job_id_set = set(obsolete_ids)
+    project = db.query(DiyProject).filter(DiyProject.id == project_id).first()
+    if project is not None:
+        normalized_config, config_changed = _scrub_legacy_build_refs_from_payload(
+            project.config,
+            removed_job_ids=removed_job_id_set,
+        )
+        if config_changed:
+            project.config = normalized_config
+
+        normalized_pending_config, pending_changed = _scrub_legacy_build_refs_from_payload(
+            project.pending_config,
+            removed_job_ids=removed_job_id_set,
+        )
+        if pending_changed:
+            project.pending_config = normalized_pending_config
+
+        if project.pending_build_job_id in removed_job_id_set:
+            project.pending_build_job_id = None
+            project.pending_config = None
+
+    db.query(SerialSession).filter(SerialSession.build_job_id.in_(obsolete_ids)).delete(synchronize_session=False)
+    for job in obsolete_jobs:
+        _delete_build_job_files(job)
+        db.delete(job)
+
+
+def _serialize_config_history_entry(
+    job: BuildJob,
+    *,
+    project: DiyProject,
+    fallback_device: Device,
+) -> ConfigHistoryEntryResponse:
+    snapshot = resolve_build_job_config_snapshot(job)
+    config_name = _normalize_config_name(
+        snapshot.get("config_name") if isinstance(snapshot, dict) else None,
+        fallback_name=fallback_device.name,
+    )
+    assigned_device_id = _trimmed_string(
+        snapshot.get("assigned_device_id") if isinstance(snapshot, dict) else None
+    ) or fallback_device.device_id
+    assigned_device_name = _trimmed_string(
+        snapshot.get("assigned_device_name") if isinstance(snapshot, dict) else None
+    ) or fallback_device.name
+
+    committed_config = project.config if isinstance(project.config, dict) else None
+    committed_config_id = _trimmed_string(committed_config.get("config_id") if committed_config else None)
+    is_committed = committed_config_id == job.id if committed_config_id else committed_config == snapshot
+
+    return ConfigHistoryEntryResponse(
+        id=job.id,
+        project_id=job.project_id,
+        status=job.status,
+        config_name=config_name,
+        assigned_device_id=assigned_device_id,
+        assigned_device_name=assigned_device_name,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        finished_at=job.finished_at,
+        error_message=job.error_message,
+        expected_firmware_version=build_job_firmware_version(job.id),
+        is_pending=project.pending_build_job_id == job.id,
+        is_committed=is_committed,
+        config=_public_config_payload(snapshot) or {},
+    )
+
+
+def _rename_config_payload(payload: Any, *, config_name: str) -> tuple[Any, bool]:
+    if isinstance(payload, dict):
+        updated_payload = dict(payload)
+        if updated_payload.get("config_name") == config_name:
+            return payload, False
+        updated_payload["config_name"] = config_name
+        return updated_payload, True
+
+    if isinstance(payload, str):
+        try:
+            decoded_payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return payload, False
+        if not isinstance(decoded_payload, dict):
+            return payload, False
+        if decoded_payload.get("config_name") == config_name:
+            return payload, False
+        decoded_payload["config_name"] = config_name
+        return json.dumps(decoded_payload), True
+
+    return payload, False
 
 
 def _get_layout_widgets(layout: Any) -> list[dict[str, Any]]:
@@ -2076,16 +2254,28 @@ async def update_device_config(
     network_target_warning = describe_network_target_change(current_config, targets)
     if network_target_warning:
         validation_warnings.append(network_target_warning)
+    job_id = str(uuid.uuid4())
+    config_name = _normalize_config_name(
+        config.get("config_name") if isinstance(config, dict) else None,
+        fallback_name=device.name,
+    )
     staged_config = _stamp_project_network_targets(current_config, targets)
     staged_config = stamp_project_secret(
         staged_config,
         project.id,
         _resolve_project_device_secret(project.id, project.pending_config, project.config, current_config),
     )
+    staged_config = _stamp_config_history_metadata(
+        staged_config,
+        config_id=job_id,
+        config_name=config_name,
+        device=device,
+        saved_at=datetime.now(timezone.utc),
+    )
 
     # Trigger rebuild only after validation passes and no active job exists.
     job = BuildJob(
-        id=str(uuid.uuid4()),
+        id=job_id,
         project_id=project.id,
         status=JobStatus.queued,
         staged_project_config=staged_config,
@@ -2095,6 +2285,8 @@ async def update_device_config(
     project.pending_build_job_id = job.id
     db.commit()
     db.refresh(job)
+    _prune_project_config_history(db, project.id)
+    db.commit()
 
     background_tasks.add_task(
         build_firmware_task,
@@ -2106,7 +2298,7 @@ async def update_device_config(
     return {
         "status": "success",
         "job_id": job.id,
-        "message": "Staged config queued and build started. The current saved config stays active until the board reports the rebuilt firmware.",
+        "message": "Config history entry queued and build started. The current saved config stays active until the board reports the rebuilt firmware.",
     }
 
 @router.delete("/device/{device_id}")
@@ -2540,6 +2732,8 @@ async def list_diy_projects(
             "name": p.name,
             "board_profile": p.board_profile,
             "config": _public_config_payload(p.config),
+            "pending_config": _public_config_payload(p.pending_config),
+            "pending_build_job_id": p.pending_build_job_id,
             "created_at": p.created_at,
             "updated_at": p.updated_at,
             "usage_state": usage_state,
@@ -2610,6 +2804,97 @@ async def delete_diy_project(
 async def get_diy_project(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
     project = _get_project_in_household_or_404(db, current_user, project_id)
     return _project_response_model(project)
+
+
+@router.get("/device/{device_id}/config-history", response_model=List[ConfigHistoryEntryResponse])
+async def list_device_config_history(
+    device_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    device = _get_device_in_household_or_404(db, current_user, device_id)
+    if not device.provisioning_project_id:
+        raise HTTPException(status_code=400, detail="Not a managed DIY device")
+
+    project = _get_project_in_household_or_404(db, current_user, device.provisioning_project_id)
+    jobs = (
+        db.query(BuildJob)
+        .filter(BuildJob.project_id == project.id)
+        .order_by(BuildJob.created_at.desc(), BuildJob.updated_at.desc(), BuildJob.id.desc())
+        .all()
+    )
+
+    history_entries: list[ConfigHistoryEntryResponse] = []
+    for job in jobs:
+        snapshot = resolve_build_job_config_snapshot(job)
+        assigned_device_id = _trimmed_string(
+            snapshot.get("assigned_device_id") if isinstance(snapshot, dict) else None
+        )
+        if assigned_device_id and assigned_device_id != device.device_id:
+            continue
+
+        history_entries.append(_serialize_config_history_entry(job, project=project, fallback_device=device))
+        if len(history_entries) >= CONFIG_HISTORY_LIMIT:
+            break
+
+    return history_entries
+
+@router.put("/device/{device_id}/config-history/{job_id}/name")
+async def update_device_config_history_name(
+    device_id: str,
+    job_id: str,
+    payload: ConfigHistoryRenameRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    device = _get_device_in_household_or_404(db, current_user, device_id)
+    if not device.provisioning_project_id:
+        raise HTTPException(status_code=400, detail="Not a managed DIY device")
+
+    normalized_config_name = _trimmed_string(payload.config_name)
+    if not normalized_config_name:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": "Enter a config label before saving the rename."},
+        )
+    normalized_config_name = normalized_config_name[:255]
+
+    job = _get_build_job_in_household_or_404(db, current_user, job_id)
+    if job.project_id != device.provisioning_project_id:
+        raise HTTPException(status_code=400, detail="Job does not belong to this device's project")
+
+    snapshot_before_rename = resolve_build_job_config_snapshot(job)
+    assigned_device_id = _trimmed_string(
+        snapshot_before_rename.get("assigned_device_id") if isinstance(snapshot_before_rename, dict) else None
+    )
+    if assigned_device_id and assigned_device_id != device.device_id:
+        raise HTTPException(status_code=404, detail="Config history entry not found for this device")
+
+    next_staged_config, changed = _rename_config_payload(
+        job.staged_project_config,
+        config_name=normalized_config_name,
+    )
+    if changed:
+        job.staged_project_config = next_staged_config
+        flag_modified(job, "staged_project_config")
+
+    project = _get_project_in_household_or_404(db, current_user, device.provisioning_project_id)
+    if isinstance(project.pending_config, dict):
+        pending_config_id = _trimmed_string(project.pending_config.get("config_id"))
+        if pending_config_id == job.id or project.pending_build_job_id == job.id:
+            updated_pending_config = dict(project.pending_config)
+            updated_pending_config["config_name"] = normalized_config_name
+            project.pending_config = updated_pending_config
+
+    if isinstance(project.config, dict):
+        committed_config_id = _trimmed_string(project.config.get("config_id"))
+        if committed_config_id == job.id or project.config == snapshot_before_rename:
+            updated_committed_config = dict(project.config)
+            updated_committed_config["config_name"] = normalized_config_name
+            project.config = updated_committed_config
+
+    db.commit()
+    return {"status": "ok", "config_name": normalized_config_name}
 
 @router.put("/diy/projects/{project_id}", response_model=DiyProjectResponse)
 async def update_diy_project(project_id: str, project_update: DiyProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
@@ -2735,9 +3020,9 @@ async def get_build_job(
     job = _get_build_job_in_household_or_404(db, current_user, job_id)
 
     # Inject an ephemeral OTA token upon successful access by owner
-    ota_token = create_ota_token(job.id)
-    ota_download_url = _resolve_job_ota_download_url(job, ota_token, request)
-    return _build_job_response_model(job, ota_token=ota_token, ota_download_url=ota_download_url)
+    job.ota_token = create_ota_token(job.id)
+    job.ota_download_url = _resolve_job_ota_download_url(job, job.ota_token, request)
+    return _build_job_response_model(job, ota_token=job.ota_token, ota_download_url=job.ota_download_url)
 
 @router.get("/diy/build/{job_id}/artifact")
 async def get_build_artifact(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
