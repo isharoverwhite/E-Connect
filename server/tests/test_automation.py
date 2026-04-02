@@ -1153,8 +1153,19 @@ def test_process_state_event_ignores_follow_up_noop_after_self_target_change(see
         db.close()
 
 
-def test_process_time_trigger_runs_enabled_automation_once_per_scheduled_minute(seeded_context):
+def test_process_time_trigger_runs_enabled_automation_once_per_scheduled_minute(seeded_context, monkeypatch):
     user = seeded_context["user"]
+    fixed_now = datetime(2026, 4, 2, 0, 0, tzinfo=timezone.utc)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            if tz is None:
+                return fixed_now.replace(tzinfo=None)
+            return fixed_now.astimezone(tz)
+
+    monkeypatch.setattr(api_module, "datetime", FixedDateTime)
+
     response = client.post(
         "/api/v1/automation",
         headers=_auth_headers(user),

@@ -7,7 +7,6 @@ export class ServerOfflineError extends Error {
     }
 }
 
-export type UserApprovalStatus = "pending" | "approved" | "revoked";
 export type ManagedHouseholdRole = "owner" | "admin" | "member" | "guest";
 
 const TOKEN_STORAGE_KEY = "econnect_token";
@@ -18,7 +17,6 @@ export interface ManagedUser {
     fullname: string;
     username: string;
     account_type: "admin" | "parent" | "child";
-    approval_status: UserApprovalStatus;
     household_role?: ManagedHouseholdRole | null;
     created_at?: string | null;
     ui_layout?: unknown;
@@ -214,22 +212,6 @@ export async function fetchManagedUsers(token: string): Promise<ManagedUser[]> {
     if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.detail?.message || errorData.detail || "Failed to load users");
-    }
-
-    return res.json();
-}
-
-export async function approveManagedUser(userId: number, token: string): Promise<ManagedUser> {
-    const res = await fetch(`${API_URL}/users/${userId}/approve`, {
-        method: "POST",
-        headers: {
-            "Authorization": `Bearer ${token}`,
-        },
-    });
-
-    if (!res.ok) {
-        const errorData = await res.json().catch(() => ({}));
-        throw new Error(errorData.detail?.message || errorData.detail || "Failed to approve user");
     }
 
     return res.json();

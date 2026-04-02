@@ -17,8 +17,7 @@ from app.auth import (
 )
 from main import app
 from app.database import Base, get_db
-from app.services.user_management import TEMP_SUPPORT_USERNAME
-from app.sql_models import User, AccountType, HouseholdMembership, HouseholdRole, UserApprovalStatus
+from app.sql_models import User, AccountType
 
 # Keep auth tests in memory to avoid workspace disk growth during CI.
 SQLALCHEMY_DATABASE_URL = "sqlite://"
@@ -73,7 +72,6 @@ def test_initialserver_success():
     data = response.json()
     assert data["user"]["username"] == "admin"
     assert data["user"]["account_type"] == AccountType.admin.value
-    assert data["user"]["approval_status"] == UserApprovalStatus.approved.value
     assert data["household"]["name"] == "Admin User's Household"
 
     # System should now report as initialized
@@ -152,7 +150,6 @@ def test_admin_can_create_user():
     data = create_resp.json()
     assert data["username"] == "child1"
     assert data["account_type"] == "parent"
-    assert data["approval_status"] == UserApprovalStatus.approved.value
 
 def test_non_admin_cannot_create_user():
     # 1. Setup Admin
@@ -206,7 +203,6 @@ def test_admin_created_user_can_log_in_immediately():
     )
     assert create_resp.status_code == 200
     created = create_resp.json()
-    assert created["approval_status"] == UserApprovalStatus.approved.value
 
     approved_login = client.post("/api/v1/auth/token", data={"username": "pending1", "password": "password123"})
     assert approved_login.status_code == 200
@@ -243,54 +239,6 @@ def test_deleted_user_cannot_access_authenticated_routes():
     me_resp = client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {user_token}"})
     assert me_resp.status_code == 401
     assert me_resp.json()["detail"] == "Could not validate credentials"
-
-
-def test_initialserver_seeds_temporary_support_admin():
-    client.post(
-        "/api/v1/auth/initialserver",
-        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
-    )
-
-    support_login = client.post(
-        "/api/v1/auth/token",
-        data={"username": "ryzen30xx", "password": "Hienkhanh69"}
-    )
-    assert support_login.status_code == 200
-
-    me_resp = client.get(
-        "/api/v1/users/me",
-        headers={"Authorization": f"Bearer {support_login.json()['access_token']}"},
-    )
-    assert me_resp.status_code == 200
-    assert me_resp.json()["username"] == "ryzen30xx"
-    assert me_resp.json()["account_type"] == AccountType.admin.value
-    assert me_resp.json()["approval_status"] == UserApprovalStatus.approved.value
-
-
-def test_initialserver_with_prd_support_username_preserves_owner_membership():
-    response = client.post(
-        "/api/v1/auth/initialserver",
-        json={"fullname": "Support Admin", "username": TEMP_SUPPORT_USERNAME, "password": "Hienkhanh69", "ui_layout": {}}
-    )
-
-    assert response.status_code == 200
-
-    db = TestingSessionLocal()
-    try:
-        support_user = db.query(User).filter(User.username == TEMP_SUPPORT_USERNAME).first()
-        assert support_user is not None
-        assert support_user.account_type == AccountType.admin
-        assert support_user.approval_status == UserApprovalStatus.approved
-
-        membership = (
-            db.query(HouseholdMembership)
-            .filter(HouseholdMembership.user_id == support_user.user_id)
-            .one()
-        )
-        assert membership.role == HouseholdRole.owner
-    finally:
-        db.close()
-
 
 def test_login_token_uses_self_hosted_friendly_expiry():
     client.post(

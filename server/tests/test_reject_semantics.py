@@ -19,7 +19,6 @@ from app.sql_models import (
     HouseholdMembership,
     HouseholdRole,
     User,
-    UserApprovalStatus,
 )
 from main import app
 
@@ -72,7 +71,6 @@ def _seed_household(prefix: str = "reject"):
         username=f"admin-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.admin,
-        approval_status=UserApprovalStatus.approved,
         ui_layout={},
     )
     member = User(
@@ -80,7 +78,6 @@ def _seed_household(prefix: str = "reject"):
         username=f"member-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.parent,
-        approval_status=UserApprovalStatus.approved,
         ui_layout={},
     )
     observer = User(
@@ -88,7 +85,6 @@ def _seed_household(prefix: str = "reject"):
         username=f"observer-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.parent,
-        approval_status=UserApprovalStatus.approved,
         ui_layout={},
     )
     db.add_all([household, admin, member, observer])

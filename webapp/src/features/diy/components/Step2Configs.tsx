@@ -66,7 +66,7 @@ export function Step2Configs({
                     Choose a Saved Config
                 </h1>
                 <p className="text-lg text-slate-600 dark:text-slate-400 dark:text-slate-400">
-                    Saved configs are grouped per board profile. Load one for {board.name} or create a new config before editing GPIO mappings.
+                    Saved configs stay scoped to the board profile they were created for. Load one for {board.name} or create a new config before editing GPIO mappings.
                 </p>
             </div>
 
@@ -154,7 +154,7 @@ export function Step2Configs({
                     <div>
                         <h2 className="text-xl font-bold text-slate-900 dark:text-white dark:text-white">Config Workspace</h2>
                         <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-400">
-                            Give this board config a clear name, then save it. Later the same board will show this config in the repair list automatically.
+                            Give this board config a clear name, then save it. Switching boards creates a new workspace instead of rewriting the saved config already attached to another board.
                         </p>
                     </div>
 

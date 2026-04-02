@@ -9,7 +9,7 @@ import uuid
 
 from app.api import router
 from app.database import Base, get_db
-from app.sql_models import AuthStatus, User, Household, HouseholdMembership, HouseholdRole, UserApprovalStatus, Room, DiyProject, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration, WifiCredential
+from app.sql_models import AuthStatus, User, Household, HouseholdMembership, HouseholdRole, Room, DiyProject, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration, WifiCredential
 from app.auth import get_password_hash, create_ota_token
 
 # Setup test DB
@@ -55,7 +55,6 @@ def create_test_data(db):
         username="admin",
         fullname="Admin",
         authentication=get_password_hash("password"),
-        approval_status=UserApprovalStatus.approved,
         account_type="admin"
     )
     db.add(user)
@@ -104,6 +103,7 @@ def create_test_data(db):
 def test_put_device_config_success():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
+    original_config = dict(project.config or {})
     
     # get token
     response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
@@ -135,14 +135,19 @@ def test_put_device_config_success():
     job = db.query(BuildJob).filter(BuildJob.id == job_id).first()
     assert job is not None
     assert job.status == JobStatus.queued
+    assert job.staged_project_config is not None
 
     db.refresh(project)
-    assert project.config["advertised_host"] == "192.168.1.25"
-    assert project.config["api_base_url"] == "http://192.168.1.25:3000/api/v1"
-    assert project.config["mqtt_broker"] == "192.168.1.25"
-    assert project.config["mqtt_port"] == 1883
-    assert project.config["target_key"] == "192.168.1.25|http://192.168.1.25:3000/api/v1|192.168.1.25|1883"
-    assert project.config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}]
+    assert project.config == original_config
+    assert project.pending_build_job_id == job_id
+    assert project.pending_config["advertised_host"] == "192.168.1.25"
+    assert project.pending_config["api_base_url"] == "http://192.168.1.25:3000/api/v1"
+    assert project.pending_config["mqtt_broker"] == "192.168.1.25"
+    assert project.pending_config["mqtt_port"] == 1883
+    assert project.pending_config["target_key"] == "192.168.1.25|http://192.168.1.25:3000/api/v1|192.168.1.25|1883"
+    assert project.pending_config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}]
+    assert job.staged_project_config == project.pending_config
+    assert project.wifi_credential_id is None
 
     db.refresh(device)
     assert len(device.pin_configurations) == 0
@@ -154,6 +159,11 @@ def test_put_device_config_success():
 def test_put_device_config_preserves_board_reported_pin_map_until_reconnect():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
+    project.config = {
+        "wifi_ssid": "test",
+        "wifi_password": "test",
+        "pins": [{"gpio": 8, "mode": "PWM", "label": "Saved Dimmer"}],
+    }
 
     db.add(
         PinConfiguration(
@@ -199,7 +209,8 @@ def test_put_device_config_preserves_board_reported_pin_map_until_reconnect():
     assert res.status_code == 200, res.text
 
     db.refresh(project)
-    assert project.config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}]
+    assert project.config["pins"] == [{"gpio": 8, "mode": "PWM", "label": "Saved Dimmer"}]
+    assert project.pending_config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}]
 
     db.refresh(device)
     assert len(device.pin_configurations) == 1
@@ -238,10 +249,10 @@ def test_put_device_config_prefers_forwarded_host_for_firmware_target():
 
     assert res.status_code == 200, res.text
     db.refresh(project)
-    assert project.config["advertised_host"] == "smart-home.local"
-    assert project.config["api_base_url"] == "https://smart-home.local:8443/api/v1"
-    assert project.config["mqtt_broker"] == "smart-home.local"
-    assert project.config["mqtt_port"] == 1883
+    assert project.pending_config["advertised_host"] == "smart-home.local"
+    assert project.pending_config["api_base_url"] == "https://smart-home.local:8443/api/v1"
+    assert project.pending_config["mqtt_broker"] == "smart-home.local"
+    assert project.pending_config["mqtt_port"] == 1883
 
 def test_put_device_config_normalizes_secure_companion_origin_to_http_lan_transport():
     db = TestingSessionLocal()
@@ -270,10 +281,10 @@ def test_put_device_config_normalizes_secure_companion_origin_to_http_lan_transp
 
     assert res.status_code == 200, res.text
     db.refresh(project)
-    assert project.config["advertised_host"] == "192.168.8.4"
-    assert project.config["api_base_url"] == "http://192.168.8.4:3000/api/v1"
-    assert project.config["mqtt_broker"] == "192.168.8.4"
-    assert project.config["mqtt_port"] == 1883
+    assert project.pending_config["advertised_host"] == "192.168.8.4"
+    assert project.pending_config["api_base_url"] == "http://192.168.8.4:3000/api/v1"
+    assert project.pending_config["mqtt_broker"] == "192.168.8.4"
+    assert project.pending_config["mqtt_port"] == 1883
 
 def test_put_device_config_rejects_docker_local_host():
     db = TestingSessionLocal()
@@ -414,12 +425,14 @@ def test_put_device_config_updates_selected_wifi_credential():
 
     assert res.status_code == 200, res.text
     db.refresh(project)
-    assert project.wifi_credential_id == wifi_credential.id
-    assert project.config["wifi_credential_id"] == wifi_credential.id
-    assert project.config["wifi_ssid"] == "Workshop-WiFi"
-    assert project.config["wifi_password"] == "WorkshopPass456"
+    assert project.wifi_credential_id is None
+    assert project.pending_config["wifi_credential_id"] == wifi_credential.id
+    assert project.pending_config["wifi_ssid"] == "Workshop-WiFi"
+    assert project.pending_config["wifi_password"] == "WorkshopPass456"
+    assert project.pending_build_job_id is not None
     job = db.query(BuildJob).filter(BuildJob.project_id == project.id).one()
     assert job.status == JobStatus.queued
+    assert job.staged_project_config == project.pending_config
 
 def test_put_device_config_invalid_payload_does_not_persist_or_create_job():
     db = TestingSessionLocal()
@@ -648,9 +661,17 @@ def test_mqtt_process_ota_status():
     
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
+    project.config = {"wifi_ssid": "test", "wifi_password": "test", "pins": [{"gpio": 8, "mode": "OUTPUT", "label": "Committed Relay"}]}
+    project.pending_config = {"wifi_ssid": "test", "wifi_password": "test", "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "Staged Relay"}]}
 
     job_id = str(uuid.uuid4())
-    job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.flashing,
+        staged_project_config=project.pending_config,
+    )
+    project.pending_build_job_id = job_id
     db.add(job)
     db.commit()
 
@@ -668,7 +689,11 @@ def test_mqtt_process_ota_status():
         mgr.process_state_message(device.device_id, payload_success)
     
     db.refresh(job)
+    db.refresh(project)
     assert job.status == JobStatus.flashed
+    assert project.config["pins"] == [{"gpio": 8, "mode": "OUTPUT", "label": "Committed Relay"}]
+    assert project.pending_config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "Staged Relay"}]
+    assert project.pending_build_job_id == job_id
 
     # setup another job for failure
     job2_id = str(uuid.uuid4())
@@ -1110,10 +1135,23 @@ def test_mqtt_reconcile_ota_success():
     
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
+    project.config = {"wifi_ssid": "test", "wifi_password": "test", "pins": [{"gpio": 8, "mode": "OUTPUT", "label": "Committed Relay"}]}
+    project.pending_config = {
+        "wifi_ssid": "Workshop-WiFi",
+        "wifi_password": "WorkshopPass456",
+        "wifi_credential_id": 9,
+        "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}],
+    }
     
     job_id = str(uuid.uuid4())
-    job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.flashing,
+        staged_project_config=project.pending_config,
+    )
     job.updated_at = datetime.utcnow() - timedelta(seconds=10)
+    project.pending_build_job_id = job_id
     db.add(job)
     device.provisioning_project_id = project.id
     db.commit()
@@ -1129,7 +1167,13 @@ def test_mqtt_reconcile_ota_success():
         mgr.process_state_message(device.device_id, payload)
         
     db.refresh(job)
+    db.refresh(project)
     assert job.status == JobStatus.flashed
+    assert project.config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}]
+    assert project.config["wifi_credential_id"] == 9
+    assert project.wifi_credential_id == 9
+    assert project.pending_config is None
+    assert project.pending_build_job_id is None
 
 
 def test_mqtt_state_persists_reported_firmware_revision():
@@ -1363,11 +1407,19 @@ def test_mqtt_register_recent_flashed_job_keeps_board_reported_pin_map_on_old_fi
 
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
+    project.config = {"wifi_ssid": "test", "wifi_password": "test", "pins": [{"gpio": 8, "mode": "OUTPUT", "label": "Committed Relay"}]}
+    project.pending_config = {"wifi_ssid": "test", "wifi_password": "test", "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "Staged Relay"}]}
 
     job_id = str(uuid.uuid4())
-    job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashed)
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.flashed,
+        staged_project_config=project.pending_config,
+    )
     job.finished_at = datetime.utcnow() - timedelta(seconds=5)
     job.updated_at = job.finished_at
+    project.pending_build_job_id = job_id
     db.add(job)
     device.provisioning_project_id = project.id
     db.commit()
@@ -1391,8 +1443,12 @@ def test_mqtt_register_recent_flashed_job_keeps_board_reported_pin_map_on_old_fi
 
     db.refresh(job)
     db.refresh(device)
+    db.refresh(project)
     assert job.status == JobStatus.flash_failed
     assert "OTA verification failed" in job.error_message
+    assert project.config["pins"] == [{"gpio": 8, "mode": "OUTPUT", "label": "Committed Relay"}]
+    assert project.pending_config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "Staged Relay"}]
+    assert project.pending_build_job_id == job_id
     assert len(device.pin_configurations) == 1
     assert device.pin_configurations[0].gpio_pin == 2
     assert device.pin_configurations[0].mode == "OUTPUT"

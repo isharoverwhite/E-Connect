@@ -40,7 +40,6 @@ from app.services.system_logs import (
     record_system_log,
 )
 from app.services.timezone_settings import apply_effective_timezone_context
-from app.services.user_management import ensure_temp_support_account
 from app.sql_models import Household, SystemLogCategory, SystemLogSeverity, User
 
 logger = logging.getLogger(__name__)
@@ -514,7 +513,6 @@ async def lifespan(app: FastAPI):
                 app,
                 apply_effective_timezone_context(household=primary_household),
             )
-            ensure_temp_support_account(db)
             app.state.firmware_network_audit = audit_runtime_firmware_target_mismatches(
                 db,
                 app.state.firmware_network_state,
