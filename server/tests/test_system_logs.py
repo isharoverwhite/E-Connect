@@ -25,7 +25,6 @@ from app.sql_models import (
     SystemLogCategory,
     SystemLogSeverity,
     User,
-    UserApprovalStatus,
 )
 
 
@@ -69,7 +68,6 @@ def create_admin_user(username: str = "logs-admin", household_timezone: str | No
             username=username,
             fullname="Logs Admin",
             authentication=get_password_hash("password"),
-            approval_status=UserApprovalStatus.approved,
             account_type=AccountType.admin,
         )
         household = Household(name="Logs Household", timezone=household_timezone)

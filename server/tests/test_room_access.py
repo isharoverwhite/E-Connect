@@ -26,7 +26,6 @@ from app.sql_models import (
     JobStatus,
     RoomPermission,
     User,
-    UserApprovalStatus,
     WifiCredential,
 )
 from main import app
@@ -80,7 +79,6 @@ def _seed_household(prefix: str = "room"):
         username=f"admin-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.admin,
-        approval_status=UserApprovalStatus.approved,
         ui_layout={},
     )
     member = User(
@@ -88,7 +86,6 @@ def _seed_household(prefix: str = "room"):
         username=f"member-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.parent,
-        approval_status=UserApprovalStatus.approved,
         ui_layout={},
     )
     observer = User(
@@ -96,7 +93,6 @@ def _seed_household(prefix: str = "room"):
         username=f"observer-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.parent,
-        approval_status=UserApprovalStatus.approved,
         ui_layout={},
     )
     db.add_all([household, admin, member, observer])
@@ -132,7 +128,6 @@ def _insert_household_admin(*, household_id: int, prefix: str) -> dict[str, obje
         username=f"{prefix}-admin",
         authentication="hashed-pass",
         account_type=AccountType.admin,
-        approval_status=UserApprovalStatus.approved,
         ui_layout={},
     )
     db.add(admin)

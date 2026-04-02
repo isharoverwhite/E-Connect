@@ -15,11 +15,6 @@ class HouseholdRole(str, enum.Enum):
     member = "member"
     guest = "guest"
 
-class UserApprovalStatus(str, enum.Enum):
-    pending = "pending"
-    approved = "approved"
-    revoked = "revoked"
-
 class AuthStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
@@ -82,7 +77,6 @@ class User(Base):
     username = Column(String(100), nullable=False, unique=True)
     authentication = Column(String(255), nullable=False) # hashed_password
     account_type = Column(Enum(AccountType), default=AccountType.parent)
-    approval_status = Column(Enum(UserApprovalStatus), default=UserApprovalStatus.approved, nullable=False)
     ui_layout = Column(JSON, comment='Lưu cấu hình Grid Layout cá nhân của từng user')
     created_at = Column(TIMESTAMP, server_default=func.now())
 
@@ -305,6 +299,8 @@ class DiyProject(Base):
     name = Column(String(255), nullable=False)
     board_profile = Column(String(100), nullable=False)
     config = Column(JSON, nullable=True, comment='Lưu trữ toàn bộ JSON map cấu hình pins, wifi, mqtt')
+    pending_config = Column(JSON, nullable=True, comment='Latest staged config waiting for OTA success before it becomes current')
+    pending_build_job_id = Column(String(36), nullable=True, comment='Build job id for the latest staged OTA config')
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
@@ -321,6 +317,7 @@ class BuildJob(Base):
     status = Column(Enum(JobStatus), default=JobStatus.queued)
     artifact_path = Column(String(255), nullable=True, comment='Đường dẫn tới file .bin sau khi build thành công')
     log_path = Column(String(255), nullable=True, comment='Đường dẫn tới file log build')
+    staged_project_config = Column(JSON, nullable=True, comment='Immutable config snapshot compiled for this build job')
     error_message = Column(Text, nullable=True, comment='Last error captured when build_failed')
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())

@@ -23,7 +23,6 @@ from app.sql_models import (
     SystemLogCategory,
     SystemLogSeverity,
     User,
-    UserApprovalStatus,
 )
 
 
@@ -51,7 +50,6 @@ def _seed_device(*, last_seen: datetime) -> tuple[str, int]:
             username=f"heartbeat-{uuid.uuid4()}",
             authentication="hashed-pass",
             account_type=AccountType.admin,
-            approval_status=UserApprovalStatus.approved,
             ui_layout={},
         )
         db.add_all([household, user])

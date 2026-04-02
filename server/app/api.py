@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Any, Callable, Literal, Union
 import ast
+import datetime as stdlib_datetime
 import json
 import logging
 import os
@@ -31,7 +32,7 @@ from .models import (
     SetupResponse, HouseholdResponse, TriggerResponse, ExecutionStatus, AutomationLogResponse,
     AutomationScheduleContextResponse,
     DiyProjectCreate, DiyProjectDeleteRequest, DiyProjectResponse, BuildJobResponse, JobStatus, SerialSessionResponse,
-    ManagedUserResponse, UserApprovalStatus, DiyProjectUsageResponse, ProjectDeviceUsage,
+    ManagedUserResponse, DiyProjectUsageResponse, ProjectDeviceUsage,
     WifiCredentialCreate, WifiCredentialUpdate, WifiCredentialRevealRequest, WifiCredentialResponse, WifiCredentialSecretResponse,
 )
 from .sql_models import (
@@ -39,7 +40,7 @@ from .sql_models import (
     Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
     AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, BuildJob, SerialSession, SerialSessionStatus,
     SystemLog, SystemLogCategory as SqlSystemLogCategory, SystemLogSeverity as SqlSystemLogSeverity,
-    UserApprovalStatus as SqlUserApprovalStatus, WifiCredential,
+    WifiCredential,
 )
 from .database import SessionLocal, get_db
 from .auth import (
@@ -72,7 +73,7 @@ from .services.device_registration import (
     register_device_payload,
 )
 from .services.diy_validation import resolve_board_definition, validate_diy_config
-from .services.user_management import ensure_temp_support_account, resolve_household_id_for_user
+from .services.user_management import resolve_household_id_for_user
 from .services.provisioning import derive_project_secret
 from .services.i2c_registry import I2CLibrary, get_i2c_catalog
 from .services.system_metrics import collect_system_metrics
@@ -143,7 +144,7 @@ def _issue_user_session_tokens(
     *,
     keep_login: bool,
 ) -> Token:
-    issued_at = datetime.now(timezone.utc)
+    issued_at = stdlib_datetime.datetime.now(timezone.utc)
     access_expires_at = None
     refresh_expires_at = None
 
@@ -541,25 +542,6 @@ def _raise_secure_pairing_error(message: str):
     )
 
 
-def _raise_user_approval_error(status: SqlUserApprovalStatus):
-    if status == SqlUserApprovalStatus.pending:
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "error": "approval_required",
-                "message": "Account pending approval by an administrator.",
-            },
-        )
-
-    raise HTTPException(
-        status_code=403,
-        detail={
-            "error": "account_revoked",
-            "message": "Account access has been revoked by an administrator.",
-        },
-    )
-
-
 def _raise_automation_graph_http_error(exc: AutomationGraphValidationError) -> None:
     raise HTTPException(
         status_code=400,
@@ -778,11 +760,9 @@ def _validate_room_permission_targets(
 
     memberships = (
         db.query(HouseholdMembership.user_id)
-        .join(User, User.user_id == HouseholdMembership.user_id)
         .filter(
             HouseholdMembership.household_id == household_id,
             HouseholdMembership.user_id.in_(unique_ids),
-            User.approval_status == SqlUserApprovalStatus.approved,
         )
         .all()
     )
@@ -1027,6 +1007,14 @@ def _stamp_wifi_credential_config(
     return stamped
 
 
+def _extract_wifi_credential_id_from_config(config_payload: Optional[dict[str, Any]]) -> Optional[int]:
+    if not isinstance(config_payload, dict):
+        return None
+
+    raw_value = config_payload.get("wifi_credential_id")
+    return raw_value if isinstance(raw_value, int) else None
+
+
 def _raise_legacy_ota_disabled() -> None:
     raise HTTPException(
         status_code=410,
@@ -1065,8 +1053,6 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     user = db.query(User).filter(User.username == token_data.username).first()
     if user is None:
         raise credentials_exception
-    if user.approval_status != SqlUserApprovalStatus.approved:
-        _raise_user_approval_error(user.approval_status)
 
     # Attach session household context dynamically for route handlers
     setattr(user, "current_household_id", token_data.household_id)
@@ -1105,8 +1091,8 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
         return
 
     user = db.query(User).filter(User.username == username).first()
-    if not user or user.approval_status != SqlUserApprovalStatus.approved:
-        await websocket.close(code=1008, reason="User missing or unapproved")
+    if not user:
+        await websocket.close(code=1008, reason="User missing")
         return
 
     acc_type_val = user.account_type.value if hasattr(user.account_type, "value") else str(user.account_type)
@@ -1146,7 +1132,6 @@ async def initialserver(payload: InitialServerRequest, db: Session = Depends(get
         username=payload.username,
         authentication=hashed_password,
         account_type=AccountType.admin, # Force admin
-        approval_status=SqlUserApprovalStatus.approved,
         ui_layout=payload.ui_layout or {}
     )
     db.add(new_user)
@@ -1180,8 +1165,6 @@ async def initialserver(payload: InitialServerRequest, db: Session = Depends(get
     db.add(membership)
     db.commit()
 
-    ensure_temp_support_account(db)
-
     return SetupResponse(user=new_user, household=new_household)
 
 @router.post("/users", response_model=UserResponse)
@@ -1202,7 +1185,6 @@ async def create_user(user_data: UserCreate, db: Session = Depends(get_db), admi
         username=user_data.username,
         authentication=hashed_password,
         account_type=user_data.account_type,
-        approval_status=SqlUserApprovalStatus.approved,
         ui_layout=user_data.ui_layout or {}
     )
     db.add(new_user)
@@ -1240,16 +1222,6 @@ async def list_users(db: Session = Depends(get_db), admin: User = Depends(get_ad
         .all()
     )
     return [_serialize_managed_user(membership.user, membership) for membership in memberships]
-
-
-@router.post("/users/{user_id}/approve", response_model=ManagedUserResponse)
-async def approve_user(user_id: int, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
-    membership = _get_managed_membership_or_404(db, admin, user_id)
-    membership.user.approval_status = SqlUserApprovalStatus.approved
-    db.commit()
-    db.refresh(membership.user)
-    return _serialize_managed_user(membership.user, membership)
-
 
 @router.delete("/users/{user_id}", response_model=dict)
 async def delete_user(user_id: int, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
@@ -1304,8 +1276,6 @@ async def login_for_access_token(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if user.approval_status != SqlUserApprovalStatus.approved:
-        _raise_user_approval_error(user.approval_status)
 
     # Find active household membership for context binding
     membership = _get_primary_membership(db, user)
@@ -1338,8 +1308,6 @@ async def refresh_access_token(payload: RefreshTokenRequest, db: Session = Depen
     user = db.query(User).filter(User.username == username).first()
     if user is None:
         raise credentials_exception
-    if user.approval_status != SqlUserApprovalStatus.approved:
-        _raise_user_approval_error(user.approval_status)
 
     membership = _get_primary_membership(db, user)
     return _issue_user_session_tokens(user, membership, keep_login=keep_login)
@@ -1957,12 +1925,18 @@ async def update_device_config(
     network_target_warning = describe_network_target_change(current_config, targets)
     if network_target_warning:
         validation_warnings.append(network_target_warning)
-    project.config = _stamp_project_network_targets(current_config, targets)
-    project.wifi_credential_id = wifi_credential.id
+    staged_config = _stamp_project_network_targets(current_config, targets)
 
     # Trigger rebuild only after validation passes and no active job exists.
-    job = BuildJob(id=str(uuid.uuid4()), project_id=project.id, status=JobStatus.queued)
+    job = BuildJob(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        status=JobStatus.queued,
+        staged_project_config=staged_config,
+    )
     db.add(job)
+    project.pending_config = staged_config
+    project.pending_build_job_id = job.id
     db.commit()
     db.refresh(job)
 
@@ -1973,7 +1947,11 @@ async def update_device_config(
         _background_session_factory(db),
     )
 
-    return {"status": "success", "job_id": job.id, "message": "Configuration saved and build started"}
+    return {
+        "status": "success",
+        "job_id": job.id,
+        "message": "Staged config queued and build started. The current saved config stays active until the board reports the rebuilt firmware.",
+    }
 
 @router.delete("/device/{device_id}")
 async def delete_device(device_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
@@ -2462,6 +2440,8 @@ async def update_diy_project(project_id: str, project_update: DiyProjectCreate, 
     project.room_id = room.room_id
     project.wifi_credential_id = wifi_credential.id
     project.config = _stamp_wifi_credential_config(project_update.config, wifi_credential)
+    project.pending_config = None
+    project.pending_build_job_id = None
     db.commit()
     db.refresh(project)
     return project

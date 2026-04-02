@@ -19,7 +19,6 @@ from app.sql_models import (
     Household,
     HouseholdMembership,
     HouseholdRole,
-    UserApprovalStatus,
     Room,
     DiyProject,
     BuildJob,
@@ -73,7 +72,6 @@ def create_test_user(
         username=username,
         fullname="Test User",
         authentication=get_password_hash("password"),
-        approval_status=UserApprovalStatus.approved,
         account_type=account_type,
     )
     db.add(user)
@@ -184,7 +182,6 @@ def test_owner_role_without_admin_account_cannot_crud_wifi_credentials():
         username="owner-no-admin",
         fullname="Owner But Not Admin",
         authentication=get_password_hash("password"),
-        approval_status=UserApprovalStatus.approved,
         account_type=AccountType.parent,
     )
     household = Household(name="Owner Household")

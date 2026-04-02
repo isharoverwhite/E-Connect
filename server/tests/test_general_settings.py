@@ -21,7 +21,6 @@ from app.sql_models import (
     HouseholdRole,
     SystemLog,
     User,
-    UserApprovalStatus,
 )
 
 
@@ -67,7 +66,6 @@ def create_admin_user(*, username: str = "timezone-admin", household_timezone: s
             username=username,
             fullname="Timezone Admin",
             authentication=get_password_hash("password"),
-            approval_status=UserApprovalStatus.approved,
             account_type=AccountType.admin,
         )
         household = Household(name="Timezone Household", timezone=household_timezone)

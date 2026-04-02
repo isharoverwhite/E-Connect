@@ -20,6 +20,7 @@ from app.services.builder import (
     build_job_firmware_version,
     describe_runtime_firmware_mismatch,
     extract_runtime_firmware_network_targets,
+    promote_build_job_project_config,
 )
 from app.services.system_logs import create_system_log, record_system_log
 from app.services.device_registration import (
@@ -91,6 +92,7 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> s
         matched_job.status = JobStatus.flashed
         matched_job.finished_at = now
         matched_job.updated_at = now
+        promote_build_job_project_config(matched_job)
         logger.info("Reconciled OTA job %s to flashed via firmware_version match.", matched_job.id)
         return "confirmed"
 
@@ -143,6 +145,7 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> s
 
     expected_version = build_job_firmware_version(recent_flashed_job.id)
     if reported_version == expected_version:
+        promote_build_job_project_config(recent_flashed_job)
         return "confirmed"
 
     _mark_ota_job_failed(

@@ -17,6 +17,7 @@ import {
   type BoardProfile,
   type ChipFamily,
 } from "@/features/diy/board-profiles";
+import { resolveProjectBoardProfileId } from "@/features/diy/project-board";
 import {
   type BuildJobStatus,
   type FlashManifest,
@@ -304,6 +305,8 @@ function createProjectPayload({
     room_id: roomId,
     family: board.family,
     board_id: board.id,
+    board_profile: board.id,
+    board_type: board.family,
     flash_source: flashSource,
     serial_port: serialPort,
     cpu_mhz: cpuMhz,
@@ -343,15 +346,6 @@ function sortProjects(projects: DiyProjectRecord[]) {
     const rightTime = Date.parse(right.updated_at || right.created_at || "");
     return rightTime - leftTime;
   });
-}
-
-function getProjectBoardId(project: DiyProjectRecord) {
-  const config = (project.config ?? {}) as Record<string, unknown>;
-  const rawBoardId =
-    typeof config.board_id === "string"
-      ? config.board_id
-      : project.board_profile;
-  return resolveBoardProfileId(rawBoardId) ?? project.board_profile;
 }
 
 function restoreDraftSnapshot(rawDraft: string | null) {
@@ -419,6 +413,7 @@ export default function DIYBuilderPage() {
   const [configBusy, setConfigBusy] = useState(false);
   const [projectSyncState, setProjectSyncState] = useState<ProjectSyncState>("loading");
   const [projectSyncMessage, setProjectSyncMessage] = useState("Loading server draft...");
+  const [attachedConfigBoardId, setAttachedConfigBoardId] = useState<string | null>(null);
   const [buildBusy, setBuildBusy] = useState(false);
   const [serverBuild, setServerBuild] = useState<ServerBuildState>(() => createEmptyBuildState());
   const [firmwareNetworkTarget, setFirmwareNetworkTarget] = useState<FirmwareNetworkTargetRecord | null>(null);
@@ -791,10 +786,12 @@ export default function DIYBuilderPage() {
       }
 
       const savedProject = (await response.json()) as DiyProjectRecord;
+      const savedProjectBoardId = resolveProjectBoardProfileId(savedProject);
       lastSavedPayloadRef.current = payloadJson;
       setProjectId(savedProject.id);
+      setAttachedConfigBoardId(savedProjectBoardId);
       setBoardConfigs((currentConfigs) =>
-        getProjectBoardId(savedProject) === board.id
+        savedProjectBoardId === board.id
           ? sortProjects([
               savedProject,
               ...currentConfigs.filter((project) => project.id !== savedProject.id),
@@ -1118,11 +1115,7 @@ export default function DIYBuilderPage() {
 
   const loadServerProject = useCallback(async (project: DiyProjectRecord) => {
     const config = (project.config ?? {}) as Record<string, unknown>;
-    const rawBoardId =
-      typeof config.board_id === "string"
-        ? config.board_id
-        : project.board_profile;
-    const resolvedBoardId = resolveBoardProfileId(rawBoardId) ?? DEFAULT_BOARD_ID;
+    const resolvedBoardId = resolveProjectBoardProfileId(project) ?? DEFAULT_BOARD_ID;
     const nextBoard = getBoardProfile(resolvedBoardId) ?? getBoardProfile(DEFAULT_BOARD_ID) ?? BOARD_PROFILES[0];
     const nextPins = sanitizePins(
       Array.isArray(config.pins) ? (config.pins as PinMapping[]) : [],
@@ -1149,6 +1142,7 @@ export default function DIYBuilderPage() {
     const shouldRewriteFlashSource = nextFlashSource !== config.flash_source;
 
     setProjectId(project.id);
+    setAttachedConfigBoardId(nextBoard.id);
     setProjectName(nextProjectName);
     setRoomId(
       typeof project.room_id === "number"
@@ -1324,6 +1318,7 @@ export default function DIYBuilderPage() {
           if (response.status === 404) {
             if (!cancelled) {
               setProjectId(null);
+              setAttachedConfigBoardId(null);
               lastSavedPayloadRef.current = null;
               setProjectSyncState("idle");
               setProjectSyncMessage("Saved local draft loaded. Choose or create a board config to continue.");
@@ -1374,6 +1369,27 @@ export default function DIYBuilderPage() {
 
     void refreshBoardConfigs();
   }, [board.id, draftLoaded, isAdmin, projectHydrated, refreshBoardConfigs]);
+
+  useEffect(() => {
+    if (!draftLoaded || !projectHydrated || !projectId || !attachedConfigBoardId) {
+      return;
+    }
+
+    if (board.id === attachedConfigBoardId) {
+      return;
+    }
+
+    const previousBoard = getBoardProfile(attachedConfigBoardId);
+    lastSavedPayloadRef.current = null;
+    setProjectId(null);
+    setAttachedConfigBoardId(null);
+    setServerBuild(createEmptyBuildState());
+    setProjectSyncState("idle");
+    setProjectSyncMessage(
+      `Board changed from ${previousBoard?.name ?? attachedConfigBoardId} to ${board.name}. ` +
+        "The original config stays attached to its saved board profile. Choose a saved config or create a new one for this board before continuing.",
+    );
+  }, [attachedConfigBoardId, board.id, board.name, draftLoaded, projectHydrated, projectId]);
 
   useEffect(() => {
     const nextOptions = BOARD_PROFILES.filter((profile) => profile.family === family);

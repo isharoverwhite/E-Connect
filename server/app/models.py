@@ -15,11 +15,6 @@ class HouseholdRole(str, Enum):
     member = "member"
     guest = "guest"
 
-class UserApprovalStatus(str, Enum):
-    pending = "pending"
-    approved = "approved"
-    revoked = "revoked"
-
 class AuthStatus(str, Enum):
     pending = "pending"
     approved = "approved"
@@ -115,7 +110,6 @@ class UserBase(BaseModel):
     fullname: str
     username: str = Field(..., min_length=3)
     account_type: AccountType = AccountType.parent
-    approval_status: UserApprovalStatus = UserApprovalStatus.pending
     ui_layout: Optional[Any] = None
 
 class UserCreate(UserBase):
@@ -460,6 +454,8 @@ class DiyProjectDeleteRequest(BaseModel):
 class DiyProjectResponse(DiyProjectBase):
     id: str
     user_id: int
+    pending_config: Optional[Dict[str, Any]] = None
+    pending_build_job_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 
@@ -517,6 +513,7 @@ class BuildJobResponse(BaseModel):
     status: JobStatus
     artifact_path: Optional[str] = None
     log_path: Optional[str] = None
+    staged_project_config: Optional[Dict[str, Any]] = None
     finished_at: Optional[datetime] = None
     error_message: Optional[str] = None
     created_at: datetime

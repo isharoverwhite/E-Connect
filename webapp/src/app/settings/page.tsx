@@ -8,7 +8,6 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import {
     ManagedUser,
     adminCreateUser,
-    approveManagedUser,
     fetchManagedUsers,
     getToken,
     deleteManagedUser,
@@ -70,7 +69,6 @@ function formatServerTimePreview(value?: string | null, timezone?: string | null
 type SettingsPanel = "general" | "users" | "rooms" | "wifi" | "configs";
 type AccountType = ManagedUser["account_type"];
 
-
 export default function SettingsPage() {
     const { user } = useAuth();
     const { showToast } = useToast();
@@ -117,6 +115,7 @@ export default function SettingsPage() {
         password: "",
         account_type: "parent" as AccountType,
     });
+    const assignableUsers = managedUsers.filter((entry) => entry.account_type !== "admin");
 
     useWebSocket((event) => {
         if (event.type === "system_metrics" && event.payload) {
@@ -344,9 +343,7 @@ export default function SettingsPage() {
                 password: "",
                 account_type: "parent" as AccountType,
             });
-            setNotice(
-                `Created ${createdUser.username}. The account is pending approval until an admin approves it.`,
-            );
+            setNotice(`Created ${createdUser.username}. The account is active immediately.`);
             await loadManagedUsers();
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to create user";
@@ -356,8 +353,7 @@ export default function SettingsPage() {
         }
     }
 
-    async function handleStatusChange(targetUser: ManagedUser, action: "approve" | "revoke" | "promote") {
-
+    async function handleStatusChange(targetUser: ManagedUser, action: "revoke" | "promote") {
         const token = getToken();
         if (!token) {
             setUsersError("Missing session token. Please sign in again.");
@@ -370,9 +366,7 @@ export default function SettingsPage() {
 
         try {
             let updatedUser = targetUser;
-            if (action === "approve") {
-                updatedUser = await approveManagedUser(targetUser.user_id, token);
-            } else if (action === "revoke") {
+            if (action === "revoke") {
                 await deleteManagedUser(targetUser.user_id, token);
             } else if (action === "promote") {
                 updatedUser = await promoteManagedUser(targetUser.user_id, token);
@@ -387,10 +381,8 @@ export default function SettingsPage() {
                     currentUsers.map((entry) => (entry.user_id === updatedUser.user_id ? updatedUser : entry)),
                 );
             }
-            
-            if (action === "approve") {
-                setNotice(`Approved ${updatedUser.username}.`);
-            } else if (action === "promote") {
+
+            if (action === "promote") {
                 setNotice("");
                 const newRole = updatedUser.account_type === "admin" ? "Admin" : "User";
                 showToast(`Changed ${updatedUser.username} role to ${newRole}.`, "success");
@@ -1034,26 +1026,11 @@ export default function SettingsPage() {
                                                                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 capitalize border border-slate-200 dark:border-slate-700">
                                                                                 {formatAccountTypeLabel(managedUser.account_type)}
                                                                             </span>
-                                                                            {managedUser.approval_status !== "approved" && (
-                                                                                <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold capitalize border ${managedUser.approval_status === "pending" ? "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-500/10 dark:text-amber-500 dark:border-amber-500/30" : "bg-rose-100 text-rose-800 border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/30"}`}>
-                                                                                    {managedUser.approval_status}
-                                                                                </span>
-                                                                            )}
                                                                         </div>
                                                                     </td>
                                                                     <td className="px-6 py-4 text-right">
                                                                         <div className="flex justify-end gap-2">
-                                                                            {managedUser.approval_status === "pending" && (
-                                                                                <button
-                                                                                    onClick={() => handleStatusChange(managedUser, "approve")}
-                                                                                    disabled={actionUserId === managedUser.user_id}
-                                                                                    className="text-slate-400 hover:text-emerald-500 transition-colors disabled:opacity-30 p-2 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-500/10 inline-flex items-center justify-center"
-                                                                                    title="Approve access"
-                                                                                >
-                                                                                    {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">check_circle</span>}
-                                                                                </button>
-                                                                            )}
-                                                                            {managedUser.approval_status === "approved" && managedUser.user_id !== 1 && managedUser.user_id !== user?.user_id ? (
+                                                                            {managedUser.user_id !== 1 && managedUser.user_id !== user?.user_id ? (
                                                                                 <button
                                                                                     onClick={() => setPromoteModalTarget(managedUser)}
                                                                                     disabled={actionUserId === managedUser.user_id}
@@ -1091,7 +1068,7 @@ export default function SettingsPage() {
                                     </div>
                                     <h2 className="mt-5 text-2xl font-semibold text-slate-900 dark:text-white">Admin access required</h2>
                                     <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-                                        This menu only appears for accounts with admin privileges. Sign in with an approved admin account such as the temporary QA account if you need to manage household users.
+                                        This menu only appears for accounts with admin privileges. Sign in with an admin account if you need to manage household users.
                                     </p>
                                 </section>
                             )
@@ -1106,7 +1083,7 @@ export default function SettingsPage() {
                                                 <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Create room</p>
                                                 <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Provision a room boundary</h2>
                                                 <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                    New rooms start private by default. Only admins retain access until you explicitly grant control to other approved household users.
+                                                    New rooms start private by default. Only admins retain access until you explicitly grant control to other household users.
                                                 </p>
                                             </div>
                                             <span className="material-icons-round rounded-2xl bg-primary/10 p-3 text-2xl text-primary">meeting_room</span>
@@ -1156,7 +1133,7 @@ export default function SettingsPage() {
                                                 <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Access matrix</p>
                                                 <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Room-level control assignments</h2>
                                                 <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                    Decide exactly which approved household users may operate devices inside each room.
+                                                    Decide exactly which household users may operate devices inside each room.
                                                 </p>
                                             </div>
                                             <button
@@ -1279,12 +1256,10 @@ export default function SettingsPage() {
                                                                         <p className="text-xs text-slate-500 dark:text-slate-400">Admins always have full access</p>
                                                                     </div>
                                                                     <div className="flex flex-wrap gap-2">
-                                                                        {managedUsers.filter(u => u.approval_status === "approved" && u.account_type !== "admin").length === 0 ? (
-                                                                            <p className="text-sm text-slate-500 dark:text-slate-400 italic">No approved household users available.</p>
+                                                                        {assignableUsers.length === 0 ? (
+                                                                            <p className="text-sm text-slate-500 dark:text-slate-400 italic">No household users available.</p>
                                                                         ) : (
-                                                                            managedUsers
-                                                                                .filter(u => u.approval_status === "approved" && u.account_type !== "admin")
-                                                                                .map(u => {
+                                                                            assignableUsers.map((u) => {
                                                                                     const isAllowed = room.allowed_user_ids?.includes(u.user_id) ?? false;
                                                                                     return (
                                                                                         <button
@@ -1318,7 +1293,7 @@ export default function SettingsPage() {
                                     </div>
                                     <h2 className="mt-5 text-2xl font-semibold text-slate-900 dark:text-white">Admin access required</h2>
                                     <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-                                        This menu only appears for accounts with admin privileges. Sign in with an approved admin account if you need to manage room boundaries and device access.
+                                        This menu only appears for accounts with admin privileges. Sign in with an admin account if you need to manage room boundaries and device access.
                                     </p>
                                 </section>
                             )

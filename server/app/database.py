@@ -77,12 +77,33 @@ def _ensure_column(table_name: str, column_name: str, sqlite_definition: str, ma
             conn.commit()
 
 
+def _drop_column_if_exists(table_name: str, column_name: str):
+    with engine.connect() as conn:
+        if DATABASE_URL.startswith("sqlite"):
+            existing_columns = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
+            if not any(column[1] == column_name for column in existing_columns):
+                return
+            conn.execute(text(f"ALTER TABLE {table_name} DROP COLUMN {column_name}"))
+            conn.commit()
+            return
+
+        result = conn.execute(text(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name AND COLUMN_NAME = :column_name"
+        ), {"table_name": table_name, "column_name": column_name})
+        if result.scalar() == 0:
+            return
+
+        conn.execute(text(f"ALTER TABLE {table_name} DROP COLUMN {column_name}"))
+        conn.commit()
+
+
 def _ensure_additive_columns():
     """Additive column guard for backwards-compatible schema changes."""
     column_guards = [
-        ("users", "approval_status", "VARCHAR(8) NOT NULL DEFAULT 'approved'", "VARCHAR(8) NOT NULL DEFAULT 'approved'"),
         ("build_jobs", "finished_at", "DATETIME", "DATETIME NULL"),
         ("build_jobs", "error_message", "TEXT", "TEXT NULL"),
+        ("build_jobs", "staged_project_config", "TEXT", "JSON NULL"),
         (
             "devices",
             "provisioning_project_id",
@@ -130,6 +151,18 @@ def _ensure_additive_columns():
             "wifi_credential_id",
             "INTEGER",
             "INT NULL",
+        ),
+        (
+            "diy_projects",
+            "pending_config",
+            "TEXT",
+            "JSON NULL",
+        ),
+        (
+            "diy_projects",
+            "pending_build_job_id",
+            "VARCHAR(36)",
+            "VARCHAR(36) NULL",
         ),
         (
             "automations",
@@ -211,6 +244,11 @@ def _ensure_additive_columns():
             )
 
     logger.info("Schema additive guards completed")
+
+
+def _remove_legacy_columns():
+    _drop_column_if_exists("users", "approval_status")
+    logger.info("Legacy column cleanup completed")
 
 
 def _backfill_room_household_ids():
@@ -313,6 +351,7 @@ def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
     for attempt in range(1, max_attempts + 1):
         try:
             Base.metadata.create_all(bind=engine)
+            _remove_legacy_columns()
             _ensure_additive_columns()
             _backfill_room_household_ids()
             _backfill_project_wifi_credentials()

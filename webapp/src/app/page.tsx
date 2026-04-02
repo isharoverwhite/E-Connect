@@ -514,28 +514,65 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
   const commandStateSynced =
     (optimisticToggleState === null || toggleTargetMatched) &&
     (optimisticSliderValue === null || sliderTargetMatched);
-  const keepOptimisticState =
-    pendingCmdId !== null && !failedPendingCommand && !commandStateSynced;
   const pending =
     requestPending || (pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced);
   const toggleLoading =
     optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
+  const sliderLoading =
+    optimisticSliderValue !== null && !sliderTargetMatched && !failedPendingCommand;
   const toggleState = baselineToggleState;
-  const sliderValue = keepOptimisticState
-    ? optimisticSliderValue ?? baselineSliderValue
+  const sliderValue = optimisticSliderValue !== null
+    ? optimisticSliderValue
     : baselineSliderValue;
+
+  // Effect to automatically clear optimistic state when fully synced
+  useEffect(() => {
+    if ((optimisticToggleState !== null || optimisticSliderValue !== null) && commandStateSynced) {
+      const timer = window.setTimeout(() => {
+        setOptimisticToggleState(null);
+        setOptimisticSliderValue(null);
+        setPendingCmdId(null);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [commandStateSynced, optimisticToggleState, optimisticSliderValue]);
+
+  // Effect to clear optimistic state shortly after delivery is confirmed.
+  // This prevents infinite "Syncing..." if an automation reverts the state or state update is lost.
+  useEffect(() => {
+    if (deliveryForPendingCommand || failedPendingCommand) {
+      const timer = window.setTimeout(() => {
+        setOptimisticToggleState(null);
+        setOptimisticSliderValue(null);
+        setPendingCmdId(null);
+      }, failedPendingCommand ? 0 : 500);
+      return () => window.clearTimeout(timer);
+    }
+  }, [deliveryForPendingCommand, failedPendingCommand]);
+
+  // Absolute fallback timeout for completely lost commands
+  useEffect(() => {
+    if (pendingCmdId !== null) {
+      const timer = window.setTimeout(() => {
+        setOptimisticToggleState(null);
+        setOptimisticSliderValue(null);
+        setPendingCmdId(null);
+      }, 3000);
+      return () => window.clearTimeout(timer);
+    }
+  }, [pendingCmdId]);
 
   const handleToggle = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const isChecked = e.target.checked;
     const targetPin = outputPin || pwmPin;
-    if (!targetPin) return;
+    if (!targetPin && !config.provider) return;
 
     setRequestPending(true);
     setPendingCmdId(null);
     setOptimisticToggleState(isChecked);
     setOptimisticSliderValue(!isChecked && (pwmPin || config.provider) ? 0 : null);
     try {
-      const payload = { kind: "action", pin: targetPin.gpio_pin, value: isChecked ? 1 : 0 };
+      const payload = { kind: "action", pin: targetPin?.gpio_pin || 0, value: isChecked ? 1 : 0 };
       const response = await sendDeviceCommand(config.device_id, payload);
       setRequestPending(false);
       if (response && response.status === "failed") {
@@ -642,8 +679,14 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
         </div>
         <div className="mb-4">
           <div className="flex justify-between items-end mb-2">
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Brightness</label>
-            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">{sliderValue}</span>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+              Brightness
+              {sliderLoading && <span className="h-3 w-3 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />}
+            </label>
+            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+              {sliderLoading && <span className="text-[10px] tracking-wide text-indigo-500/80 animate-pulse font-normal uppercase">Syncing...</span>}
+              {sliderValue}
+            </span>
           </div>
           <input
             type="range"
@@ -734,8 +777,14 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
         </div>
         <div className="mb-4">
           <div className="flex justify-between items-end mb-2">
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Brightness ({pwmRangeLabel})</label>
-            <span className="text-xs font-bold text-primary">{sliderValue}</span>
+            <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+              Brightness ({pwmRangeLabel})
+              {sliderLoading && <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />}
+            </label>
+            <span className="text-xs font-bold text-primary flex items-center gap-1.5">
+              {sliderLoading && <span className="text-[10px] tracking-wide text-primary/70 animate-pulse font-normal uppercase">Syncing...</span>}
+              {sliderValue}
+            </span>
           </div>
           <input
             type="range"

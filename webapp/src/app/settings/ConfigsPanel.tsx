@@ -4,7 +4,11 @@ import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { getToken } from "@/lib/auth";
 import { API_URL } from "@/lib/api";
-import { resolveBoardProfileId } from "@/features/diy/board-profiles";
+import {
+    getProjectBoardProfileLabel,
+    getProjectBoardTypeLabel,
+    resolveProjectBoardProfileId,
+} from "@/features/diy/project-board";
 import { SvgPinMapPreview } from "./SvgPinMapPreview";
 import type { PinMapping } from "@/features/diy/types";
 import { formatServerTimestamp } from "@/lib/server-time";
@@ -149,7 +153,11 @@ export function ConfigsPanel({ timezone }: { timezone?: string | null }) {
 
     const filteredConfigs = useMemo(() => {
         return configs.filter(config => {
-            const matchesSearch = config.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+            const boardTypeLabel = getProjectBoardTypeLabel(config).toLowerCase();
+            const boardProfileLabel = getProjectBoardProfileLabel(config).toLowerCase();
+            const matchesSearch = config.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  boardTypeLabel.includes(searchQuery.toLowerCase()) ||
+                                  boardProfileLabel.includes(searchQuery.toLowerCase()) ||
                                   config.board_profile.toLowerCase().includes(searchQuery.toLowerCase());
             const matchesFilter = filterType === "all" || config.usage_state === filterType;
             return matchesSearch && matchesFilter;
@@ -170,7 +178,7 @@ export function ConfigsPanel({ timezone }: { timezone?: string | null }) {
                 <h2 className="text-xl flex items-center gap-2 font-bold text-slate-900 dark:text-white">
                     Manage Saved Configs
                 </h2>
-                <p className="text-sm text-slate-500">View, search, and delete your DIY device configurations.</p>
+                <p className="text-sm text-slate-500">View, search, and manage DIY configs by their assigned board type and board profile.</p>
             </div>
 
             {error && (
@@ -223,7 +231,11 @@ export function ConfigsPanel({ timezone }: { timezone?: string | null }) {
                 </div>
             ) : (
                 <section className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                    {filteredConfigs.map(config => (
+                    {filteredConfigs.map(config => {
+                        const boardTypeLabel = getProjectBoardTypeLabel(config);
+                        const boardProfileLabel = getProjectBoardProfileLabel(config);
+
+                        return (
                         <div 
                             key={config.id} 
                             onClick={() => setSelectedConfig(config)} 
@@ -239,26 +251,34 @@ export function ConfigsPanel({ timezone }: { timezone?: string | null }) {
                                     </div>
                                     <p className="text-sm text-slate-500 dark:text-slate-400 flex items-center gap-1">
                                         <span className="material-symbols-outlined text-[16px]">memory</span>
-                                        {config.board_profile}
+                                        {boardTypeLabel}
+                                    </p>
+                                    <p className="text-xs text-slate-400 dark:text-slate-500">
+                                        Profile: {boardProfileLabel}
                                     </p>
                                 </div>
                                 <button 
                                     onClick={(e) => { e.stopPropagation(); openDeleteModal(config); }}
                                     disabled={config.usage_state === "in_use" || deletingId === config.id}
-                                    className={config.usage_state === "in_use" ? "text-slate-300 dark:text-slate-700 cursor-not-allowed group/info relative shrink-0 p-1" : "text-slate-400 hover:text-rose-500 transition-colors shrink-0 p-1 bg-transparent border-0 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-full"} 
+                                    className={config.usage_state === "in_use" ? "text-slate-300 dark:text-slate-700 cursor-not-allowed shrink-0 p-1" : "text-slate-400 hover:text-rose-500 transition-colors shrink-0 p-1 bg-transparent border-0 hover:bg-rose-50 dark:hover:bg-rose-500/10 rounded-full"}
                                     title={config.usage_state === "in_use" ? "Active configurations cannot be deleted" : "Delete unused config"}>
-                                    <span className="material-symbols-outlined text-[20px] leading-none">{deletingId === config.id ? "hourglass_empty" : "delete"}</span>
-                                    {config.usage_state === "in_use" && <span className="material-symbols-outlined absolute top-[-4px] right-[-4px] text-[12px] bg-slate-800 text-white rounded-full leading-none fill-icon">lock</span>}
+                                    {config.usage_state === "in_use" ? (
+                                        <span className="material-symbols-outlined text-[20px] leading-none">lock</span>
+                                    ) : (
+                                        <span className="material-symbols-outlined text-[20px] leading-none">{deletingId === config.id ? "hourglass_empty" : "delete"}</span>
+                                    )}
                                 </button>
                             </div>
                             
                             {config.usage_state === "in_use" ? (
                                 <div className="flex items-center gap-3 py-3 px-4 bg-primary/5 dark:bg-primary/10 rounded-lg">
-                                    <span className="text-sm font-medium text-primary">{config.devices.length} {config.devices.length === 1 ? 'Device' : 'Devices'} Connected</span>
+                                    <span className="text-sm font-medium text-primary">
+                                        Assigned to {config.devices.length} {config.devices.length === 1 ? 'board' : 'boards'}
+                                    </span>
                                 </div>
                             ) : (
                                 <div className="flex items-center gap-3 py-3 px-4 bg-slate-50 dark:bg-slate-800/50 rounded-lg">
-                                    <span className="text-sm text-slate-400 dark:text-slate-500 italic">No devices currently using this profile</span>
+                                    <span className="text-sm text-slate-400 dark:text-slate-500 italic">No boards currently assigned to this config</span>
                                 </div>
                             )}
 
@@ -277,7 +297,7 @@ export function ConfigsPanel({ timezone }: { timezone?: string | null }) {
                                 </button>
                             </div>
                         </div>
-                    ))}
+                    )})}
                 </section>
             )}
 
@@ -286,7 +306,7 @@ export function ConfigsPanel({ timezone }: { timezone?: string | null }) {
                     <div className="p-6 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/30">
                         <div>
                             <h2 className="text-lg font-bold text-slate-900 dark:text-white">{selectedConfig.name}</h2>
-                            <p className="text-sm text-slate-500">Configuration Details & Associated Devices</p>
+                            <p className="text-sm text-slate-500">Configuration Details & Board Assignments</p>
                         </div>
                         <button onClick={() => setSelectedConfig(null)} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 rounded-full transition-colors">
                             <span className="material-symbols-outlined">close</span>
@@ -295,16 +315,24 @@ export function ConfigsPanel({ timezone }: { timezone?: string | null }) {
                     
                     <div className="p-6 grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-8">
                         <div className="space-y-4">
+                            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/40">
+                                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Board Type</p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{getProjectBoardTypeLabel(selectedConfig)}</p>
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/40">
+                                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Board Profile</p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{getProjectBoardProfileLabel(selectedConfig)}</p>
+                                </div>
+                                <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/40">
+                                    <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">Assigned Boards</p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{selectedConfig.devices.length}</p>
+                                </div>
+                            </div>
                             <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">Board Pin Mapping</h3>
                             <div className="mt-2 w-full max-h-[460px] overflow-y-auto custom-scrollbar border border-slate-200 dark:border-slate-800 rounded-lg">
                                 <SvgPinMapPreview 
-                                    boardId={
-                                        resolveBoardProfileId(
-                                            (selectedConfig.config?.board_id as string)
-                                            || (selectedConfig.config?.board as string)
-                                            || selectedConfig.board_profile,
-                                        ) || "esp32-c3-super-mini"
-                                    } 
+                                    boardId={resolveProjectBoardProfileId(selectedConfig) || "esp32-c3-super-mini"}
                                     pins={(selectedConfig.config?.pins as PinMapping[]) || []} 
                                 />
                             </div>
@@ -319,9 +347,9 @@ export function ConfigsPanel({ timezone }: { timezone?: string | null }) {
                         </div>
 
                         <div className="space-y-4">
-                            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">Associated Devices ({selectedConfig.devices.length})</h3>
+                            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">Assigned Boards ({selectedConfig.devices.length})</h3>
                             {selectedConfig.devices.length === 0 ? (
-                                <p className="text-sm text-slate-500 italic">No associated devices</p>
+                                <p className="text-sm text-slate-500 italic">No boards are currently assigned to this config</p>
                             ) : (
                                 <div className="space-y-2 max-h-64 overflow-y-auto pr-2">
                                     {selectedConfig.devices.map(device => (

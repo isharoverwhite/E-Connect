@@ -20,6 +20,7 @@ export interface Step2PinsProps {
     onNext: () => void;
     onBack: () => void;
     nextLabel?: string;
+    nextDisabled?: boolean;
     backLabel?: string;
     exportLabel?: string;
 }
@@ -38,6 +39,7 @@ export function Step2Pins({
     onNext,
     onBack,
     nextLabel = "Validate Wiring",
+    nextDisabled = false,
     backLabel = "Back",
     exportLabel = "Save JSON",
 }: Step2PinsProps) {
@@ -522,7 +524,8 @@ export function Step2Pins({
 
                     <button
                         onClick={onNext}
-                        className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-3 rounded text-sm uppercase tracking-widest shadow-sm transition-colors active:shadow-none flex items-center justify-center gap-2 mt-1"
+                        disabled={nextDisabled}
+                        className={`w-full font-black py-3 rounded text-sm uppercase tracking-widest shadow-sm transition-colors active:shadow-none flex items-center justify-center gap-2 mt-1 ${nextDisabled ? 'bg-slate-300 text-slate-500 cursor-not-allowed dark:bg-slate-700 dark:text-slate-500' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}
                     >
                         <span className="material-symbols-outlined text-[18px]">bolt</span>
                         {nextLabel}
@@ -546,14 +549,15 @@ export function Step2Pins({
                     >
                         {({ zoomIn, zoomOut, resetTransform }) => (
                             <>
-                                <div className="absolute top-4 right-4 flex gap-1 z-20 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md p-1.5 rounded-lg shadow-sm border border-border-light dark:border-border-dark">
+                                <div className="absolute bottom-6 left-6 flex flex-col gap-1 z-20 bg-white/80 dark:bg-slate-800/80 backdrop-blur-md p-1.5 rounded-lg shadow-sm border border-border-light dark:border-border-dark">
                                     <button onClick={() => zoomIn()} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-300 transition-colors" title="Zoom In">
                                         <span className="material-symbols-outlined text-[20px]">zoom_in</span>
                                     </button>
+                                    <div className="h-px bg-border-light dark:bg-border-dark mx-1"></div>
                                     <button onClick={() => zoomOut()} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-300 transition-colors" title="Zoom Out">
                                         <span className="material-symbols-outlined text-[20px]">zoom_out</span>
                                     </button>
-                                    <div className="w-px bg-border-light dark:bg-border-dark my-1"></div>
+                                    <div className="h-px bg-border-light dark:bg-border-dark mx-1"></div>
                                     <button onClick={() => resetTransform()} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded text-slate-600 dark:text-slate-300 transition-colors" title="Reset View">
                                         <span className="material-symbols-outlined text-[20px]">fit_screen</span>
                                     </button>
