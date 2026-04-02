@@ -126,16 +126,33 @@
   - Only `admin` users may open the managed-device reconfiguration screen.
   - The screen must resolve the editable schema from the saved config board metadata first, then fall back to the linked DIY project board profile only when that metadata is missing.
   - The screen must load the latest staged OTA config as the editable desired config when one exists; otherwise it loads the committed DIY project pin map.
-  - The screen must expose a config-history list ordered by newest saved time first, keep only the latest `3` saved entries, and identify each entry by config/build id instead of by the board name.
+  - The screen must expose a config-history list ordered by newest saved time first, scoped to the current device UUID plus board profile, and it must not enforce a fixed history limit.
+  - Each history entry represents a saved config id, not a build-job id. The UI must treat build status as secondary metadata attached to that saved config.
   - Each config-history entry must show the user-provided config label plus the board assignment (`assigned to board`) using both board id and board name when available.
-  - The admin must be able to rename the config label before saving a rebuild; that label belongs to the saved config snapshot, not to the device identity itself.
+  - The admin must be able to rename the config label in both new-board setup and managed-device reconfiguration; that label belongs to the saved config snapshot, not to the device identity itself.
+  - The screen header must also show the config's assigned device name as an inline editable field with a pencil action next to the current value.
+  - Clicking the pencil must swap that assigned device-name text into a textbox; pressing `Enter` or blurring the textbox must stage the edited name into the current config draft without immediately mutating the live managed-device record.
+  - The board's real device name must stay unchanged until the rebuilt firmware is flashed successfully and the device reconnects with the new firmware identity.
+  - The admin must be able to open an old saved config, edit it in place, or clone it into a new saved config before editing.
+  - The `Config History` sidebar must expose an inline add action that clears the editor into a new empty draft, pre-fills the label `New Config`, and shows a visible draft card immediately before that draft is saved to the database.
   - The screen must separately show the board-reported active pin map and the currently committed project config that still drives runtime behavior until OTA is verified.
   - The screen must also show which saved Wi-Fi credential is currently attached to that managed device's linked DIY project and allow the admin to switch to another saved credential before rebuild.
   - The screen must surface inline `validation error`, `warning`, and `success` feedback for pin edits instead of relying on browser alerts alone.
-  - Saving a changed pin map is safety-sensitive because an invalid wiring or GPIO role can damage hardware; the save action must open a confirmation modal that requires the password of the signed-in account before the backend accepts the change.
-  - A wrong or missing password must keep the device config unchanged and show an inline error inside that confirmation modal.
-  - A successful confirmation must create a new config-history entry for the rebuild job, stage the updated pin mapping and selected Wi-Fi credential there, keep the committed project config unchanged until the board reports the rebuilt firmware successfully, and then promote that exact saved snapshot to current.
+  - A brand-new empty draft should not immediately frame the default `map at least one GPIO` requirement as a blocking red wiring-error banner; the screen should show a lighter informational draft state until the admin actually starts mapping pins.
+  - An empty config may still be saved into config history as a draft snapshot, even when it has no mapped GPIOs and no Wi-Fi selected yet.
+  - Empty config drafts must not start a rebuild, create a pending OTA job, or unlock flash actions until the admin adds at least one valid GPIO mapping and selects a saved Wi-Fi credential.
+  - Missing Wi-Fi selection must block build/rebuild, but it must not be rendered as a pin-wiring error immediately when the admin starts a new empty config.
+  - History entries that are neither the current committed config nor the pending OTA config must expose a guarded delete action that removes that saved config from history after password confirmation.
+  - The delete flow must preserve historical build-job snapshots and must reject deletion when the target config is still referenced by the committed device state, the pending OTA state, or an active build job.
+  - If the admin deletes the same old config that is currently loaded into the editor, the current editor values must stay available as an unsaved draft instead of being discarded silently.
+  - Saving a brand-new config entry, cloning an existing config into a new entry, or saving an empty draft must not require the signed-in account password.
+  - Overwriting an existing saved config entry in place must still require the password of the signed-in account, and a wrong or missing password must keep that saved config unchanged while showing an inline error in the save modal.
+  - A successful save must either update the selected saved config in place or create a new saved config entry, depending on the admin's choice, then stage that config for rebuild while keeping the committed project config unchanged until the board reports the rebuilt firmware successfully.
+  - The UI must send `config_id` when editing an existing saved config in place, and it must send `source_config_id` plus `create_new_config=true` when cloning an older config into a new saved config before rebuild.
+  - `Ctrl+S` / `Cmd+S` on this screen must trigger the same save confirmation flow instead of allowing the browser's default page-save behavior.
+  - The top navbar must not duplicate the rebuild CTA when the main pin-config workspace already owns the primary save/rebuild action.
   - The OTA dialog must stay blocked until the rebuild reaches `artifact_ready`, then allow the admin to send the OTA command for that exact build job.
+  - Sending or retrying the OTA command must require the password of the signed-in account, even when the config save that produced the build did not.
   - The OTA command must use the artifact URL derived from that exact build snapshot, not a freshly inferred runtime URL that may point at a different host or port.
   - The OTA dialog copy must distinguish the target firmware version from the board-reported current firmware version.
   - The OTA dialog must show `building`, `artifact_ready`, `flashing`, `flashed`, and `flash_failed` states, plus a clear close path when the build itself fails.
