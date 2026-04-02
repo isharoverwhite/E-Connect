@@ -126,13 +126,17 @@
   - Only `admin` users may open the managed-device reconfiguration screen.
   - The screen must resolve the editable schema from the saved config board metadata first, then fall back to the linked DIY project board profile only when that metadata is missing.
   - The screen must load the latest staged OTA config as the editable desired config when one exists; otherwise it loads the committed DIY project pin map.
+  - The screen must expose a config-history list ordered by newest saved time first, keep only the latest `3` saved entries, and identify each entry by config/build id instead of by the board name.
+  - Each config-history entry must show the user-provided config label plus the board assignment (`assigned to board`) using both board id and board name when available.
+  - The admin must be able to rename the config label before saving a rebuild; that label belongs to the saved config snapshot, not to the device identity itself.
   - The screen must separately show the board-reported active pin map and the currently committed project config that still drives runtime behavior until OTA is verified.
   - The screen must also show which saved Wi-Fi credential is currently attached to that managed device's linked DIY project and allow the admin to switch to another saved credential before rebuild.
   - The screen must surface inline `validation error`, `warning`, and `success` feedback for pin edits instead of relying on browser alerts alone.
   - Saving a changed pin map is safety-sensitive because an invalid wiring or GPIO role can damage hardware; the save action must open a confirmation modal that requires the password of the signed-in account before the backend accepts the change.
   - A wrong or missing password must keep the device config unchanged and show an inline error inside that confirmation modal.
-  - A successful confirmation must stage the updated pin mapping and selected Wi-Fi credential for the rebuild job, keep the committed project config unchanged until the board reports the rebuilt firmware successfully, and then promote that staged config to current.
+  - A successful confirmation must create a new config-history entry for the rebuild job, stage the updated pin mapping and selected Wi-Fi credential there, keep the committed project config unchanged until the board reports the rebuilt firmware successfully, and then promote that exact saved snapshot to current.
   - The OTA dialog must stay blocked until the rebuild reaches `artifact_ready`, then allow the admin to send the OTA command for that exact build job.
+  - The OTA command must use the artifact URL derived from that exact build snapshot, not a freshly inferred runtime URL that may point at a different host or port.
   - The OTA dialog copy must distinguish the target firmware version from the board-reported current firmware version.
   - The OTA dialog must show `building`, `artifact_ready`, `flashing`, `flashed`, and `flash_failed` states, plus a clear close path when the build itself fails.
   - After the OTA job reaches `flashed`, the dialog must wait for the board to report `online` again on the expected firmware version for that exact build before showing the final success state, then return the admin to the dashboard automatically.

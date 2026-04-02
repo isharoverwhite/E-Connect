@@ -1,6 +1,8 @@
 import logging
 import os
 import time
+import json
+from datetime import datetime, timezone
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
@@ -40,6 +42,7 @@ engine = create_engine(DATABASE_URL, **engine_options)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
+LEGACY_CONFIG_BUILD_POINTER_KEYS = ("latest_build_job_id", "latest_build_config_key")
 
 def _format_operational_error(exc: OperationalError) -> str:
     original_error = getattr(exc, "orig", None)
@@ -55,48 +58,180 @@ def check_database_connection():
         logger.warning("Database connectivity check failed: %s", error_message)
         return False, error_message
 
-def _ensure_column(table_name: str, column_name: str, sqlite_definition: str, maria_definition: str):
+def _column_exists(table_name: str, column_name: str) -> bool:
     with engine.connect() as conn:
         if DATABASE_URL.startswith("sqlite"):
             existing_columns = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
-            if not any(column[1] == column_name for column in existing_columns):
+            return any(column[1] == column_name for column in existing_columns)
+
+        result = conn.execute(text(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS "
+            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name AND COLUMN_NAME = :column_name"
+        ), {"table_name": table_name, "column_name": column_name})
+        return bool(result.scalar())
+
+def _ensure_column(table_name: str, column_name: str, sqlite_definition: str, maria_definition: str):
+    with engine.connect() as conn:
+        if DATABASE_URL.startswith("sqlite"):
+            if not _column_exists(table_name, column_name):
                 conn.execute(text(
                     f"ALTER TABLE {table_name} ADD COLUMN {column_name} {sqlite_definition}"
                 ))
                 conn.commit()
             return
 
-        result = conn.execute(text(
-            "SELECT COUNT(*) FROM information_schema.COLUMNS "
-            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name AND COLUMN_NAME = :column_name"
-        ), {"table_name": table_name, "column_name": column_name})
-        if result.scalar() == 0:
+        if not _column_exists(table_name, column_name):
             conn.execute(text(
                 f"ALTER TABLE {table_name} ADD COLUMN {column_name} {maria_definition}"
             ))
             conn.commit()
 
-
 def _drop_column_if_exists(table_name: str, column_name: str):
+    if not _column_exists(table_name, column_name):
+        return
+
     with engine.connect() as conn:
-        if DATABASE_URL.startswith("sqlite"):
-            existing_columns = conn.execute(text(f"PRAGMA table_info({table_name})")).fetchall()
-            if not any(column[1] == column_name for column in existing_columns):
-                return
-            conn.execute(text(f"ALTER TABLE {table_name} DROP COLUMN {column_name}"))
-            conn.commit()
-            return
-
-        result = conn.execute(text(
-            "SELECT COUNT(*) FROM information_schema.COLUMNS "
-            "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name AND COLUMN_NAME = :column_name"
-        ), {"table_name": table_name, "column_name": column_name})
-        if result.scalar() == 0:
-            return
-
         conn.execute(text(f"ALTER TABLE {table_name} DROP COLUMN {column_name}"))
         conn.commit()
 
+def _trimmed_string(value):
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+def _decode_json_object(value):
+    if isinstance(value, dict):
+        return dict(value)
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(decoded, dict):
+            return dict(decoded)
+    return None
+
+def _utc_isoformat(value):
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    if not isinstance(value, datetime):
+        return None
+    timestamp = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return timestamp.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+def _config_name_fallback(project_name: str | None, device_name: str | None) -> str:
+    return (device_name or project_name or "Saved config").strip() or "Saved config"
+
+def _resolve_project_device(project, linked_devices, *, preferred_payloads):
+    candidate_ids = []
+    candidate_names = []
+    for payload in preferred_payloads:
+        payload_json = _decode_json_object(payload)
+        if not payload_json:
+            continue
+        candidate_id = _trimmed_string(payload_json.get("assigned_device_id")) or _trimmed_string(payload_json.get("device_id"))
+        if candidate_id:
+            candidate_ids.append(candidate_id)
+        candidate_name = _trimmed_string(payload_json.get("assigned_device_name"))
+        if candidate_name:
+            candidate_names.append(candidate_name)
+
+    for candidate_id in candidate_ids:
+        matched = next((device for device in linked_devices if device.device_id == candidate_id), None)
+        if matched is not None:
+            return matched
+
+    for candidate_name in candidate_names:
+        matched = next((device for device in linked_devices if device.name == candidate_name), None)
+        if matched is not None:
+            return matched
+
+    project_name = _trimmed_string(getattr(project, "name", None))
+    if project_name:
+        matched = next((device for device in linked_devices if _trimmed_string(device.name) == project_name), None)
+        if matched is not None:
+            return matched
+
+    if len(linked_devices) == 1:
+        return linked_devices[0]
+
+    return linked_devices[0] if linked_devices else None
+
+def _normalize_build_history_snapshot(snapshot, *, job, project, device):
+    normalized = _decode_json_object(snapshot) or {}
+    changed = snapshot is None or not isinstance(snapshot, dict)
+
+    for legacy_key in LEGACY_CONFIG_BUILD_POINTER_KEYS:
+        if legacy_key in normalized:
+            normalized.pop(legacy_key, None)
+            changed = True
+
+    if not _trimmed_string(normalized.get("config_id")):
+        normalized["config_id"] = job.id
+        changed = True
+
+    project_name = _trimmed_string(getattr(project, "name", None)) if project is not None else None
+    device_name = _trimmed_string(getattr(device, "name", None)) if device is not None else None
+    if not _trimmed_string(normalized.get("config_name")):
+        normalized["config_name"] = _config_name_fallback(project_name, device_name)
+        changed = True
+
+    if device is not None:
+        if not _trimmed_string(normalized.get("assigned_device_id")):
+            normalized["assigned_device_id"] = device.device_id
+            changed = True
+        if not _trimmed_string(normalized.get("assigned_device_name")):
+            normalized["assigned_device_name"] = device.name
+            changed = True
+
+    if not _trimmed_string(normalized.get("saved_at")):
+        saved_at = _utc_isoformat(getattr(job, "created_at", None))
+        if saved_at:
+            normalized["saved_at"] = saved_at
+            changed = True
+
+    return normalized, changed
+
+def _normalize_project_config_payload(payload, *, project, device, valid_job_ids, fallback_job_id=None):
+    payload_json = _decode_json_object(payload)
+    if payload_json is None:
+        return payload, False
+
+    normalized = dict(payload_json)
+    changed = False
+    referenced_job_id = _trimmed_string(normalized.get("latest_build_job_id"))
+    if referenced_job_id is None and "latest_build_config_key" in normalized:
+        normalized.pop("latest_build_config_key", None)
+        changed = True
+    elif referenced_job_id and referenced_job_id not in valid_job_ids:
+        for legacy_key in LEGACY_CONFIG_BUILD_POINTER_KEYS:
+            if legacy_key in normalized:
+                normalized.pop(legacy_key, None)
+                changed = True
+
+    project_name = _trimmed_string(getattr(project, "name", None)) if project is not None else None
+    device_name = _trimmed_string(getattr(device, "name", None)) if device is not None else None
+    if not _trimmed_string(normalized.get("config_name")):
+        normalized["config_name"] = _config_name_fallback(project_name, device_name)
+        changed = True
+
+    if device is not None:
+        if not _trimmed_string(normalized.get("assigned_device_id")):
+            normalized["assigned_device_id"] = device.device_id
+            changed = True
+        if not _trimmed_string(normalized.get("assigned_device_name")):
+            normalized["assigned_device_name"] = device.name
+            changed = True
+
+    if fallback_job_id and not _trimmed_string(normalized.get("config_id")):
+        normalized["config_id"] = fallback_job_id
+        changed = True
+
+    if changed:
+        return normalized, True
+    return payload_json, False
 
 def _ensure_additive_columns():
     """Additive column guard for backwards-compatible schema changes."""
@@ -245,10 +380,115 @@ def _ensure_additive_columns():
 
     logger.info("Schema additive guards completed")
 
+def _backfill_legacy_build_history_metadata():
+    from .sql_models import BuildJob, Device, DiyProject
 
-def _remove_legacy_columns():
-    _drop_column_if_exists("users", "approval_status")
-    logger.info("Legacy column cleanup completed")
+    db = SessionLocal()
+    try:
+        projects = {project.id: project for project in db.query(DiyProject).all()}
+        devices_by_project = {}
+        for device in db.query(Device).filter(Device.provisioning_project_id.isnot(None)).all():
+            devices_by_project.setdefault(device.provisioning_project_id, []).append(device)
+
+        changed = False
+        for job in db.query(BuildJob).order_by(BuildJob.created_at.asc(), BuildJob.id.asc()).all():
+            project = projects.get(job.project_id)
+            linked_devices = devices_by_project.get(job.project_id, [])
+            resolved_device = _resolve_project_device(
+                project,
+                linked_devices,
+                preferred_payloads=(
+                    job.staged_project_config,
+                    getattr(project, "pending_config", None) if project is not None else None,
+                    getattr(project, "config", None) if project is not None else None,
+                ),
+            )
+            normalized_snapshot, snapshot_changed = _normalize_build_history_snapshot(
+                job.staged_project_config,
+                job=job,
+                project=project,
+                device=resolved_device,
+            )
+            if snapshot_changed:
+                job.staged_project_config = normalized_snapshot
+                changed = True
+
+        if changed:
+            db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("Legacy build history metadata backfill failed (non-fatal): %s", exc)
+    finally:
+        db.close()
+
+def _cleanup_project_board_config_data():
+    from .sql_models import BuildJob, Device, DiyProject
+
+    db = SessionLocal()
+    try:
+        projects = db.query(DiyProject).all()
+        valid_job_ids_by_project = {}
+        for project_id, job_id in db.query(BuildJob.project_id, BuildJob.id).all():
+            valid_job_ids_by_project.setdefault(project_id, set()).add(job_id)
+
+        devices_by_project = {}
+        for device in db.query(Device).filter(Device.provisioning_project_id.isnot(None)).all():
+            devices_by_project.setdefault(device.provisioning_project_id, []).append(device)
+
+        changed = False
+        for project in projects:
+            valid_job_ids = valid_job_ids_by_project.get(project.id, set())
+            resolved_device = _resolve_project_device(
+                project,
+                devices_by_project.get(project.id, []),
+                preferred_payloads=(project.pending_config, project.config),
+            )
+
+            normalized_config, config_changed = _normalize_project_config_payload(
+                project.config,
+                project=project,
+                device=resolved_device,
+                valid_job_ids=valid_job_ids,
+            )
+            if config_changed:
+                project.config = normalized_config
+                changed = True
+
+            pending_job_id = _trimmed_string(project.pending_build_job_id)
+            if pending_job_id and pending_job_id not in valid_job_ids:
+                project.pending_build_job_id = None
+                project.pending_config = None
+                changed = True
+                pending_job_id = None
+            elif pending_job_id is None and project.pending_config is not None:
+                project.pending_config = None
+                changed = True
+
+            if pending_job_id:
+                normalized_pending_config, pending_changed = _normalize_project_config_payload(
+                    project.pending_config,
+                    project=project,
+                    device=resolved_device,
+                    valid_job_ids=valid_job_ids,
+                    fallback_job_id=pending_job_id,
+                )
+                if pending_changed:
+                    project.pending_config = normalized_pending_config
+                    changed = True
+
+        if changed:
+            db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("Board config cleanup failed (non-fatal): %s", exc)
+    finally:
+        db.close()
+
+def _cleanup_legacy_user_approval_status():
+    try:
+        _drop_column_if_exists("users", "approval_status")
+    except Exception as exc:
+        logger.warning("Legacy users.approval_status cleanup failed (non-fatal): %s", exc)
 
 
 def _backfill_room_household_ids():
@@ -351,10 +591,12 @@ def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
     for attempt in range(1, max_attempts + 1):
         try:
             Base.metadata.create_all(bind=engine)
-            _remove_legacy_columns()
             _ensure_additive_columns()
             _backfill_room_household_ids()
             _backfill_project_wifi_credentials()
+            _backfill_legacy_build_history_metadata()
+            _cleanup_project_board_config_data()
+            _cleanup_legacy_user_approval_status()
             logger.info("Database schema is ready")
             return True, None
         except SQLAlchemyError as exc:
