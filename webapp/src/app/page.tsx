@@ -2,20 +2,55 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchDashboardDevices, fetchDevices, sendDeviceCommand } from "@/lib/api";
+import { fetchDashboardDevices, fetchDevices, sendDeviceCommand, fetchSystemLogs, markSystemLogRead, markAllSystemLogsRead, SystemLogEntry, fetchSystemStatus } from "@/lib/api";
 import { getActivePinConfigurations, getStatePins as readStatePins } from "@/lib/device-config";
 import { useAuth } from "@/components/AuthProvider";
 import Sidebar from '@/components/Sidebar';
-import { DeviceConfig, DeviceStatePin, DeviceStateSnapshot } from "@/types/device";
+import { DeviceConfig, DeviceStatePin, DeviceStateSnapshot, PinConfig } from "@/types/device";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { Rnd } from "react-rnd";
+
+type CanvasLayout = { x: number; y: number; w: number | string; h: number | string };
+
+const getCardMinHeight = (config: DeviceConfig) => {
+  if (config.provider) {
+    return 210; // Extension Card
+  }
+  
+  const pins = getActivePinConfigurations(config);
+  if (pins.length === 0) return 130; // empty state
+  
+  let h = 100; // Base: Header (~80px) + bottom padding (~20px)
+  let i2c = false;
+  
+  for (const p of pins) {
+    if (p.mode === 'I2C') {
+      if (!i2c) {
+        h += 55;
+        i2c = true;
+      }
+    } else if (p.mode === 'PWM') {
+      h += 75; // PWM slider UI takes more vertical space
+    } else {
+      h += 55; // Standard toggle/status row
+    }
+  }
+  return Math.ceil(h * 1.05);
+};
 
 export default function Dashboard() {
   const { user } = useAuth();
   const router = useRouter();
   const [devices, setDevices] = useState<DeviceConfig[]>([]);
   const [pairingRequests, setPairingRequests] = useState<DeviceConfig[]>([]);
+  const [systemLogs, setSystemLogs] = useState<SystemLogEntry[]>([]);
+  const [latestFirmwareRevision, setLatestFirmwareRevision] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [mountDropdown, setMountDropdown] = useState(false);
+  const [filterStatus, setFilterStatus] = useState<"all" | "online" | "offline">("all");
+  const [isClearing, setIsClearing] = useState(false);
+  const [clearingItemIds, setClearingItemIds] = useState<Set<string>>(new Set());
   const [dismissedNotifIds, setDismissedNotifIds] = useState<Set<string>>(() => {
     if (typeof window !== "undefined") {
       try {
@@ -25,14 +60,41 @@ export default function Dashboard() {
     }
     return new Set<string>();
   });
+  
+  const [isCustomizeMode, setIsCustomizeMode] = useState(false);
+  const [canvasLayouts, setCanvasLayouts] = useState<Record<string, CanvasLayout>>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("dashboardCanvasLayout");
+        if (saved) return JSON.parse(saved);
+      } catch {}
+    }
+    return {};
+  });
+
+  const saveCanvasLayout = () => {
+    localStorage.setItem("dashboardCanvasLayout", JSON.stringify(canvasLayouts));
+    setIsCustomizeMode(false);
+  };
+
+  const resetCanvasLayout = () => {
+    localStorage.removeItem("dashboardCanvasLayout");
+    setCanvasLayouts({});
+    setIsCustomizeMode(false);
+  };
+
   const isAdmin = user?.account_type === "admin";
   async function syncDashboardData() {
-    const [dashboardDevices, pendingRequests] = await Promise.all([
+    const [dashboardDevices, pendingRequests, logsRes, statusRes] = await Promise.all([
       fetchDashboardDevices(),
       isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
+      isAdmin ? fetchSystemLogs(undefined, 50) : Promise.resolve({ entries: [] }),
+      isAdmin ? fetchSystemStatus() : Promise.resolve(null),
     ]);
     setDevices(dashboardDevices);
     setPairingRequests((pendingRequests as DeviceConfig[]) || []);
+    if (isAdmin) setSystemLogs(logsRes.entries);
+    if (statusRes) setLatestFirmwareRevision(statusRes.latest_firmware_revision || null);
     setLoading(false);
   }
 
@@ -95,15 +157,19 @@ export default function Dashboard() {
     // Debounce the fetch slightly to prevent rapid double-fetching if WS connects instantly
     const timeoutId = window.setTimeout(() => {
       void (async () => {
-        const [dashboardDevices, pendingRequests] = await Promise.all([
+        const [dashboardDevices, pendingRequests, logsRes, statusRes] = await Promise.all([
           fetchDashboardDevices(),
           isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
+          isAdmin ? fetchSystemLogs(undefined, 50) : Promise.resolve({ entries: [] }),
+          isAdmin ? fetchSystemStatus() : Promise.resolve(null),
         ]);
         if (cancelled) {
           return;
         }
         setDevices(dashboardDevices);
         setPairingRequests((pendingRequests as DeviceConfig[]) || []);
+        if (isAdmin) setSystemLogs(logsRes.entries);
+        if (statusRes) setLatestFirmwareRevision(statusRes.latest_firmware_revision || null);
         setLoading(false);
       })();
     }, 50);
@@ -119,35 +185,56 @@ export default function Dashboard() {
   };
 
   const approvedDevices = devices.filter((device) => device.auth_status === "approved");
-  const onlineCount = devices.filter(isDeviceOnline).length;
+  const onlineDevices = approvedDevices.filter(isDeviceOnline);
+  const offlineDevices = approvedDevices.filter((d) => !isDeviceOnline(d));
+
+  const onlineCount = onlineDevices.length;
+  const outdatedDevices = useMemo(() => {
+    if (!latestFirmwareRevision || devices.length === 0) return [];
+    return devices.filter(d => !!d.firmware_revision && d.firmware_revision !== latestFirmwareRevision);
+  }, [devices, latestFirmwareRevision]);
   const oneWeekAgo = new Date();
   oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
   const newThisWeek = devices.filter(d => d.created_at && new Date(d.created_at) > oneWeekAgo).length;
 
-  const offlineDevices = devices.filter(d => !isDeviceOnline(d) && d.auth_status === "approved");
+  const visibleNotifications = useMemo(() => {
+    return systemLogs.filter(n => !dismissedNotifIds.has(n.id.toString()));
+  }, [systemLogs, dismissedNotifIds]);
 
-  const allNotifications = useMemo(() => {
-    const notifs: Array<{ id: string; type: 'offline'; device: DeviceConfig }> = [];
-    offlineDevices.forEach(dev => {
-      notifs.push({
-        id: `offline-${dev.device_id}-${dev.last_seen || ''}`,
-        type: 'offline' as const,
-        device: dev,
-      });
-    });
-    return notifs;
-  }, [offlineDevices]);
+  const alertCount = visibleNotifications.filter(n => !n.is_read).length;
 
-  const visibleNotifications = allNotifications.filter(n => !dismissedNotifIds.has(n.id));
-  const alertCount = visibleNotifications.length;
+  const toggleDropdown = () => {
+    if (showNotifications) {
+      setShowNotifications(false);
+      setTimeout(() => setMountDropdown(false), 200);
+    } else {
+      setMountDropdown(true);
+      setTimeout(() => setShowNotifications(true), 10);
+    }
+  };
 
   const handleClearAll = async () => {
-    const newDismissed = new Set(dismissedNotifIds);
-    for (const n of allNotifications) {
-      newDismissed.add(n.id);
+    setIsClearing(true);
+    setTimeout(async () => {
+      const newDismissed = new Set(dismissedNotifIds);
+      for (const n of visibleNotifications) {
+        newDismissed.add(n.id.toString());
+      }
+      setDismissedNotifIds(newDismissed);
+      try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(newDismissed))); } catch {}
+
+      setSystemLogs(prev => prev.map(n => ({...n, is_read: true})));
+      try { await markAllSystemLogsRead(); } catch {}
+      setIsClearing(false);
+    }, 400); // Wait for slide out animation
+  };
+
+  const handleSingleNotifClick = async (notif: SystemLogEntry) => {
+    if (!notif.is_read) {
+       setSystemLogs(prev => prev.map(n => n.id === notif.id ? { ...n, is_read: true } : n));
+       try { await markSystemLogRead(notif.id); } catch {}
     }
-    setDismissedNotifIds(newDismissed);
-    try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(newDismissed))); } catch {}
+    router.push("/logs?view=alerts");
   };
 
   return (
@@ -161,7 +248,7 @@ export default function Dashboard() {
             <div className="relative group">
               <button
                 className="w-10 h-10 flex items-center justify-center text-primary bg-blue-50 dark:bg-blue-500/10 rounded-full transition-colors relative outline-none ring-2 ring-blue-100 dark:ring-blue-900/30"
-                onClick={() => setShowNotifications(!showNotifications)}
+                onClick={toggleDropdown}
               >
                 <span className="material-icons-round">notifications</span>
                 {alertCount > 0 && (
@@ -172,8 +259,10 @@ export default function Dashboard() {
                 )}
               </button>
 
-              {showNotifications && (
-                <div className="absolute right-0 top-full mt-3 w-80 sm:w-96 bg-surface-light dark:bg-surface-dark rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+              {mountDropdown && (
+                <div 
+                  className={`absolute right-0 top-full mt-3 w-80 sm:w-96 bg-surface-light dark:bg-surface-dark rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 transition-all duration-200 origin-top-right transform ${showNotifications ? 'scale-100 opacity-100' : 'scale-95 opacity-0'}`}
+                >
                   <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/50 backdrop-blur-sm">
                     <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-100">Notifications</h3>
                     {visibleNotifications.length > 0 && (
@@ -181,8 +270,8 @@ export default function Dashboard() {
                         onClick={handleClearAll}
                         className="text-xs font-medium text-slate-500 hover:text-red-500 transition-colors flex items-center gap-1"
                       >
-                        <span className="material-icons-round text-[14px]">delete_sweep</span>
-                        Clear all
+                        <span className="material-icons-round text-[14px]">done_all</span>
+                        Make all read
                       </button>
                     )}
                   </div>
@@ -193,34 +282,63 @@ export default function Dashboard() {
                         <p>No new notifications</p>
                       </div>
                     ) : (
-                      visibleNotifications.map(notif => {
+                      visibleNotifications.map((notif, idx) => {
+                          const isUnread = !notif.is_read;
+                          const severityColor = notif.severity === 'info' ? 'text-sky-500 bg-sky-100 dark:bg-sky-500/10 dark:text-sky-400' :
+                                                notif.severity === 'warning' ? 'text-amber-500 bg-amber-100 dark:bg-amber-500/10 dark:text-amber-400' :
+                                                notif.severity === 'error' ? 'text-rose-500 bg-rose-100 dark:bg-rose-500/10 dark:text-rose-400' :
+                                                'text-red-500 bg-red-100 dark:bg-red-500/10 dark:text-red-400';
+                          const icon = notif.severity === 'info' ? 'info' :
+                                       notif.severity === 'warning' ? 'warning' :
+                                       notif.severity === 'error' ? 'error' : 'report';
                           return (
-                            <div key={notif.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 transition-colors group">
+                            <div key={notif.id} 
+                              className={`p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 group/notif cursor-pointer relative transition-all duration-400 ease-in-out ${isClearing || clearingItemIds.has(notif.id.toString()) ? 'opacity-0 -translate-x-full' : 'opacity-100 translate-x-0'}`}
+                              style={{ transitionDelay: isClearing ? `${idx * 40}ms` : '0ms' }}
+                              onClick={() => handleSingleNotifClick(notif)}
+                            >
                               <div className="flex gap-3">
                                 <div className="flex-shrink-0 mt-1">
-                                  <div className="w-8 h-8 rounded-full bg-red-100 dark:bg-red-900/20 flex items-center justify-center text-red-500 dark:text-red-400 group-hover:bg-red-200 dark:group-hover:bg-red-900/40 transition-colors">
-                                    <span className="material-icons-round text-lg">wifi_off</span>
+                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${severityColor}`}>
+                                    <span className="material-icons-round text-lg">{icon}</span>
                                   </div>
                                 </div>
-                                <div className="flex-1">
+                                <div className="flex-1 min-w-0">
                                   <div className="flex justify-between items-start mb-1">
-                                    <p className="text-sm font-medium text-slate-900 dark:text-white mt-1">{notif.device.name} Offline</p>
+                                    <p className={`text-sm text-slate-900 flex items-center gap-2 dark:text-white mt-1 capitalize ${isUnread ? 'font-bold' : 'font-medium'}`}>
+                                      {notif.category}
+                                      {isUnread && <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>}
+                                    </p>
                                     <button
-                                      onClick={() => {
-                                        setDismissedNotifIds(prev => {
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setClearingItemIds(prev => {
                                           const next = new Set(prev);
-                                          next.add(notif.id);
-                                          try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(next))); } catch {}
+                                          next.add(notif.id.toString());
                                           return next;
                                         });
+                                        setTimeout(() => {
+                                          setDismissedNotifIds(prev => {
+                                            const next = new Set(prev);
+                                            next.add(notif.id.toString());
+                                            try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(next))); } catch {}
+                                            return next;
+                                          });
+                                          setClearingItemIds(prev => {
+                                            const next = new Set(prev);
+                                            next.delete(notif.id.toString());
+                                            return next;
+                                          });
+                                        }, 400);
                                       }}
-                                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 opacity-0 group-hover:opacity-100 transition-opacity rounded-full hover:bg-slate-100 dark:hover:bg-slate-700"
+                                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 opacity-0 group-hover/notif:opacity-100 transition-opacity rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 flex-shrink-0 ml-2"
                                       title="Dismiss"
                                     >
                                       <span className="material-icons-round text-sm">close</span>
                                     </button>
                                   </div>
-                                  <p className="text-xs text-slate-500 dark:text-slate-400">Connection lost to {notif.device.board || 'Device'}.</p>
+                                  <p className={`text-xs break-all sm:break-words ${isUnread ? 'text-slate-700 dark:text-slate-300 font-medium' : 'text-slate-500 dark:text-slate-400'}`}>{notif.message}</p>
+                                  <p className="text-[10px] text-slate-400 mt-1">{new Date(notif.occurred_at).toLocaleString()}</p>
                                 </div>
                               </div>
                             </div>
@@ -267,9 +385,15 @@ export default function Dashboard() {
                 <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">Total Devices</p>
                   <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{loading ? '--' : devices.length.toString().padStart(2, '0')}</h3>
-                  <div className="mt-2 text-xs text-green-600 dark:text-green-400 flex items-center font-medium">
-                    <span className="material-icons-round text-sm mr-1">trending_up</span>
-                    {newThisWeek > 0 ? `+${newThisWeek} New this week` : 'Up to date'}
+                  <div className={`mt-2 text-xs flex items-center font-medium ${outdatedDevices.length > 0 ? "text-green-600 dark:text-green-400 animate-[pulse_1.5s_ease-in-out_infinite]" : "text-slate-500 dark:text-slate-400"}`}>
+                    <span className="material-icons-round text-sm mr-1">{outdatedDevices.length > 0 ? "system_update" : "trending_up"}</span>
+                    {outdatedDevices.length > 0 ? (
+                        <div className="flex items-center gap-1">
+                            <span>{outdatedDevices.length} devices update</span>
+                            <span className="material-icons-round text-[10px]">arrow_forward</span>
+                            <span className="font-mono">{latestFirmwareRevision}</span>
+                        </div>
+                    ) : newThisWeek > 0 ? <span className="text-green-600 dark:text-green-400">{`+${newThisWeek} New this week`}</span> : 'Up to date'}
                   </div>
                 </div>
               </div>
@@ -325,22 +449,66 @@ export default function Dashboard() {
 
             <div className="mb-8">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Quick Controls</h2>
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Canvas Panel</h2>
                 <div className="flex space-x-2">
-                  <button className="flex items-center px-3 py-1.5 border border-slate-300 dark:border-slate-600 rounded text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700">
-                    <span className="material-icons-round text-sm mr-2">tune</span> Customize
-                  </button>
+                  {isCustomizeMode ? (
+                    <>
+                      <button onClick={resetCanvasLayout} className="flex items-center px-3 py-1.5 border border-red-300 dark:border-red-600 rounded bg-white dark:bg-slate-800 shadow-sm text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
+                        <span className="material-icons-round text-[16px] mr-1.5">restart_alt</span> Reset
+                      </button>
+                      <button onClick={saveCanvasLayout} className="flex items-center px-3 py-1.5 bg-primary text-white rounded shadow-sm text-sm font-medium hover:bg-blue-600 transition-colors">
+                        <span className="material-icons-round text-[16px] mr-1.5">save</span> Save Layout
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={() => setIsCustomizeMode(true)} className="flex items-center px-3 py-1.5 border border-slate-300 dark:border-slate-600 rounded text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors bg-white dark:bg-slate-800 shadow-sm font-medium">
+                      <span className="material-icons-round text-[16px] mr-1.5">tune</span> Customize
+                    </button>
+                  )}
                 </div>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+              <div className={`relative min-h-[600px] w-full rounded-xl transition-colors duration-300 overflow-hidden ${isCustomizeMode ? 'bg-slate-100 dark:bg-slate-800/80 border-2 border-dashed border-primary/50' : ''}`}>
                 {loading ? (
-                  <div className="col-span-full py-12 text-center text-slate-400">Loading devices...</div>
+                  <div className="py-12 text-center text-slate-400">Loading devices...</div>
                 ) : approvedDevices.length === 0 ? (
-                  <div className="col-span-full py-12 text-center text-slate-400">No devices found.</div>
+                  <div className="py-12 text-center text-slate-400">No devices found.</div>
                 ) : (
-                  approvedDevices.map((config) => (
-                    <DynamicDeviceCard key={config.device_id} config={config} isOnline={isDeviceOnline(config)} />
-                  ))
+                  approvedDevices.map((config, index) => {
+                    if (!("device_id" in config)) return null;
+                    const c = config as DeviceConfig;
+                    const layout = canvasLayouts[c.device_id] || { x: (index % 3) * 340, y: Math.floor(index / 3) * 220, w: 320, h: "auto" };
+                    return (
+                      <Rnd
+                        key={c.device_id}
+                        size={{ width: layout.w, height: layout.h }}
+                        position={{ x: layout.x, y: layout.y }}
+                        onDragStop={(e, d) => {
+                          setCanvasLayouts(prev => ({ ...prev, [c.device_id]: { ...layout, x: d.x, y: d.y } }));
+                        }}
+                        onResizeStop={(e, direction, ref, delta, position) => {
+                          setCanvasLayouts(prev => ({ 
+                            ...prev, 
+                            [c.device_id]: { 
+                              x: position.x, 
+                              y: position.y, 
+                              w: parseInt(ref.style.width, 10), 
+                              h: parseInt(ref.style.height, 10) 
+                            } 
+                          }));
+                        }}
+                        disableDragging={!isCustomizeMode}
+                        enableResizing={isCustomizeMode}
+                        minWidth={200}
+                        minHeight={getCardMinHeight(c)}
+                        bounds="parent"
+                        className={`transition-shadow ${isCustomizeMode ? "z-50 shadow-2xl ring-2 ring-primary cursor-move rounded-xl bg-white dark:bg-surface-dark" : "z-10"}`}
+                      >
+                        <div className={`w-full h-full ${isCustomizeMode ? 'pointer-events-none' : ''}`}>
+                          <DynamicDeviceCard config={c} isOnline={isDeviceOnline(c)} />
+                        </div>
+                      </Rnd>
+                    );
+                  })
                 )}
               </div>
             </div>
@@ -479,34 +647,28 @@ function getBrightnessState(
   return fallback;
 }
 
-function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
+function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig, pin: PinConfig, isOnline: boolean }) {
   const [requestPending, setRequestPending] = useState(false);
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
   const [optimisticSliderValue, setOptimisticSliderValue] = useState<number | null>(null);
-  const activePinConfigurations = getActivePinConfigurations(config);
 
-  const pwmPin = activePinConfigurations.find((p) => p.mode === 'PWM');
-  const outputPin = activePinConfigurations.find((p) => p.mode === 'OUTPUT');
-  const analogPin = activePinConfigurations.find((p) => p.mode === 'ADC');
-  const i2cPin = activePinConfigurations.find((p) => p.mode === 'I2C');
-
-  const pwmMin = pwmPin?.extra_params?.min_value ?? 0;
-  const pwmMax = pwmPin?.extra_params?.max_value ?? 255;
-  const pwmRangeMin = Math.min(pwmMin, pwmMax);
-  const pwmRangeMax = Math.max(pwmMin, pwmMax);
-  const pwmRangeLabel = pwmMin > pwmMax ? `${pwmMin} -> ${pwmMax}` : `${pwmMin}-${pwmMax}`;
-  const pwmSliderStyle = pwmMin > pwmMax ? { direction: "rtl" as const } : undefined;
-  const controlPin = outputPin ?? pwmPin;
-  const primaryState = getStatePin(config.last_state);
-  const analogState = getStatePin(config.last_state, analogPin?.gpio_pin);
-  const baselineToggleState = getBinaryState(config.last_state, controlPin?.gpio_pin);
-  const baselineSliderValue = getBrightnessState(config.last_state, pwmPin?.gpio_pin, pwmMin);
   const deliveryForPendingCommand = Boolean(
     config.last_delivery && pendingCmdId && config.last_delivery.command_id === pendingCmdId
   );
   const failedPendingCommand =
     deliveryForPendingCommand && config.last_delivery?.status === "failed";
+
+  const pwmMin = pin.extra_params?.min_value ?? 0;
+  const pwmMax = pin.extra_params?.max_value ?? 255;
+  const pwmRangeMin = Math.min(pwmMin, pwmMax);
+  const pwmRangeMax = Math.max(pwmMin, pwmMax);
+  const pwmSliderStyle = pwmMin > pwmMax ? { direction: "rtl" as const } : undefined;
+
+  const pinState = getStatePin(config.last_state, pin.mode === 'I2C' ? null : pin.gpio_pin);
+  const baselineToggleState = getBinaryState(config.last_state, pin.gpio_pin);
+  const baselineSliderValue = getBrightnessState(config.last_state, pin.gpio_pin, pwmMin);
+
   const toggleTargetMatched =
     optimisticToggleState !== null && baselineToggleState === optimisticToggleState;
   const sliderTargetMatched =
@@ -514,18 +676,14 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
   const commandStateSynced =
     (optimisticToggleState === null || toggleTargetMatched) &&
     (optimisticSliderValue === null || sliderTargetMatched);
-  const pending =
-    requestPending || (pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced);
-  const toggleLoading =
-    optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
-  const sliderLoading =
-    optimisticSliderValue !== null && !sliderTargetMatched && !failedPendingCommand;
-  const toggleState = baselineToggleState;
-  const sliderValue = optimisticSliderValue !== null
-    ? optimisticSliderValue
-    : baselineSliderValue;
 
-  // Effect to automatically clear optimistic state when fully synced
+  const pending = requestPending || (pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced);
+  const toggleLoading = optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
+  const sliderLoading = optimisticSliderValue !== null && !sliderTargetMatched && !failedPendingCommand;
+
+  const toggleState = optimisticToggleState !== null ? optimisticToggleState : baselineToggleState;
+  const sliderValue = optimisticSliderValue !== null ? optimisticSliderValue : baselineSliderValue;
+
   useEffect(() => {
     if ((optimisticToggleState !== null || optimisticSliderValue !== null) && commandStateSynced) {
       const timer = window.setTimeout(() => {
@@ -537,8 +695,6 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
     }
   }, [commandStateSynced, optimisticToggleState, optimisticSliderValue]);
 
-  // Effect to clear optimistic state shortly after delivery is confirmed.
-  // This prevents infinite "Syncing..." if an automation reverts the state or state update is lost.
   useEffect(() => {
     if (deliveryForPendingCommand || failedPendingCommand) {
       const timer = window.setTimeout(() => {
@@ -550,7 +706,6 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
     }
   }, [deliveryForPendingCommand, failedPendingCommand]);
 
-  // Absolute fallback timeout for completely lost commands
   useEffect(() => {
     if (pendingCmdId !== null) {
       const timer = window.setTimeout(() => {
@@ -564,15 +719,19 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
 
   const handleToggle = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const isChecked = e.target.checked;
-    const targetPin = outputPin || pwmPin;
-    if (!targetPin && !config.provider) return;
-
     setRequestPending(true);
     setPendingCmdId(null);
     setOptimisticToggleState(isChecked);
-    setOptimisticSliderValue(!isChecked && (pwmPin || config.provider) ? 0 : null);
+    
+    if (pin.mode === 'PWM') {
+      setOptimisticSliderValue(!isChecked ? pwmMin : (sliderValue === pwmMin ? pwmMax : sliderValue));
+    }
+    
     try {
-      const payload = { kind: "action", pin: targetPin?.gpio_pin || 0, value: isChecked ? 1 : 0 };
+      const payload: { kind: string; pin: number; value: number; brightness?: number } = { kind: "action", pin: pin.gpio_pin, value: isChecked ? 1 : 0 };
+      if (pin.mode === 'PWM' && isChecked && sliderValue === pwmMin) {
+        payload.brightness = pwmMax;
+      }
       const response = await sendDeviceCommand(config.device_id, payload);
       setRequestPending(false);
       if (response && response.status === "failed") {
@@ -589,15 +748,12 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
   };
 
   const handleSliderCommit = async (rawValue: number) => {
-    const targetPin = pwmPin || outputPin;
-    if (!targetPin && !config.provider) return;
-
     setRequestPending(true);
     setPendingCmdId(null);
     setOptimisticToggleState(null);
     setOptimisticSliderValue(rawValue);
     try {
-      const payload = { kind: "action", pin: targetPin?.gpio_pin || 0, brightness: rawValue };
+      const payload = { kind: "action", pin: pin.gpio_pin, brightness: rawValue };
       const response = await sendDeviceCommand(config.device_id, payload);
       setRequestPending(false);
       if (response && response.status === "failed") {
@@ -611,236 +767,308 @@ function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnlin
     }
   };
 
-  const nameLower = config.name.toLowerCase();
+  const label = pin.function || pin.label || `${pin.mode} Pin ${pin.gpio_pin}`;
 
-  // I2C SENSOR CARD
-  if (i2cPin) {
-    const libName = i2cPin.extra_params?.i2c_library || "I2C Device";
-    const isSensor = !i2cPin.extra_params?.i2c_library?.includes("SSD1306") && !i2cPin.extra_params?.i2c_library?.includes("MCP23017");
-
+  if (pin.mode === 'OUTPUT') {
     return (
-      <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-orange-100 dark:border-orange-900/30 p-5 shadow-sm hover:shadow-md transition-shadow">
-        <div className="flex justify-between items-start mb-2">
-          <div className="h-10 w-10 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 flex items-center justify-center">
-            <span className="material-icons-round">{isSensor ? 'Settings_input_component' : 'view_quilt'}</span>
-          </div>
-          <div className="flex flex-col items-end">
-            <span className="text-[10px] font-bold text-orange-500 uppercase tracking-tight">I2C · {i2cPin.extra_params?.i2c_address}</span>
-            <span className="text-[9px] text-slate-400">ID: {config.device_id.split('-')[0]}</span>
-          </div>
-        </div>
-        <h3 className="text-base font-semibold text-slate-900 dark:text-white mt-2 truncate" title={config.name}>{config.name}</h3>
-        <p className="text-xs text-slate-500 mb-3 truncate" title={libName}>{libName}</p>
-
-        <div className="flex items-center gap-4">
-          <div className="flex-1">
-             <span className="text-2xl font-bold text-slate-800 dark:text-white">
-               {getNumericStateValue(primaryState?.value) ?? "--"}
-             </span>
-             <span className="text-sm text-slate-500 ml-1">{primaryState?.unit || ''}</span>
-          </div>
-          {isOnline && <span className="text-[10px] text-green-500 font-medium bg-green-500/10 px-2 py-0.5 rounded-full">Live</span>}
-        </div>
-
-        <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-[10px] text-slate-400">
-           <span className="flex items-center gap-1">
-             <span className={`w-1.5 h-1.5 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'}`}></span>
-             {isOnline ? 'Connected' : 'Offline'}
-           </span>
-           <span>Bus: SDA={activePinConfigurations.find(p => p.extra_params?.i2c_role === 'SDA')?.gpio_pin} SCL={activePinConfigurations.find(p => p.extra_params?.i2c_role === 'SCL')?.gpio_pin}</span>
-        </div>
-      </div>
-    );
-  }
-  // EXTENSION CARD
-  if (config.provider) {
-    return (
-      <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-indigo-100 dark:border-indigo-900/50 p-5 shadow-sm hover:shadow-md transition-shadow relative overflow-hidden">
-        <div className="absolute top-0 right-0">
-          <div className="bg-indigo-500 text-white text-[10px] px-2 py-1 rounded-bl-lg rounded-tr text-xs font-bold flex items-center shadow-sm z-20">
-            <span className="material-icons-round text-[14px] mr-1">extension</span> EXT
-          </div>
-        </div>
-        <div className="flex justify-between items-start mb-2 mt-1">
-          <div className="h-10 w-10 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-            <span className="material-icons-round">wb_incandescent</span>
-          </div>
-          <DeviceToggle
-            checked={toggleState}
-            disabled={pending || !isOnline}
-            id={`ext-${config.device_id}`}
-            loading={toggleLoading}
-            onChange={handleToggle}
-          />
-        </div>
-        <div className="mb-5">
-          <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
-          <p className="text-xs text-slate-500 truncate" title="Extension Device">Extension Device</p>
-        </div>
-        <div className="mb-4">
-          <div className="flex justify-between items-end mb-2">
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-              Brightness
-              {sliderLoading && <span className="h-3 w-3 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />}
-            </label>
-            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
-              {sliderLoading && <span className="text-[10px] tracking-wide text-indigo-500/80 animate-pulse font-normal uppercase">Syncing...</span>}
-              {sliderValue}
-            </span>
-          </div>
-          <input
-            type="range"
-            className="w-full accent-primary h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
-            min={pwmRangeMin}
-            max={pwmRangeMax}
-            value={sliderValue}
-            disabled={pending || !isOnline}
-            style={pwmSliderStyle}
-            onChange={(e) => setOptimisticSliderValue(parseInt(e.target.value))}
-            onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
-            onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
-          />
-        </div>
-        <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
-          <span className="flex items-center text-indigo-600 dark:text-indigo-400 font-medium">Source: {config.provider}</span>
-        </div>
-      </div>
-    );
-  }
-
-  // SENSOR CARD (Temp/Humidity)
-  if (nameLower.includes('temp') || nameLower.includes('humidity') || analogPin) {
-    const isTemp = nameLower.includes('temp');
-    return (
-      <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow">
-        <div className="flex justify-between items-start mb-2">
-          <div className={`h-10 w-10 rounded-full ${isTemp ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400'} flex items-center justify-center`}>
-            <span className="material-icons-round">{isTemp ? 'thermostat' : 'water_drop'}</span>
-          </div>
-          <span className="text-xs font-mono text-slate-400">Updated 1m ago</span>
-        </div>
-        <h3 className="text-base font-semibold text-slate-900 dark:text-white mt-2 truncate" title={config.name}>{config.name}</h3>
-        <p className="text-xs text-slate-500 mb-3 truncate" title={config.board || 'Multi-sensor Node'}>{config.board || 'Multi-sensor Node'}</p>
-        <div className="flex items-baseline space-x-1">
-          <span className="text-3xl font-bold text-slate-800 dark:text-white">
-            {getNumericStateValue(analogState?.value) ?? getNumericStateValue(primaryState?.value) ?? '--'}
-          </span>
-          <span className="text-lg font-medium text-slate-500">{isTemp ? '°C' : '%'}</span>
-        </div>
-        <div className={`mt-3 text-xs flex items-center ${isTemp ? 'text-green-600 dark:text-green-400' : 'text-slate-500 dark:text-slate-400'}`}>
-          <span className="material-icons-round text-sm mr-1">{isTemp ? 'arrow_drop_up' : 'remove'}</span>
-          {analogState?.trend || primaryState?.trend || 'Stable'}
-        </div>
-      </div>
-    );
-  }
-
-  // GARAGE OFFLINE
-  if (nameLower.includes('garage') && !isOnline) {
-    return (
-      <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow border-l-4 border-l-red-500">
-        <div className="flex justify-between items-start mb-4">
-          <div className="h-10 w-10 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-slate-500 dark:text-slate-400">
-            <span className="material-icons-round">garage</span>
-          </div>
-          <button className="text-slate-400 hover:text-primary"><span className="material-icons-round">refresh</span></button>
-        </div>
-        <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
-        <p className="text-xs text-slate-500 mb-4 truncate" title={config.board || 'Device'}>{config.board || 'Device'}</p>
-        <div className="flex items-center justify-between text-xs text-red-500 dark:text-red-400 border-t border-slate-100 dark:border-slate-800 pt-3 font-medium">
-          <span className="flex items-center"><span className="w-2 h-2 rounded-full bg-red-500 mr-2"></span>Offline</span>
-          <span>Check Power</span>
-        </div>
-      </div>
-    );
-  }
-
-  // DIMMER CARD
-  if (pwmPin || nameLower.includes('lamp') || nameLower.includes('dimmer')) {
-    return (
-      <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow">
-        <div className="flex justify-between items-start mb-2">
-          <div className="h-10 w-10 rounded-full bg-yellow-100 dark:bg-yellow-900/30 flex items-center justify-center text-yellow-600 dark:text-yellow-400">
-            <span className="material-icons-round">lightbulb</span>
-          </div>
-          <DeviceToggle
-            checked={toggleState}
-            disabled={pending || !isOnline}
-            id={`dim-${config.device_id}`}
-            loading={toggleLoading}
-            onChange={handleToggle}
-          />
-        </div>
-        <div className="mb-5">
-          <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
-          <p className="text-xs text-slate-500 truncate" title={config.board || 'Dimmer'}>{config.board || 'Dimmer'}</p>
-        </div>
-        <div className="mb-4">
-          <div className="flex justify-between items-end mb-2">
-            <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-              Brightness ({pwmRangeLabel})
-              {sliderLoading && <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />}
-            </label>
-            <span className="text-xs font-bold text-primary flex items-center gap-1.5">
-              {sliderLoading && <span className="text-[10px] tracking-wide text-primary/70 animate-pulse font-normal uppercase">Syncing...</span>}
-              {sliderValue}
-            </span>
-          </div>
-          <input
-            type="range"
-            className="w-full accent-primary h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
-            min={pwmRangeMin}
-            max={pwmRangeMax}
-            value={sliderValue}
-            disabled={pending || !isOnline}
-            style={pwmSliderStyle}
-            onChange={(e) => setOptimisticSliderValue(parseInt(e.target.value))}
-            onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
-            onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
-          />
-        </div>
-        <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
-          <span className="flex items-center">
-            {isOnline ? <span className="w-2 h-2 rounded-full bg-green-500 mr-2"></span> : <span className="w-2 h-2 rounded-full bg-red-500 mr-2"></span>}
-            {isOnline ? 'Online' : 'Offline'}
-          </span>
-          <span className="text-xs text-slate-400">12W</span>
-        </div>
-      </div>
-    );
-  }
-
-  // SWITCH / DEFAULT
-  const Icon = nameLower.includes('lock') ? 'lock' : 'wb_incandescent';
-  const colorClass = nameLower.includes('lock') ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400' : 'bg-slate-100 dark:bg-slate-700 text-slate-500 dark:text-slate-400';
-  const statusRight = toggleLoading
-    ? 'Updating...'
-    : nameLower.includes('lock')
-      ? (toggleState ? 'Locked' : 'Unlocked')
-      : (toggleState ? 'On' : 'Off');
-
-  return (
-    <div className={`bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow ${nameLower.includes('lock') ? '' : 'opacity-90'}`}>
-      <div className="flex justify-between items-start mb-4">
-        <div className={`h-10 w-10 rounded-full flex items-center justify-center ${colorClass}`}>
-          <span className="material-icons-round">{Icon}</span>
-        </div>
+      <div className="flex justify-between items-center py-3 border-t border-slate-100 dark:border-slate-800/50">
+        <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
         <DeviceToggle
           checked={toggleState}
           disabled={pending || !isOnline}
-          id={`sw-${config.device_id}`}
+          id={`pin-${config.device_id}-${pin.gpio_pin}`}
           loading={toggleLoading}
           onChange={handleToggle}
         />
       </div>
-      <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
-      <p className="text-xs text-slate-500 mb-4 truncate" title={config.board || 'Device'}>{config.board || 'Device'}</p>
+    );
+  }
+
+  if (pin.mode === 'PWM') {
+    return (
+      <div className="py-3 border-t border-slate-100 dark:border-slate-800/50">
+        <div className="flex justify-between items-center mb-3">
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
+          <div className="flex items-center gap-3">
+             <span className="text-xs font-bold text-primary">
+               {sliderLoading && <span className="text-[10px] uppercase font-normal text-primary/70 mr-1 animate-pulse">Syncing...</span>}
+               {sliderValue}
+             </span>
+             <DeviceToggle
+                checked={toggleState}
+                disabled={pending || !isOnline}
+                id={`pin-toggle-${config.device_id}-${pin.gpio_pin}`}
+                loading={toggleLoading}
+                onChange={handleToggle}
+             />
+          </div>
+        </div>
+        <input
+          type="range"
+          className="w-full accent-primary h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
+          min={pwmRangeMin}
+          max={pwmRangeMax}
+          value={sliderValue}
+          disabled={pending || !isOnline}
+          style={pwmSliderStyle}
+          onChange={(e) => setOptimisticSliderValue(parseInt(e.target.value))}
+          onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
+          onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
+        />
+      </div>
+    );
+  }
+
+  if (pin.mode === 'ADC' || pin.mode === 'INPUT') {
+    const inputType = pin.extra_params?.input_type;
+    const isSwitch = inputType === "switch";
+    const isTach = inputType === "tachometer";
+    const numValue = getNumericStateValue(pinState?.value);
+    
+    let displayValue: React.ReactNode = numValue ?? '--';
+    let unit = pinState?.unit;
+
+    if (isSwitch) {
+      displayValue = numValue === 1 ? 'ON' : (numValue === 0 ? 'OFF' : '--');
+    } else if (isTach) {
+      unit = unit || "RPM";
+    }
+
+    return (
+      <div className="flex justify-between items-center py-3 border-t border-slate-100 dark:border-slate-800/50">
+        <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
+        <div className="flex items-baseline space-x-1">
+          <span className={`text-lg font-bold ${isSwitch && numValue === 1 ? 'text-green-600 dark:text-green-400' : 'text-slate-800 dark:text-white'}`}>
+            {displayValue}
+          </span>
+          {unit && <span className="text-xs font-medium text-slate-500 ml-1">{unit}</span>}
+        </div>
+      </div>
+    );
+  }
+
+  if (pin.mode === 'I2C') {
+    return (
+      <div className="py-3 border-t border-slate-100 dark:border-slate-800/50">
+        <div className="flex justify-between items-center">
+          <div className="flex flex-col">
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
+            <span className="text-[10px] text-slate-400">I2C &middot; {pin.extra_params?.i2c_address || 'Auto'}</span>
+          </div>
+          <div className="flex items-baseline space-x-1">
+            <span className="text-lg font-bold text-slate-800 dark:text-white">
+              {getNumericStateValue(pinState?.value) ?? '--'}
+            </span>
+            {pinState?.unit && <span className="text-xs font-medium text-slate-500">{pinState.unit}</span>}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
+  const [requestPending, setRequestPending] = useState(false);
+  const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
+  const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
+  const [optimisticSliderValue, setOptimisticSliderValue] = useState<number | null>(null);
+
+  const deliveryForPendingCommand = Boolean(
+    config.last_delivery && pendingCmdId && config.last_delivery.command_id === pendingCmdId
+  );
+  const failedPendingCommand =
+    deliveryForPendingCommand && config.last_delivery?.status === "failed";
+
+  const baselineToggleState = getBinaryState(config.last_state);
+  const baselineSliderValue = getBrightnessState(config.last_state, null, 0);
+
+  const toggleTargetMatched =
+    optimisticToggleState !== null && baselineToggleState === optimisticToggleState;
+  const sliderTargetMatched =
+    optimisticSliderValue !== null && baselineSliderValue === optimisticSliderValue;
+  const commandStateSynced =
+    (optimisticToggleState === null || toggleTargetMatched) &&
+    (optimisticSliderValue === null || sliderTargetMatched);
+
+  const pending = requestPending || (pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced);
+  const toggleLoading = optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
+  const sliderLoading = optimisticSliderValue !== null && !sliderTargetMatched && !failedPendingCommand;
+
+  const toggleState = optimisticToggleState !== null ? optimisticToggleState : baselineToggleState;
+  const sliderValue = optimisticSliderValue !== null ? optimisticSliderValue : baselineSliderValue;
+
+  useEffect(() => {
+    if ((optimisticToggleState !== null || optimisticSliderValue !== null) && commandStateSynced) {
+      const timer = window.setTimeout(() => {
+        setOptimisticToggleState(null);
+        setOptimisticSliderValue(null);
+        setPendingCmdId(null);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [commandStateSynced, optimisticToggleState, optimisticSliderValue]);
+
+  useEffect(() => {
+    if (deliveryForPendingCommand || failedPendingCommand) {
+      const timer = window.setTimeout(() => {
+        setOptimisticToggleState(null);
+        setOptimisticSliderValue(null);
+        setPendingCmdId(null);
+      }, failedPendingCommand ? 0 : 500);
+      return () => window.clearTimeout(timer);
+    }
+  }, [deliveryForPendingCommand, failedPendingCommand]);
+
+  useEffect(() => {
+    if (pendingCmdId !== null) {
+      const timer = window.setTimeout(() => {
+        setOptimisticToggleState(null);
+        setOptimisticSliderValue(null);
+        setPendingCmdId(null);
+      }, 3000);
+      return () => window.clearTimeout(timer);
+    }
+  }, [pendingCmdId]);
+
+  const handleToggle = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const isChecked = e.target.checked;
+    setRequestPending(true);
+    setPendingCmdId(null);
+    setOptimisticToggleState(isChecked);
+    setOptimisticSliderValue(!isChecked ? 0 : null);
+    try {
+      const payload = { kind: "action", pin: 0, value: isChecked ? 1 : 0 };
+      const response = await sendDeviceCommand(config.device_id, payload);
+      setRequestPending(false);
+      if (response && response.status === "failed") {
+        setOptimisticToggleState(null);
+        setOptimisticSliderValue(null);
+      } else {
+        setPendingCmdId(response?.command_id || null);
+      }
+    } catch {
+      setRequestPending(false);
+      setOptimisticToggleState(null);
+      setOptimisticSliderValue(null);
+    }
+  };
+
+  const handleSliderCommit = async (rawValue: number) => {
+    setRequestPending(true);
+    setPendingCmdId(null);
+    setOptimisticToggleState(null);
+    setOptimisticSliderValue(rawValue);
+    try {
+      const payload = { kind: "action", pin: 0, brightness: rawValue };
+      const response = await sendDeviceCommand(config.device_id, payload);
+      setRequestPending(false);
+      if (response && response.status === "failed") {
+        setOptimisticSliderValue(null);
+      } else {
+        setPendingCmdId(response?.command_id || null);
+      }
+    } catch {
+      setRequestPending(false);
+      setOptimisticSliderValue(null);
+    }
+  };
+
+  return (
+    <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-indigo-100 dark:border-indigo-900/50 p-5 shadow-sm hover:shadow-md transition-shadow relative overflow-y-auto w-full h-full flex flex-col">
+      <div className="absolute top-0 right-0">
+        <div className="bg-indigo-500 text-white text-[10px] px-2 py-1 rounded-bl-lg rounded-tr text-xs font-bold flex items-center shadow-sm z-20">
+          <span className="material-icons-round text-[14px] mr-1">extension</span> EXT
+        </div>
+      </div>
+      <div className="flex justify-between items-start mb-2 mt-1">
+        <div className="h-10 w-10 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+          <span className="material-icons-round">wb_incandescent</span>
+        </div>
+        <DeviceToggle
+          checked={toggleState}
+          disabled={pending || !isOnline}
+          id={`ext-${config.device_id}`}
+          loading={toggleLoading}
+          onChange={handleToggle}
+        />
+      </div>
+      <div className="mb-5">
+        <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
+        <p className="text-xs text-slate-500 truncate" title="Extension Device">Extension Device</p>
+      </div>
+      <div className="mb-4">
+        <div className="flex justify-between items-end mb-2">
+          <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+            Brightness
+            {sliderLoading && <span className="h-3 w-3 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />}
+          </label>
+          <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+            {sliderLoading && <span className="text-[10px] tracking-wide text-indigo-500/80 animate-pulse font-normal uppercase">Syncing...</span>}
+            {sliderValue}
+          </span>
+        </div>
+        <input
+          type="range"
+          className="w-full accent-primary h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
+          min={0}
+          max={255}
+          value={sliderValue}
+          disabled={pending || !isOnline}
+          onChange={(e) => setOptimisticSliderValue(parseInt(e.target.value))}
+          onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
+          onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
+        />
+      </div>
       <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
-        <span className="flex items-center">
-          {isOnline ? <span className="w-2 h-2 rounded-full bg-green-500 mr-2"></span> : <span className="w-2 h-2 rounded-full bg-red-500 mr-2"></span>}
+        <span className="flex items-center text-indigo-600 dark:text-indigo-400 font-medium">Source: {config.provider}</span>
+      </div>
+    </div>
+  );
+}
+
+function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
+  if (config.provider) {
+    return <ExtensionCard config={config} isOnline={isOnline} />;
+  }
+
+  const activePinConfigurations = getActivePinConfigurations(config);
+  
+  const displayPins = [];
+  let hasI2C = false;
+  for (const p of activePinConfigurations) {
+    if (p.mode === 'I2C') {
+      if (!hasI2C) {
+        displayPins.push(p);
+        hasI2C = true;
+      }
+    } else {
+      displayPins.push(p);
+    }
+  }
+
+  return (
+    <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow relative overflow-y-auto w-full h-full flex flex-col">
+      <div className="flex justify-between items-start mb-4">
+        <div className="flex-1 min-w-0 pr-4">
+          <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
+          <p className="text-xs text-slate-500 truncate" title={config.board || 'Device'}>{config.board || 'Device'}</p>
+        </div>
+        <span className="flex items-center text-xs text-slate-500 flex-shrink-0">
+          <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'} mr-1`}></span>
           {isOnline ? 'Online' : 'Offline'}
         </span>
-        <span>{statusRight}</span>
+      </div>
+      
+      <div className="flex flex-col mt-2">
+        {displayPins.length === 0 ? (
+           <div className="py-4 text-xs text-slate-400 text-center border-t border-slate-100 dark:border-slate-800/50">No pins configured</div>
+        ) : (
+           displayPins.map(pin => (
+             <PinControlItem key={pin.gpio_pin} config={config} pin={pin} isOnline={isOnline} />
+           ))
+        )}
       </div>
     </div>
   );

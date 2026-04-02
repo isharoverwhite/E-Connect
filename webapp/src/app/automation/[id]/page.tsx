@@ -124,6 +124,7 @@ export default function AutomationPage() {
 
   const transformRef = useRef<ReactZoomPanPinchContentRef | null>(null);
   const canvasViewportRef = useRef<HTMLDivElement | null>(null);
+  const graphLoadedForId = useRef<string | null>(null);
   const [pageState, setPageState] = useState<PageState>("loading");
   const [automations, setAutomations] = useState<AutomationRecord[]>([]);
 
@@ -288,28 +289,28 @@ export default function AutomationPage() {
 
   // Update local graph state when selection changes
   useEffect(() => {
-    if (selectedAutomation) {
+    if (selectedId === null) {
+      if (draftAutomation && graphLoadedForId.current !== "new") {
+        const displayGraph = layoutGraphForCanvas(draftAutomation.graph);
+        setNodes(displayGraph.nodes);
+        setEdges(displayGraph.edges);
+        setPendingCanvasFit(true);
+        setSelectedNodeId(null);
+        setLastResult(null);
+        graphLoadedForId.current = "new";
+      }
+      return;
+    }
+
+    if (selectedAutomation && graphLoadedForId.current !== selectedAutomation.id.toString()) {
       const displayGraph = layoutGraphForCanvas(selectedAutomation.graph ?? getEmptyGraph());
       setNodes(displayGraph.nodes);
       setEdges(displayGraph.edges);
       setPendingCanvasFit(true);
       setSelectedNodeId(null);
       setLastResult(selectedAutomation.last_execution ? { status: selectedAutomation.last_execution.status, message: "Last run from record", log: selectedAutomation.last_execution } : null);
-      return;
+      graphLoadedForId.current = selectedAutomation.id.toString();
     }
-    if (draftAutomation && selectedId === null) {
-      const displayGraph = layoutGraphForCanvas(draftAutomation.graph);
-      setNodes(displayGraph.nodes);
-      setEdges(displayGraph.edges);
-      setPendingCanvasFit(true);
-      setSelectedNodeId(null);
-      setLastResult(null);
-      return;
-    }
-    setNodes([]);
-    setEdges([]);
-    setSelectedNodeId(null);
-    setLastResult(null);
   }, [draftAutomation, selectedAutomation, selectedId]);
 
   useEffect(() => {
@@ -363,7 +364,7 @@ export default function AutomationPage() {
   }
 
   async function handleRenameAutomation() {
-    if (!activeAutomation) return;
+    if (!activeAutomation || renamePending) return;
     const trimmedName = renameDraft.trim();
     if (!trimmedName) {
       setRenameError("Name is required.");
@@ -388,7 +389,7 @@ export default function AutomationPage() {
       setRenameError("");
       const saved = await updateAutomation(
         selectedAutomation.id,
-        buildRenamePayload(selectedAutomation, trimmedName, { nodes, edges })
+        buildRenamePayload(selectedAutomation, trimmedName, selectedAutomation.graph ?? { nodes: [], edges: [] })
       );
       setAutomations((prev) => prev.map((automation) => (automation.id === saved.id ? saved : automation)));
       setRenameOpen(false);
@@ -420,6 +421,7 @@ export default function AutomationPage() {
       } else if (selectedAutomation) {
         const payload = buildGraphAutomationPayload(selectedAutomation, { nodes, edges });
         const saved = await updateAutomation(selectedAutomation.id, payload);
+        graphLoadedForId.current = null; // force reload graph logic on next render just in case
         setAutomations((prev) => prev.map((a) => (a.id === saved.id ? saved : a)));
       }
       showToast("Graph saved successfully!", "success");
@@ -731,18 +733,34 @@ export default function AutomationPage() {
             >
               <span className="material-icons-round text-xl">arrow_back</span>
             </button>
-            <h1 
-              className="group text-lg font-semibold text-slate-800 dark:text-white flex items-center cursor-pointer px-2 py-1 -ml-1 rounded transition hover:bg-slate-50 dark:hover:bg-slate-800/50"
-              onClick={activeAutomation ? openRenameModal : undefined}
-            >
-              <span>{activeAutomation ? activeAutomation.name : "Automation Rules"}</span>
-              {isDraftSelection && <span className="ml-3 inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">Draft</span>}
-              {activeAutomation && (
-                <span className="material-icons-round text-[18px] opacity-65 transition-all group-hover:opacity-100 group-hover:text-primary text-slate-400 dark:text-slate-500 ml-2">
-                  edit
-                </span>
-              )}
-            </h1>
+            {renameOpen ? (
+              <form onSubmit={(e) => { e.preventDefault(); void handleRenameAutomation(); }} className="flex items-center relative">
+                 <input 
+                   autoFocus
+                   type="text"
+                   className="text-lg font-semibold px-2 py-0.5 -ml-1 bg-white border border-primary text-slate-800 rounded focus:outline-none focus:ring-2 focus:ring-primary/20 dark:bg-slate-800 dark:text-white dark:border-primary/50"
+                   value={renameDraft}
+                   onChange={(e) => { setRenameDraft(e.target.value); setRenameError(""); }}
+                   onBlur={() => void handleRenameAutomation()}
+                   onKeyDown={(e) => { if (e.key === "Escape") closeRenameModal(); }}
+                   disabled={renamePending}
+                 />
+                 {renameError && <span className="absolute left-0 -bottom-6 text-xs text-rose-500 whitespace-nowrap">{renameError}</span>}
+              </form>
+            ) : (
+                <h1 
+                  className="group text-lg font-semibold text-slate-800 dark:text-white flex items-center cursor-pointer px-2 py-1 -ml-1 rounded transition hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                  onClick={activeAutomation ? openRenameModal : undefined}
+                >
+                  <span>{activeAutomation ? activeAutomation.name : "Automation Rules"}</span>
+                  {isDraftSelection && <span className="ml-3 inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">Draft</span>}
+                  {activeAutomation && (
+                    <span className="material-icons-round text-[18px] opacity-65 transition-all group-hover:opacity-100 group-hover:text-primary text-slate-400 dark:text-slate-500 ml-2">
+                      edit
+                    </span>
+                  )}
+                </h1>
+            )}
           </div>
           <div className="flex items-center gap-2">
             {activeAutomation && (
@@ -768,44 +786,7 @@ export default function AutomationPage() {
 
         {pageState === "error" && <div className="p-8"><ErrorBanner message={fetchError} onRetry={() => void loadData()} /></div>}
 
-        {renameOpen && activeAutomation && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-               <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-700 dark:bg-slate-900">
-                   <h2 className="text-lg font-bold mb-2">Rename Automation</h2>
-                   <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
-                     Update the rule name shown in your automation list.
-                   </p>
-                   <input
-                     autoFocus
-                     name="rename-automation-name"
-                     value={renameDraft}
-                     onChange={(e) => {
-                       setRenameDraft(e.target.value);
-                       if (renameError) setRenameError("");
-                     }}
-                     onKeyDown={(e) => {
-                       if (e.key === "Enter") {
-                         void handleRenameAutomation();
-                       }
-                       if (e.key === "Escape") {
-                         closeRenameModal();
-                       }
-                     }}
-                     placeholder="Rule name"
-                     className="w-full rounded-xl border border-slate-300 bg-transparent px-4 py-2 text-sm focus:border-primary dark:border-slate-700 outline-none"
-                   />
-                   {renameError && (
-                     <p className="mt-2 text-sm text-rose-500 dark:text-rose-400">{renameError}</p>
-                   )}
-                   <div className="mt-5 flex justify-end gap-2">
-                       <button onClick={closeRenameModal} disabled={renamePending} className="px-4 py-2 text-sm font-medium hover:bg-slate-100 rounded-lg disabled:opacity-50 dark:hover:bg-slate-800">Cancel</button>
-                       <button onClick={() => void handleRenameAutomation()} disabled={renamePending} className="px-4 py-2 bg-primary text-white text-sm font-medium rounded-lg disabled:opacity-50">
-                         {renamePending ? "Saving..." : "Save Name"}
-                       </button>
-                   </div>
-               </div>
-            </div>
-        )}
+
 
         {deleteOpen && activeAutomation && (
             <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
@@ -1156,7 +1137,7 @@ export default function AutomationPage() {
                    };
 
                    const handleSetSourcePin = (pinValue: number, mode: string, func: string) => {
-                       const nextTriggerKind = getPreferredTriggerKindForPin({ mode, function: func });
+                       const nextTriggerKind = getPreferredTriggerKindForPin({ mode, function: func, gpio_pin: pinValue }, sourceDev?.last_state);
                        setNodes(prev => prev.map(n => {
                            if (n.id === trigger.id) {
                                return {
@@ -1175,22 +1156,6 @@ export default function AutomationPage() {
                                return {
                                    ...n,
                                    ...buildConditionStateForTriggerKind(nextTriggerKind, n.kind, n.config, pinValue),
-                               };
-                           }
-                           return n;
-                       }));
-                   };
-
-                   const handleSetTriggerKind = (nextTriggerKind: string) => {
-                       if (trigger.config.pin === undefined) return;
-                       if (nextTriggerKind === DEVICE_VALUE_TRIGGER_KIND && !isNumericSource) return;
-                       if (nextTriggerKind === DEVICE_ON_OFF_TRIGGER_KIND && !isSwitchSource) return;
-                       setNodes(prev => prev.map(n => {
-                           if (n.id === trigger.id) return { ...n, kind: nextTriggerKind };
-                           if (n.id === condition.id) {
-                               return {
-                                   ...n,
-                                   ...buildConditionStateForTriggerKind(nextTriggerKind, n.kind, n.config, trigger.config.pin),
                                };
                            }
                            return n;
@@ -1261,12 +1226,11 @@ export default function AutomationPage() {
 
                    const sourceDev = devices.find(d => d.device_id === trigger.config.device_id);
                    const sourcePinObj = sourceDev?.pin_configurations.find(p => p.gpio_pin === trigger.config.pin);
-                   const isNumericSource = isNumericPin(sourcePinObj);
-                   const isSwitchSource = isSwitchPin(sourcePinObj);
+
                    const conditionDev = devices.find(d => d.device_id === condition.config.device_id);
                    const conditionPinObj = conditionDev?.pin_configurations.find(p => p.gpio_pin === condition.config.pin);
-                   const isNumericConditionSource = isNumericPin(conditionPinObj);
-                   const isSwitchConditionSource = isSwitchPin(conditionPinObj);
+                   const isNumericConditionSource = isNumericPin(conditionPinObj, conditionDev?.last_state);
+                   const isSwitchConditionSource = isSwitchPin(conditionPinObj, conditionDev?.last_state);
                    const targetDev = devices.find(d => d.device_id === action.config.device_id);
                    const conditionConfigured =
                        condition.kind === "numeric_compare"
@@ -1364,32 +1328,11 @@ export default function AutomationPage() {
                                            </div>
                                        )}
 
-                                       {trigger.config.pin !== undefined && (
-                                           <div className="space-y-2 mt-2">
-                                               <span className="text-xs font-bold text-slate-500 block">Trigger Mode</span>
-                                               <div className="flex gap-2">
-                                                   <button
-                                                       type="button"
-                                                       onClick={() => handleSetTriggerKind(DEVICE_ON_OFF_TRIGGER_KIND)}
-                                                       disabled={!isSwitchSource}
-                                                       className={`flex-1 py-2 rounded-lg font-bold text-[11px] border transition shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${trigger.kind === DEVICE_ON_OFF_TRIGGER_KIND ? "bg-blue-600 border-blue-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300"}`}
-                                                   >
-                                                       On/Off Event
-                                                   </button>
-                                                   <button
-                                                       type="button"
-                                                       onClick={() => handleSetTriggerKind(DEVICE_VALUE_TRIGGER_KIND)}
-                                                       disabled={!isNumericSource}
-                                                       className={`flex-1 py-2 rounded-lg font-bold text-[11px] border transition shadow-sm disabled:cursor-not-allowed disabled:opacity-50 ${trigger.kind === DEVICE_VALUE_TRIGGER_KIND ? "bg-blue-600 border-blue-700 text-white" : "bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300"}`}
-                                                   >
-                                                       Device Value
-                                                   </button>
-                                               </div>
-                                               {trigger.kind === LEGACY_DEVICE_TRIGGER_KIND && (
-                                                   <p className="text-[11px] text-slate-500">
-                                                       Legacy `device_state` trigger loaded. Pick a device-specific mode to save the stricter contract.
-                                                   </p>
-                                               )}
+                                       {trigger.config.pin !== undefined && trigger.kind === LEGACY_DEVICE_TRIGGER_KIND && (
+                                           <div className="mt-3 p-2 bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-800">
+                                               <p className="text-[11px] text-slate-500">
+                                                   Legacy rule detected. Click the selected pin again to safely upgrade mapping.
+                                               </p>
                                            </div>
                                        )}
                                    </>

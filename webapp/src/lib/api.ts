@@ -100,6 +100,7 @@ export interface SystemStatusResponse {
     current_server_time: string;
     latest_alert_at?: string | null;
     latest_alert_message?: string | null;
+    latest_firmware_revision?: string | null;
 }
 
 export interface SystemLogAcknowledgeResponse {
@@ -562,3 +563,58 @@ export async function deleteDeviceConfigHistory(
 
     return response.json();
 }
+
+export async function fetchProjectConfigHistory(
+    projectId: string
+): Promise<DeviceConfigHistoryEntry[]> {
+    const token = getToken();
+    if (!token) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/diy/projects/${projectId}/config-history`, {
+        cache: "no-store",
+        headers: {
+            Authorization: `Bearer ${token}`,
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to load project config history"));
+    }
+
+    return response.json();
+}
+
+
+export const rebuildFirmware = async (
+  deviceId: string,
+  password?: string
+): Promise<{ status: string; job_id: string; config_id: number; message: string }> => {
+  const token = getToken();
+  if (!token) {
+    throw new Error("Missing session token. Please sign in again.");
+  }
+
+  const response = await fetch(`${API_URL}/device/${deviceId}/action/rebuild`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ password: password || "" }),
+  });
+  if (!response.ok) {
+    const isJson = response.headers.get("content-type")?.includes("application/json");
+    if (isJson) {
+      const errorData = await response.json();
+      const message = typeof errorData.detail === "object" ? errorData.detail.message : errorData.detail;
+      throw new Error(message || "Failed to trigger firmware rebuild");
+    } else {
+      const textData = await response.text();
+      console.error("Server returned non-JSON error:", textData);
+      throw new Error(`Server Error: ${response.statusText}`);
+    }
+  }
+  return response.json();
+};

@@ -741,6 +741,24 @@ class MQTTClientManager:
         except HTTPException as exc:
             db.rollback()
             detail = exc.detail if isinstance(exc.detail, dict) else {}
+            
+            try:
+                from app.services.system_logs import create_system_log 
+                from app.sql_models import SystemLogSeverity, SystemLogCategory
+                create_system_log(
+                    db,
+                    occurred_at=datetime.utcnow(),
+                    severity=SystemLogSeverity.error,
+                    category=SystemLogCategory.connectivity,
+                    event_code="device_registration_rejected",
+                    message=f"Device pairing rejected: {detail.get('message', str(exc.detail))}",
+                    device_id=device_id,
+                    details=detail
+                )
+                db.commit()
+            except Exception:
+                pass
+
             ack_payload = self._attach_runtime_network(
                 build_registration_ack_payload(
                     status="error",

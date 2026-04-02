@@ -28,7 +28,7 @@ import {
   type WebappTransport,
 } from "@/lib/scanner";
 
-const FOUND_SCAN_TIMEOUT_MS = 7000;
+const FOUND_SCAN_TIMEOUT_MS = 15000;
 const EMPTY_SCAN_TIMEOUT_MS = 15000;
 const BATCH_SIZE = 40;
 const SECURE_AUTO_SCAN_DELAY_MS = 500;

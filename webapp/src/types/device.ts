@@ -45,6 +45,7 @@ export interface DeviceStatePin {
     extra_params?: PinExtraParams | null;
     trend?: string;
     unit?: string;
+    datatype?: "number" | "boolean";
 }
 
 export interface DeviceStateSnapshot {

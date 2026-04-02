@@ -36,6 +36,21 @@ for path in (BUILD_BASE_DIR, JOBS_DIR, ARTIFACTS_DIR, LOGS_DIR, PLATFORMIO_CORE_
 def build_job_firmware_version(job_id: str) -> str:
     return f"build-{job_id[:8]}"
 
+def get_latest_firmware_revision() -> str | None:
+    revision_file = FIRMWARE_TEMPLATE_DIR / "include" / "firmware_revision.h"
+    if not revision_file.exists():
+        return None
+    try:
+        with open(revision_file, "r") as f:
+            for line in f:
+                if "ECONNECT_FIRMWARE_REVISION" in line:
+                    parts = line.strip().split()
+                    if len(parts) >= 3 and parts[1] == "ECONNECT_FIRMWARE_REVISION":
+                        return parts[2].strip('"')
+    except Exception:
+        pass
+    return None
+
 
 _BLOCKED_ADVERTISED_HOSTNAMES = {
     "localhost",
@@ -842,19 +857,32 @@ def generate_platformio_ini(project, project_dir: str):
         "bblanchon/ArduinoJson@^6.21.3",
     ]
 
-    # Add dynamic I2C library dependencies
+    # Add dynamic I2C and DHT library dependencies
     raw_pins = config_json.get("pins", [])
     seen_libs = set()
+    needs_dht = False
+
     for pin in raw_pins if isinstance(raw_pins, list) else []:
-        if str(pin.get("mode")).upper() == "I2C":
-            extra = pin.get("extra_params")
-            if isinstance(extra, dict):
+        mode = str(pin.get("mode")).upper()
+        extra = pin.get("extra_params")
+        if isinstance(extra, dict):
+            if mode == "I2C":
                 lib_name = extra.get("i2c_library")
                 if lib_name and lib_name not in seen_libs:
                     lib_info = find_library_by_name(lib_name)
                     if lib_info:
                         lib_deps.extend(lib_info.pio_lib_deps)
                         seen_libs.add(lib_name)
+            elif mode == "INPUT":
+                if extra.get("input_type") == "dht":
+                    needs_dht = True
+
+    if needs_dht:
+        lib_deps.extend([
+            "adafruit/DHT sensor library@^1.4.6",
+            "adafruit/Adafruit Unified Sensor@^1.1.14"
+        ])
+        build_flags.append("-D ECONNECT_HAS_DHT")
 
     build_flags_block = "\n".join(f"    {flag}" for flag in build_flags) if build_flags else ""
     board_configs_block = "\n".join(board_config_lines) + "\n" if board_config_lines else ""
@@ -1015,6 +1043,10 @@ def promote_build_job_project_config(job: BuildJob) -> bool:
     staged_config = dict(job.staged_project_config)
     project.config = staged_config
 
+    staged_project_name = staged_config.get("project_name")
+    if staged_project_name:
+        project.name = str(staged_project_name).strip() or project.name
+
     staged_wifi_credential_id = staged_config.get("wifi_credential_id")
     if isinstance(staged_wifi_credential_id, int):
         project.wifi_credential_id = staged_wifi_credential_id
@@ -1082,6 +1114,9 @@ def write_generated_firmware_config(
         i2c_role = ""
         i2c_address = ""
         i2c_library = ""
+        i2c_device_version = ""
+        input_type = "switch"
+        dht_version = ""
 
         if isinstance(raw_extra_params, dict):
             # Output / PWM
@@ -1101,9 +1136,14 @@ def write_generated_firmware_config(
             i2c_role = str(raw_extra_params.get("i2c_role") or "")
             i2c_address = str(raw_extra_params.get("i2c_address") or "")
             i2c_library = str(raw_extra_params.get("i2c_library") or "")
+            i2c_device_version = str(raw_extra_params.get("i2c_device_version") or "")
+
+            # Input
+            input_type = str(raw_extra_params.get("input_type") or "switch")
+            dht_version = str(raw_extra_params.get("dht_version") or "")
 
         pin_rows.append(
-            f'    {{ {gpio}, "{_escape_c_string(mode)}", "{_escape_c_string(function_name)}", "{_escape_c_string(label)}", {active_level}, {pwm_min}, {pwm_max}, "{_escape_c_string(i2c_role)}", "{_escape_c_string(i2c_address)}", "{_escape_c_string(i2c_library)}" }}'
+            f'    {{ {gpio}, "{_escape_c_string(mode)}", "{_escape_c_string(function_name)}", "{_escape_c_string(label)}", {active_level}, {pwm_min}, {pwm_max}, "{_escape_c_string(i2c_role)}", "{_escape_c_string(i2c_address)}", "{_escape_c_string(i2c_library)}", "{_escape_c_string(i2c_device_version)}", "{_escape_c_string(input_type)}", "{_escape_c_string(dht_version)}" }}'
         )
 
     api_base_url_block = ""
@@ -1125,6 +1165,9 @@ struct EConnectPinConfig {{
   const char *i2c_role;
   const char *i2c_address;
   const char *i2c_library;
+  const char *i2c_device_version;
+  const char *input_type;
+  const char *dht_version;
 }};
 
 #define ECONNECT_HAS_PIN_CONFIGS 1

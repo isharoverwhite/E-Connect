@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import ConfirmModal from "@/components/ConfirmModal";
 import Sidebar from "@/components/Sidebar";
 import { AutomationRecord, AutomationListFilter, AutomationScheduleContext } from "@/types/automation";
-import { fetchAutomations, fetchAutomationScheduleContext } from "@/lib/api-automation";
+import { fetchAutomations, fetchAutomationScheduleContext, deleteAutomation } from "@/lib/api-automation";
 import { getAutomationGraphSummary, getAutomationGraphReadiness, getReadinessClasses, formatAutomationRunTime } from "@/lib/automation-utils";
 
 function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => void }) {
@@ -55,6 +56,9 @@ export default function AutomationListPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<AutomationListFilter>("all");
 
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const loadAutomations = async () => {
     try {
       setLoading(true);
@@ -69,6 +73,21 @@ export default function AutomationListPage() {
       setError(e instanceof Error ? e.message : "Failed to load automations");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deletingId) return;
+    try {
+      setIsDeleting(true);
+      await deleteAutomation(deletingId);
+      setAutomations((prev) => prev.filter((a) => a.id !== deletingId));
+      setDeletingId(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete automation");
+      setDeletingId(null);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -104,10 +123,18 @@ export default function AutomationListPage() {
           {items.map((automation) => {
             const readiness = getAutomationGraphReadiness(automation.graph);
             return (
-              <button
+              <div
                 key={automation.id}
                 onClick={() => router.push(`/automation/${automation.id}`)}
-                className="group flex flex-col text-left rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    router.push(`/automation/${automation.id}`);
+                  }
+                }}
+                className="group cursor-pointer flex flex-col text-left rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-slate-300 hover:shadow-md dark:border-slate-800 dark:bg-slate-900 dark:hover:border-slate-700 outline-none focus-visible:ring-2 focus-visible:ring-primary"
               >
                 <div className="flex items-start justify-between gap-3 mb-3 w-full">
                   <div className="flex items-center gap-2 min-w-0">
@@ -116,16 +143,30 @@ export default function AutomationListPage() {
                     </div>
                     <span className="truncate text-[15px] font-semibold text-slate-800 dark:text-slate-100">{automation.name}</span>
                   </div>
-                  <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${getReadinessClasses(readiness.tone)}`}>
-                    {readiness.label}
-                  </span>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${getReadinessClasses(readiness.tone)}`}>
+                      {readiness.label}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDeletingId(automation.id);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 dark:hover:text-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-500/50"
+                      title="Delete rule"
+                      aria-label="Delete rule"
+                    >
+                      <span className="material-icons-round text-[16px]">delete_outline</span>
+                    </button>
+                  </div>
                 </div>
 
-                <p className="text-[13px] leading-relaxed text-slate-500 dark:text-slate-400 line-clamp-2 h-10 mb-4">
+                <p className="text-[13px] leading-relaxed text-slate-500 dark:text-slate-400 line-clamp-2 h-10 mb-4 select-none">
                   {getAutomationGraphSummary(automation.graph)}
                 </p>
 
-                <div className="mt-auto flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800 w-full text-[11px] text-slate-500 font-medium">
+                <div className="mt-auto flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800 w-full text-[11px] text-slate-500 font-medium select-none">
                   <span className="flex items-center gap-1.5">
                     <span className={`h-1.5 w-1.5 rounded-full ${automation.is_enabled ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`}></span>
                     {automation.is_enabled ? "Enabled" : "Paused"}
@@ -134,7 +175,7 @@ export default function AutomationListPage() {
                     {automation.last_execution ? `Run: ${automation.last_execution.status}` : (automation.last_triggered ? formatAutomationRunTime(automation.last_triggered, effectiveTimezone) : "Never")}
                   </span>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>
@@ -240,6 +281,20 @@ export default function AutomationListPage() {
           )}
         </div>
       </main>
+
+      <ConfirmModal
+        isOpen={deletingId !== null}
+        title="Delete Automation"
+        message="Are you sure you want to delete this automation rule? This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        type="danger"
+        isLoading={isDeleting}
+        onCancel={() => {
+          if (!isDeleting) setDeletingId(null);
+        }}
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }

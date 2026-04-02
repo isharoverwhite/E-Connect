@@ -158,6 +158,10 @@ def _resolve_allowed_secure_device_names(secure_project: DiyProject | None, devi
     project_name = _resolve_project_secure_device_name(secure_project)
     if project_name:
         allowed_names.add(project_name)
+    if secure_project and isinstance(secure_project.pending_config, dict):
+        pending_name = secure_project.pending_config.get("project_name")
+        if pending_name:
+            allowed_names.add(_normalize_device_name(str(pending_name)))
     if device:
         stored_name = _normalize_device_name(device.name)
         if stored_name:
@@ -329,7 +333,21 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
         if device:
             expected_mac = _normalize_mac_address(device.mac_address)
             if expected_mac and normalized_payload_mac != expected_mac:
-                _raise_secure_pairing_error("Trusted MAC address mismatch for provisioned device.")
+                # Check if another device is currently using the new MAC address
+                mac_conflict = db.query(Device).filter(Device.mac_address == normalized_payload_mac, Device.device_id != payload.device_id).first()
+                if mac_conflict:
+                    if _can_reclaim_stale_secure_mac_binding(mac_conflict):
+                        device = _reclaim_stale_secure_mac_binding(
+                            db,
+                            mac_conflict,
+                            target_device_id=payload.device_id,
+                        )
+                        reclaimed_stale_secure_mac = True
+                    else:
+                        _raise_secure_pairing_error("MAC address is already bound to another device.")
+                else:
+                    # Allow MAC update since the secret is correct (typical for board replacement)
+                    pass
         else:
             mac_bound_device = db.query(Device).filter(Device.mac_address == normalized_payload_mac).first()
             if mac_bound_device and mac_bound_device.device_id != payload.device_id:
