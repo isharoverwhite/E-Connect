@@ -1,5 +1,6 @@
 import pytest
 from datetime import datetime
+import hashlib
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import close_all_sessions, sessionmaker
@@ -11,6 +12,7 @@ from app.api import router
 from app.database import Base, get_db
 from app.sql_models import AuthStatus, User, Household, HouseholdMembership, HouseholdRole, Room, DiyProject, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration, WifiCredential
 from app.auth import get_password_hash, create_ota_token
+from app.services.provisioning import PRIVATE_DEVICE_SECRET_KEY
 
 # Setup test DB
 SQLALCHEMY_DATABASE_URL = "sqlite://"
@@ -330,6 +332,43 @@ def test_get_build_job_includes_expected_firmware_version():
     assert payload["id"] == job_id
     assert payload["expected_firmware_version"] == f"build-{job_id[:8]}"
 
+
+def test_get_build_job_includes_exact_build_ota_download_url():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.artifact_ready,
+        staged_project_config={
+            "api_base_url": "https://smart-home.local:8443/api/v1",
+            "config_id": job_id,
+            "config_name": "Kitchen OTA",
+            "assigned_device_id": device.device_id,
+            "assigned_device_name": device.name,
+            PRIVATE_DEVICE_SECRET_KEY: "persisted-secret",
+        },
+    )
+    db.add(job)
+    db.commit()
+
+    res = client.get(
+        f"/api/v1/diy/build/{job_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["ota_download_url"].startswith(
+        f"https://smart-home.local:8443/api/v1/diy/ota/download/{job_id}/firmware.bin?token="
+    )
+    assert PRIVATE_DEVICE_SECRET_KEY not in payload["staged_project_config"]
+
 def test_put_device_config_invalid_not_diy():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
@@ -529,13 +568,21 @@ def test_legacy_ota_endpoints_are_locked():
 def test_send_command_ota_publish_success(tmp_path):
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
-    
+
     job_id = str(uuid.uuid4())
+    artifact_bytes = b"test-firmware-image"
+    artifact_path = tmp_path / f"{job_id}.bin"
+    artifact_path.write_bytes(artifact_bytes)
     job = BuildJob(
         id=job_id,
         project_id=project.id,
         status=JobStatus.artifact_ready,
-        artifact_path=_write_test_artifact(tmp_path, job_id),
+        artifact_path=str(artifact_path),
+        staged_project_config={
+            "api_base_url": "https://smart-home.local:8443/api/v1",
+            "advertised_host": "smart-home.local",
+            PRIVATE_DEVICE_SECRET_KEY: "persisted-secret",
+        },
     )
     db.add(job)
     db.commit()
@@ -545,16 +592,33 @@ def test_send_command_ota_publish_success(tmp_path):
 
     payload = {"action": "ota", "job_id": job_id, "url": "http://test"}
 
-    with patch('app.api.mqtt_manager.publish_command', return_value=True):
+    captured_payload = {}
+
+    def fake_publish(_device_id, published_payload):
+        captured_payload["payload"] = dict(published_payload)
+        return True
+
+    with patch('app.api.mqtt_manager.publish_command', side_effect=fake_publish):
         res = client.post(
             f"/api/v1/device/{device.device_id}/command",
             json=payload,
             headers={"Authorization": f"Bearer {token}"}
         )
-    
-    assert res.status_code == 200
+
+    assert res.status_code == 200, res.text
     db.refresh(job)
     assert job.status == JobStatus.flashing
+    published_payload = captured_payload["payload"]
+    assert published_payload["kind"] == "system"
+    assert published_payload["url"] == published_payload["payload"]
+    assert published_payload["url"].startswith(
+        f"http://smart-home.local:8000/api/v1/diy/ota/download/{job_id}/firmware.bin?token="
+    )
+    assert published_payload["url"] != "http://test"
+    expected_md5 = hashlib.md5(artifact_bytes).hexdigest()
+    expected_signature = hashlib.md5((expected_md5 + "persisted-secret").encode()).hexdigest()
+    assert published_payload["md5"] == expected_md5
+    assert published_payload["signature"] == expected_signature
 
 def test_send_command_ota_publish_failure(tmp_path):
     db = TestingSessionLocal()

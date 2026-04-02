@@ -519,6 +519,7 @@ class BuildJobResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     ota_token: Optional[str] = None
+    ota_download_url: Optional[str] = None
     expected_firmware_version: Optional[str] = None
 
     class Config:
