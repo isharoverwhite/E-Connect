@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
@@ -18,7 +18,6 @@ const publicHttpPort = parsePort(process.env.PORT ?? "3000", "PORT");
 const publicHttpsPort = parsePort(process.env.HTTPS_PORT ?? "3443", "HTTPS_PORT");
 const publicHost = process.env.HOSTNAME ?? "0.0.0.0";
 const internalPort = parsePort(process.env.INTERNAL_HTTP_PORT ?? "3001", "INTERNAL_HTTP_PORT");
-const forwardedArgs = process.argv.slice(2);
 
 if (publicHttpPort === publicHttpsPort) {
   throw new Error(`PORT=${publicHttpPort} and HTTPS_PORT=${publicHttpsPort} must not be the same.`);
@@ -28,38 +27,67 @@ if (internalPort === publicHttpPort || internalPort === publicHttpsPort) {
   throw new Error(`INTERNAL_HTTP_PORT=${internalPort} must differ from the public listener ports.`);
 }
 
-const nextBinary = path.join(
-  process.cwd(),
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "next.cmd" : "next",
-);
+const standaloneServerPath = [
+  path.join(process.cwd(), "server.js"),
+  path.join(process.cwd(), ".next", "standalone", "server.js"),
+].find((candidate) => existsSync(candidate));
+
+if (!standaloneServerPath) {
+  throw new Error("Could not find the Next standalone server entrypoint. Run `npm run build` first.");
+}
+
+function prepareStandaloneRuntime(serverPath) {
+  const rootStandaloneServer = path.join(process.cwd(), "server.js");
+  if (serverPath === rootStandaloneServer) {
+    return {
+      runtimeDir: process.cwd(),
+      runtimeServerPath: serverPath,
+    };
+  }
+
+  const standaloneDir = path.dirname(serverPath);
+  const runtimeDir = path.join(process.cwd(), ".next", "local-standalone-runtime");
+  const rootStaticDir = path.join(process.cwd(), ".next", "static");
+  const runtimeStaticDir = path.join(runtimeDir, ".next", "static");
+  const publicDir = path.join(process.cwd(), "public");
+  const runtimePublicDir = path.join(runtimeDir, "public");
+
+  rmSync(runtimeDir, { recursive: true, force: true });
+  mkdirSync(runtimeDir, { recursive: true });
+  cpSync(standaloneDir, runtimeDir, { recursive: true });
+
+  if (existsSync(rootStaticDir)) {
+    mkdirSync(path.dirname(runtimeStaticDir), { recursive: true });
+    cpSync(rootStaticDir, runtimeStaticDir, { recursive: true });
+  }
+
+  if (existsSync(publicDir)) {
+    cpSync(publicDir, runtimePublicDir, { recursive: true });
+  }
+
+  return {
+    runtimeDir,
+    runtimeServerPath: path.join(runtimeDir, "server.js"),
+  };
+}
+
+const { runtimeDir, runtimeServerPath } = prepareStandaloneRuntime(standaloneServerPath);
 
 const { keyPath, certPath, provider, hosts, httpsDir } = ensureLocalTlsAssets();
 
 console.log(
-  `[dev] Dual-origin dev runtime with hot reload is enabled. Using ${provider} TLS assets in ${httpsDir} for ${formatTlsHostSummary(hosts)}.`,
+  `[https] HTTPS companion is enabled on port ${publicHttpsPort}. Using ${provider} TLS assets in ${httpsDir} for ${formatTlsHostSummary(hosts)}.`,
 );
 
-const child = spawn(
-  nextBinary,
-  [
-    "dev",
-    "--hostname",
-    "127.0.0.1",
-    "--port",
-    String(internalPort),
-    ...forwardedArgs,
-  ],
-  {
-    stdio: "inherit",
-    env: {
-      ...process.env,
-      HOSTNAME: "127.0.0.1",
-      PORT: String(internalPort),
-    },
+const child = spawn(process.execPath, [runtimeServerPath], {
+  cwd: runtimeDir,
+  stdio: "inherit",
+  env: {
+    ...process.env,
+    PORT: String(internalPort),
+    HOSTNAME: "127.0.0.1",
   },
-);
+});
 
 let shuttingDown = false;
 
@@ -103,7 +131,7 @@ function proxyHttpRequest(request, response, options) {
     if (!response.headersSent) {
       response.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
     }
-    response.end("Next.js dev upstream is unavailable.");
+    response.end("Next.js upstream is unavailable.");
   });
 
   request.on("aborted", () => {
@@ -171,12 +199,12 @@ attachUpgradeProxy(httpServer, { externalPort: publicHttpPort, isSecure: false }
 attachUpgradeProxy(httpsServer, { externalPort: publicHttpsPort, isSecure: true });
 
 httpServer.listen(publicHttpPort, publicHost, () => {
-  console.log(`[http] Dev proxy listening on http://${publicHost}:${publicHttpPort}.`);
+  console.log(`[http] Listening on http://${publicHost}:${publicHttpPort}.`);
 });
 
 httpsServer.listen(publicHttpsPort, publicHost, () => {
   console.log(
-    `[https] Dev proxy listening on https://${publicHost}:${publicHttpsPort} with Next dev upstream on 127.0.0.1:${internalPort}.`,
+    `[https] Listening on https://${publicHost}:${publicHttpsPort} with internal Next upstream on 127.0.0.1:${internalPort}.`,
   );
 });
 

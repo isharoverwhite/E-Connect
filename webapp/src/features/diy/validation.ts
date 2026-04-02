@@ -43,11 +43,7 @@ export function validatePinMappings(
       errors.push(`GPIO ${mapping.gpio_pin} is input-only and cannot drive outputs.`);
     }
 
-    if (boardPin.reserved) {
-      errors.push(
-        `GPIO ${mapping.gpio_pin} is reserved or tightly coupled to boot / USB functions on ${board.name}.`,
-      );
-    }
+    // Removed check for reserved pins as they can now be mapped if they have capabilities
 
     if (boardPin.bootSensitive && (mapping.mode === "OUTPUT" || mapping.mode === "PWM")) {
       warnings.push(

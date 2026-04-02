@@ -8,7 +8,6 @@ WEBAPP_DIR="$ROOT_DIR/webapp"
 
 SERVER_PYTHON="${ECONNECT_SERVER_PYTHON:-$SERVER_DIR/venv/bin/python}"
 START_DOCKER_DEPS="${ECONNECT_START_DOCKER_DEPS:-1}"
-SKIP_WEBAPP_BUILD="${ECONNECT_SKIP_WEBAPP_BUILD:-0}"
 
 SERVER_HOST="${ECONNECT_SERVER_HOST:-0.0.0.0}"
 SERVER_PORT="${ECONNECT_SERVER_PORT:-8000}"
@@ -34,7 +33,6 @@ Options:
   --server-port PORT         Override backend port. Default: 8000
   --webapp-http-port PORT    Override webapp HTTP port. Default: 3000
   --webapp-https-port PORT   Override webapp HTTPS port. Default: 3443
-  --skip-webapp-build        Skip 'npm run build' before starting the webapp.
   --no-docker-deps           Do not auto-start docker compose services db/mqtt.
   -h, --help                 Show this help message.
 
@@ -46,12 +44,10 @@ Environment overrides:
   ECONNECT_WEBAPP_INTERNAL_HTTP_PORT
   ECONNECT_SERVER_PYTHON
   ECONNECT_START_DOCKER_DEPS=0
-  ECONNECT_SKIP_WEBAPP_BUILD=1
 
 Notes:
-  - This script intentionally does not use 'npm run dev' for the webapp.
-    The repo's dev mode serves HTTPS directly on :3000, which can leave the
-    board with an HTTP :3000 target that does not actually exist.
+  - The webapp runs in developer mode with hot reload, but still keeps the
+    public OTA-safe topology: HTTP on :3000 and HTTPS companion on :3443.
   - MariaDB and MQTT are expected on localhost. By default the script ensures
     docker compose has db + mqtt running first.
 EOF
@@ -74,10 +70,6 @@ while [[ $# -gt 0 ]]; do
     --webapp-https-port)
       WEBAPP_HTTPS_PORT="${2:?Missing value for --webapp-https-port}"
       shift 2
-      ;;
-    --skip-webapp-build)
-      SKIP_WEBAPP_BUILD="1"
-      shift
       ;;
     --no-docker-deps)
       START_DOCKER_DEPS="0"
@@ -393,21 +385,7 @@ SERVER_PID="$!"
 
 wait_for_http_url "http://127.0.0.1:$SERVER_PORT/health" "60" "backend health"
 
-# Use the standalone runtime instead of `next dev` so the HTTP :3000 origin
-# really exists for the board while the secure companion stays on :3443.
-if [[ "$SKIP_WEBAPP_BUILD" != "1" ]]; then
-  echo "Building webapp for standalone dual-port runtime"
-  (
-    cd "$WEBAPP_DIR"
-    PORT="$WEBAPP_HTTP_PORT" \
-    HTTPS_PORT="$WEBAPP_HTTPS_PORT" \
-    INTERNAL_HTTP_PORT="$WEBAPP_INTERNAL_HTTP_PORT" \
-    HOSTNAME="0.0.0.0" \
-    npm run build
-  )
-fi
-
-echo "Starting webapp on http://0.0.0.0:$WEBAPP_HTTP_PORT and https://0.0.0.0:$WEBAPP_HTTPS_PORT"
+echo "Starting webapp dev runtime on http://0.0.0.0:$WEBAPP_HTTP_PORT and https://0.0.0.0:$WEBAPP_HTTPS_PORT"
 (
   cd "$WEBAPP_DIR"
   exec env \
@@ -415,7 +393,7 @@ echo "Starting webapp on http://0.0.0.0:$WEBAPP_HTTP_PORT and https://0.0.0.0:$W
     HTTPS_PORT="$WEBAPP_HTTPS_PORT" \
     INTERNAL_HTTP_PORT="$WEBAPP_INTERNAL_HTTP_PORT" \
     HOSTNAME="0.0.0.0" \
-    npm run start
+    npm run dev
 ) &
 WEBAPP_PID="$!"
 

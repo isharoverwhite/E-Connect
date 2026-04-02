@@ -980,6 +980,9 @@ def resolve_build_job_config_snapshot(job: BuildJob) -> dict[str, Any]:
         if isinstance(decoded_snapshot, dict):
             return dict(decoded_snapshot)
 
+    if job.saved_config is not None and isinstance(job.saved_config.config, dict):
+        return dict(job.saved_config.config)
+
     project = job.project
     if (
         project is not None
@@ -987,6 +990,15 @@ def resolve_build_job_config_snapshot(job: BuildJob) -> dict[str, Any]:
         and isinstance(project.pending_config, dict)
     ):
         return dict(project.pending_config)
+
+    if (
+        project is not None
+        and getattr(project, "pending_config_id", None)
+        and getattr(project, "pending_config_id", None) == getattr(job, "saved_config_id", None)
+        and getattr(project, "pending_saved_config", None) is not None
+        and isinstance(project.pending_saved_config.config, dict)
+    ):
+        return dict(project.pending_saved_config.config)
 
     if project is not None and isinstance(project.config, dict):
         return dict(project.config)
@@ -999,6 +1011,7 @@ def promote_build_job_project_config(job: BuildJob) -> bool:
     if project is None or not isinstance(job.staged_project_config, dict):
         return False
 
+    now = datetime.utcnow()
     staged_config = dict(job.staged_project_config)
     project.config = staged_config
 
@@ -1006,9 +1019,19 @@ def promote_build_job_project_config(job: BuildJob) -> bool:
     if isinstance(staged_wifi_credential_id, int):
         project.wifi_credential_id = staged_wifi_credential_id
 
+    if job.saved_config is not None:
+        job.saved_config.config = dict(staged_config)
+        job.saved_config.name = str(staged_config.get("config_name") or job.saved_config.name or "Saved config").strip() or "Saved config"
+        job.saved_config.last_applied_at = now
+        project.current_config_id = job.saved_config.id
+
     if project.pending_build_job_id == job.id:
         project.pending_config = None
         project.pending_build_job_id = None
+        project.pending_config_id = None
+
+    if getattr(project, "current_config_id", None) is None and getattr(job, "saved_config_id", None):
+        project.current_config_id = job.saved_config_id
 
     return True
 

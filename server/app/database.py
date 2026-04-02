@@ -2,6 +2,7 @@ import logging
 import os
 import time
 import json
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import create_engine, text
@@ -43,6 +44,8 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 LEGACY_CONFIG_BUILD_POINTER_KEYS = ("latest_build_job_id", "latest_build_config_key")
+CONFIG_HISTORY_DELETED_AT_KEY = "_history_deleted_at"
+INTERNAL_CONFIG_METADATA_KEYS = (CONFIG_HISTORY_DELETED_AT_KEY,)
 
 def _format_operational_error(exc: OperationalError) -> str:
     original_error = getattr(exc, "orig", None)
@@ -121,8 +124,134 @@ def _utc_isoformat(value):
     timestamp = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
     return timestamp.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
+def strip_internal_config_metadata(payload):
+    normalized = _decode_json_object(payload)
+    if normalized is None:
+        return None
+
+    sanitized = dict(normalized)
+    for internal_key in INTERNAL_CONFIG_METADATA_KEYS:
+        sanitized.pop(internal_key, None)
+    return sanitized
+
+def is_config_history_deleted_payload(payload) -> bool:
+    normalized = _decode_json_object(payload)
+    if normalized is None:
+        return False
+    return _trimmed_string(normalized.get(CONFIG_HISTORY_DELETED_AT_KEY)) is not None
+
+def mark_config_history_deleted_payload(payload, *, deleted_at: datetime | None = None):
+    normalized = _decode_json_object(payload)
+    if normalized is None:
+        return payload, False
+
+    existing_deleted_at = _trimmed_string(normalized.get(CONFIG_HISTORY_DELETED_AT_KEY))
+    if existing_deleted_at is not None:
+        return normalized, False
+
+    updated = dict(normalized)
+    updated[CONFIG_HISTORY_DELETED_AT_KEY] = _utc_isoformat(deleted_at or datetime.now(timezone.utc))
+    return updated, True
+
 def _config_name_fallback(project_name: str | None, device_name: str | None) -> str:
     return (device_name or project_name or "Saved config").strip() or "Saved config"
+
+
+def _config_device_name_fallback(
+    payload_device_name: str | None,
+    project_name: str | None,
+    device_name: str | None,
+) -> str:
+    return (payload_device_name or device_name or project_name or "E-Connect Node").strip() or "E-Connect Node"
+
+def _resolve_project_binding_identity(project, device):
+    project_name = _trimmed_string(getattr(project, "name", None)) if project is not None else None
+    device_id = _trimmed_string(getattr(device, "device_id", None)) if device is not None else None
+    device_name = _trimmed_string(getattr(device, "name", None)) if device is not None else None
+
+    if device_id is None and project is not None:
+        try:
+            from .services.provisioning import build_project_firmware_identity, extract_project_secret_from_payload
+
+            persisted_secret = None
+            for payload in (
+                getattr(project, "pending_config", None),
+                getattr(project, "config", None),
+            ):
+                persisted_secret = extract_project_secret_from_payload(payload)
+                if persisted_secret:
+                    break
+
+            device_id, _ = build_project_firmware_identity(project.id, persisted_secret)
+        except Exception:
+            device_id = None
+
+    resolved_device_id = device_id or (_trimmed_string(getattr(project, "id", None)) if project is not None else None) or str(uuid.uuid4())
+    resolved_device_name = device_name or _config_name_fallback(project_name, None)
+    return resolved_device_id, resolved_device_name
+
+def _normalize_saved_config_payload(
+    payload,
+    *,
+    row_id: str,
+    project,
+    device,
+    saved_at: datetime | None = None,
+    preserve_internal_metadata: bool = False,
+):
+    normalized = _decode_json_object(payload) or {}
+    changed = payload is None or not isinstance(payload, dict)
+
+    for legacy_key in LEGACY_CONFIG_BUILD_POINTER_KEYS:
+        if legacy_key in normalized:
+            normalized.pop(legacy_key, None)
+            changed = True
+
+    if not preserve_internal_metadata:
+        for internal_key in INTERNAL_CONFIG_METADATA_KEYS:
+            if internal_key in normalized:
+                normalized.pop(internal_key, None)
+                changed = True
+
+    if not _trimmed_string(normalized.get("config_id")):
+        normalized["config_id"] = row_id
+        changed = True
+
+    project_name = _trimmed_string(getattr(project, "name", None)) if project is not None else None
+    resolved_device_id, fallback_device_name = _resolve_project_binding_identity(project, device)
+    resolved_device_name = _config_device_name_fallback(
+        _trimmed_string(normalized.get("assigned_device_name")),
+        _trimmed_string(normalized.get("project_name")) or project_name,
+        fallback_device_name,
+    )
+    if not _trimmed_string(normalized.get("config_name")):
+        normalized["config_name"] = _config_name_fallback(project_name, resolved_device_name)
+        changed = True
+
+    if _trimmed_string(normalized.get("assigned_device_id")) != resolved_device_id:
+        normalized["assigned_device_id"] = resolved_device_id
+        changed = True
+
+    if _trimmed_string(normalized.get("assigned_device_name")) != resolved_device_name:
+        normalized["assigned_device_name"] = resolved_device_name
+        changed = True
+
+    if _trimmed_string(normalized.get("project_name")) != resolved_device_name:
+        normalized["project_name"] = resolved_device_name
+        changed = True
+
+    board_profile = _trimmed_string(getattr(project, "board_profile", None)) if project is not None else None
+    if board_profile and _trimmed_string(normalized.get("board_profile")) != board_profile:
+        normalized["board_profile"] = board_profile
+        changed = True
+
+    if not _trimmed_string(normalized.get("saved_at")):
+        normalized_saved_at = _utc_isoformat(saved_at or datetime.now(timezone.utc))
+        if normalized_saved_at:
+            normalized["saved_at"] = normalized_saved_at
+            changed = True
+
+    return normalized, changed
 
 def _resolve_project_device(project, linked_devices, *, preferred_payloads):
     candidate_ids = []
@@ -160,39 +289,14 @@ def _resolve_project_device(project, linked_devices, *, preferred_payloads):
     return linked_devices[0] if linked_devices else None
 
 def _normalize_build_history_snapshot(snapshot, *, job, project, device):
-    normalized = _decode_json_object(snapshot) or {}
-    changed = snapshot is None or not isinstance(snapshot, dict)
-
-    for legacy_key in LEGACY_CONFIG_BUILD_POINTER_KEYS:
-        if legacy_key in normalized:
-            normalized.pop(legacy_key, None)
-            changed = True
-
-    if not _trimmed_string(normalized.get("config_id")):
-        normalized["config_id"] = job.id
-        changed = True
-
-    project_name = _trimmed_string(getattr(project, "name", None)) if project is not None else None
-    device_name = _trimmed_string(getattr(device, "name", None)) if device is not None else None
-    if not _trimmed_string(normalized.get("config_name")):
-        normalized["config_name"] = _config_name_fallback(project_name, device_name)
-        changed = True
-
-    if device is not None:
-        if not _trimmed_string(normalized.get("assigned_device_id")):
-            normalized["assigned_device_id"] = device.device_id
-            changed = True
-        if not _trimmed_string(normalized.get("assigned_device_name")):
-            normalized["assigned_device_name"] = device.name
-            changed = True
-
-    if not _trimmed_string(normalized.get("saved_at")):
-        saved_at = _utc_isoformat(getattr(job, "created_at", None))
-        if saved_at:
-            normalized["saved_at"] = saved_at
-            changed = True
-
-    return normalized, changed
+    return _normalize_saved_config_payload(
+        snapshot,
+        row_id=job.id,
+        project=project,
+        device=device,
+        saved_at=getattr(job, "created_at", None),
+        preserve_internal_metadata=True,
+    )
 
 def _normalize_project_config_payload(payload, *, project, device, valid_job_ids, fallback_job_id=None):
     payload_json = _decode_json_object(payload)
@@ -213,17 +317,27 @@ def _normalize_project_config_payload(payload, *, project, device, valid_job_ids
 
     project_name = _trimmed_string(getattr(project, "name", None)) if project is not None else None
     device_name = _trimmed_string(getattr(device, "name", None)) if device is not None else None
+    resolved_device_name = _config_device_name_fallback(
+        _trimmed_string(normalized.get("assigned_device_name")),
+        _trimmed_string(normalized.get("project_name")) or project_name,
+        device_name,
+    )
     if not _trimmed_string(normalized.get("config_name")):
-        normalized["config_name"] = _config_name_fallback(project_name, device_name)
+        normalized["config_name"] = _config_name_fallback(project_name, resolved_device_name)
         changed = True
 
     if device is not None:
         if not _trimmed_string(normalized.get("assigned_device_id")):
             normalized["assigned_device_id"] = device.device_id
             changed = True
-        if not _trimmed_string(normalized.get("assigned_device_name")):
-            normalized["assigned_device_name"] = device.name
-            changed = True
+
+    if _trimmed_string(normalized.get("assigned_device_name")) != resolved_device_name:
+        normalized["assigned_device_name"] = resolved_device_name
+        changed = True
+
+    if _trimmed_string(normalized.get("project_name")) != resolved_device_name:
+        normalized["project_name"] = resolved_device_name
+        changed = True
 
     if fallback_job_id and not _trimmed_string(normalized.get("config_id")):
         normalized["config_id"] = fallback_job_id
@@ -295,7 +409,25 @@ def _ensure_additive_columns():
         ),
         (
             "diy_projects",
+            "current_config_id",
+            "VARCHAR(36)",
+            "VARCHAR(36) NULL",
+        ),
+        (
+            "diy_projects",
+            "pending_config_id",
+            "VARCHAR(36)",
+            "VARCHAR(36) NULL",
+        ),
+        (
+            "diy_projects",
             "pending_build_job_id",
+            "VARCHAR(36)",
+            "VARCHAR(36) NULL",
+        ),
+        (
+            "build_jobs",
+            "saved_config_id",
             "VARCHAR(36)",
             "VARCHAR(36) NULL",
         ),
@@ -458,10 +590,14 @@ def _cleanup_project_board_config_data():
             if pending_job_id and pending_job_id not in valid_job_ids:
                 project.pending_build_job_id = None
                 project.pending_config = None
+                if getattr(project, "pending_config_id", None):
+                    project.pending_config_id = None
                 changed = True
                 pending_job_id = None
             elif pending_job_id is None and project.pending_config is not None:
                 project.pending_config = None
+                if getattr(project, "pending_config_id", None):
+                    project.pending_config_id = None
                 changed = True
 
             if pending_job_id:
@@ -481,6 +617,199 @@ def _cleanup_project_board_config_data():
     except Exception as exc:
         db.rollback()
         logger.warning("Board config cleanup failed (non-fatal): %s", exc)
+    finally:
+        db.close()
+
+def _backfill_saved_project_configs():
+    from .sql_models import BuildJob, Device, DiyProject, DiyProjectConfig, JobStatus
+
+    def ensure_saved_config_row(
+        *,
+        row_id: str,
+        project,
+        device,
+        payload,
+        rows_by_id: dict[str, object],
+        last_applied_at: datetime | None = None,
+    ) -> bool:
+        normalized_payload, payload_changed = _normalize_saved_config_payload(
+            payload,
+            row_id=row_id,
+            project=project,
+            device=device,
+            saved_at=last_applied_at,
+        )
+        resolved_device_id, _ = _resolve_project_binding_identity(project, device)
+        config_name = _trimmed_string(normalized_payload.get("config_name")) or _config_name_fallback(
+            _trimmed_string(getattr(project, "name", None)),
+            _trimmed_string(getattr(device, "name", None)) if device is not None else None,
+        )
+
+        row = rows_by_id.get(row_id)
+        changed = payload_changed
+        if row is None:
+            row = DiyProjectConfig(
+                id=row_id,
+                project_id=project.id,
+                device_id=resolved_device_id,
+                board_profile=project.board_profile,
+                name=config_name,
+                config=normalized_payload,
+                last_applied_at=last_applied_at,
+            )
+            db.add(row)
+            rows_by_id[row_id] = row
+            return True
+
+        if row.project_id != project.id:
+            row.project_id = project.id
+            changed = True
+        if row.device_id != resolved_device_id:
+            row.device_id = resolved_device_id
+            changed = True
+        if row.board_profile != project.board_profile:
+            row.board_profile = project.board_profile
+            changed = True
+        if row.name != config_name:
+            row.name = config_name
+            changed = True
+        if row.config != normalized_payload:
+            row.config = normalized_payload
+            changed = True
+        if last_applied_at and row.last_applied_at != last_applied_at:
+            row.last_applied_at = last_applied_at
+            changed = True
+        return changed
+
+    db = SessionLocal()
+    try:
+        projects = {project.id: project for project in db.query(DiyProject).all()}
+        rows_by_id = {row.id: row for row in db.query(DiyProjectConfig).all()}
+        devices_by_project = {}
+        for device in db.query(Device).filter(Device.provisioning_project_id.isnot(None)).all():
+            devices_by_project.setdefault(device.provisioning_project_id, []).append(device)
+
+        changed = False
+
+        for project in projects.values():
+            linked_devices = devices_by_project.get(project.id, [])
+            resolved_device = _resolve_project_device(
+                project,
+                linked_devices,
+                preferred_payloads=(project.pending_config, project.config),
+            )
+
+            current_payload = _decode_json_object(project.config)
+            if current_payload is not None:
+                current_config_id = (
+                    _trimmed_string(getattr(project, "current_config_id", None))
+                    or _trimmed_string(current_payload.get("config_id"))
+                    or project.id
+                )
+                if ensure_saved_config_row(
+                    row_id=current_config_id,
+                    project=project,
+                    device=resolved_device,
+                    payload=current_payload,
+                    rows_by_id=rows_by_id,
+                ):
+                    changed = True
+                normalized_current, current_payload_changed = _normalize_saved_config_payload(
+                    current_payload,
+                    row_id=current_config_id,
+                    project=project,
+                    device=resolved_device,
+                )
+                if current_payload_changed or project.config != normalized_current:
+                    project.config = normalized_current
+                    changed = True
+                if getattr(project, "current_config_id", None) != current_config_id:
+                    project.current_config_id = current_config_id
+                    changed = True
+            elif getattr(project, "current_config_id", None):
+                project.current_config_id = None
+                changed = True
+
+            pending_payload = _decode_json_object(project.pending_config)
+            if pending_payload is not None:
+                pending_config_id = (
+                    _trimmed_string(getattr(project, "pending_config_id", None))
+                    or _trimmed_string(pending_payload.get("config_id"))
+                    or _trimmed_string(getattr(project, "pending_build_job_id", None))
+                    or str(uuid.uuid4())
+                )
+                if ensure_saved_config_row(
+                    row_id=pending_config_id,
+                    project=project,
+                    device=resolved_device,
+                    payload=pending_payload,
+                    rows_by_id=rows_by_id,
+                ):
+                    changed = True
+                normalized_pending, pending_payload_changed = _normalize_saved_config_payload(
+                    pending_payload,
+                    row_id=pending_config_id,
+                    project=project,
+                    device=resolved_device,
+                )
+                if pending_payload_changed or project.pending_config != normalized_pending:
+                    project.pending_config = normalized_pending
+                    changed = True
+                if getattr(project, "pending_config_id", None) != pending_config_id:
+                    project.pending_config_id = pending_config_id
+                    changed = True
+            elif getattr(project, "pending_config_id", None):
+                project.pending_config_id = None
+                changed = True
+
+        for job in db.query(BuildJob).order_by(BuildJob.created_at.asc(), BuildJob.id.asc()).all():
+            project = projects.get(job.project_id)
+            if project is None:
+                continue
+
+            linked_devices = devices_by_project.get(project.id, [])
+            resolved_device = _resolve_project_device(
+                project,
+                linked_devices,
+                preferred_payloads=(
+                    job.staged_project_config,
+                    project.pending_config,
+                    project.config,
+                ),
+            )
+            snapshot = _decode_json_object(job.staged_project_config)
+            if snapshot is None:
+                continue
+            if is_config_history_deleted_payload(snapshot):
+                if getattr(job, "saved_config_id", None) is not None:
+                    job.saved_config_id = None
+                    changed = True
+                continue
+
+            row_id = (
+                _trimmed_string(getattr(job, "saved_config_id", None))
+                or _trimmed_string(snapshot.get("config_id"))
+                or job.id
+            )
+            applied_at = job.finished_at if job.status == JobStatus.flashed else None
+            if ensure_saved_config_row(
+                row_id=row_id,
+                project=project,
+                device=resolved_device,
+                payload=snapshot,
+                rows_by_id=rows_by_id,
+                last_applied_at=applied_at,
+            ):
+                changed = True
+            if getattr(job, "saved_config_id", None) != row_id:
+                job.saved_config_id = row_id
+                changed = True
+
+        if changed:
+            db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.warning("Saved DIY config backfill failed (non-fatal): %s", exc)
     finally:
         db.close()
 
@@ -596,6 +925,7 @@ def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
             _backfill_project_wifi_credentials()
             _backfill_legacy_build_history_metadata()
             _cleanup_project_board_config_data()
+            _backfill_saved_project_configs()
             _cleanup_legacy_user_approval_status()
             logger.info("Database schema is ready")
             return True, None

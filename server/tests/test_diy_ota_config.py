@@ -10,8 +10,8 @@ import os
 import uuid
 
 from app.api import router
-from app.database import Base, get_db
-from app.sql_models import AuthStatus, User, Household, HouseholdMembership, HouseholdRole, Room, DiyProject, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration, WifiCredential
+from app.database import Base, CONFIG_HISTORY_DELETED_AT_KEY, get_db
+from app.sql_models import AuthStatus, User, Household, HouseholdMembership, HouseholdRole, Room, DiyProject, DiyProjectConfig, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration, WifiCredential, DeviceHistory
 from app.auth import get_password_hash, create_ota_token
 from app.services.builder import get_durable_artifact_path
 from app.services.provisioning import PRIVATE_DEVICE_SECRET_KEY
@@ -142,7 +142,12 @@ def test_put_device_config_success():
     assert job.staged_project_config is not None
 
     db.refresh(project)
-    assert project.config == original_config
+    for key, value in original_config.items():
+        assert project.config[key] == value
+    assert project.current_config_id is not None
+    assert project.config["config_id"] == project.current_config_id
+    assert project.pending_config_id == data["config_id"]
+    assert project.pending_config_id != project.current_config_id
     assert project.pending_build_job_id == job_id
     assert project.pending_config["advertised_host"] == "192.168.1.25"
     assert project.pending_config["api_base_url"] == "http://192.168.1.25:3000/api/v1"
@@ -158,6 +163,48 @@ def test_put_device_config_success():
 
     db.refresh(user)
     assert not user.ui_layout
+
+
+def test_put_device_config_stages_device_name_until_flash():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    payload = {
+        "assigned_device_name": "Kitchen Lamp",
+        "config_name": "Kitchen Lamp Revision",
+        "pins": [
+            {"gpio": 2, "mode": "OUTPUT", "label": "LED"}
+        ]
+    }
+
+    with patch("app.api.build_firmware_task", return_value=None):
+        res = client.put(
+            f"/api/v1/device/{device.device_id}/config",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert data["status"] == "success"
+
+    db.refresh(project)
+    db.refresh(device)
+
+    assert device.name == "OTA Device"
+    assert project.pending_config["assigned_device_name"] == "Kitchen Lamp"
+    assert project.pending_config["project_name"] == "Kitchen Lamp"
+
+    saved_config = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == data["config_id"]).one()
+    assert saved_config.config["assigned_device_name"] == "Kitchen Lamp"
+    assert saved_config.config["project_name"] == "Kitchen Lamp"
+
+    job = db.query(BuildJob).filter(BuildJob.id == data["job_id"]).one()
+    assert job.staged_project_config["assigned_device_name"] == "Kitchen Lamp"
+    assert job.staged_project_config["project_name"] == "Kitchen Lamp"
 
 
 def test_put_device_config_preserves_board_reported_pin_map_until_reconnect():
@@ -372,7 +419,7 @@ def test_get_build_job_includes_exact_build_ota_download_url():
     assert PRIVATE_DEVICE_SECRET_KEY not in payload["staged_project_config"]
 
 
-def test_put_device_config_creates_named_history_entry_and_prunes_oldest_history(tmp_path):
+def test_put_device_config_creates_named_saved_config_without_pruning_build_history(tmp_path):
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
 
@@ -433,10 +480,12 @@ def test_put_device_config_creates_named_history_entry_and_prunes_oldest_history
 
     assert res.status_code == 200, res.text
     new_job_id = res.json()["job_id"]
+    new_config_id = res.json()["config_id"]
 
     db.refresh(project)
     assert project.pending_build_job_id == new_job_id
-    assert project.pending_config["config_id"] == new_job_id
+    assert project.pending_config_id == new_config_id
+    assert project.pending_config["config_id"] == new_config_id
     assert project.pending_config["config_name"] == "Kitchen Revision B"
     assert project.pending_config["assigned_device_id"] == device.device_id
     assert project.pending_config["assigned_device_name"] == device.name
@@ -444,6 +493,12 @@ def test_put_device_config_creates_named_history_entry_and_prunes_oldest_history
     assert "latest_build_config_key" not in project.pending_config
     assert "latest_build_job_id" not in project.config
     assert "latest_build_config_key" not in project.config
+    saved_config = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == new_config_id).one()
+    assert saved_config.project_id == project.id
+    assert saved_config.device_id == device.device_id
+    assert saved_config.board_profile == project.board_profile
+    assert saved_config.name == "Kitchen Revision B"
+    assert saved_config.config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "Relay"}]
 
     remaining_jobs = (
         db.query(BuildJob)
@@ -452,19 +507,19 @@ def test_put_device_config_creates_named_history_entry_and_prunes_oldest_history
         .all()
     )
     remaining_ids = [job.id for job in remaining_jobs if isinstance(job.staged_project_config, dict)]
-    assert len(remaining_ids) == 3
+    assert len(remaining_ids) == 4
     assert new_job_id in remaining_ids
-    assert old_job_ids[2] not in remaining_ids
+    assert old_job_ids[2] in remaining_ids
 
     oldest_artifact_path = tmp_path / f"{old_job_ids[2]}.bin"
     oldest_log_path = tmp_path / f"{old_job_ids[2]}.log"
-    assert not oldest_artifact_path.exists()
-    assert not oldest_log_path.exists()
-    assert not os.path.exists(get_durable_artifact_path(old_job_ids[2], "bootloader"))
-    assert not os.path.exists(get_durable_artifact_path(old_job_ids[2], "partitions"))
+    assert oldest_artifact_path.exists()
+    assert oldest_log_path.exists()
+    assert os.path.exists(get_durable_artifact_path(old_job_ids[2], "bootloader"))
+    assert os.path.exists(get_durable_artifact_path(old_job_ids[2], "partitions"))
 
 
-def test_list_device_config_history_returns_latest_three_with_board_assignment():
+def test_list_device_config_history_returns_all_saved_configs_with_board_assignment():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
 
@@ -503,19 +558,21 @@ def test_list_device_config_history_returns_latest_three_with_board_assignment()
     )
 
     assert res.status_code == 200, res.text
-    payload = res.json()
-    assert len(payload) == 3
-    assert [entry["id"] for entry in payload] == [snapshots[0][0], snapshots[1][0], snapshots[2][0]]
-    assert payload[0]["config_name"] == "Revision 0"
-    assert payload[0]["assigned_device_id"] == device.device_id
-    assert payload[0]["assigned_device_name"] == device.name
-    assert payload[0]["is_pending"] is True
-    assert payload[0]["is_committed"] is False
-    assert payload[1]["is_committed"] is True
-    assert payload[1]["expected_firmware_version"] == f"build-{snapshots[1][0][:8]}"
+    payload = sorted(res.json(), key=lambda entry: entry["id"])
+    assert len(payload) == 4
+    assert [entry["id"] for entry in payload] == sorted([snapshot_id for snapshot_id, _ in snapshots])
+    by_id = {entry["id"]: entry for entry in payload}
+    assert by_id[snapshots[0][0]]["config_name"] == "Revision 0"
+    assert by_id[snapshots[0][0]]["assigned_device_id"] == device.device_id
+    assert by_id[snapshots[0][0]]["assigned_device_name"] == device.name
+    assert by_id[snapshots[0][0]]["is_pending"] is True
+    assert by_id[snapshots[0][0]]["is_committed"] is False
+    assert by_id[snapshots[1][0]]["is_committed"] is True
+    assert by_id[snapshots[1][0]]["latest_build_job_id"] == snapshots[1][0]
+    assert by_id[snapshots[1][0]]["expected_firmware_version"] == f"build-{snapshots[1][0][:8]}"
 
 
-def test_config_history_and_prune_include_legacy_jobs_without_staged_snapshot():
+def test_config_history_keeps_legacy_jobs_and_current_saved_config():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
 
@@ -565,7 +622,7 @@ def test_config_history_and_prune_include_legacy_jobs_without_staged_snapshot():
         .order_by(BuildJob.created_at.desc(), BuildJob.id.desc())
         .all()
     )
-    assert [job.id for job in remaining_jobs] == [new_job_id, legacy_job_ids[0], legacy_job_ids[1]]
+    assert [job.id for job in remaining_jobs] == [new_job_id, legacy_job_ids[0], legacy_job_ids[1], legacy_job_ids[2]]
 
     history_res = client.get(
         f"/api/v1/device/{device.device_id}/config-history",
@@ -574,11 +631,14 @@ def test_config_history_and_prune_include_legacy_jobs_without_staged_snapshot():
 
     assert history_res.status_code == 200, history_res.text
     payload = history_res.json()
-    assert len(payload) == 3
-    assert [entry["id"] for entry in payload] == [new_job_id, legacy_job_ids[0], legacy_job_ids[1]]
-    assert payload[0]["config_name"] == "Legacy Carry Forward"
-    assert payload[0]["assigned_device_id"] == device.device_id
-    assert payload[1]["config_name"] == device.name
+    db.refresh(project)
+    assert len(payload) == 2
+    by_id = {entry["id"]: entry for entry in payload}
+    assert save_res.json()["config_id"] in by_id
+    assert project.current_config_id in by_id
+    assert by_id[save_res.json()["config_id"]]["config_name"] == "Legacy Carry Forward"
+    assert by_id[save_res.json()["config_id"]]["assigned_device_id"] == device.device_id
+    assert by_id[project.current_config_id]["config_name"] == device.name
 
 
 def test_rename_device_config_history_updates_current_committed_snapshot_name():
@@ -606,8 +666,15 @@ def test_rename_device_config_history_updates_current_committed_snapshot_name():
     response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
     token = response.json()["access_token"]
 
+    list_res = client.get(
+        f"/api/v1/device/{device.device_id}/config-history",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert list_res.status_code == 200, list_res.text
+    saved_config_id = next(entry["id"] for entry in list_res.json() if entry["config_name"] == "Committed Snapshot")
+
     res = client.put(
-        f"/api/v1/device/{device.device_id}/config-history/{job_id}/name",
+        f"/api/v1/device/{device.device_id}/config-history/{saved_config_id}/name",
         json={"config_name": "Committed Snapshot Renamed"},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -617,6 +684,9 @@ def test_rename_device_config_history_updates_current_committed_snapshot_name():
 
     db.refresh(job)
     db.refresh(project)
+    saved_config = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == saved_config_id).one()
+    assert saved_config.name == "Committed Snapshot Renamed"
+    assert saved_config.config["config_name"] == "Committed Snapshot Renamed"
     assert job.staged_project_config["config_name"] == "Committed Snapshot Renamed"
     assert project.config["config_name"] == "Committed Snapshot Renamed"
 
@@ -664,8 +734,15 @@ def test_rename_device_config_history_updates_pending_snapshot_name():
     response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
     token = response.json()["access_token"]
 
+    list_res = client.get(
+        f"/api/v1/device/{device.device_id}/config-history",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert list_res.status_code == 200, list_res.text
+    saved_config_id = next(entry["id"] for entry in list_res.json() if entry["config_name"] == "Pending Snapshot")
+
     res = client.put(
-        f"/api/v1/device/{device.device_id}/config-history/{pending_job_id}/name",
+        f"/api/v1/device/{device.device_id}/config-history/{saved_config_id}/name",
         json={"config_name": "Pending Snapshot Renamed"},
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -675,9 +752,117 @@ def test_rename_device_config_history_updates_pending_snapshot_name():
 
     db.refresh(pending_job)
     db.refresh(project)
+    saved_config = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == saved_config_id).one()
+    assert saved_config.name == "Pending Snapshot Renamed"
     assert pending_job.staged_project_config["config_name"] == "Pending Snapshot Renamed"
     assert project.pending_config["config_name"] == "Pending Snapshot Renamed"
     assert project.config["config_name"] == "Committed Snapshot"
+
+def test_put_device_config_updates_existing_saved_config_when_config_id_is_provided():
+    db = TestingSessionLocal()
+    _user, _room, project, device = create_test_data(db)
+
+    saved_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Editable Config",
+        config={
+            "config_id": "legacy-editable",
+            "config_name": "Editable Config",
+            "assigned_device_id": device.device_id,
+            "assigned_device_name": device.name,
+            "wifi_ssid": "test",
+            "wifi_password": "test",
+            "pins": [{"gpio": 3, "mode": "OUTPUT", "label": "Old Relay"}],
+        },
+    )
+    db.add(saved_config)
+    project.current_config_id = saved_config.id
+    project.config = dict(saved_config.config)
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    with patch("app.api.build_firmware_task", return_value=None):
+        res = client.put(
+            f"/api/v1/device/{device.device_id}/config",
+            json={
+                "password": "password",
+                "config_id": saved_config.id,
+                "config_name": "Editable Config Updated",
+                "pins": [{"gpio": 5, "mode": "PWM", "label": "Updated Dimmer"}],
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["config_id"] == saved_config.id
+
+    db.refresh(saved_config)
+    db.refresh(project)
+    job = db.query(BuildJob).filter(BuildJob.id == res.json()["job_id"]).one()
+    assert job.saved_config_id == saved_config.id
+    assert saved_config.name == "Editable Config Updated"
+    assert saved_config.config["pins"] == [{"gpio": 5, "mode": "PWM", "label": "Updated Dimmer"}]
+    assert project.pending_config_id == saved_config.id
+    assert db.query(DiyProjectConfig).filter(DiyProjectConfig.project_id == project.id).count() == 1
+
+
+def test_put_device_config_can_clone_existing_saved_config_into_new_config():
+    db = TestingSessionLocal()
+    _user, _room, project, device = create_test_data(db)
+
+    original_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Original Config",
+        config={
+            "config_id": "original-config",
+            "config_name": "Original Config",
+            "assigned_device_id": device.device_id,
+            "assigned_device_name": device.name,
+            "wifi_ssid": "test",
+            "wifi_password": "test",
+            "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "Original Relay"}],
+        },
+    )
+    db.add(original_config)
+    project.current_config_id = original_config.id
+    project.config = dict(original_config.config)
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    with patch("app.api.build_firmware_task", return_value=None):
+        res = client.put(
+            f"/api/v1/device/{device.device_id}/config",
+            json={
+                "source_config_id": original_config.id,
+                "create_new_config": True,
+                "config_name": "Cloned Config",
+                "pins": [{"gpio": 5, "mode": "PWM", "label": "Cloned Dimmer"}],
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert res.status_code == 200, res.text
+    new_config_id = res.json()["config_id"]
+    assert new_config_id != original_config.id
+
+    db.refresh(original_config)
+    db.refresh(project)
+    cloned_config = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == new_config_id).one()
+    assert original_config.config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "Original Relay"}]
+    assert cloned_config.name == "Cloned Config"
+    assert cloned_config.config["pins"] == [{"gpio": 5, "mode": "PWM", "label": "Cloned Dimmer"}]
+    assert project.pending_config_id == new_config_id
+    assert db.query(DiyProjectConfig).filter(DiyProjectConfig.project_id == project.id).count() == 2
 
 def test_put_device_config_invalid_not_diy():
     db = TestingSessionLocal()
@@ -699,27 +884,30 @@ def test_put_device_config_invalid_not_diy():
     assert res.status_code == 400
     assert "Not a managed DIY device" in res.json()["detail"]
 
-def test_put_device_config_requires_account_password():
+def test_put_device_config_overwrite_requires_account_password():
     db = TestingSessionLocal()
-    user, room, project, device = create_test_data(db)
+    _user, _room, project, device = create_test_data(db)
 
-    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
-    token = response.json()["access_token"]
-
-    res = client.put(
-        f"/api/v1/device/{device.device_id}/config",
-        json={"pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}]},
-        headers={"Authorization": f"Bearer {token}"},
+    saved_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Editable Config",
+        config={
+            "config_id": "legacy-editable",
+            "config_name": "Editable Config",
+            "assigned_device_id": device.device_id,
+            "assigned_device_name": device.name,
+            "wifi_ssid": "test",
+            "wifi_password": "test",
+            "pins": [{"gpio": 3, "mode": "OUTPUT", "label": "Old Relay"}],
+        },
     )
-
-    assert res.status_code == 400
-    assert res.json()["detail"]["error"] == "validation"
-    assert res.json()["detail"]["message"] == "Enter your account password before updating this board config."
-    assert db.query(BuildJob).filter(BuildJob.project_id == project.id).count() == 0
-
-def test_put_device_config_rejects_wrong_account_password():
-    db = TestingSessionLocal()
-    user, room, project, device = create_test_data(db)
+    db.add(saved_config)
+    project.current_config_id = saved_config.id
+    project.config = dict(saved_config.config)
+    db.commit()
 
     response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
     token = response.json()["access_token"]
@@ -727,6 +915,49 @@ def test_put_device_config_rejects_wrong_account_password():
     res = client.put(
         f"/api/v1/device/{device.device_id}/config",
         json={
+            "config_id": saved_config.id,
+            "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}],
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 400
+    assert res.json()["detail"]["error"] == "validation"
+    assert res.json()["detail"]["message"] == "Enter your account password before overwriting this saved board config."
+    assert db.query(BuildJob).filter(BuildJob.project_id == project.id).count() == 0
+
+def test_put_device_config_overwrite_rejects_wrong_account_password():
+    db = TestingSessionLocal()
+    _user, _room, project, device = create_test_data(db)
+
+    saved_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Editable Config",
+        config={
+            "config_id": "legacy-editable",
+            "config_name": "Editable Config",
+            "assigned_device_id": device.device_id,
+            "assigned_device_name": device.name,
+            "wifi_ssid": "test",
+            "wifi_password": "test",
+            "pins": [{"gpio": 3, "mode": "OUTPUT", "label": "Old Relay"}],
+        },
+    )
+    db.add(saved_config)
+    project.current_config_id = saved_config.id
+    project.config = dict(saved_config.config)
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    res = client.put(
+        f"/api/v1/device/{device.device_id}/config",
+        json={
+            "config_id": saved_config.id,
             "password": "wrong-password",
             "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "LED"}],
         },
@@ -737,7 +968,7 @@ def test_put_device_config_rejects_wrong_account_password():
     assert res.json()["detail"]["error"] == "invalid_password"
     assert (
         res.json()["detail"]["message"]
-        == "Incorrect password. Enter the password for the signed-in account to update this board config."
+        == "Incorrect password. Enter the password for the signed-in account to overwrite this saved board config."
     )
     assert db.query(BuildJob).filter(BuildJob.project_id == project.id).count() == 0
 
@@ -758,7 +989,6 @@ def test_put_device_config_updates_selected_wifi_credential():
     token = response.json()["access_token"]
 
     payload = {
-        "password": "password",
         "wifi_credential_id": wifi_credential.id,
         "pins": [
             {"gpio": 2, "mode": "OUTPUT", "label": "LED"}
@@ -783,7 +1013,7 @@ def test_put_device_config_updates_selected_wifi_credential():
     assert job.status == JobStatus.queued
     assert job.staged_project_config == project.pending_config
 
-def test_put_device_config_invalid_payload_does_not_persist_or_create_job():
+def test_put_device_config_empty_payload_saves_draft_without_creating_job():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
 
@@ -793,15 +1023,57 @@ def test_put_device_config_invalid_payload_does_not_persist_or_create_job():
     original_config = dict(project.config or {})
     res = client.put(
         f"/api/v1/device/{device.device_id}/config",
-        json={"password": "password", "pins": []},
+        json={
+            "pins": [],
+            "wifi_credential_id": None,
+            "config_name": "Empty Draft",
+        },
         headers={"Authorization": f"Bearer {token}"}
     )
 
-    assert res.status_code == 400
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "draft_saved"
+    assert "job_id" not in res.json()
+    saved_config_id = res.json()["config_id"]
 
     db.refresh(project)
-    assert project.config == original_config
+    assert project.config["wifi_ssid"] == original_config["wifi_ssid"]
+    assert project.config["wifi_password"] == original_config["wifi_password"]
+    assert project.current_config_id is not None
+    assert project.pending_config is None
+    assert project.pending_config_id is None
+    assert project.pending_build_job_id is None
     assert db.query(BuildJob).filter(BuildJob.project_id == project.id).count() == 0
+    saved_config = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == saved_config_id).one()
+    assert saved_config.name == "Empty Draft"
+    assert saved_config.config["pins"] == []
+    assert saved_config.config["wifi_credential_id"] is None
+    assert "wifi_ssid" not in saved_config.config
+    assert "wifi_password" not in saved_config.config
+
+def test_put_device_config_empty_payload_can_save_draft_while_active_job_exists():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    active_job = BuildJob(id=str(uuid.uuid4()), project_id=project.id, status=JobStatus.building)
+    db.add(active_job)
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    res = client.put(
+        f"/api/v1/device/{device.device_id}/config",
+        json={"pins": [], "wifi_credential_id": None, "config_name": "Parallel Draft"},
+        headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json()["status"] == "draft_saved"
+
+    db.refresh(project)
+    assert project.pending_build_job_id is None
+    assert db.query(BuildJob).filter(BuildJob.project_id == project.id).count() == 1
 
 def test_put_device_config_conflicts_with_active_job():
     db = TestingSessionLocal()
@@ -856,6 +1128,254 @@ def test_ota_download_unauthenticated_not_ready():
     assert "Artifact not ready" in res.json()["detail"]
 
 
+def test_delete_old_device_config_history_removes_saved_config_and_keeps_build_snapshot():
+    db = TestingSessionLocal()
+    _user, _room, project, device = create_test_data(db)
+
+    committed_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Committed Snapshot",
+        config={
+            "config_id": "committed-snapshot",
+            "config_name": "Committed Snapshot",
+            "assigned_device_id": device.device_id,
+            "assigned_device_name": device.name,
+            "pins": [{"gpio": 3, "mode": "OUTPUT", "label": "Live Relay"}],
+        },
+    )
+    old_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Old Snapshot",
+        config={
+            "config_id": "old-snapshot",
+            "config_name": "Old Snapshot",
+            "assigned_device_id": device.device_id,
+            "assigned_device_name": device.name,
+            "pins": [{"gpio": 5, "mode": "PWM", "label": "Archived Dimmer"}],
+        },
+    )
+    db.add_all([committed_config, old_config])
+    project.current_config_id = committed_config.id
+    project.config = dict(committed_config.config)
+
+    old_job = BuildJob(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        saved_config_id=old_config.id,
+        status=JobStatus.flash_failed,
+        staged_project_config=dict(old_config.config),
+    )
+    db.add(old_job)
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    res = client.request(
+        "DELETE",
+        f"/api/v1/device/{device.device_id}/config-history/{old_config.id}",
+        json={"password": "password"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200, res.text
+    assert res.json() == {"status": "deleted", "id": old_config.id}
+
+    db.refresh(project)
+    db.refresh(old_job)
+    assert db.query(DiyProjectConfig).filter(DiyProjectConfig.id == old_config.id).first() is None
+    assert old_job.saved_config_id is None
+    assert old_job.staged_project_config["config_name"] == "Old Snapshot"
+    assert old_job.staged_project_config[CONFIG_HISTORY_DELETED_AT_KEY]
+    assert project.current_config_id == committed_config.id
+    assert project.config["config_name"] == "Committed Snapshot"
+
+
+def test_delete_old_device_config_history_does_not_rematerialize_deleted_snapshot_on_reload():
+    db = TestingSessionLocal()
+    _user, _room, project, device = create_test_data(db)
+
+    committed_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Committed Snapshot",
+        config={
+            "config_id": "committed-snapshot",
+            "config_name": "Committed Snapshot",
+            "assigned_device_id": device.device_id,
+            "assigned_device_name": device.name,
+            "pins": [{"gpio": 3, "mode": "OUTPUT", "label": "Live Relay"}],
+        },
+    )
+    old_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Old Snapshot",
+        config={
+            "config_id": "old-snapshot",
+            "config_name": "Old Snapshot",
+            "assigned_device_id": device.device_id,
+            "assigned_device_name": device.name,
+            "pins": [{"gpio": 5, "mode": "PWM", "label": "Archived Dimmer"}],
+        },
+    )
+    db.add_all([committed_config, old_config])
+    project.current_config_id = committed_config.id
+    project.config = dict(committed_config.config)
+
+    old_job = BuildJob(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        saved_config_id=old_config.id,
+        status=JobStatus.flash_failed,
+        staged_project_config=dict(old_config.config),
+    )
+    db.add(old_job)
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    delete_res = client.request(
+        "DELETE",
+        f"/api/v1/device/{device.device_id}/config-history/{old_config.id}",
+        json={"password": "password"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert delete_res.status_code == 200, delete_res.text
+
+    for _ in range(2):
+        history_res = client.get(
+            f"/api/v1/device/{device.device_id}/config-history",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert history_res.status_code == 200, history_res.text
+        payload = history_res.json()
+        assert [entry["id"] for entry in payload] == [committed_config.id]
+        assert payload[0]["config_name"] == "Committed Snapshot"
+
+    db.refresh(old_job)
+    assert old_job.saved_config_id is None
+    assert old_job.staged_project_config["config_name"] == "Old Snapshot"
+    assert old_job.staged_project_config[CONFIG_HISTORY_DELETED_AT_KEY]
+    assert db.query(DiyProjectConfig).filter(DiyProjectConfig.id == old_config.id).first() is None
+
+
+def test_delete_device_config_history_rejects_current_committed_config():
+    db = TestingSessionLocal()
+    _user, _room, project, device = create_test_data(db)
+
+    committed_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Committed Snapshot",
+        config={
+            "config_id": "committed-snapshot",
+            "config_name": "Committed Snapshot",
+            "assigned_device_id": device.device_id,
+            "assigned_device_name": device.name,
+            "pins": [{"gpio": 3, "mode": "OUTPUT", "label": "Live Relay"}],
+        },
+    )
+    db.add(committed_config)
+    project.current_config_id = committed_config.id
+    project.config = dict(committed_config.config)
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    res = client.request(
+        "DELETE",
+        f"/api/v1/device/{device.device_id}/config-history/{committed_config.id}",
+        json={"password": "password"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["error"] == "conflict"
+    assert res.json()["detail"]["message"] == "The current committed config cannot be deleted from history."
+    assert db.query(DiyProjectConfig).filter(DiyProjectConfig.id == committed_config.id).first() is not None
+
+
+def test_delete_device_config_history_rejects_pending_ota_config():
+    db = TestingSessionLocal()
+    _user, _room, project, device = create_test_data(db)
+
+    committed_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Committed Snapshot",
+        config={
+            "config_id": "committed-snapshot",
+            "config_name": "Committed Snapshot",
+            "assigned_device_id": device.device_id,
+            "assigned_device_name": device.name,
+            "pins": [{"gpio": 3, "mode": "OUTPUT", "label": "Live Relay"}],
+        },
+    )
+    pending_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Pending Snapshot",
+        config={
+            "config_id": "pending-snapshot",
+            "config_name": "Pending Snapshot",
+            "assigned_device_id": device.device_id,
+            "assigned_device_name": device.name,
+            "pins": [{"gpio": 8, "mode": "PWM", "label": "Pending Dimmer"}],
+        },
+    )
+    db.add_all([committed_config, pending_config])
+    project.current_config_id = committed_config.id
+    project.config = dict(committed_config.config)
+    project.pending_config_id = pending_config.id
+    project.pending_config = dict(pending_config.config)
+
+    pending_job = BuildJob(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        saved_config_id=pending_config.id,
+        status=JobStatus.queued,
+        staged_project_config=dict(pending_config.config),
+    )
+    db.add(pending_job)
+    project.pending_build_job_id = pending_job.id
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    res = client.request(
+        "DELETE",
+        f"/api/v1/device/{device.device_id}/config-history/{pending_config.id}",
+        json={"password": "password"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"]["error"] == "conflict"
+    assert res.json()["detail"]["message"] == "The pending OTA config cannot be deleted from history."
+    assert db.query(DiyProjectConfig).filter(DiyProjectConfig.id == pending_config.id).first() is not None
+
+
 from unittest.mock import patch
 
 
@@ -901,7 +1421,7 @@ def test_send_command_ota_publish_success(tmp_path):
     response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
     token = response.json()["access_token"]
 
-    payload = {"action": "ota", "job_id": job_id, "url": "http://test"}
+    payload = {"action": "ota", "job_id": job_id, "url": "http://test", "password": "password"}
 
     captured_payload = {}
 
@@ -922,6 +1442,7 @@ def test_send_command_ota_publish_success(tmp_path):
     published_payload = captured_payload["payload"]
     assert published_payload["kind"] == "system"
     assert published_payload["url"] == published_payload["payload"]
+    assert "password" not in published_payload
     assert published_payload["url"].startswith(
         f"http://smart-home.local:8000/api/v1/diy/ota/download/{job_id}/firmware.bin?token="
     )
@@ -930,6 +1451,69 @@ def test_send_command_ota_publish_success(tmp_path):
     expected_signature = hashlib.md5((expected_md5 + "persisted-secret").encode()).hexdigest()
     assert published_payload["md5"] == expected_md5
     assert published_payload["signature"] == expected_signature
+    history = db.query(DeviceHistory).filter(DeviceHistory.device_id == device.device_id).order_by(DeviceHistory.id.desc()).first()
+    assert history is not None
+    assert "password" not in (history.payload or "")
+
+def test_send_command_ota_requires_account_password(tmp_path):
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.artifact_ready,
+        artifact_path=_write_test_artifact(tmp_path, job_id),
+    )
+    db.add(job)
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    payload = {"action": "ota", "job_id": job_id, "url": "http://test"}
+    res = client.post(
+        f"/api/v1/device/{device.device_id}/command",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 400
+    assert res.json()["detail"]["error"] == "validation"
+    assert res.json()["detail"]["message"] == "Enter your account password before sending this OTA update."
+    db.refresh(job)
+    assert job.status == JobStatus.artifact_ready
+
+def test_send_command_ota_rejects_wrong_account_password(tmp_path):
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.artifact_ready,
+        artifact_path=_write_test_artifact(tmp_path, job_id),
+    )
+    db.add(job)
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    payload = {"action": "ota", "job_id": job_id, "url": "http://test", "password": "wrong-password"}
+    res = client.post(
+        f"/api/v1/device/{device.device_id}/command",
+        json=payload,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 403
+    assert res.json()["detail"]["error"] == "invalid_password"
+    assert res.json()["detail"]["message"] == "Incorrect password. Enter the password for the signed-in account to send this OTA update."
+    db.refresh(job)
+    assert job.status == JobStatus.artifact_ready
 
 def test_send_command_ota_publish_failure(tmp_path):
     db = TestingSessionLocal()
@@ -948,7 +1532,7 @@ def test_send_command_ota_publish_failure(tmp_path):
     response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
     token = response.json()["access_token"]
 
-    payload = {"action": "ota", "job_id": job_id, "url": "http://test"}
+    payload = {"action": "ota", "job_id": job_id, "url": "http://test", "password": "password"}
 
     with patch('app.api.mqtt_manager.publish_command', return_value=False):
         res = client.post(
@@ -981,7 +1565,7 @@ def test_send_command_ota_retry_after_flash_failed_reuses_artifact(tmp_path):
     response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
     token = response.json()["access_token"]
 
-    payload = {"action": "ota", "job_id": job_id, "url": "http://test"}
+    payload = {"action": "ota", "job_id": job_id, "url": "http://test", "password": "password"}
 
     with patch("app.api.mqtt_manager.publish_command", return_value=True):
         res = client.post(
@@ -1019,7 +1603,7 @@ def test_send_command_ota_rejects_wrong_project_job():
     response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
     token = response.json()["access_token"]
 
-    payload = {"action": "ota", "job_id": job_id, "url": "http://test"}
+    payload = {"action": "ota", "job_id": job_id, "url": "http://test", "password": "password"}
     res = client.post(
         f"/api/v1/device/{device.device_id}/command",
         json=payload,

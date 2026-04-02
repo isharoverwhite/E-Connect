@@ -299,7 +299,9 @@ class DiyProject(Base):
     name = Column(String(255), nullable=False)
     board_profile = Column(String(100), nullable=False)
     config = Column(JSON, nullable=True, comment='Lưu trữ toàn bộ JSON map cấu hình pins, wifi, mqtt')
+    current_config_id = Column(String(36), ForeignKey("diy_project_configs.id"), nullable=True, comment='Saved config currently treated as active for the board')
     pending_config = Column(JSON, nullable=True, comment='Latest staged config waiting for OTA success before it becomes current')
+    pending_config_id = Column(String(36), ForeignKey("diy_project_configs.id"), nullable=True, comment='Saved config linked to the latest staged OTA config')
     pending_build_job_id = Column(String(36), nullable=True, comment='Build job id for the latest staged OTA config')
     created_at = Column(TIMESTAMP, server_default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -308,12 +310,45 @@ class DiyProject(Base):
     room = relationship("Room")
     wifi_credential = relationship("WifiCredential", back_populates="projects")
     build_jobs = relationship("BuildJob", back_populates="project", cascade="all, delete-orphan")
+    saved_configs = relationship(
+        "DiyProjectConfig",
+        back_populates="project",
+        cascade="all, delete-orphan",
+        foreign_keys="DiyProjectConfig.project_id",
+    )
+    current_saved_config = relationship(
+        "DiyProjectConfig",
+        foreign_keys=[current_config_id],
+        post_update=True,
+    )
+    pending_saved_config = relationship(
+        "DiyProjectConfig",
+        foreign_keys=[pending_config_id],
+        post_update=True,
+    )
+
+class DiyProjectConfig(Base):
+    __tablename__ = "diy_project_configs"
+
+    id = Column(String(36), primary_key=True, comment='UUID cho config đã lưu của một board/project')
+    project_id = Column(String(36), ForeignKey("diy_projects.id"), nullable=False)
+    device_id = Column(String(36), nullable=False, comment='UUID thiết bị được bind với config này')
+    board_profile = Column(String(100), nullable=False)
+    name = Column(String(255), nullable=False)
+    config = Column(JSON, nullable=True, comment='Saved config payload for builder/reconfiguration flows')
+    last_applied_at = Column(DateTime, nullable=True, comment='UTC timestamp when this config most recently became active on hardware')
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    project = relationship("DiyProject", back_populates="saved_configs", foreign_keys=[project_id])
+    build_jobs = relationship("BuildJob", back_populates="saved_config")
 
 class BuildJob(Base):
     __tablename__ = "build_jobs"
 
     id = Column(String(36), primary_key=True, comment='UUID cho job')
     project_id = Column(String(36), ForeignKey("diy_projects.id"), nullable=False)
+    saved_config_id = Column(String(36), ForeignKey("diy_project_configs.id"), nullable=True, comment='Saved config row used to produce this build')
     status = Column(Enum(JobStatus), default=JobStatus.queued)
     artifact_path = Column(String(255), nullable=True, comment='Đường dẫn tới file .bin sau khi build thành công')
     log_path = Column(String(255), nullable=True, comment='Đường dẫn tới file log build')
@@ -324,6 +359,7 @@ class BuildJob(Base):
     finished_at = Column(DateTime, nullable=True, comment='UTC timestamp when build reached a terminal state')
 
     project = relationship("DiyProject", back_populates="build_jobs")
+    saved_config = relationship("DiyProjectConfig", back_populates="build_jobs")
 
 class SerialSessionStatus(str, enum.Enum):
     locked = "locked"

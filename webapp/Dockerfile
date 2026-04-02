@@ -38,4 +38,4 @@ COPY --from=builder /app/scripts ./scripts
 
 EXPOSE 3000
 
-CMD ["node", "scripts/serve-standalone-https.mjs"]
+CMD ["node", "scripts/serve-production-https.mjs"]

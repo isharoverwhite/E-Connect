@@ -14,15 +14,14 @@ export interface Step2PinsProps {
     selectedPinId: string | null;
     setSelectedPinId: React.Dispatch<React.SetStateAction<string | null>>;
     projectName: string;
-    configBusy: boolean;
+    configBusy?: boolean;
     projectSyncState: ProjectSyncState;
-    onExportConfig: () => Promise<void>;
+    onExportConfig?: () => void | Promise<void>;
     onNext: () => void;
     onBack: () => void;
     nextLabel?: string;
     nextDisabled?: boolean;
     backLabel?: string;
-    exportLabel?: string;
 }
 
 export function Step2Pins({
@@ -33,15 +32,12 @@ export function Step2Pins({
     selectedPinId,
     setSelectedPinId,
     projectName,
-    configBusy,
     projectSyncState,
-    onExportConfig,
     onNext,
     onBack,
     nextLabel = "Validate Wiring",
     nextDisabled = false,
     backLabel = "Back",
-    exportLabel = "Save JSON",
 }: Step2PinsProps) {
     const [i2cCatalog, setI2cCatalog] = useState<I2CLibrary[]>([]);
     const [showClearConfirm, setShowClearConfirm] = useState(false);
@@ -243,7 +239,6 @@ export function Step2Pins({
                 {/* Header inside sidebar */}
                 <div className="p-6 border-b border-border-light dark:border-border-dark flex-shrink-0">
                     <h1 className="text-slate-900 dark:text-white text-2xl font-bold tracking-tight">Pin Configuration</h1>
-                    <p className="text-slate-500 dark:text-slate-400 text-xs mt-1 leading-5">Assign hardware roles to the available GPIO pins for {board.name}.</p>
                 </div>
 
                 {/* Scrollable list */}
@@ -253,7 +248,7 @@ export function Step2Pins({
                         <button onClick={clearAll} className="text-slate-400 hover:text-slate-600 dark:text-slate-400 transition-colors text-[10px] uppercase font-bold tracking-wider">Reset All</button>
                     </div>
 
-                    {boardPins.filter(pin => pin.capabilities.length > 0 && !(pin.reserved || pin.bootSensitive)).map(pin => {
+                    {boardPins.filter(pin => pin.capabilities.length > 0).map(pin => {
                         const assignment = pins.find(p => p.gpio_pin === pin.gpio);
                         const isSelected = selectedPinId === pin.id;
 
@@ -357,74 +352,93 @@ export function Step2Pins({
                                             {assignment.mode === "OUTPUT" && (
                                                 <div className="flex items-center justify-between">
                                                     <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-                                                        Active Level
+                                                        Logic Level
                                                     </p>
-                                                    <div className="flex gap-1">
-                                                        {[1, 0].map((level) => {
-                                                            const activeLevel = assignment.extra_params?.active_level ?? 1;
-                                                            const isActive = activeLevel === level;
-                                                            return (
-                                                                <button
-                                                                    key={level}
-                                                                    type="button"
-                                                                    onClick={(event) => {
-                                                                        event.stopPropagation();
-                                                                        handleExtraParamChange(pin, { active_level: level as 0 | 1 });
-                                                                    }}
-                                                                    className={`rounded px-2.5 py-1 text-[10px] uppercase font-bold tracking-wider transition-colors ${
-                                                                        isActive
-                                                                            ? "bg-blue-100 text-blue-700 border border-blue-200"
-                                                                            : "bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-border-light dark:border-border-dark hover:text-slate-700 dark:text-slate-300"
-                                                                    }`}
-                                                                >
-                                                                    {level === 1 ? "HIGH" : "LOW"}
-                                                                </button>
-                                                            );
-                                                        })}
-                                                    </div>
+                                                    <label className="flex items-center cursor-pointer gap-2">
+                                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 select-none">Reverse</span>
+                                                        <div className="relative">
+                                                            <input
+                                                                type="checkbox"
+                                                                className="sr-only peer"
+                                                                checked={assignment.extra_params?.active_level === 0}
+                                                                onChange={(e) => {
+                                                                    handleExtraParamChange(pin, { active_level: e.target.checked ? 0 : 1 });
+                                                                }}
+                                                            />
+                                                            <div className="w-8 h-4 bg-slate-300 dark:bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 dark:after:border-slate-600 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-4 peer-checked:after:border-white"></div>
+                                                        </div>
+                                                    </label>
                                                 </div>
                                             )}
                                         </div>
                                     </div>
                                 )}
 
-                                {assignment?.mode === "PWM" && (
-                                    <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5">
-                                        <div className="flex flex-col gap-2.5">
-                                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-                                                Output Map (0-255)
-                                            </p>
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <div className="flex flex-col gap-1">
-                                                    <label htmlFor={`pin-pwm-min-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Min</label>
-                                                    <input
-                                                        id={`pin-pwm-min-${pin.gpio}`}
-                                                        name={`pin-pwm-min-${pin.gpio}`}
-                                                        type="number"
-                                                        min="0"
-                                                        max="255"
-                                                        value={assignment.extra_params?.min_value ?? 0}
-                                                        onChange={(e) => handleExtraParamChange(pin, { min_value: parseInt(e.target.value) || 0 })}
-                                                        className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-blue-500"
-                                                    />
+                                {assignment?.mode === "PWM" && (() => {
+                                    const rawMin = assignment.extra_params?.min_value ?? 0;
+                                    const rawMax = assignment.extra_params?.max_value ?? 255;
+                                    const isPwmReversed = rawMin > rawMax;
+
+                                    return (
+                                        <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5">
+                                            <div className="flex flex-col gap-2.5">
+                                                <div className="flex items-center justify-between">
+                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                                                        Output Map (0-255)
+                                                    </p>
+                                                    <label className="flex items-center cursor-pointer gap-2">
+                                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 select-none">Reverse</span>
+                                                        <div className="relative">
+                                                            <input
+                                                                type="checkbox"
+                                                                className="sr-only peer"
+                                                                checked={isPwmReversed}
+                                                                onChange={() => {
+                                                                    handleExtraParamChange(pin, { min_value: rawMax, max_value: rawMin });
+                                                                }}
+                                                            />
+                                                            <div className="w-8 h-4 bg-slate-300 dark:bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 dark:after:border-slate-600 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-4 peer-checked:after:border-white"></div>
+                                                        </div>
+                                                    </label>
                                                 </div>
-                                                <div className="flex flex-col gap-1">
-                                                    <label htmlFor={`pin-pwm-max-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Max</label>
-                                                    <input
-                                                        id={`pin-pwm-max-${pin.gpio}`}
-                                                        name={`pin-pwm-max-${pin.gpio}`}
-                                                        type="number"
-                                                        min="0"
-                                                        max="255"
-                                                        value={assignment.extra_params?.max_value ?? 255}
-                                                        onChange={(e) => handleExtraParamChange(pin, { max_value: parseInt(e.target.value) || 0 })}
-                                                        className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-blue-500"
-                                                    />
+                                                <div className="grid grid-cols-2 gap-3">
+                                                    <div className="flex flex-col gap-1">
+                                                        <label htmlFor={`pin-pwm-min-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Min</label>
+                                                        <input
+                                                            id={`pin-pwm-min-${pin.gpio}`}
+                                                            name={`pin-pwm-min-${pin.gpio}`}
+                                                            type="number"
+                                                            min="0"
+                                                            max="255"
+                                                            value={rawMin}
+                                                            onChange={(e) => {
+                                                                const val = parseInt(e.target.value) || 0;
+                                                                handleExtraParamChange(pin, { min_value: val });
+                                                            }}
+                                                            className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-blue-500"
+                                                        />
+                                                    </div>
+                                                    <div className="flex flex-col gap-1">
+                                                        <label htmlFor={`pin-pwm-max-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Max</label>
+                                                        <input
+                                                            id={`pin-pwm-max-${pin.gpio}`}
+                                                            name={`pin-pwm-max-${pin.gpio}`}
+                                                            type="number"
+                                                            min="0"
+                                                            max="255"
+                                                            value={rawMax}
+                                                            onChange={(e) => {
+                                                                const val = parseInt(e.target.value) || 0;
+                                                                handleExtraParamChange(pin, { max_value: val });
+                                                            }}
+                                                            className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-blue-500"
+                                                        />
+                                                    </div>
                                                 </div>
                                             </div>
                                         </div>
-                                    </div>
-                                )}
+                                    );
+                                })()}
 
                                 {assignment?.mode === "I2C" && (
                                     <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5 flex flex-col gap-3">
@@ -496,29 +510,20 @@ export function Step2Pins({
 
                 {/* Footer buttons / Deployment */}
                 <div className="p-4 border-t border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-900/40 flex-shrink-0 space-y-3">
-                    <div className="flex items-center justify-between bg-white dark:bg-slate-800 border border-border-light dark:border-border-dark p-2.5 rounded text-xs select-none">
-                        <div className="flex items-center gap-2">
-                            <span className="material-symbols-outlined text-sm text-blue-600">description</span>
-                            <span className="font-mono text-slate-600 dark:text-slate-400 font-medium">device_config.json</span>
-                        </div>
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${projectSyncState === 'saved' ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800' : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800'}`}>
-                            {formatSyncState(projectSyncState)}
-                        </span>
-                    </div>
-
                     <div className="mt-1 flex items-center justify-between text-[11px] px-1 text-slate-500 dark:text-slate-400">
                         <span className="flex items-center gap-1.5 font-medium tracking-wide">
                             <div className={`w-1.5 h-1.5 rounded-full ${pins.length > 0 ? "bg-blue-600 shadow-[0_0_6px_rgba(37,99,235,0.6)]" : "bg-slate-300"}`}></div>
                             {pins.length > 0 ? `${pins.length} active maps` : "Awaiting assignment"}
                         </span>
+
+                        <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${projectSyncState === 'saved' ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800' : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800'}`}>
+                            {formatSyncState(projectSyncState)}
+                        </span>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-2 mt-4">
-                        <button onClick={onBack} className="bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-800 dark:text-slate-200 rounded py-2 text-xs font-bold uppercase tracking-widest transition-colors shadow-sm">
+                    <div className="mt-4">
+                        <button onClick={onBack} className="w-full bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-800 dark:text-slate-200 rounded py-2 text-xs font-bold uppercase tracking-widest transition-colors shadow-sm">
                             {backLabel}
-                        </button>
-                        <button onClick={() => void onExportConfig()} disabled={configBusy} className="bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-300 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 hover:text-slate-800 dark:text-slate-200 rounded py-2 text-xs font-bold uppercase tracking-widest transition-colors disabled:opacity-50 shadow-sm">
-                            {configBusy ? "Wait..." : exportLabel}
                         </button>
                     </div>
 
@@ -794,7 +799,7 @@ function renderSvgPin({
     const bottom = boardHeight - 70;
     const gap = totalRows === 1 ? 0 : (bottom - top) / (totalRows - 1);
     const y = top + gap * index;
-    const isReserved = pin.reserved || pin.bootSensitive || pin.capabilities.length === 0;
+    const isReserved = pin.capabilities.length === 0;
     const fill = isSelected
         ? PIN_FILL.selected
         : assignment
@@ -809,6 +814,10 @@ function renderSvgPin({
     const labelX = side === "left" ? 112 : 608;
     const mappingTextX = side === "left" ? 94 : 626;
     const anchor = side === "left" ? "end" : "start";
+
+    const isBuiltInLed = pin.note?.toLowerCase().includes("led") || pin.label.toLowerCase().includes("led");
+    const isI2C = pin.capabilities.includes("I2C");
+    const stemCenter = side === "left" ? 171 : 549;
 
     return (
         <g
@@ -825,6 +834,18 @@ function renderSvgPin({
             className={`group ${isReserved ? "cursor-not-allowed opacity-60" : "cursor-pointer"}`}
         >
             <line x1={stemStart} x2={stemEnd} y1={y} y2={y} stroke={isDark ? "#94a3b8" : "#475569"} strokeWidth="3" />
+
+            {isBuiltInLed && (
+                <text x={stemCenter} y={y - 4} fontSize="8.5" fill={isDark ? "#fbbf24" : "#ea580c"} textAnchor="middle" fontWeight="bold" className="pointer-events-none">
+                    LED
+                </text>
+            )}
+            {isI2C && (
+                <text x={stemCenter} y={isBuiltInLed ? y + 9 : y - 4} fontSize="8.5" fill={isDark ? "#38bdf8" : "#0284c7"} textAnchor="middle" fontWeight="bold" className="pointer-events-none">
+                    I2C
+                </text>
+            )}
+
             <rect
                 x={pinX}
                 y={y - 11}
