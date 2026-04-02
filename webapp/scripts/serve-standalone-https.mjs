@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";
 import net from "node:net";
@@ -36,13 +36,51 @@ if (!standaloneServerPath) {
   throw new Error("Could not find the Next standalone server entrypoint. Run `npm run build` first.");
 }
 
+function prepareStandaloneRuntime(serverPath) {
+  const rootStandaloneServer = path.join(process.cwd(), "server.js");
+  if (serverPath === rootStandaloneServer) {
+    return {
+      runtimeDir: process.cwd(),
+      runtimeServerPath: serverPath,
+    };
+  }
+
+  const standaloneDir = path.dirname(serverPath);
+  const runtimeDir = path.join(process.cwd(), ".next", "local-standalone-runtime");
+  const rootStaticDir = path.join(process.cwd(), ".next", "static");
+  const runtimeStaticDir = path.join(runtimeDir, ".next", "static");
+  const publicDir = path.join(process.cwd(), "public");
+  const runtimePublicDir = path.join(runtimeDir, "public");
+
+  rmSync(runtimeDir, { recursive: true, force: true });
+  mkdirSync(runtimeDir, { recursive: true });
+  cpSync(standaloneDir, runtimeDir, { recursive: true });
+
+  if (existsSync(rootStaticDir)) {
+    mkdirSync(path.dirname(runtimeStaticDir), { recursive: true });
+    cpSync(rootStaticDir, runtimeStaticDir, { recursive: true });
+  }
+
+  if (existsSync(publicDir)) {
+    cpSync(publicDir, runtimePublicDir, { recursive: true });
+  }
+
+  return {
+    runtimeDir,
+    runtimeServerPath: path.join(runtimeDir, "server.js"),
+  };
+}
+
+const { runtimeDir, runtimeServerPath } = prepareStandaloneRuntime(standaloneServerPath);
+
 const { keyPath, certPath, provider, hosts, httpsDir } = ensureLocalTlsAssets();
 
 console.log(
   `[https] HTTPS companion is enabled on port ${publicHttpsPort}. Using ${provider} TLS assets in ${httpsDir} for ${formatTlsHostSummary(hosts)}.`,
 );
 
-const child = spawn(process.execPath, [standaloneServerPath], {
+const child = spawn(process.execPath, [runtimeServerPath], {
+  cwd: runtimeDir,
   stdio: "inherit",
   env: {
     ...process.env,

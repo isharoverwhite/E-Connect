@@ -5,10 +5,12 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
 import {
   API_URL,
+  fetchDeviceConfigHistory,
   fetchDevice,
-  fetchRuntimeNetworkInfo,
   saveDeviceConfig,
   sendDeviceCommand,
+  renameDeviceConfigHistory,
+  type DeviceConfigHistoryEntry,
 } from "@/lib/api";
 import { getToken } from "@/lib/auth";
 import { getActivePinConfigurations } from "@/lib/device-config";
@@ -21,8 +23,10 @@ import type { BuildJobStatus, PinMapping } from "@/features/diy/types";
 import { validatePinMappings } from "@/features/diy/validation";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import type { DeviceConfig, PinConfig } from "@/types/device";
+import { useToast } from "@/components/ToastContext";
 
 interface DiyProjectResponse {
+  id: string;
   config?: Record<string, unknown> | null;
   pending_config?: Record<string, unknown> | null;
   pending_build_job_id?: string | null;
@@ -34,8 +38,10 @@ interface DiyProjectResponse {
 interface BuildJobSnapshot {
   status: BuildJobStatus;
   ota_token?: string | null;
+  ota_download_url?: string | null;
   error_message?: string | null;
   expected_firmware_version?: string | null;
+  staged_project_config?: Record<string, unknown> | null;
 }
 
 const OTA_TERMINAL_STATUSES = new Set<BuildJobStatus>([
@@ -118,6 +124,11 @@ function resolveCommittedWifiCredentialId(project: DiyProjectResponse): number |
   return project.wifi_credential_id ?? readConfigWifiCredentialId(project.config);
 }
 
+function readConfigName(projectConfig: Record<string, unknown> | null | undefined): string {
+  const rawValue = projectConfig?.config_name;
+  return typeof rawValue === "string" ? rawValue.trim() : "";
+}
+
 function normalizePins(pins: PinMapping[]): PinMapping[] {
   return [...pins]
     .map((pin) => ({
@@ -130,17 +141,16 @@ function normalizePins(pins: PinMapping[]): PinMapping[] {
     .sort((left, right) => left.gpio_pin - right.gpio_pin);
 }
 
-function serializePins(pins: PinMapping[]): string {
-  return JSON.stringify(normalizePins(pins));
-}
-
 function parseTimestamp(value?: string | null): number | null {
   if (!value) {
     return null;
   }
-
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+function serializePins(pins: PinMapping[]): string {
+  return JSON.stringify(normalizePins(pins));
 }
 
 function isExpectedFirmwareVersion(
@@ -211,6 +221,26 @@ function buildReachableOtaUrl(apiBaseUrl: string, jobId: string, token: string):
   return otaUrl.toString();
 }
 
+function formatHistoryTime(value?: string | null): string {
+  if (!value) {
+    return "Unknown time";
+  }
+
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(parsed));
+}
+
+function shortJobId(value: string): string {
+  return value.slice(0, 8);
+}
+
 export default function DevicePinConfigurator({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
   const { user } = useAuth();
@@ -230,8 +260,15 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   const [selectedWifiCredentialId, setSelectedWifiCredentialId] = useState<number | null>(null);
   const [savedWifiCredentialId, setSavedWifiCredentialId] = useState<number | null>(null);
   const [pendingWifiCredentialId, setPendingWifiCredentialId] = useState<number | null>(null);
+  const [savedConfigName, setSavedConfigName] = useState("");
   const [pendingBuildJobId, setPendingBuildJobId] = useState<string | null>(null);
+  const [configHistory, setConfigHistory] = useState<DeviceConfigHistoryEntry[]>([]);
+  const [editingConfigId, setEditingConfigId] = useState<string | null>(null);
+  const [editingConfigName, setEditingConfigName] = useState("");
+  const [isRenamingConfig, setIsRenamingConfig] = useState(false);
+  const { showToast } = useToast();
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
+  const [isHistorySidebarOpen, setIsHistorySidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -332,21 +369,25 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         if (!token) {
           throw new Error("Missing session token. Please sign in again.");
         }
-        const projectResponse = await fetch(
-          `${API_URL}/diy/projects/${nextDevice.provisioning_project_id}`,
-          {
-            cache: "no-store",
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
+        const projectResponsePromise = fetch(`${API_URL}/diy/projects/${nextDevice.provisioning_project_id}`, {
+          cache: "no-store",
+          headers: {
+            Authorization: `Bearer ${token}`,
           },
-        );
+        });
+        const wifiCredentialsPromise = fetchWifiCredentials(token);
+        const configHistoryPromise = fetchDeviceConfigHistory(deviceId);
+
+        const projectResponse = await projectResponsePromise;
         if (!projectResponse.ok) {
           throw new Error("Failed to load the linked DIY project");
         }
 
         const nextProject = (await projectResponse.json()) as DiyProjectResponse;
-        const nextWifiCredentials = await fetchWifiCredentials(token);
+        const [nextWifiCredentials, nextConfigHistory] = await Promise.all([
+          wifiCredentialsPromise,
+          configHistoryPromise,
+        ]);
         const committedConfig = nextProject.config;
         const desiredConfig = nextProject.pending_config ?? nextProject.config;
         const resolvedBoardId =
@@ -383,6 +424,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         if (cancelled) {
           return;
         }
+        const nextSavedConfigName = readConfigName(committedConfig) || nextProject.name || nextDevice.name;
 
         setDevice(nextDevice);
         setProject(nextProject);
@@ -396,8 +438,10 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         setSelectedWifiCredentialId(nextSelectedWifiCredentialId);
         setSavedWifiCredentialId(nextSavedWifiCredentialId);
         setPendingWifiCredentialId(nextProject.pending_config ? nextPendingWifiCredentialId : null);
+        setSavedConfigName(nextSavedConfigName);
         setPendingBuildJobId(nextProject.pending_build_job_id ?? null);
         setJobId(nextProject.pending_build_job_id ?? null);
+        setConfigHistory(nextConfigHistory);
       } catch (nextError) {
         if (!cancelled) {
           setWifiCredentialsLoading(false);
@@ -438,6 +482,22 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         setJobStatus(snapshot.status);
         setJobError(snapshot.error_message?.trim() || null);
         setExpectedFirmwareVersion(snapshot.expected_firmware_version?.trim() || null);
+        setConfigHistory((current) =>
+          current.map((entry) =>
+            entry.id === jobId
+              ? {
+                  ...entry,
+                  status: snapshot.status,
+                  error_message: snapshot.error_message?.trim() || null,
+                  expected_firmware_version: snapshot.expected_firmware_version?.trim() || null,
+                  config:
+                    snapshot.staged_project_config && typeof snapshot.staged_project_config === "object"
+                      ? snapshot.staged_project_config
+                      : entry.config,
+                }
+              : entry,
+          ),
+        );
         if (OTA_POLL_FINAL_STATUSES.has(snapshot.status) && interval !== null) {
           window.clearInterval(interval);
           interval = null;
@@ -579,34 +639,6 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         : "OTA update completed. Waiting for the board to reconnect and report online before returning to the dashboard.",
     );
   }, [boardOnlineAfterOta, device, expectedFirmwareVersion, jobStatus, otaModalOpen]);
-
-  useEffect(() => {
-    if (!boardOnlineAfterOta || !pendingPins) {
-      return;
-    }
-
-    const committedPins = pendingPins;
-    const committedWifiCredentialId = pendingWifiCredentialId;
-
-    setSavedPins(committedPins);
-    setSavedWifiCredentialId(committedWifiCredentialId);
-    setPendingPins(null);
-    setPendingWifiCredentialId(null);
-    setPendingBuildJobId(null);
-    setProject((current) =>
-      current
-        ? {
-            ...current,
-            wifi_credential_id: committedWifiCredentialId,
-            config: {
-              ...(current.pending_config ?? current.config ?? {}),
-            },
-            pending_config: null,
-            pending_build_job_id: null,
-          }
-        : current,
-    );
-  }, [boardOnlineAfterOta, pendingPins, pendingWifiCredentialId]);
 
   useEffect(() => {
     if (!boardOnlineAfterOta) {
@@ -773,10 +805,12 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
     setIsSaving(true);
 
     try {
+      const nextConfigName = savedConfigName || device.name;
       const result = await saveDeviceConfig(device.device_id, {
         pins,
         password: confirmPassword,
         wifi_credential_id: selectedWifiCredentialId,
+        config_name: nextConfigName,
       });
 
       if (result.status !== "success" || !result.job_id) {
@@ -794,12 +828,51 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
               pending_build_job_id: result.job_id,
               pending_config: {
                 ...(current.pending_config ?? current.config ?? {}),
+                config_id: result.job_id,
+                config_name: nextConfigName,
+                assigned_device_id: device.device_id,
+                assigned_device_name: device.name,
                 pins: nextPendingPins,
                 wifi_credential_id: selectedWifiCredentialId,
               },
             }
           : current,
       );
+      setConfigHistory((current) => {
+        const nextEntry: DeviceConfigHistoryEntry = {
+          id: result.job_id!,
+          project_id: project.id,
+          status: "queued",
+          config_name: nextConfigName,
+          assigned_device_id: device.device_id,
+          assigned_device_name: device.name,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          finished_at: null,
+          error_message: null,
+          expected_firmware_version: `build-${result.job_id!.slice(0, 8)}`,
+          is_pending: true,
+          is_committed: false,
+          config: {
+            ...(project.pending_config ?? project.config ?? {}),
+            config_id: result.job_id,
+            config_name: nextConfigName,
+            assigned_device_id: device.device_id,
+            assigned_device_name: device.name,
+            pins: nextPendingPins,
+            wifi_credential_id: selectedWifiCredentialId,
+          },
+        };
+        return [
+          nextEntry,
+          ...current
+            .filter((entry) => entry.id !== result.job_id)
+            .map((entry) => ({
+              ...entry,
+              is_pending: false,
+            })),
+        ].slice(0, 3);
+      });
       setConfirmModalOpen(false);
       setConfirmPassword("");
       setJobId(result.job_id);
@@ -839,12 +912,18 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         throw new Error("Server did not provide an OTA token for this firmware build");
       }
 
-      const runtimeNetwork = await fetchRuntimeNetworkInfo();
-      const firmwareUrl = buildReachableOtaUrl(
-        runtimeNetwork.api_base_url,
-        jobId,
-        snapshot.ota_token,
-      );
+      const stagedApiBaseUrl =
+        snapshot.staged_project_config &&
+        typeof snapshot.staged_project_config === "object" &&
+        typeof snapshot.staged_project_config.api_base_url === "string"
+          ? snapshot.staged_project_config.api_base_url
+          : null;
+      const firmwareUrl =
+        snapshot.ota_download_url?.trim() ||
+        (stagedApiBaseUrl ? buildReachableOtaUrl(stagedApiBaseUrl, jobId, snapshot.ota_token) : "");
+      if (!firmwareUrl) {
+        throw new Error("Server did not provide a reachable OTA download URL for this build");
+      }
       const commandResult = await sendDeviceCommand(device.device_id, {
         kind: "system",
         action: "ota",
@@ -868,6 +947,103 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
     }
   };
 
+  const loadConfigFromHistory = (entry: DeviceConfigHistoryEntry) => {
+    const nextPins = mapProjectPins(entry.config);
+    if (nextPins.length === 0) {
+      setStatusMessage(`Config ${entry.config_name} does not contain a valid pin mapping to load.`);
+      return;
+    }
+
+    setPins(nextPins);
+    setSelectedWifiCredentialId(readConfigWifiCredentialId(entry.config));
+    setSavedConfigName(readConfigName(entry.config) || entry.config_name);
+    setStatusMessage(`Loaded config ${entry.config_name} (${shortJobId(entry.id)}) into the editor.`);
+  };
+
+  const openOtaStatusForHistory = (entry: DeviceConfigHistoryEntry) => {
+    setJobId(entry.id);
+    setJobStatus(entry.status as BuildJobStatus);
+    setJobError(entry.error_message || null);
+    setExpectedFirmwareVersion(entry.expected_firmware_version || null);
+    setFlashCompletedAt(entry.finished_at ? new Date(entry.finished_at).getTime() : null);
+    setBoardOnlineAfterOta(false);
+    setOtaStartingFirmwareVersion(device?.firmware_version || null);
+    setOtaModalOpen(true);
+  };
+
+  const handleRenameConfig = async (jobId: string) => {
+    if (!device) return;
+    if (isRenamingConfig) return;
+
+    const nextConfigName = editingConfigName.trim();
+    if (!nextConfigName) {
+      setEditingConfigId(null);
+      return;
+    }
+
+    const renamedEntry = configHistory.find((entry) => entry.id === jobId);
+    if (renamedEntry && renamedEntry.config_name.trim() === nextConfigName) {
+      setEditingConfigId(null);
+      return;
+    }
+
+    const shouldUpdateCommittedConfig = renamedEntry?.is_committed ?? false;
+    const shouldUpdatePendingConfig =
+      (renamedEntry?.is_pending ?? false) || project?.pending_build_job_id === jobId;
+
+    try {
+      setIsRenamingConfig(true);
+      await renameDeviceConfigHistory(device.device_id, jobId, nextConfigName);
+      setConfigHistory((current) =>
+        current.map((entry) =>
+          entry.id === jobId
+            ? {
+                ...entry,
+                config_name: nextConfigName,
+                config: {
+                  ...entry.config,
+                  config_name: nextConfigName,
+                },
+              }
+            : entry,
+        ),
+      );
+      setProject((current) => {
+        if (!current) return current;
+
+        let changed = false;
+        const nextProject: DiyProjectResponse = { ...current };
+
+        if (shouldUpdatePendingConfig && current.pending_config) {
+          nextProject.pending_config = {
+            ...current.pending_config,
+            config_name: nextConfigName,
+          };
+          changed = true;
+        }
+
+        if (shouldUpdateCommittedConfig && current.config) {
+          nextProject.config = {
+            ...current.config,
+            config_name: nextConfigName,
+          };
+          changed = true;
+        }
+
+        return changed ? nextProject : current;
+      });
+      if (shouldUpdateCommittedConfig) {
+        setSavedConfigName(nextConfigName);
+      }
+      showToast("Configuration name updated", "success");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Failed to rename configuration", "error");
+    } finally {
+      setIsRenamingConfig(false);
+      setEditingConfigId(null);
+    }
+  };
+
   return (
     <div className="h-screen flex flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 overflow-hidden">
       <header className="border-b border-slate-200 bg-white/95 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 shrink-0 z-10 shadow-sm relative">
@@ -881,9 +1057,30 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
               <span className="material-icons-round text-[20px]">arrow_back</span>
             </button>
             <div className="flex flex-col justify-center">
-              <h1 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white leading-tight">
-                {device.name}
-              </h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white leading-tight">
+                  {device.name}
+                </h1>
+                {hasPendingActivation && pendingBuildJobId && !otaModalOpen && (
+                  <button
+                    className="flex items-center gap-1.5 rounded-full bg-blue-100/60 px-3 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-200 transition dark:bg-blue-500/20 dark:text-blue-300 dark:hover:bg-blue-500/30"
+                    onClick={() => {
+                      setJobId(pendingBuildJobId);
+                      setJobStatus(null);
+                      setJobError(null);
+                      setExpectedFirmwareVersion(null);
+                      setFlashCompletedAt(null);
+                      setBoardOnlineAfterOta(false);
+                      setOtaStartingFirmwareVersion(null);
+                      setOtaModalOpen(true);
+                    }}
+                    type="button"
+                  >
+                    <span className="material-icons-round text-[14px]">system_update_alt</span>
+                    Pending OTA
+                  </button>
+                )}
+              </div>
               <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5">
                 <span className="material-icons-round text-[14px]">developer_board</span>
                 <span>{boardProfile.name}</span>
@@ -951,6 +1148,12 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                   openConfirmModal();
                 } else if (hasPendingActivation && pendingBuildJobId) {
                   setJobId(pendingBuildJobId);
+                  setJobStatus(null);
+                  setJobError(null);
+                  setExpectedFirmwareVersion(null);
+                  setFlashCompletedAt(null);
+                  setBoardOnlineAfterOta(false);
+                  setOtaStartingFirmwareVersion(null);
                   setOtaModalOpen(true);
                 } else {
                   openConfirmModal();
@@ -967,72 +1170,170 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         </div>
       </header>
 
-      <main className="flex-1 flex flex-col relative w-full overflow-hidden">
-        <div className="absolute inset-0 flex flex-col">
-          {/* Messages container - strictly bounded height if messages exist */}
-          <div className="flex-shrink-0 flex flex-col px-4 pt-4 gap-2 empty:p-0">
-            {statusMessage && (
-              <section className={statusMessageClassName}>
-                {statusMessage}
-              </section>
-            )}
-            
-            {wifiCredentialsError && (
-              <p className="px-4 py-2 text-sm text-white bg-rose-600 rounded-lg shadow-sm">{wifiCredentialsError}</p>
-            )}
-
-            {hasPendingActivation && pendingBuildJobId && !otaModalOpen && (
-              <section className="rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 shadow-sm dark:border-blue-500/20 dark:bg-blue-500/10">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">
-                      Pending OTA Config
-                    </p>
-                    <p className="mt-1 text-sm leading-6 text-blue-800 dark:text-blue-100">
-                      Build <span className="font-mono">{pendingBuildJobId}</span> is staging a
-                      newer config. The current committed config stays active until the board
-                      reports the rebuilt firmware successfully.
-                    </p>
+      <main className="flex-1 flex relative w-full overflow-hidden bg-slate-50 dark:bg-slate-950">
+        {/* Left Sidebar: Config History */}
+        <div
+          className={`flex-shrink-0 flex flex-col bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 transition-all duration-300 ease-in-out relative z-20 ${
+            isHistorySidebarOpen ? "w-[300px] md:w-[350px]" : "w-0 overflow-hidden border-r-0"
+          }`}
+        >
+          <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center shrink-0 h-[60px]">
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+              Config History
+            </h2>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3 custom-scrollbar">
+            {configHistory.length === 0 ? (
+              <p className="text-sm text-slate-500 dark:text-slate-400 text-center mt-4">
+                No saved configs found.
+              </p>
+            ) : (
+              configHistory.map((entry) => (
+                <article
+                  key={entry.id}
+                  className="group flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3.5 dark:border-slate-700/50 dark:bg-slate-950/50 transition hover:bg-slate-100 dark:hover:bg-slate-900"
+                >
+                  <div className="flex flex-col gap-1 min-w-0">
+                    <div className="flex items-start justify-between w-full gap-2 overflow-hidden">
+                       {editingConfigId === entry.id ? (
+                         <input
+                           type="text"
+                           value={editingConfigName}
+                           onChange={(e) => setEditingConfigName(e.target.value)}
+                           onBlur={() => handleRenameConfig(entry.id)}
+                           onKeyDown={(e) => {
+                             if (e.key === "Enter") handleRenameConfig(entry.id);
+                             if (e.key === "Escape") setEditingConfigId(null);
+                           }}
+                           autoFocus
+                           disabled={isRenamingConfig}
+                           className="text-sm font-semibold text-slate-900 dark:text-white bg-transparent border-b border-blue-500 outline-none flex-1 min-w-0"
+                         />
+                       ) : (
+                         <p
+                           className="truncate text-sm font-semibold text-slate-900 dark:text-white cursor-text hover:text-blue-600 dark:hover:text-blue-400 flex-1 min-w-0 transition-colors"
+                           onClick={() => {
+                             setEditingConfigName(entry.config_name);
+                             setEditingConfigId(entry.id);
+                           }}
+                           title="Click to rename"
+                         >
+                           {entry.config_name}
+                         </p>
+                       )}
+                       <span
+                          className={`rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider shrink-0 ${
+                            entry.status === "artifact_ready" || entry.status === "flashed"
+                              ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
+                              : entry.status === "flash_failed" || entry.status === "build_failed"
+                                ? "bg-rose-100 text-rose-700 dark:bg-rose-500/10 dark:text-rose-200"
+                                : "bg-blue-100 text-blue-700 dark:bg-blue-500/10 dark:text-blue-200"
+                          }`}
+                        >
+                          {entry.status}
+                        </span>
+                    </div>
+                    <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400">
+                      ID {shortJobId(entry.id)}
+                    </span>
                   </div>
-                  <button
-                    className="rounded-2xl border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 dark:border-blue-400/30 dark:bg-slate-900 dark:text-blue-200 dark:hover:bg-slate-800"
-                    onClick={() => {
-                      setJobId(pendingBuildJobId);
-                      setOtaModalOpen(true);
-                    }}
-                    type="button"
-                  >
-                    Open OTA status
-                  </button>
-                </div>
-              </section>
-            )}
 
+                  <div className="flex flex-col gap-0.5 text-[11px] text-slate-500 dark:text-slate-400">
+                    <p>{formatHistoryTime(entry.created_at)}</p>
+                    {entry.is_committed && (
+                      <p className="font-medium text-emerald-600 dark:text-emerald-400 mt-1">
+                        Current committed
+                      </p>
+                    )}
+                    {entry.is_pending && (
+                      <p className="font-medium text-blue-600 dark:text-blue-400 mt-1">
+                        Pending OTA
+                      </p>
+                    )}
+                    {entry.error_message && (
+                      <p className="text-rose-600 dark:text-rose-400 truncate mt-1" title={entry.error_message}>
+                        {entry.error_message}
+                      </p>
+                    )}
+                  </div>
 
-
-            {validation.errors.length > 0 && (
-              <section className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-500/20 dark:bg-rose-500/10 shadow-sm flex items-center gap-3">
-                <span className="material-icons-round text-rose-500 text-[20px]">report</span>
-                <p className="text-sm text-rose-800 dark:text-rose-100 m-0">
-                  <span className="font-semibold mr-1">Wiring errors:</span>
-                  {validation.errors.join("; ")}
-                </p>
-              </section>
-            )}
-
-            {validation.warnings.length > 0 && (
-              <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-500/20 dark:bg-amber-500/10 shadow-sm flex items-center gap-3">
-                <span className="material-icons-round text-amber-500 text-[20px]">warning</span>
-                <p className="text-sm text-amber-800 dark:text-amber-100 m-0">
-                  <span className="font-semibold mr-1">Safety warnings:</span>
-                  {validation.warnings.join("; ")}
-                </p>
-              </section>
+                  <div className="flex items-center gap-2 mt-1 pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <button
+                      className="flex-1 rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                      onClick={() => loadConfigFromHistory(entry)}
+                      type="button"
+                    >
+                      Load
+                    </button>
+                    <button
+                      className="flex-1 rounded-lg bg-blue-600 px-2 py-1.5 text-[11px] font-semibold text-white transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={entry.status === "build_failed" || entry.status === "cancelled"}
+                      onClick={() => openOtaStatusForHistory(entry)}
+                      type="button"
+                    >
+                      OTA Status
+                    </button>
+                  </div>
+                </article>
+              ))
             )}
           </div>
+        </div>
 
-          <div className="flex-1 min-h-0 relative p-4 flex">
-            <div className="w-full flex-1 flex shadow-[0_0_24px_rgba(0,0,0,0.02)] border border-slate-200 dark:border-slate-800 dark:bg-slate-900 rounded-2xl overflow-hidden min-h-0 bg-white">
+        {/* Main Board Area */}
+        <div className="flex-1 flex flex-col relative w-full overflow-hidden">
+          <div className="absolute top-1/2 -translate-y-1/2 left-0 z-20">
+            <button
+              onClick={() => setIsHistorySidebarOpen(!isHistorySidebarOpen)}
+              className={`flex h-12 shrink-0 items-center justify-center rounded-r-xl border border-l-0 border-slate-200 bg-white/90 shadow-sm backdrop-blur transition-all overflow-hidden ${
+                isHistorySidebarOpen
+                  ? "w-8 bg-slate-100 text-slate-400 dark:border-slate-700 dark:bg-slate-800/90 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300"
+                  : "w-10 text-slate-500 hover:w-11 hover:bg-slate-50 hover:text-slate-900 dark:border-slate-700 dark:bg-slate-800/90 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white"
+              }`}
+              title={isHistorySidebarOpen ? "Close config history" : "Open config history"}
+            >
+              <span className="material-icons-round text-[20px]">
+                history
+              </span>
+            </button>
+          </div>
+
+          <div className="absolute inset-0 flex flex-col">
+            {/* Messages container - strictly bounded height if messages exist */}
+            <div className={`flex-shrink-0 flex flex-col px-4 gap-2 empty:p-0 ${!isHistorySidebarOpen ? "pt-16 pb-2" : "pt-4 pb-2"}`}>
+              {statusMessage && (
+                <section className={statusMessageClassName}>
+                  {statusMessage}
+                </section>
+              )}
+
+              {wifiCredentialsError && (
+                <p className="px-4 py-2 text-sm text-white bg-rose-600 rounded-lg shadow-sm">{wifiCredentialsError}</p>
+              )}
+
+              {validation.errors.length > 0 && (
+                <section className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-500/20 dark:bg-rose-500/10 shadow-sm flex items-center gap-3">
+                  <span className="material-icons-round text-rose-500 text-[20px]">report</span>
+                  <p className="text-sm text-rose-800 dark:text-rose-100 m-0">
+                    <span className="font-semibold mr-1">Wiring errors:</span>
+                    {validation.errors.join("; ")}
+                  </p>
+                </section>
+              )}
+
+              {validation.warnings.length > 0 && (
+                <section className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 dark:border-amber-500/20 dark:bg-amber-500/10 shadow-sm flex items-center gap-3">
+                  <span className="material-icons-round text-amber-500 text-[20px]">warning</span>
+                  <p className="text-sm text-amber-800 dark:text-amber-100 m-0">
+                    <span className="font-semibold mr-1">Safety warnings:</span>
+                    {validation.warnings.join("; ")}
+                  </p>
+                </section>
+              )}
+            </div>
+
+            <div className={`flex-1 min-h-0 relative px-4 pb-4 flex ${!isHistorySidebarOpen && !statusMessage && !validation.errors.length && !validation.warnings.length ? "pt-0" : ""}`}>
+              <div className="w-full flex-1 flex shadow-[0_0_24px_rgba(0,0,0,0.02)] border border-slate-200 dark:border-slate-800 dark:bg-slate-900 rounded-2xl overflow-hidden min-h-0 bg-white">
               <Step2Pins
                 board={boardProfile}
                 boardPins={[...boardProfile.leftPins, ...boardProfile.rightPins]}
@@ -1052,6 +1353,12 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                     openConfirmModal();
                   } else if (hasPendingActivation && pendingBuildJobId) {
                     setJobId(pendingBuildJobId);
+                    setJobStatus(null);
+                    setJobError(null);
+                    setExpectedFirmwareVersion(null);
+                    setFlashCompletedAt(null);
+                    setBoardOnlineAfterOta(false);
+                    setOtaStartingFirmwareVersion(null);
                     setOtaModalOpen(true);
                   } else {
                     openConfirmModal();
@@ -1067,7 +1374,9 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
             </div>
           </div>
         </div>
+        </div>
       </main>
+
 
       {confirmModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
@@ -1110,6 +1419,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                   <span>{pins.length} mapped pins</span>
                   <span>{validation.warnings.length} warnings</span>
                   <span>{boardProfile.name}</span>
+                  <span>{(savedConfigName || device.name).slice(0, 28)}</span>
                 </div>
                 <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
                   Continue only if the connected wiring matches the new pin roles. The rebuild will
