@@ -14,6 +14,7 @@ import {
   LEGACY_DEVICE_TRIGGER_KIND
 } from "@/types/automation";
 import { formatServerTimestamp } from "@/lib/server-time";
+import { type DeviceStateSnapshot, type DeviceStatePin } from "@/types/device";
 
 export interface PortDefinition {
   id: string;
@@ -333,12 +334,28 @@ export function getLinearRule(nodes: AutomationGraphNode[], edges: AutomationGra
   return { trigger, condition, action };
 }
 
-export function isNumericPin(p: { mode?: string; function?: string | null } | undefined | null) {
-  return p?.mode === "ADC" || p?.mode === "DHT22" || p?.mode === "PWM" || p?.function?.toLowerCase().includes("temp") || p?.function?.toLowerCase().includes("hum") || p?.function?.toLowerCase().includes("moisture");
+export function isNumericPin(p: { mode?: string; function?: string | null; gpio_pin?: number } | undefined | null, lastState?: DeviceStateSnapshot | null) {
+  let mode = p?.mode;
+  let datatype;
+  if (p?.gpio_pin != null && lastState?.pins) {
+    const s = lastState.pins.find((x: DeviceStatePin) => x.pin === p.gpio_pin);
+    if (s && s.mode) mode = s.mode;
+    if (s && s.datatype) datatype = s.datatype;
+  }
+  if (datatype) return datatype === "number";
+  return mode === "ADC" || mode === "DHT22" || mode === "PWM" || p?.function?.toLowerCase().includes("temp") || p?.function?.toLowerCase().includes("hum") || p?.function?.toLowerCase().includes("moisture");
 }
 
-export function isSwitchPin(p: { mode?: string; function?: string | null } | undefined | null) {
-  return p?.mode === "INPUT" || p?.mode === "OUTPUT" || p?.function?.toLowerCase().includes("switch") || p?.function?.toLowerCase().includes("btn") || p?.function?.toLowerCase().includes("button") || p?.function?.toLowerCase().includes("relay") || p?.function?.toLowerCase().includes("contact") || p?.function?.toLowerCase().includes("pir");
+export function isSwitchPin(p: { mode?: string; function?: string | null; gpio_pin?: number } | undefined | null, lastState?: DeviceStateSnapshot | null) {
+  let mode = p?.mode;
+  let datatype;
+  if (p?.gpio_pin != null && lastState?.pins) {
+    const s = lastState.pins.find((x: DeviceStatePin) => x.pin === p.gpio_pin);
+    if (s && s.mode) mode = s.mode;
+    if (s && s.datatype) datatype = s.datatype;
+  }
+  if (datatype) return datatype === "boolean";
+  return mode === "INPUT" || mode === "OUTPUT" || p?.function?.toLowerCase().includes("switch") || p?.function?.toLowerCase().includes("btn") || p?.function?.toLowerCase().includes("button") || p?.function?.toLowerCase().includes("relay") || p?.function?.toLowerCase().includes("contact") || p?.function?.toLowerCase().includes("pir");
 }
 
 export function getTimeTriggerHour(config: AutomationGraphNodeConfig): number {
@@ -540,9 +557,9 @@ export function getTriggerKindLabel(kind: string): string {
   }
 }
 
-export function getPreferredTriggerKindForPin(pin: { mode?: string; function?: string | null } | undefined | null): string {
-  if (isNumericPin(pin)) return DEVICE_VALUE_TRIGGER_KIND;
-  if (isSwitchPin(pin)) return DEVICE_ON_OFF_TRIGGER_KIND;
+export function getPreferredTriggerKindForPin(pin: { mode?: string; function?: string | null; gpio_pin?: number } | undefined | null, lastState?: DeviceStateSnapshot | null): string {
+  if (isNumericPin(pin, lastState)) return DEVICE_VALUE_TRIGGER_KIND;
+  if (isSwitchPin(pin, lastState)) return DEVICE_ON_OFF_TRIGGER_KIND;
   return LEGACY_DEVICE_TRIGGER_KIND;
 }
 

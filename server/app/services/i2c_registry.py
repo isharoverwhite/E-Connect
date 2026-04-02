@@ -10,6 +10,7 @@ class I2CLibrary(BaseModel):
     pio_lib_deps: List[str] = []
     supported_channels: List[str] = ["SDA", "SCL"]
     is_writable: bool = False
+    versions: Optional[List[str]] = None
 
 I2C_CATALOG: List[I2CLibrary] = [
     I2CLibrary(
@@ -28,7 +29,8 @@ I2C_CATALOG: List[I2CLibrary] = [
         description="Reliable and low-cost temperature and humidity sensor.",
         default_address="0x38",
         pio_lib_deps=["adafruit/Adafruit AHTX0@^2.0.5"],
-        is_writable=False
+        is_writable=False,
+        versions=["AHT20", "AHT10", "AHTX0"]
     ),
     I2CLibrary(
         name="adafruit/Adafruit SSD1306",

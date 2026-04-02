@@ -73,6 +73,7 @@ from .services.builder import (
     infer_firmware_network_targets,
     resolve_build_job_config_snapshot,
     resolve_webapp_transport,
+    get_latest_firmware_revision,
 )
 from .services.device_registration import (
     build_pairing_queue_event_payload,
@@ -2597,6 +2598,82 @@ async def update_device_config(
         "message": "Config history entry queued and build started. The current saved config stays active until the board reports the rebuilt firmware.",
     }
 
+
+@router.post("/device/{device_id}/action/rebuild")
+async def rebuild_device_firmware(
+    device_id: str,
+    config: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Trigger a firmware rebuild for a device using its currently committed configuration.
+    """
+    _require_current_user_password(
+        current_user,
+        config.get("password") if isinstance(config, dict) else None,
+        missing_action="rebuilding firmware",
+        invalid_action="rebuild firmware",
+    )
+
+    device = _get_device_in_household_or_404(db, current_user, device_id)
+    if not device.provisioning_project_id:
+        raise HTTPException(status_code=400, detail="Not a managed DIY device")
+
+    project = _get_project_in_household_or_404(db, current_user, device.provisioning_project_id)
+    
+    from app.sql_models import DiyProjectConfig
+    if not project.current_config_id:
+        raise HTTPException(status_code=400, detail="No committed configuration found for this device")
+
+    committed_config = db.query(DiyProjectConfig).filter(
+        DiyProjectConfig.id == project.current_config_id
+    ).first()
+    
+    if not committed_config:
+        raise HTTPException(status_code=400, detail="Committed configuration not found in database")
+
+    if project.pending_build_job_id:
+        job = db.query(BuildJob).filter(BuildJob.id == project.pending_build_job_id).first()
+        if job and job.status in {JobStatus.queued, JobStatus.building}:
+            return {
+                "status": "success",
+                "job_id": job.id,
+                "config_id": committed_config.id,
+                "message": "Rebuild job already queued or building.",
+            }
+            
+    import uuid
+    job_id = str(uuid.uuid4())
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.queued,
+        saved_config_id=committed_config.id,
+        staged_project_config=committed_config.config,
+    )
+    db.add(job)
+    project.pending_config = committed_config.config
+    project.pending_config_id = committed_config.id
+    project.pending_build_job_id = job.id
+    db.commit()
+    db.refresh(job)
+
+    background_tasks.add_task(
+        build_firmware_task,
+        job.id,
+        [],
+        _background_session_factory(db),
+    )
+
+    return {
+        "status": "success",
+        "job_id": job.id,
+        "config_id": committed_config.id,
+        "message": "Rebuild job queued.",
+    }
+
 @router.delete("/device/{device_id}")
 async def delete_device(device_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
     """
@@ -3123,6 +3200,30 @@ async def delete_diy_project(
 async def get_diy_project(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
     project = _get_project_in_household_or_404(db, current_user, project_id)
     return _project_response_model(project)
+
+
+@router.get("/diy/projects/{project_id}/config-history", response_model=List[ConfigHistoryEntryResponse])
+async def list_project_config_history(
+    project_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    project = _get_project_in_household_or_404(db, current_user, project_id)
+    
+    saved_configs = (
+        db.query(DiyProjectConfig)
+        .filter(
+            DiyProjectConfig.project_id == project.id,
+            DiyProjectConfig.board_profile == project.board_profile,
+        )
+        .order_by(DiyProjectConfig.updated_at.desc(), DiyProjectConfig.created_at.desc(), DiyProjectConfig.id.desc())
+        .all()
+    )
+    latest_jobs = _latest_builds_by_saved_config(db, project_id=project.id)
+    return [
+        _serialize_saved_config_entry(saved_config, project=project, latest_job=latest_jobs.get(saved_config.id))
+        for saved_config in saved_configs
+    ]
 
 
 @router.get("/device/{device_id}/configs", response_model=List[ConfigHistoryEntryResponse])
@@ -3776,6 +3877,7 @@ async def get_system_status(
         current_server_time=get_current_server_time(effective_timezone),
         latest_alert_at=_coerce_utc_api_datetime(latest_alert.occurred_at) if latest_alert else None,
         latest_alert_message=latest_alert.message if latest_alert else None,
+        latest_firmware_revision=get_latest_firmware_revision(),
     )
 
 

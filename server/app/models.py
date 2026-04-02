@@ -397,6 +397,7 @@ class SystemStatusResponse(BaseModel):
     current_server_time: datetime
     latest_alert_at: Optional[datetime] = None
     latest_alert_message: Optional[str] = None
+    latest_firmware_revision: Optional[str] = None
 
 
 class SystemLogAcknowledgeResponse(BaseModel):

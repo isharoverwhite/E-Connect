@@ -3,7 +3,7 @@
 import { useEffect, useState, useMemo } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { getToken } from "@/lib/auth";
-import { API_URL } from "@/lib/api";
+import { API_URL, fetchProjectConfigHistory, type DeviceConfigHistoryEntry } from "@/lib/api";
 import {
     getProjectBoardProfileLabel,
     getProjectBoardTypeLabel,
@@ -45,6 +45,10 @@ export function ConfigsPanel({ timezone }: { timezone?: string | null }) {
     const [error, setError] = useState("");
     const [notice, setNotice] = useState("");
     const [selectedConfig, setSelectedConfig] = useState<DiyProjectUsageResponse | null>(null);
+    const [selectedConfigHistory, setSelectedConfigHistory] = useState<DeviceConfigHistoryEntry[]>([]);
+    const [activeHistoryVersion, setActiveHistoryVersion] = useState<DeviceConfigHistoryEntry | null>(null);
+    const [historyLoading, setHistoryLoading] = useState(false);
+    
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [deleteTarget, setDeleteTarget] = useState<DiyProjectUsageResponse | null>(null);
     const [deletePassword, setDeletePassword] = useState("");
@@ -52,6 +56,33 @@ export function ConfigsPanel({ timezone }: { timezone?: string | null }) {
 
     const [searchQuery, setSearchQuery] = useState("");
     const [filterType, setFilterType] = useState<"all" | "in_use" | "unused">("all");
+
+    useEffect(() => {
+        if (!selectedConfig) {
+            setSelectedConfigHistory([]);
+            setActiveHistoryVersion(null);
+            return;
+        }
+        
+        let isCancelled = false;
+        setHistoryLoading(true);
+        fetchProjectConfigHistory(selectedConfig.id)
+            .then(history => {
+                if (isCancelled) return;
+                setSelectedConfigHistory(history);
+                if (history.length > 0) {
+                    setActiveHistoryVersion(history[0]);
+                } else {
+                    setActiveHistoryVersion(null);
+                }
+            })
+            .catch(err => console.error("Failed to fetch project history", err))
+            .finally(() => {
+                if (!isCancelled) setHistoryLoading(false);
+            });
+            
+        return () => { isCancelled = true; };
+    }, [selectedConfig]);
 
     async function loadConfigs() {
         const token = getToken();
@@ -329,20 +360,53 @@ export function ConfigsPanel({ timezone }: { timezone?: string | null }) {
                                     <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">{selectedConfig.devices.length}</p>
                                 </div>
                             </div>
-                            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">Board Pin Mapping</h3>
-                            <div className="mt-2 w-full max-h-[460px] overflow-y-auto custom-scrollbar border border-slate-200 dark:border-slate-800 rounded-lg">
-                                <SvgPinMapPreview 
-                                    boardId={resolveProjectBoardProfileId(selectedConfig) || "esp32-c3-super-mini"}
-                                    pins={(selectedConfig.config?.pins as PinMapping[]) || []} 
-                                />
-                            </div>
-                            <div className="flex gap-2 mt-4">
-                                <button 
-                                    onClick={() => navigator.clipboard.writeText(JSON.stringify(selectedConfig.config, null, 2))} 
-                                    className="flex-1 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 py-2 rounded-lg text-sm font-medium flex items-center justify-center gap-2 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                                >
-                                    <span className="material-symbols-outlined text-[18px]">content_copy</span> Copy Raw JSON Config
-                                </button>
+                            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">Config Versions & Pin Mapping</h3>
+                            <div className="mt-2 flex flex-col sm:flex-row border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden bg-white dark:bg-slate-950">
+                                {/* Left Side: History List */}
+                                <div className="w-full sm:w-[240px] shrink-0 border-b sm:border-b-0 sm:border-r border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 h-[300px] sm:h-[460px] flex flex-col">
+                                    <div className="p-3 border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 shrink-0">
+                                        <h4 className="text-xs font-semibold uppercase tracking-widest text-slate-500">History ({selectedConfigHistory.length})</h4>
+                                    </div>
+                                    <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-2 custom-scrollbar">
+                                        {historyLoading ? (
+                                             <div className="text-sm text-center py-4 text-slate-500 animate-pulse">Loading history...</div>
+                                        ) : selectedConfigHistory.length === 0 ? (
+                                             <div className="text-sm text-center py-4 text-slate-500">No history found.</div>
+                                        ) : selectedConfigHistory.map(entry => {
+                                             const isActive = activeHistoryVersion?.id === entry.id;
+                                             return (
+                                                 <button
+                                                     key={entry.id}
+                                                     onClick={() => setActiveHistoryVersion(entry)}
+                                                     className={`text-left p-2.5 rounded-lg border transition-all text-sm flex flex-col gap-1 w-full ${isActive ? 'bg-primary/5 border-primary/30 ring-1 ring-primary/20' : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-primary/20'}`}
+                                                 >
+                                                     <div className="font-semibold text-slate-900 dark:text-white truncate pr-2 w-full">{entry.config_name}</div>
+                                                     <div className="text-[10px] text-slate-500 flex justify-between items-center w-full">
+                                                         <span>{formatServerTimestamp(entry.created_at, { options: { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }, timezone })}</span>
+                                                         <span className={`${entry.latest_build_status === "build_failed" || entry.latest_build_status === "flash_failed" ? "bg-rose-500/10 text-rose-500" : entry.latest_build_status === "artifact_ready" || entry.latest_build_status === "flashed" ? "bg-emerald-500/10 text-emerald-500" : "bg-blue-500/10 text-blue-500"} uppercase font-bold text-[8px] tracking-wider px-1.5 py-0.5 rounded-full shrink-0`}>{entry.latest_build_status || "saved"}</span>
+                                                     </div>
+                                                 </button>
+                                             );
+                                        })}
+                                    </div>
+                                </div>
+                                
+                                {/* Right Side: SVG Preview */}
+                                <div className="flex-1 h-[460px] overflow-y-auto custom-scrollbar relative p-4 bg-white dark:bg-slate-900 flex flex-col">
+                                    {activeHistoryVersion ? (
+                                        <div className="flex-1 w-full">
+                                            <SvgPinMapPreview 
+                                                boardId={resolveProjectBoardProfileId(selectedConfig) || "esp32-c3-super-mini"}
+                                                pins={(activeHistoryVersion.config?.pins as PinMapping[]) || []} 
+                                            />
+                                        </div>
+                                    ) : (
+                                        <div className="w-full h-full flex flex-col items-center justify-center text-slate-400 gap-2">
+                                            <span className="material-symbols-outlined text-[32px]">touch_app</span>
+                                            <p className="text-sm">Select a version from history to view mapping</p>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
 

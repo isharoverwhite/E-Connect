@@ -164,7 +164,7 @@ def _pin_matches_function_keywords(pin_config: object, keywords: tuple[str, ...]
 
 def _pin_supports_numeric_trigger(pin_config: object) -> bool:
     pin_mode = _pin_mode_value(pin_config)
-    return pin_mode in {PinMode.ADC.value, PinMode.PWM.value} or _pin_matches_function_keywords(
+    return pin_mode in {PinMode.ADC.value, PinMode.PWM.value, PinMode.INPUT.value, PinMode.OUTPUT.value} or _pin_matches_function_keywords(
         pin_config,
         NUMERIC_TRIGGER_FUNCTION_KEYWORDS,
     )
@@ -172,7 +172,7 @@ def _pin_supports_numeric_trigger(pin_config: object) -> bool:
 
 def _pin_supports_binary_trigger(pin_config: object) -> bool:
     pin_mode = _pin_mode_value(pin_config)
-    return pin_mode in {PinMode.INPUT.value, PinMode.OUTPUT.value} or _pin_matches_function_keywords(
+    return pin_mode in {PinMode.INPUT.value, PinMode.OUTPUT.value, PinMode.ADC.value, PinMode.PWM.value} or _pin_matches_function_keywords(
         pin_config,
         BINARY_TRIGGER_FUNCTION_KEYWORDS,
     )

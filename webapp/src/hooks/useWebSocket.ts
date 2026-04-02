@@ -21,30 +21,37 @@ export function useWebSocket(onEvent: (event: WebSocketEvent) => void) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<number | null>(null);
   const pingIntervalRef = useRef<number | null>(null);
+  const pongTimeoutRef = useRef<number | null>(null);
   const backoffRef = useRef(1000);
   const handleEvent = useEffectEvent(onEvent);
 
   useEffect(() => {
     let isActive = true;
 
-    function clearReconnectTimer() {
+    function clearTimers() {
       if (reconnectTimeoutRef.current !== null) {
         window.clearTimeout(reconnectTimeoutRef.current);
         reconnectTimeoutRef.current = null;
       }
-    }
-
-    function clearPingInterval() {
       if (pingIntervalRef.current !== null) {
         window.clearInterval(pingIntervalRef.current);
         pingIntervalRef.current = null;
       }
+      if (pongTimeoutRef.current !== null) {
+        window.clearTimeout(pongTimeoutRef.current);
+        pongTimeoutRef.current = null;
+      }
     }
 
-    function scheduleReconnect() {
-      clearReconnectTimer();
-      const timeout = Math.min(backoffRef.current * 1.5, 30000);
-      backoffRef.current = timeout;
+    function scheduleReconnect(immediate = false) {
+      if (reconnectTimeoutRef.current !== null) {
+        window.clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      const timeout = immediate ? 500 : Math.min(backoffRef.current * 1.5, 30000);
+      if (!immediate) {
+        backoffRef.current = timeout;
+      }
       reconnectTimeoutRef.current = window.setTimeout(() => {
         reconnectTimeoutRef.current = null;
         void connect();
@@ -79,11 +86,20 @@ export function useWebSocket(onEvent: (event: WebSocketEvent) => void) {
         if (!isActive) return;
         setIsConnected(true);
         backoffRef.current = 1000;
-        clearReconnectTimer();
-        clearPingInterval();
+        clearTimers();
+        
         pingIntervalRef.current = window.setInterval(() => {
           if (ws.readyState === WebSocket.OPEN) {
             ws.send("ping");
+            
+            // Set a timeout to wait for pong
+            if (pongTimeoutRef.current !== null) {
+              window.clearTimeout(pongTimeoutRef.current);
+            }
+            pongTimeoutRef.current = window.setTimeout(() => {
+              console.warn("WebSocket pong timeout. Closing stale connection.");
+              ws.close();
+            }, 5000);
           }
         }, 15000);
       };
@@ -91,7 +107,13 @@ export function useWebSocket(onEvent: (event: WebSocketEvent) => void) {
       ws.onmessage = (event) => {
         if (!isActive) return;
         try {
-          if (event.data === "pong") return;
+          if (event.data === "pong") {
+            if (pongTimeoutRef.current !== null) {
+              window.clearTimeout(pongTimeoutRef.current);
+              pongTimeoutRef.current = null;
+            }
+            return;
+          }
           const parsed = JSON.parse(event.data) as WebSocketEvent;
           handleEvent(parsed);
         } catch (err) {
@@ -102,7 +124,7 @@ export function useWebSocket(onEvent: (event: WebSocketEvent) => void) {
       ws.onclose = () => {
         if (!isActive) return;
         setIsConnected(false);
-        clearPingInterval();
+        clearTimers();
         if (wsRef.current === ws) {
           wsRef.current = null;
         }
@@ -116,10 +138,29 @@ export function useWebSocket(onEvent: (event: WebSocketEvent) => void) {
 
     void connect();
 
+    // Reconnect immediately when user comes back to the tab or regains network
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED || wsRef.current.readyState === WebSocket.CLOSING) {
+           backoffRef.current = 1000;
+           scheduleReconnect(true);
+        }
+      }
+    };
+    
+    const handleOnline = () => {
+       backoffRef.current = 1000;
+       scheduleReconnect(true);
+    };
+
+    window.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("online", handleOnline);
+
     return () => {
       isActive = false;
-      clearReconnectTimer();
-      clearPingInterval();
+      clearTimers();
+      window.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("online", handleOnline);
       if (wsRef.current) {
         wsRef.current.close();
       }
