@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 import anyio
 import asyncio
 import hashlib
+from urllib.parse import urlencode
 
 from .mqtt import build_pairing_rejected_ack_payload, mqtt_manager
 from .ws_manager import manager as ws_manager
@@ -63,6 +64,7 @@ from .services.builder import (
     describe_network_target_change,
     get_durable_artifact_path,
     infer_firmware_network_targets,
+    resolve_build_job_config_snapshot,
     resolve_webapp_transport,
 )
 from .services.device_registration import (
@@ -74,7 +76,12 @@ from .services.device_registration import (
 )
 from .services.diy_validation import resolve_board_definition, validate_diy_config
 from .services.user_management import resolve_household_id_for_user
-from .services.provisioning import derive_project_secret
+from .services.provisioning import (
+    build_project_firmware_identity,
+    extract_project_secret_from_payload,
+    stamp_project_secret,
+    strip_project_secret_from_payload,
+)
 from .services.i2c_registry import I2CLibrary, get_i2c_catalog
 from .services.system_metrics import collect_system_metrics
 from .services.system_logs import (
@@ -109,6 +116,8 @@ ACTIVE_BUILD_JOB_STATUSES = (
     JobStatus.building,
     JobStatus.flashing,
 )
+DEFAULT_OTA_PUBLIC_SCHEME = "http"
+DEFAULT_OTA_PUBLIC_PORT = 8000
 DEVICE_HEARTBEAT_TIMEOUT_SECONDS = max(
     5,
     int(os.getenv("DEVICE_HEARTBEAT_TIMEOUT_SECONDS", "15")),
@@ -271,6 +280,9 @@ def _stamp_project_network_targets(config: dict[str, Any], targets: dict[str, An
     stamped = dict(config)
     stamped["advertised_host"] = str(targets["advertised_host"])
     stamped["api_base_url"] = str(targets["api_base_url"])
+    ota_api_base_url = _build_direct_ota_api_base_url(str(targets["advertised_host"]))
+    if ota_api_base_url:
+        stamped["ota_api_base_url"] = ota_api_base_url
     stamped["mqtt_broker"] = str(targets["mqtt_broker"])
     stamped["mqtt_port"] = int(targets["mqtt_port"])
     stamped["target_key"] = str(targets["target_key"])
@@ -456,22 +468,161 @@ def _broadcast_pairing_queue_updated(device: Device, *, reason: str) -> None:
 
 
 def _resolve_build_artifact_path(job: BuildJob, artifact_name: Literal["firmware", "bootloader", "partitions"]) -> Optional[str]:
-    if artifact_name == "firmware":
-        return job.artifact_path
+    candidates: list[str] = []
+    direct_path = _trimmed_string(job.artifact_path)
+    if direct_path:
+        candidates.append(direct_path)
 
     try:
-        candidate = get_durable_artifact_path(job.id, artifact_name)
-        if os.path.exists(candidate):
-            return candidate
+        candidates.append(get_durable_artifact_path(job.id, artifact_name))
     except ValueError:
         pass
 
-    if not job.artifact_path:
+    if direct_path:
+        artifact_dir = os.path.dirname(direct_path)
+        fallback_candidate = os.path.join(artifact_dir, f"{job.id}.{artifact_name}.bin")
+        if fallback_candidate != direct_path:
+            candidates.append(fallback_candidate)
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.exists(candidate):
+            return candidate
+
+    return None
+
+
+def _trimmed_string(value: Any) -> Optional[str]:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _build_direct_ota_api_base_url(advertised_host: str | None) -> Optional[str]:
+    normalized_host = _trimmed_string(advertised_host)
+    if not normalized_host:
         return None
 
-    artifact_dir = os.path.dirname(job.artifact_path)
-    fallback_candidate = os.path.join(artifact_dir, f"{job.id}.{artifact_name}.bin")
-    return fallback_candidate if os.path.exists(fallback_candidate) else None
+    raw_scheme = os.getenv("FIRMWARE_OTA_PUBLIC_SCHEME", os.getenv("FIRMWARE_PUBLIC_SCHEME", DEFAULT_OTA_PUBLIC_SCHEME))
+    scheme = raw_scheme.strip().lower() if isinstance(raw_scheme, str) else DEFAULT_OTA_PUBLIC_SCHEME
+    if scheme not in {"http", "https"}:
+        scheme = DEFAULT_OTA_PUBLIC_SCHEME
+
+    raw_port = os.getenv("FIRMWARE_OTA_PUBLIC_PORT", os.getenv("MDNS_DISCOVERY_PORT", str(DEFAULT_OTA_PUBLIC_PORT)))
+    try:
+        port = int(str(raw_port).strip())
+    except (TypeError, ValueError):
+        port = DEFAULT_OTA_PUBLIC_PORT
+
+    if ":" in normalized_host and not normalized_host.startswith("["):
+        netloc = f"[{normalized_host}]:{port}"
+    else:
+        netloc = f"{normalized_host}:{port}"
+
+    return f"{scheme}://{netloc}/api/v1"
+
+
+def _public_config_payload(payload: Any) -> Optional[dict[str, Any]]:
+    public_payload = strip_project_secret_from_payload(payload)
+    if public_payload is None and isinstance(payload, dict):
+        return dict(payload)
+    return public_payload
+
+
+def _resolve_project_device_secret(project_id: str, *payloads: Any) -> str:
+    for payload in payloads:
+        persisted_secret = extract_project_secret_from_payload(payload)
+        if persisted_secret:
+            return persisted_secret
+
+    _, derived_secret = build_project_firmware_identity(project_id)
+    return derived_secret
+
+
+def _build_job_response_model(
+    job: BuildJob,
+    *,
+    ota_token: str | None = None,
+    ota_download_url: str | None = None,
+) -> BuildJobResponse:
+    return BuildJobResponse(
+        id=job.id,
+        project_id=job.project_id,
+        status=job.status,
+        artifact_path=job.artifact_path,
+        log_path=job.log_path,
+        staged_project_config=_public_config_payload(job.staged_project_config),
+        finished_at=job.finished_at,
+        error_message=job.error_message,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+        ota_token=ota_token,
+        ota_download_url=ota_download_url,
+        expected_firmware_version=build_job_firmware_version(job.id),
+    )
+
+
+def _project_response_model(project: DiyProject) -> DiyProjectResponse:
+    return DiyProjectResponse(
+        id=project.id,
+        user_id=project.user_id,
+        room_id=project.room_id,
+        wifi_credential_id=project.wifi_credential_id,
+        name=project.name,
+        board_profile=project.board_profile,
+        config=_public_config_payload(project.config),
+        pending_config=_public_config_payload(project.pending_config),
+        pending_build_job_id=project.pending_build_job_id,
+        created_at=project.created_at,
+        updated_at=project.updated_at,
+    )
+
+
+def _build_ota_download_url(api_base_url: str, job_id: str, token: str) -> str:
+    normalized_base_url = api_base_url.strip().rstrip("/")
+    query = urlencode({"token": token})
+    return f"{normalized_base_url}/diy/ota/download/{job_id}/firmware.bin?{query}"
+
+
+def _resolve_job_ota_download_url(job: BuildJob, token: str, request: Request | None = None) -> Optional[str]:
+    snapshot = resolve_build_job_config_snapshot(job)
+    ota_api_base_url = _trimmed_string(snapshot.get("ota_api_base_url") if isinstance(snapshot, dict) else None)
+    if ota_api_base_url:
+        return _build_ota_download_url(ota_api_base_url, job.id, token)
+
+    advertised_host = _trimmed_string(snapshot.get("advertised_host") if isinstance(snapshot, dict) else None)
+    if advertised_host:
+        ota_api_base_url = _build_direct_ota_api_base_url(advertised_host)
+        if ota_api_base_url:
+            return _build_ota_download_url(ota_api_base_url, job.id, token)
+
+    api_base_url = _trimmed_string(snapshot.get("api_base_url") if isinstance(snapshot, dict) else None)
+    if api_base_url:
+        return _build_ota_download_url(api_base_url, job.id, token)
+
+    if request is None:
+        return None
+
+    advertised_host = _resolve_system_advertised_host(request)
+    if advertised_host:
+        ota_api_base_url = _build_direct_ota_api_base_url(advertised_host)
+        if ota_api_base_url:
+            return _build_ota_download_url(ota_api_base_url, job.id, token)
+
+    try:
+        targets = infer_firmware_network_targets(
+            request.headers,
+            request.url.scheme,
+            _get_runtime_firmware_network_state(request),
+        )
+    except ValueError:
+        return None
+
+    return _build_ota_download_url(str(targets["api_base_url"]), job.id, token)
 
 
 def _get_layout_widgets(layout: Any) -> list[dict[str, Any]]:
@@ -1926,6 +2077,11 @@ async def update_device_config(
     if network_target_warning:
         validation_warnings.append(network_target_warning)
     staged_config = _stamp_project_network_targets(current_config, targets)
+    staged_config = stamp_project_secret(
+        staged_config,
+        project.id,
+        _resolve_project_device_secret(project.id, project.pending_config, project.config, current_config),
+    )
 
     # Trigger rebuild only after validation passes and no active job exists.
     job = BuildJob(
@@ -1969,7 +2125,13 @@ async def delete_device(device_id: str, db: Session = Depends(get_db), current_u
     return {"status": "unpaired", "detail": f"Device {device_id} removed from the dashboard and is ready to pair again."}
 
 @router.post("/device/{device_id}/command")
-async def send_command(device_id: str, command: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def send_command(
+    device_id: str,
+    command: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
     Send a command to the device via MQTT and record the publish result.
     """
@@ -1992,18 +2154,48 @@ async def send_command(device_id: str, command: dict, db: Session = Depends(get_
                 detail={"error": "conflict", "message": "Artifact is not ready for flashing"},
             )
 
+        artifact_path = _resolve_build_artifact_path(ota_job, "firmware")
+        if not artifact_path or not os.path.exists(artifact_path):
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "conflict",
+                    "message": "Firmware artifact is not available on this backend runtime. Rebuild on the current runtime before retrying OTA.",
+                },
+            )
+
+        ota_token = create_ota_token(ota_job.id)
+        ota_url = _resolve_job_ota_download_url(ota_job, ota_token, request)
+        if not ota_url:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to resolve an OTA download URL for this build job.",
+            )
+
+        ota_project = ota_job.project or _get_project_in_household_or_404(db, current_user, device.provisioning_project_id)
+
         # Security: Inject artifact MD5 and server signature into the OTA command
         try:
-            with open(ota_job.artifact_path, "rb") as f:
+            with open(artifact_path, "rb") as f:
                 firmware_bytes = f.read()
             firmware_md5 = hashlib.md5(firmware_bytes).hexdigest()
         except Exception:
             raise HTTPException(status_code=500, detail="Failed to read firmware artifact to generate signature.")
 
-        secret_key = derive_project_secret(device.provisioning_project_id, device.device_id)
+        secret_key = _resolve_project_device_secret(
+            device.provisioning_project_id,
+            ota_job.staged_project_config,
+            getattr(ota_project, "pending_config", None),
+            getattr(ota_project, "config", None),
+        )
         signature_payload = (firmware_md5 + secret_key).encode("utf-8")
         signature = hashlib.md5(signature_payload).hexdigest()
 
+        command["kind"] = "system"
+        command["job_id"] = ota_job.id
+        command["url"] = ota_url
+        command["payload"] = ota_url
+        command["ota_token"] = ota_token
         command["md5"] = firmware_md5
         command["signature"] = signature
 
@@ -2263,9 +2455,11 @@ async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(ge
         required=True,
         missing_message="Select a Wi-Fi credential before creating a device project.",
     )
+    project_id = str(uuid.uuid4())
     stamped_config = _stamp_wifi_credential_config(project.config, wifi_credential)
+    stamped_config = stamp_project_secret(stamped_config, project_id)
     new_project = DiyProject(
-        id=str(uuid.uuid4()),
+        id=project_id,
         user_id=current_user.user_id,
         room_id=room.room_id,
         wifi_credential_id=wifi_credential.id,
@@ -2276,7 +2470,7 @@ async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(ge
     db.add(new_project)
     db.commit()
     db.refresh(new_project)
-    return new_project
+    return _project_response_model(new_project)
 
 @router.get("/diy/projects", response_model=List[DiyProjectUsageResponse])
 async def list_diy_projects(
@@ -2345,7 +2539,7 @@ async def list_diy_projects(
             "wifi_credential_id": p.wifi_credential_id,
             "name": p.name,
             "board_profile": p.board_profile,
-            "config": p.config,
+            "config": _public_config_payload(p.config),
             "created_at": p.created_at,
             "updated_at": p.updated_at,
             "usage_state": usage_state,
@@ -2414,7 +2608,8 @@ async def delete_diy_project(
 
 @router.get("/diy/projects/{project_id}", response_model=DiyProjectResponse)
 async def get_diy_project(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
-    return _get_project_in_household_or_404(db, current_user, project_id)
+    project = _get_project_in_household_or_404(db, current_user, project_id)
+    return _project_response_model(project)
 
 @router.put("/diy/projects/{project_id}", response_model=DiyProjectResponse)
 async def update_diy_project(project_id: str, project_update: DiyProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
@@ -2439,12 +2634,16 @@ async def update_diy_project(project_id: str, project_update: DiyProjectCreate, 
     project.board_profile = project_update.board_profile
     project.room_id = room.room_id
     project.wifi_credential_id = wifi_credential.id
-    project.config = _stamp_wifi_credential_config(project_update.config, wifi_credential)
+    project.config = stamp_project_secret(
+        _stamp_wifi_credential_config(project_update.config, wifi_credential),
+        project.id,
+        _resolve_project_device_secret(project.id, project.pending_config, project.config),
+    )
     project.pending_config = None
     project.pending_build_job_id = None
     db.commit()
     db.refresh(project)
-    return project
+    return _project_response_model(project)
 
 @router.post("/diy/build", response_model=BuildJobResponse)
 async def trigger_diy_build(
@@ -2484,7 +2683,7 @@ async def trigger_diy_build(
         .first()
     )
     if active_job:
-        return active_job
+        return _build_job_response_model(active_job)
 
     current_config = project.config if isinstance(project.config, dict) else {}
     try:
@@ -2502,6 +2701,11 @@ async def trigger_diy_build(
     if network_target_warning:
         validation_warnings.append(network_target_warning)
     project.config = _stamp_project_network_targets(current_config, targets)
+    project.config = stamp_project_secret(
+        project.config,
+        project.id,
+        _resolve_project_device_secret(project.id, project.pending_config, current_config),
+    )
 
     job_id = str(uuid.uuid4())
     job = BuildJob(
@@ -2519,16 +2723,21 @@ async def trigger_diy_build(
         validation_warnings,
         _background_session_factory(db),
     )
-    return job
+    return _build_job_response_model(job)
 
 @router.get("/diy/build/{job_id}", response_model=BuildJobResponse)
-async def get_build_job(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
+async def get_build_job(
+    job_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
     job = _get_build_job_in_household_or_404(db, current_user, job_id)
 
     # Inject an ephemeral OTA token upon successful access by owner
-    job.ota_token = create_ota_token(job.id)
-    job.expected_firmware_version = build_job_firmware_version(job.id)
-    return job
+    ota_token = create_ota_token(job.id)
+    ota_download_url = _resolve_job_ota_download_url(job, ota_token, request)
+    return _build_job_response_model(job, ota_token=ota_token, ota_download_url=ota_download_url)
 
 @router.get("/diy/build/{job_id}/artifact")
 async def get_build_artifact(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):

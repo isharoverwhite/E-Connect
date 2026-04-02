@@ -11,7 +11,11 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models import DeviceRegister
-from app.services.provisioning import build_project_firmware_identity, verify_project_secret
+from app.services.provisioning import (
+    build_project_firmware_identity,
+    extract_project_secret_from_payload,
+    verify_project_secret,
+)
 from app.sql_models import (
     AccountType,
     AuthStatus,
@@ -265,10 +269,23 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
         device = db.query(Device).filter(Device.device_id == payload.device_id).first()
 
     if device and device.provisioning_project_id:
+        persisted_secret = None
+        if device.provisioning_project_id:
+            persisted_project = (
+                db.query(DiyProject)
+                .filter(DiyProject.id == device.provisioning_project_id)
+                .first()
+            )
+            if persisted_project is not None:
+                persisted_secret = (
+                    extract_project_secret_from_payload(persisted_project.pending_config)
+                    or extract_project_secret_from_payload(persisted_project.config)
+                )
         if not verify_project_secret(
             device.provisioning_project_id,
             device.device_id,
             payload.secret_key,
+            persisted_secret,
         ):
             _raise_secure_pairing_error("Secret key mismatch for provisioned device.")
         secret_verified = True
@@ -284,10 +301,14 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
         if secure_project.room_id is None:
             _raise_secure_pairing_error("Provisioning project is missing a room assignment.")
 
-        expected_device_id, _ = build_project_firmware_identity(secure_project.id)
+        persisted_secret = (
+            extract_project_secret_from_payload(secure_project.pending_config)
+            or extract_project_secret_from_payload(secure_project.config)
+        )
+        expected_device_id, _ = build_project_firmware_identity(secure_project.id, persisted_secret)
         if payload.device_id != expected_device_id:
             _raise_secure_pairing_error("Provisioned device id does not match the server record.")
-        if not verify_project_secret(secure_project.id, expected_device_id, payload.secret_key):
+        if not verify_project_secret(secure_project.id, expected_device_id, payload.secret_key, persisted_secret):
             _raise_secure_pairing_error("Secret key mismatch for provisioned project.")
 
         secret_verified = True

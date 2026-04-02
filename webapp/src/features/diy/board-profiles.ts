@@ -129,7 +129,7 @@ export const BOARD_FAMILIES: BoardFamilyInfo[] = [
   {
     id: "ESP32-S3",
     title: "ESP32-S3",
-    subtitle: "AI-ready and USB-native boards for richer peripherals.",
+    subtitle: "USB-native boards for richer peripherals and more demanding local workloads.",
     accent: "from-blue-500 to-indigo-500",
     specs: {
       core: "Dual-core Xtensa® LX7",
