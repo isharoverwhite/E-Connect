@@ -28,6 +28,7 @@ from app.sql_models import (
     WifiCredential,
 )
 from app.auth import get_password_hash
+from app.services.provisioning import PRIVATE_DEVICE_SECRET_KEY
 
 # Setup test DB
 SQLALCHEMY_DATABASE_URL = "sqlite://"
@@ -1234,6 +1235,7 @@ def test_builder_generates_correct_config(tmp_path):
     mock_config = {
         "advertised_host": "192.168.1.50",
         "api_base_url": "http://192.168.1.50:3000/api/v1",
+        PRIVATE_DEVICE_SECRET_KEY: "persisted-secret",
         "wifi_ssid": "test_ssid",
         "wifi_password": "test_password",
         "pins": [
@@ -1275,6 +1277,7 @@ def test_builder_generates_correct_config(tmp_path):
     assert '{ 4, "I2C", "i2c", "I2C Sensor", 1, 0, 255, "SDA", "0x3C", "Wire" }' in content, f"Missing I2C pin in: {content}"
     assert '#define MQTT_BROKER "192.168.1.50"' in content
     assert '#define API_BASE_URL "http://192.168.1.50:3000/api/v1"' in content
+    assert '#define ECONNECT_SECRET_KEY "persisted-secret"' in content
 
 
 def test_firmware_template_declares_developer_managed_revision():

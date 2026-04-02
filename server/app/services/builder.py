@@ -1,7 +1,8 @@
+import ipaddress
+import json
 import os
 import shutil
 import subprocess
-import ipaddress
 import socket
 from datetime import datetime
 from pathlib import Path
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.services.diy_validation import resolve_board_definition
-from app.services.provisioning import build_project_firmware_identity
+from app.services.provisioning import build_project_firmware_identity, extract_project_secret_from_payload
 from app.sql_models import AuthStatus, BuildJob, Device, DiyProject, JobStatus, SerialSession, SerialSessionStatus
 from app.services.i2c_registry import find_library_by_name
 
@@ -971,6 +972,13 @@ def _resolve_project_wifi_credentials(
 def resolve_build_job_config_snapshot(job: BuildJob) -> dict[str, Any]:
     if isinstance(job.staged_project_config, dict):
         return dict(job.staged_project_config)
+    if isinstance(job.staged_project_config, str):
+        try:
+            decoded_snapshot = json.loads(job.staged_project_config)
+        except json.JSONDecodeError:
+            decoded_snapshot = None
+        if isinstance(decoded_snapshot, dict):
+            return dict(decoded_snapshot)
 
     project = job.project
     if (
@@ -1020,7 +1028,10 @@ def write_generated_firmware_config(
     include_dir = os.path.join(project_dir, "include")
     os.makedirs(include_dir, exist_ok=True)
 
-    device_id, secret_key = build_project_firmware_identity(project.id)
+    persisted_secret = extract_project_secret_from_payload(config_json)
+    if persisted_secret is None and isinstance(project.config, dict):
+        persisted_secret = extract_project_secret_from_payload(project.config)
+    device_id, secret_key = build_project_firmware_identity(project.id, persisted_secret)
     project_name = str(config_json.get("project_name") or project.name or "E-Connect Node").strip()
     firmware_version = build_job_firmware_version(job_id)
     wifi_ssid, wifi_password = _resolve_project_wifi_credentials(project, config_json=config_json)
