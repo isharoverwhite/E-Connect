@@ -11,11 +11,12 @@ import {
   sendDeviceCommand,
 } from "@/lib/api";
 import { getToken } from "@/lib/auth";
-import { arePinConfigurationsEquivalent, getActivePinConfigurations } from "@/lib/device-config";
+import { getActivePinConfigurations } from "@/lib/device-config";
 import { fetchWifiCredentials, type WifiCredentialRecord } from "@/lib/wifi-credentials";
 import { Step2Pins } from "@/features/diy/components/Step2Pins";
 import type { BoardProfile } from "@/features/diy/board-profiles";
-import { getBoardProfile, resolveBoardProfileId } from "@/features/diy/board-profiles";
+import { getBoardProfile } from "@/features/diy/board-profiles";
+import { resolveProjectBoardProfileId } from "@/features/diy/project-board";
 import type { BuildJobStatus, PinMapping } from "@/features/diy/types";
 import { validatePinMappings } from "@/features/diy/validation";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -23,6 +24,8 @@ import type { DeviceConfig, PinConfig } from "@/types/device";
 
 interface DiyProjectResponse {
   config?: Record<string, unknown> | null;
+  pending_config?: Record<string, unknown> | null;
+  pending_build_job_id?: string | null;
   board_profile: string;
   name?: string;
   wifi_credential_id?: number | null;
@@ -102,6 +105,17 @@ function mapProjectPins(projectConfig: Record<string, unknown> | null | undefine
   return mappedPins
     .filter((pin): pin is PinMapping => pin !== null)
     .sort((left, right) => left.gpio_pin - right.gpio_pin);
+}
+
+function readConfigWifiCredentialId(
+  projectConfig: Record<string, unknown> | null | undefined,
+): number | null {
+  const rawValue = projectConfig?.wifi_credential_id;
+  return typeof rawValue === "number" ? rawValue : null;
+}
+
+function resolveCommittedWifiCredentialId(project: DiyProjectResponse): number | null {
+  return project.wifi_credential_id ?? readConfigWifiCredentialId(project.config);
 }
 
 function normalizePins(pins: PinMapping[]): PinMapping[] {
@@ -209,11 +223,14 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   const [boardProfile, setBoardProfile] = useState<BoardProfile | null>(null);
   const [pins, setPins] = useState<PinMapping[]>([]);
   const [savedPins, setSavedPins] = useState<PinMapping[]>([]);
+  const [pendingPins, setPendingPins] = useState<PinMapping[] | null>(null);
   const [wifiCredentials, setWifiCredentials] = useState<WifiCredentialRecord[]>([]);
   const [wifiCredentialsLoading, setWifiCredentialsLoading] = useState(true);
   const [wifiCredentialsError, setWifiCredentialsError] = useState<string | null>(null);
   const [selectedWifiCredentialId, setSelectedWifiCredentialId] = useState<number | null>(null);
   const [savedWifiCredentialId, setSavedWifiCredentialId] = useState<number | null>(null);
+  const [pendingWifiCredentialId, setPendingWifiCredentialId] = useState<number | null>(null);
+  const [pendingBuildJobId, setPendingBuildJobId] = useState<string | null>(null);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -330,16 +347,39 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
 
         const nextProject = (await projectResponse.json()) as DiyProjectResponse;
         const nextWifiCredentials = await fetchWifiCredentials(token);
+        const committedConfig = nextProject.config;
+        const desiredConfig = nextProject.pending_config ?? nextProject.config;
         const resolvedBoardId =
-          resolveBoardProfileId(nextProject.board_profile) ?? nextProject.board_profile;
+          resolveProjectBoardProfileId({
+            ...nextProject,
+            config: desiredConfig ?? committedConfig,
+          }) ?? nextProject.board_profile;
         const nextBoardProfile = getBoardProfile(resolvedBoardId);
         if (!nextBoardProfile) {
           throw new Error(`Unknown board profile: ${nextProject.board_profile}`);
         }
 
-        const nextPins = mapProjectPins(nextProject.config);
+        const nextPins = mapProjectPins(desiredConfig);
+        const nextCommittedPins = mapProjectPins(committedConfig);
+        const nextActivePins = mapDevicePins(getActivePinConfigurations(nextDevice));
+        const nextDesiredPins =
+          nextPins.length > 0
+            ? nextPins
+            : nextCommittedPins.length > 0
+              ? nextCommittedPins
+              : validatePinMappings(nextBoardProfile, nextActivePins).errors.length === 0
+                ? nextActivePins
+                : [];
         const nextSavedPins =
-          nextPins.length > 0 ? nextPins : mapDevicePins(getActivePinConfigurations(nextDevice));
+          nextCommittedPins.length > 0
+            ? nextCommittedPins
+            : validatePinMappings(nextBoardProfile, nextActivePins).errors.length === 0
+              ? nextActivePins
+              : [];
+        const nextSavedWifiCredentialId = resolveCommittedWifiCredentialId(nextProject);
+        const nextPendingWifiCredentialId = readConfigWifiCredentialId(nextProject.pending_config);
+        const nextSelectedWifiCredentialId =
+          nextPendingWifiCredentialId ?? nextSavedWifiCredentialId;
         if (cancelled) {
           return;
         }
@@ -350,10 +390,14 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         setWifiCredentials(nextWifiCredentials);
         setWifiCredentialsError(null);
         setWifiCredentialsLoading(false);
-        setPins(nextSavedPins);
+        setPins(nextDesiredPins);
         setSavedPins(nextSavedPins);
-        setSelectedWifiCredentialId(nextProject.wifi_credential_id ?? null);
-        setSavedWifiCredentialId(nextProject.wifi_credential_id ?? null);
+        setPendingPins(nextProject.pending_config ? nextPins : null);
+        setSelectedWifiCredentialId(nextSelectedWifiCredentialId);
+        setSavedWifiCredentialId(nextSavedWifiCredentialId);
+        setPendingWifiCredentialId(nextProject.pending_config ? nextPendingWifiCredentialId : null);
+        setPendingBuildJobId(nextProject.pending_build_job_id ?? null);
+        setJobId(nextProject.pending_build_job_id ?? null);
       } catch (nextError) {
         if (!cancelled) {
           setWifiCredentialsLoading(false);
@@ -537,6 +581,34 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   }, [boardOnlineAfterOta, device, expectedFirmwareVersion, jobStatus, otaModalOpen]);
 
   useEffect(() => {
+    if (!boardOnlineAfterOta || !pendingPins) {
+      return;
+    }
+
+    const committedPins = pendingPins;
+    const committedWifiCredentialId = pendingWifiCredentialId;
+
+    setSavedPins(committedPins);
+    setSavedWifiCredentialId(committedWifiCredentialId);
+    setPendingPins(null);
+    setPendingWifiCredentialId(null);
+    setPendingBuildJobId(null);
+    setProject((current) =>
+      current
+        ? {
+            ...current,
+            wifi_credential_id: committedWifiCredentialId,
+            config: {
+              ...(current.pending_config ?? current.config ?? {}),
+            },
+            pending_config: null,
+            pending_build_job_id: null,
+          }
+        : current,
+    );
+  }, [boardOnlineAfterOta, pendingPins, pendingWifiCredentialId]);
+
+  useEffect(() => {
     if (!boardOnlineAfterOta) {
       return;
     }
@@ -623,16 +695,28 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   }
 
   const validation = validatePinMappings(boardProfile, pins);
+  const desiredProjectConfig = project.pending_config ?? project.config;
+  const resolvedProjectBoardProfileId =
+    resolveProjectBoardProfileId({
+      ...project,
+      config: desiredProjectConfig,
+    }) ?? project.board_profile;
   const hasWifiCredentialSelection = selectedWifiCredentialId !== null;
   const canInitiateOta = jobStatus === "artifact_ready" || jobStatus === "flash_failed";
   if (!hasWifiCredentialSelection) {
     validation.errors.push("Select a saved Wi-Fi credential before rebuilding this board.");
   }
+  const hasPendingActivation = pendingPins !== null || pendingBuildJobId !== null;
+  const baselinePins = pendingPins ?? savedPins;
+  const baselineWifiCredentialId = hasPendingActivation
+    ? pendingWifiCredentialId
+    : savedWifiCredentialId;
   const hasChanges =
-    serializePins(pins) !== serializePins(savedPins) ||
-    selectedWifiCredentialId !== savedWifiCredentialId;
+    serializePins(pins) !== serializePins(baselinePins) ||
+    selectedWifiCredentialId !== baselineWifiCredentialId;
   const pinPreview = {
-    board_profile: project.board_profile,
+    board_profile: resolvedProjectBoardProfileId,
+    board_type: boardProfile.family,
     device_id: device.device_id,
     device_name: device.name,
     wifi_credential_id: selectedWifiCredentialId,
@@ -641,11 +725,9 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   const activeBoardPinConfigurations = getActivePinConfigurations(device);
   const activeBoardPins = mapDevicePins(activeBoardPinConfigurations);
   const hasBoardReportedPins = activeBoardPinConfigurations.length > 0;
-  const boardConfigInSync =
-    hasBoardReportedPins &&
-    arePinConfigurationsEquivalent(activeBoardPinConfigurations, savedPins);
+
   const activeFirmwareVersion = device.firmware_version?.trim() || null;
-  const projectSyncState = isSaving ? "saving" : hasChanges ? "idle" : "saved";
+  const projectSyncState = isSaving ? "saving" : hasChanges ? "idle" : hasPendingActivation ? "pending_ota" : "saved";
   const statusMessageClassName =
     jobStatus === "flashed" && !boardOnlineAfterOta
       ? "rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 text-sm text-blue-800 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200"
@@ -701,17 +783,18 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         throw new Error(result.message || "Failed to save configuration");
       }
 
-      const nextSavedPins = normalizePins(pins);
-      setSavedPins(nextSavedPins);
-      setSavedWifiCredentialId(selectedWifiCredentialId);
+      const nextPendingPins = normalizePins(pins);
+      setPendingPins(nextPendingPins);
+      setPendingWifiCredentialId(selectedWifiCredentialId);
+      setPendingBuildJobId(result.job_id);
       setProject((current) =>
         current
           ? {
               ...current,
-              wifi_credential_id: selectedWifiCredentialId,
-              config: {
-                ...(current.config ?? {}),
-                pins: nextSavedPins,
+              pending_build_job_id: result.job_id,
+              pending_config: {
+                ...(current.pending_config ?? current.config ?? {}),
+                pins: nextPendingPins,
                 wifi_credential_id: selectedWifiCredentialId,
               },
             }
@@ -728,7 +811,8 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       setBoardOnlineAfterOta(false);
       setOtaStartingFirmwareVersion(null);
       setStatusMessage(
-        "Saved project config updated. The dashboard will keep following the board-reported active pin map until OTA finishes and the board reconnects on the new firmware.",
+        result.message ??
+          "Staged config queued. The board keeps using the current committed config until it reconnects on the rebuilt firmware.",
       );
     } catch (saveError) {
       setConfirmError(getErrorMessage(saveError));
@@ -808,6 +892,10 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                   <span className={`h-2 w-2 rounded-full ${device.conn_status === "online" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-slate-400"}`} />
                   {device.conn_status === "online" ? "Online" : "Offline"}
                 </span>
+                <span className="mx-1 text-slate-300 dark:text-slate-600">•</span>
+                <span>{activeFirmwareVersion ? `v${activeFirmwareVersion}` : "Unknown FW"}</span>
+                <span className="mx-1 text-slate-300 dark:text-slate-600">•</span>
+                <span>{hasBoardReportedPins ? `${activeBoardPins.length} mapped` : "No pin map"}</span>
               </div>
             </div>
           </div>
@@ -844,23 +932,36 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
               className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-bold uppercase tracking-wider ${
                 hasChanges
                   ? "bg-amber-100/50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
-                  : "bg-emerald-100/50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+                  : hasPendingActivation
+                    ? "bg-blue-100/50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300"
+                    : "bg-emerald-100/50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
               }`}
             >
               <span className="material-icons-round text-[14px]">
-                {hasChanges ? "pending_actions" : "task_alt"}
+                {hasChanges ? "pending_actions" : hasPendingActivation ? "system_update_alt" : "task_alt"}
               </span>
-              {hasChanges ? "Unsaved" : "Saved"}
+              {hasChanges ? "Unsaved" : hasPendingActivation ? "Pending OTA" : "Saved"}
             </div>
             
             <button
               className="flex items-center gap-1.5 rounded-full bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={isSaving || !hasChanges || validation.errors.length > 0}
-              onClick={openConfirmModal}
+              disabled={isSaving || (!hasChanges && !hasPendingActivation) || validation.errors.length > 0}
+              onClick={() => {
+                if (hasChanges) {
+                  openConfirmModal();
+                } else if (hasPendingActivation && pendingBuildJobId) {
+                  setJobId(pendingBuildJobId);
+                  setOtaModalOpen(true);
+                } else {
+                  openConfirmModal();
+                }
+              }}
               type="button"
             >
-              <span className="material-icons-round text-[16px]">how_to_reg</span>
-              Rebuild
+              <span className="material-icons-round text-[16px]">
+                {hasChanges ? "how_to_reg" : "cloud_download"}
+              </span>
+              {hasChanges ? "Rebuild" : hasPendingActivation ? "OTA Status" : "Rebuild"}
             </button>
           </div>
         </div>
@@ -880,67 +981,34 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
               <p className="px-4 py-2 text-sm text-white bg-rose-600 rounded-lg shadow-sm">{wifiCredentialsError}</p>
             )}
 
-            <section className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-              <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
-                    Active Board Config
-                  </p>
-                  <h2 className="mt-1 text-base font-semibold text-slate-900 dark:text-white">
-                    {!hasBoardReportedPins
-                      ? "Waiting for board-reported pin metadata"
-                      : boardConfigInSync
-                        ? "Board config matches the saved project config"
-                        : "Board is still running a different pin map"}
-                  </h2>
-                  <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400">
-                    {!hasBoardReportedPins
-                      ? "This board has not reported a full pin map yet. Until it reconnects, the server cannot prove which GPIO roles are active on hardware."
-                      : boardConfigInSync
-                        ? "Dashboard controls are aligned with the same pin map currently saved on the server."
-                        : "Dashboard/runtime behavior follows the board-reported pin map. Saved changes stay pending until OTA completes and the board reconnects on the rebuilt firmware."}
-                  </p>
+            {hasPendingActivation && pendingBuildJobId && !otaModalOpen && (
+              <section className="rounded-2xl border border-blue-200 bg-blue-50 px-5 py-4 shadow-sm dark:border-blue-500/20 dark:bg-blue-500/10">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">
+                      Pending OTA Config
+                    </p>
+                    <p className="mt-1 text-sm leading-6 text-blue-800 dark:text-blue-100">
+                      Build <span className="font-mono">{pendingBuildJobId}</span> is staging a
+                      newer config. The current committed config stays active until the board
+                      reports the rebuilt firmware successfully.
+                    </p>
+                  </div>
+                  <button
+                    className="rounded-2xl border border-blue-200 bg-white px-4 py-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-100 dark:border-blue-400/30 dark:bg-slate-900 dark:text-blue-200 dark:hover:bg-slate-800"
+                    onClick={() => {
+                      setJobId(pendingBuildJobId);
+                      setOtaModalOpen(true);
+                    }}
+                    type="button"
+                  >
+                    Open OTA status
+                  </button>
                 </div>
-                <span
-                  className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${
-                    !hasBoardReportedPins
-                      ? "border border-slate-200 bg-slate-100 text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                      : boardConfigInSync
-                        ? "border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300"
-                        : "border border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300"
-                  }`}
-                >
-                  {!hasBoardReportedPins ? "unknown" : boardConfigInSync ? "synced" : "drift"}
-                </span>
-              </div>
+              </section>
+            )}
 
-              <div className="mt-4 grid gap-3 md:grid-cols-3">
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-950">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
-                    Board-reported pins
-                  </p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">
-                    {hasBoardReportedPins ? `${activeBoardPins.length} active map(s)` : "No pin map yet"}
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-950">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
-                    Saved project pins
-                  </p>
-                  <p className="mt-2 text-sm font-semibold text-slate-900 dark:text-white">
-                    {savedPins.length} saved map(s)
-                  </p>
-                </div>
-                <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-950">
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
-                    Active firmware
-                  </p>
-                  <p className="mt-2 break-all font-mono text-sm text-slate-700 dark:text-slate-200">
-                    {activeFirmwareVersion ?? "Unknown"}
-                  </p>
-                </div>
-              </div>
-            </section>
+
 
             {validation.errors.length > 0 && (
               <section className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-500/20 dark:bg-rose-500/10 shadow-sm flex items-center gap-3">
@@ -969,10 +1037,26 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                 board={boardProfile}
                 boardPins={[...boardProfile.leftPins, ...boardProfile.rightPins]}
                 configBusy={isSaving}
-                nextLabel="Review & rebuild"
+                nextDisabled={isSaving || (!hasChanges && !hasPendingActivation) || validation.errors.length > 0}
+                nextLabel={
+                  hasChanges
+                    ? "Review & rebuild"
+                    : hasPendingActivation
+                      ? "Open OTA status"
+                      : "Up to date"
+                }
                 onBack={() => router.push("/devices")}
                 onExportConfig={exportConfig}
-                onNext={openConfirmModal}
+                onNext={() => {
+                  if (hasChanges) {
+                    openConfirmModal();
+                  } else if (hasPendingActivation && pendingBuildJobId) {
+                    setJobId(pendingBuildJobId);
+                    setOtaModalOpen(true);
+                  } else {
+                    openConfirmModal();
+                  }
+                }}
                 pins={pins}
                 projectName={device.name}
                 projectSyncState={projectSyncState}
@@ -1007,7 +1091,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                     Confirm board reconfiguration
                   </h2>
                   <p className="text-sm leading-6 text-slate-500 dark:text-slate-400">
-                    You are about to rewrite the persisted GPIO mapping for{" "}
+                    You are about to stage a replacement GPIO mapping for{" "}
                     <span className="font-semibold text-slate-700 dark:text-slate-200">
                       {device.name}
                     </span>
@@ -1015,7 +1099,8 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                     <span className="font-semibold text-slate-700 dark:text-slate-200">
                       {user?.username ?? "the signed-in account"}
                     </span>{" "}
-                    before the server accepts this safety-sensitive change.
+                    before the server accepts this safety-sensitive rebuild. The current committed
+                    config will not be replaced until the board reports the rebuilt firmware.
                   </p>
                 </div>
               </div>
@@ -1028,8 +1113,8 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                 </div>
                 <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
                   Continue only if the connected wiring matches the new pin roles. The rebuild will
-                  start immediately after confirmation, and OTA remains optional until you send the
-                  update command.
+                  start immediately after confirmation, but the current committed config stays in
+                  place until OTA succeeds and the board reconnects on the rebuilt firmware.
                 </p>
               </div>
 
@@ -1090,8 +1175,9 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                   Firmware rebuild and OTA handoff
                 </h2>
                 <p className="text-sm leading-6 text-slate-500 dark:text-slate-400">
-                  The new GPIO mapping is saved. Wait for the firmware artifact, then trigger OTA
-                  for this exact build job.
+                  This build is staging a newer GPIO mapping. Wait for the firmware artifact, then
+                  trigger OTA for this exact build job. The committed config stays unchanged until
+                  the board reports the new firmware.
                 </p>
               </div>
               <button
@@ -1126,7 +1212,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
               <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
-                    Expected firmware
+                    Target Firmware
                   </p>
                   <p className="mt-2 break-all font-mono text-sm text-slate-700 dark:text-slate-200">
                     {expectedFirmwareVersion ?? "pending"}
@@ -1134,7 +1220,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                 </div>
                 <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
                   <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
-                    Device-reported firmware
+                    Board-reported Firmware
                   </p>
                   <p className="mt-2 break-all font-mono text-sm text-slate-700 dark:text-slate-200">
                     {device?.firmware_version ?? "unknown"}

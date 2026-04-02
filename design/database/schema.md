@@ -4,17 +4,17 @@ This file documents the baseline schema for E-Connect.
 
 ## Core Tables
 
-1. `users`: Stores user accounts and auth status (`approval_status`), with admin-created accounts defaulting to `approved`.
+1. `users`: Stores admin-provisioned user accounts, role metadata, and UI preferences.
 2. `households`: Logical groupings of users and devices, including the optional admin-selected server timezone override (`timezone`).
 3. `household_memberships`: Join table linking users to households.
 4. `devices`: Managed devices under E-Connect (`provisioning_project_id`, `ip_address`).
 5. `pin_configurations`: GPIO mapping for devices.
 6. `device_history`: Time-series device state and events.
 7. `automations`: Visual automation rule graphs, enablement, and execution metadata.
-8. `diy_projects`: Web builder project state (`room_id`).
+8. `diy_projects`: Web builder project state (`room_id`, `pending_config`, `pending_build_job_id`).
 9. `wifi_credentials`: Household-scoped SSID/password records selected by DIY projects and managed-device reconfiguration.
 10. `rooms`: Physical or logical grouping within a household (`household_id`).
-11. `build_jobs`: Server-side firmware compilation tracking (`finished_at`, `error_message`).
+11. `build_jobs`: Server-side firmware compilation tracking (`finished_at`, `error_message`, `staged_project_config`).
 12. `system_logs`: 30-day retained operational events for server lifecycle, connectivity, firmware observations, and alert history.
 
 ## Automation Graph Contract
@@ -46,6 +46,13 @@ This file documents the baseline schema for E-Connect.
 4. Normal list/read models must expose masked password metadata only; plaintext password disclosure requires explicit password confirmation of the signed-in account.
 5. Firmware build/rebuild paths must resolve the selected Wi-Fi credential from the relational record instead of trusting stale SSID/password fields embedded in arbitrary JSON config payloads.
 
+## Managed Reconfiguration Staging Contract
+
+1. `diy_projects.config` remains the committed config currently expected to match the board after the last verified OTA or flash.
+2. `diy_projects.pending_config` stores the latest staged managed-device reconfiguration that has been rebuilt but not yet verified on hardware.
+3. `diy_projects.pending_build_job_id` points to the newest staged build job still awaiting verification.
+4. `build_jobs.staged_project_config` stores the immutable config snapshot that was compiled for that exact artifact so OTA reconciliation can promote the correct config only after the board reports the expected firmware version.
+
 ## Server Timezone Contract
 
 1. `households.timezone` stores an optional IANA timezone override selected from the bundled Wikipedia tz database canonical list.
@@ -56,7 +63,7 @@ This file documents the baseline schema for E-Connect.
 ## Auth Session Note
 
 - The refresh-token session flow remains stateless in the current baseline: no new auth-session table is introduced for this slice.
-- Admin-created household users are written with `users.approval_status = approved` immediately; login, refresh, and authenticated access still rely on that durable contract to block revoked or otherwise non-approved accounts.
+- Household user accounts are provisioned only by an admin; once persisted they are immediately active, and account removal is represented by deleting the user record instead of maintaining a separate approval state column.
 
 ## System Log Contract
 

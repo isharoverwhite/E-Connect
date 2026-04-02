@@ -29,7 +29,7 @@ export interface PinMapping {
 
 export type FlashSource = "server" | "demo";
 
-export type ProjectSyncState = "idle" | "loading" | "saving" | "saved" | "error";
+export type ProjectSyncState = "idle" | "loading" | "saving" | "saved" | "pending_ota" | "error";
 
 export type BuildJobStatus =
     | "draft_config"
@@ -90,10 +90,10 @@ export const MODE_BADGE_STYLES: Record<PinMode, string> = {
 };
 
 export const PIN_FILL: Record<"idle" | "selected" | "assigned" | "reserved", string> = {
-    idle: "#facc15",
-    selected: "#3b82f6",
-    assigned: "#22c55e",
-    reserved: "#94a3b8",
+    idle: "#eab308",
+    selected: "#00f2ff",
+    assigned: "#10b981",
+    reserved: "#334155",
 };
 
 export function sanitizePins(input: unknown[], modeMetadata: Record<string, unknown>): PinMapping[] {

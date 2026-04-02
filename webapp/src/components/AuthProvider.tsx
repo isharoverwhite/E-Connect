@@ -18,7 +18,6 @@ interface User {
     username: string;
     fullname: string;
     account_type: string;
-    approval_status?: "pending" | "approved" | "revoked";
     ui_layout?: unknown;
 }
 

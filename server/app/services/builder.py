@@ -5,7 +5,7 @@ import ipaddress
 import socket
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
 
 from sqlalchemy.orm import Session
@@ -941,7 +941,20 @@ def _resolve_mqtt_port(config_json: dict) -> int:
     return _resolve_runtime_mqtt_port()
 
 
-def _resolve_project_wifi_credentials(project) -> tuple[str, str]:
+def _resolve_project_wifi_credentials(
+    project,
+    *,
+    config_json: Mapping[str, Any] | None = None,
+) -> tuple[str, str]:
+    payload = config_json if isinstance(config_json, Mapping) else None
+    if payload is None:
+        payload = project.config if isinstance(project.config, dict) else {}
+
+    wifi_ssid = str(payload.get("wifi_ssid") or "").strip()
+    wifi_password = str(payload.get("wifi_password") or "")
+    if wifi_ssid and wifi_password:
+        return wifi_ssid, wifi_password
+
     credential = getattr(project, "wifi_credential", None)
     if credential is not None:
         wifi_ssid = str(getattr(credential, "ssid", "") or "").strip()
@@ -955,15 +968,62 @@ def _resolve_project_wifi_credentials(project) -> tuple[str, str]:
     return wifi_ssid, wifi_password
 
 
-def write_generated_firmware_config(project, job_id: str, project_dir: str):
-    config_json = project.config if isinstance(project.config, dict) else {}
+def resolve_build_job_config_snapshot(job: BuildJob) -> dict[str, Any]:
+    if isinstance(job.staged_project_config, dict):
+        return dict(job.staged_project_config)
+
+    project = job.project
+    if (
+        project is not None
+        and project.pending_build_job_id == job.id
+        and isinstance(project.pending_config, dict)
+    ):
+        return dict(project.pending_config)
+
+    if project is not None and isinstance(project.config, dict):
+        return dict(project.config)
+
+    return {}
+
+
+def promote_build_job_project_config(job: BuildJob) -> bool:
+    project = job.project
+    if project is None or not isinstance(job.staged_project_config, dict):
+        return False
+
+    staged_config = dict(job.staged_project_config)
+    project.config = staged_config
+
+    staged_wifi_credential_id = staged_config.get("wifi_credential_id")
+    if isinstance(staged_wifi_credential_id, int):
+        project.wifi_credential_id = staged_wifi_credential_id
+
+    if project.pending_build_job_id == job.id:
+        project.pending_config = None
+        project.pending_build_job_id = None
+
+    return True
+
+
+def write_generated_firmware_config(
+    project,
+    job_id: str,
+    project_dir: str,
+    *,
+    config_override: Mapping[str, Any] | None = None,
+):
+    config_json = (
+        dict(config_override)
+        if isinstance(config_override, Mapping)
+        else project.config if isinstance(project.config, dict) else {}
+    )
     include_dir = os.path.join(project_dir, "include")
     os.makedirs(include_dir, exist_ok=True)
 
     device_id, secret_key = build_project_firmware_identity(project.id)
     project_name = str(config_json.get("project_name") or project.name or "E-Connect Node").strip()
     firmware_version = build_job_firmware_version(job_id)
-    wifi_ssid, wifi_password = _resolve_project_wifi_credentials(project)
+    wifi_ssid, wifi_password = _resolve_project_wifi_credentials(project, config_json=config_json)
     mqtt_broker = _resolve_mqtt_broker(config_json)
     mqtt_port = _resolve_mqtt_port(config_json)
     mqtt_namespace = str(os.getenv("FIRMWARE_MQTT_NAMESPACE", os.getenv("MQTT_NAMESPACE", "local")))
@@ -1134,7 +1194,13 @@ def build_firmware_task(
         project = job.project
         copy_firmware_template(project_dir)
         generate_platformio_ini(project, project_dir)
-        write_generated_firmware_config(project, job_id, project_dir)
+        build_config = resolve_build_job_config_snapshot(job)
+        write_generated_firmware_config(
+            project,
+            job_id,
+            project_dir,
+            config_override=build_config,
+        )
 
         with open(log_path, "w") as log_file:
             log_file.write(f"--- Build started for job {job_id} at {datetime.utcnow().isoformat()} ---\\n")

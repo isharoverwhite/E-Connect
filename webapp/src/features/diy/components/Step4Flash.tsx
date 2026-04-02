@@ -68,6 +68,8 @@ function getPillStyles(value: ProjectSyncState | ServerBuildState["status"]) {
         case "artifact_ready":
         case "flashed":
             return "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300";
+        case "pending_ota":
+            return "border-blue-200 bg-blue-50 text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300";
         case "error":
         case "build_failed":
         case "flash_failed":

@@ -31,6 +31,7 @@
   - Clearing the saved override happens by saving an empty timezone field, and the panel must describe the non-overridden state as the current runtime timezone rather than exposing a dedicated `Use Env` action.
 - **`users`**: Admin user management panel to provision and revoke accounts.
   - Accounts created by an admin must become usable immediately and must not wait for a separate approval step.
+  - The UI must not surface approval badges, approval actions, or copy implying a separate approval queue for user accounts.
   - The create-user form must show inline client-side validation before submit for missing `username`, `full name`, and `password`.
   - The create-user form must require a minimum username length of `3` characters and a minimum password length of `8` characters before it sends the request.
 - **`rooms`**: Admin panel for managing room access control.
@@ -44,11 +45,13 @@
   - If no Wi-Fi credentials exist yet, the panel must show an explicit empty state that tells the admin to add the first network before using the DIY provisioning flow.
 - **`configs` (New)**: Admin panel for managing DIY Config projects.
   - Lists all project records.
+  - Each config card must show both the board type (for example `ESP32-C3`) and the exact saved board profile (for example `ESP32-C3 Super Mini`).
   - Usage state badges: **`unused`** and **`in_use`**.
+  - Assignment summaries must be phrased in board-assignment language, for example `Assigned to 3 boards`, instead of implying that only online devices count.
   - Deleting an `in_use` config is blocked and shows an informative tooltip/error indicating which devices use it.
   - Deleting an `unused` config must open a destructive confirmation modal that requires the signed-in account password before the backend accepts the delete request.
   - A wrong or missing password must keep the config intact and surface an inline error inside that confirmation modal.
-  - Clicking a config triggers a detailed dialog showing JSON mapping and device usage lists.
+  - Clicking a config triggers a detailed dialog showing JSON mapping plus board-assignment details, including the board type, exact board profile, and linked board list.
   - Deleting a config successfully cleans up backend records and is updated responsively on the UI.
 
 ## Automation Page
@@ -92,6 +95,8 @@
   - Instead of free-typing SSID/password on each new project, the admin must pick one saved Wi-Fi credential from Settings.
   - If no saved Wi-Fi credential exists, the builder must show a blocking empty state or inline warning and direct the admin to add one in Settings first.
   - The selected Wi-Fi credential must persist with the DIY project and reload when the project is reopened.
+  - If the admin changes the selected board or board family while an existing saved config is loaded, the builder must detach from that saved config instead of silently rewriting the linked config record in place.
+  - After that detach, the UI must require the admin to choose or create a saved config for the newly selected board profile before continuing to pin editing.
   - The server-side build flow must prefer the runtime targets detected at backend startup for firmware stamping and only fall back to request-derived headers when startup auto-detect is unavailable.
   - The runtime MQTT broker target may differ from the API host when operators explicitly configure a public firmware-broker override; otherwise firmware may default to the same public host/IP as the API target.
 - **Step 2 / Pin Mapping**:
@@ -119,13 +124,16 @@
 ## Managed Device Reconfiguration
 - **`/devices/[id]/config`**:
   - Only `admin` users may open the managed-device reconfiguration screen.
-  - The screen must load the linked DIY project board profile and the saved DIY project pin map as the editable desired config, while separately showing the board-reported active pin map that currently drives runtime behavior.
+  - The screen must resolve the editable schema from the saved config board metadata first, then fall back to the linked DIY project board profile only when that metadata is missing.
+  - The screen must load the latest staged OTA config as the editable desired config when one exists; otherwise it loads the committed DIY project pin map.
+  - The screen must separately show the board-reported active pin map and the currently committed project config that still drives runtime behavior until OTA is verified.
   - The screen must also show which saved Wi-Fi credential is currently attached to that managed device's linked DIY project and allow the admin to switch to another saved credential before rebuild.
   - The screen must surface inline `validation error`, `warning`, and `success` feedback for pin edits instead of relying on browser alerts alone.
   - Saving a changed pin map is safety-sensitive because an invalid wiring or GPIO role can damage hardware; the save action must open a confirmation modal that requires the password of the signed-in account before the backend accepts the change.
   - A wrong or missing password must keep the device config unchanged and show an inline error inside that confirmation modal.
-  - A successful confirmation must persist the updated pin mapping and selected Wi-Fi credential to the managed DIY project, keep the current board-reported runtime map intact until the board reconnects on the rebuilt firmware, and then start a new firmware rebuild for that device.
+  - A successful confirmation must stage the updated pin mapping and selected Wi-Fi credential for the rebuild job, keep the committed project config unchanged until the board reports the rebuilt firmware successfully, and then promote that staged config to current.
   - The OTA dialog must stay blocked until the rebuild reaches `artifact_ready`, then allow the admin to send the OTA command for that exact build job.
+  - The OTA dialog copy must distinguish the target firmware version from the board-reported current firmware version.
   - The OTA dialog must show `building`, `artifact_ready`, `flashing`, `flashed`, and `flash_failed` states, plus a clear close path when the build itself fails.
   - After the OTA job reaches `flashed`, the dialog must wait for the board to report `online` again on the expected firmware version for that exact build before showing the final success state, then return the admin to the dashboard automatically.
 

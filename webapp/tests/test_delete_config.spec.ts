@@ -7,7 +7,7 @@ test.describe('Config management', () => {
     // Navigate to dashboard
     await page.goto('/login');
     
-    // Login as Temporary Support Admin
+    // Login as an admin test account
     await page.getByPlaceholder('Enter your username').fill(process.env.TEST_USERNAME!);
     await page.getByRole('textbox', { name: "Password" }).fill(process.env.TEST_PASSWORD!);
     await page.getByRole('button', { name: 'Sign In' }).click();
