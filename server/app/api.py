@@ -3,7 +3,6 @@ from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import or_
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Any, Callable, Literal, Union
 import ast
@@ -13,7 +12,6 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 import anyio
 import asyncio
 import hashlib
@@ -37,16 +35,22 @@ from .models import (
     DiyProjectCreate, DiyProjectDeleteRequest, DiyProjectResponse, BuildJobResponse, ConfigHistoryEntryResponse, JobStatus, SerialSessionResponse,
     ManagedUserResponse, DiyProjectUsageResponse, ProjectDeviceUsage,
     WifiCredentialCreate, WifiCredentialUpdate, WifiCredentialRevealRequest, WifiCredentialResponse, WifiCredentialSecretResponse,
-    ConfigHistoryRenameRequest
+    ConfigHistoryRenameRequest, ConfigHistoryDeleteRequest
 )
 from .sql_models import (
     User, Device, Automation, DeviceHistory,
     Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
-    AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, BuildJob, SerialSession, SerialSessionStatus,
+    AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, DiyProjectConfig, BuildJob, SerialSession, SerialSessionStatus,
     SystemLog, SystemLogCategory as SqlSystemLogCategory, SystemLogSeverity as SqlSystemLogSeverity,
     WifiCredential,
 )
-from .database import SessionLocal, get_db
+from .database import (
+    SessionLocal,
+    get_db,
+    is_config_history_deleted_payload,
+    mark_config_history_deleted_payload,
+    strip_internal_config_metadata,
+)
 from .auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     ACCESS_TOKEN_TYPE,
@@ -119,7 +123,6 @@ ACTIVE_BUILD_JOB_STATUSES = (
     JobStatus.building,
     JobStatus.flashing,
 )
-CONFIG_HISTORY_LIMIT = 3
 DEFAULT_OTA_PUBLIC_SCHEME = "http"
 DEFAULT_OTA_PUBLIC_PORT = 8000
 DEVICE_HEARTBEAT_TIMEOUT_SECONDS = max(
@@ -514,6 +517,14 @@ def _normalize_config_name(raw_value: Any, *, fallback_name: str) -> str:
     return fallback[:255]
 
 
+def _normalize_staged_device_name(raw_value: Any, *, fallback_name: str) -> str:
+    normalized = _trimmed_string(raw_value)
+    if normalized:
+        return normalized[:255]
+    fallback = fallback_name.strip() or "E-Connect Node"
+    return fallback[:255]
+
+
 def _build_direct_ota_api_base_url(advertised_host: str | None) -> Optional[str]:
     normalized_host = _trimmed_string(advertised_host)
     if not normalized_host:
@@ -541,8 +552,11 @@ def _build_direct_ota_api_base_url(advertised_host: str | None) -> Optional[str]
 def _public_config_payload(payload: Any) -> Optional[dict[str, Any]]:
     public_payload = strip_project_secret_from_payload(payload)
     if public_payload is None and isinstance(payload, dict):
-        return dict(payload)
-    return public_payload
+        public_payload = dict(payload)
+    sanitized_payload = strip_internal_config_metadata(public_payload)
+    if sanitized_payload is None and isinstance(public_payload, dict):
+        return dict(public_payload)
+    return sanitized_payload
 
 
 def _resolve_project_device_secret(project_id: str, *payloads: Any) -> str:
@@ -578,7 +592,62 @@ def _build_job_response_model(
     )
 
 
+def _resolve_project_bound_device_identity(
+    project: DiyProject,
+    *,
+    fallback_device: Device | None = None,
+) -> tuple[str, str]:
+    if fallback_device is not None:
+        return fallback_device.device_id, fallback_device.name
+
+    payloads: list[dict[str, Any]] = []
+    if isinstance(project.pending_config, dict):
+        payloads.append(project.pending_config)
+    if isinstance(project.config, dict):
+        payloads.append(project.config)
+
+    for payload in payloads:
+        assigned_device_id = _trimmed_string(payload.get("assigned_device_id"))
+        assigned_device_name = _trimmed_string(payload.get("assigned_device_name"))
+        if assigned_device_id:
+            return assigned_device_id, assigned_device_name or project.name
+
+    resolved_device_id, _ = build_project_firmware_identity(
+        project.id,
+        _resolve_project_device_secret(project.id, project.pending_config, project.config),
+    )
+    return resolved_device_id, project.name
+
+
+def _saved_config_public_payload(saved_config: DiyProjectConfig) -> dict[str, Any]:
+    payload = _public_config_payload(saved_config.config) or {}
+    stamped = dict(payload)
+    stamped["config_id"] = saved_config.id
+    stamped["config_name"] = saved_config.name
+    stamped["assigned_device_id"] = saved_config.device_id
+    stamped["board_profile"] = saved_config.board_profile
+    if not _trimmed_string(stamped.get("assigned_device_name")):
+        project_name = _trimmed_string(saved_config.project.name) if saved_config.project is not None else None
+        stamped["assigned_device_name"] = project_name or saved_config.name
+    if not _trimmed_string(stamped.get("saved_at")) and saved_config.created_at is not None:
+        stamped["saved_at"] = saved_config.created_at.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return stamped
+
+
+def _strip_legacy_build_pointer_keys(config_payload: dict[str, Any]) -> dict[str, Any]:
+    normalized_payload = strip_internal_config_metadata(config_payload) or dict(config_payload)
+    normalized_payload.pop("latest_build_job_id", None)
+    normalized_payload.pop("latest_build_config_key", None)
+    return normalized_payload
+
+
 def _project_response_model(project: DiyProject) -> DiyProjectResponse:
+    current_config_name = None
+    if project.current_saved_config is not None:
+        current_config_name = project.current_saved_config.name
+    elif isinstance(project.config, dict):
+        current_config_name = _trimmed_string(project.config.get("config_name"))
+
     return DiyProjectResponse(
         id=project.id,
         user_id=project.user_id,
@@ -586,8 +655,11 @@ def _project_response_model(project: DiyProject) -> DiyProjectResponse:
         wifi_credential_id=project.wifi_credential_id,
         name=project.name,
         board_profile=project.board_profile,
+        config_name=current_config_name,
         config=_public_config_payload(project.config),
+        current_config_id=getattr(project, "current_config_id", None),
         pending_config=_public_config_payload(project.pending_config),
+        pending_config_id=getattr(project, "pending_config_id", None),
         pending_build_job_id=project.pending_build_job_id,
         created_at=project.created_at,
         updated_at=project.updated_at,
@@ -599,14 +671,18 @@ def _stamp_config_history_metadata(
     *,
     config_id: str,
     config_name: str,
-    device: Device,
+    device_id: str,
+    device_name: str,
+    board_profile: str,
     saved_at: datetime,
 ) -> dict[str, Any]:
     stamped = dict(config)
     stamped["config_id"] = config_id
     stamped["config_name"] = config_name
-    stamped["assigned_device_id"] = device.device_id
-    stamped["assigned_device_name"] = device.name
+    stamped["assigned_device_id"] = device_id
+    stamped["assigned_device_name"] = device_name
+    stamped["project_name"] = device_name
+    stamped["board_profile"] = board_profile
     stamped["saved_at"] = saved_at.replace(microsecond=0).isoformat().replace("+00:00", "Z")
     return stamped
 
@@ -654,130 +730,266 @@ def _resolve_job_ota_download_url(job: BuildJob, token: str, request: Request | 
     return _build_ota_download_url(str(targets["api_base_url"]), job.id, token)
 
 
-def _delete_file_if_exists(path: str | None) -> None:
-    normalized_path = _trimmed_string(path)
-    if not normalized_path:
-        return
-
-    candidate = Path(normalized_path)
-    try:
-        if candidate.exists():
-            candidate.unlink()
-    except OSError:
-        logger.warning("Failed to delete retained config artifact/log %s", normalized_path, exc_info=True)
-
-
-def _delete_build_job_files(job: BuildJob) -> None:
-    _delete_file_if_exists(job.artifact_path)
-    _delete_file_if_exists(job.log_path)
-    for artifact_name in ("firmware", "bootloader", "partitions"):
-        try:
-            _delete_file_if_exists(get_durable_artifact_path(job.id, artifact_name))
-        except ValueError:
-            continue
-
-
-def _scrub_legacy_build_refs_from_payload(
-    payload: Any,
+def _get_saved_config_for_project_device_or_404(
+    db: Session,
     *,
-    removed_job_ids: set[str],
-) -> tuple[Any, bool]:
-    if not isinstance(payload, dict):
-        return payload, False
-
-    normalized = dict(payload)
-    referenced_job_id = _trimmed_string(normalized.get("latest_build_job_id"))
-    changed = False
-    if referenced_job_id in removed_job_ids:
-        for legacy_key in ("latest_build_job_id", "latest_build_config_key"):
-            if legacy_key in normalized:
-                normalized.pop(legacy_key, None)
-                changed = True
-
-    if referenced_job_id is None and "latest_build_config_key" in normalized:
-        normalized.pop("latest_build_config_key", None)
-        changed = True
-
-    return normalized if changed else payload, changed
+    project: DiyProject,
+    device_id: str,
+    config_id: str,
+) -> DiyProjectConfig:
+    saved_config = (
+        db.query(DiyProjectConfig)
+        .filter(
+            DiyProjectConfig.id == config_id,
+            DiyProjectConfig.project_id == project.id,
+            DiyProjectConfig.device_id == device_id,
+            DiyProjectConfig.board_profile == project.board_profile,
+        )
+        .first()
+    )
+    if saved_config is None:
+        raise HTTPException(status_code=404, detail="Config not found for this device")
+    return saved_config
 
 
-def _prune_project_config_history(db: Session, project_id: str, *, keep: int = CONFIG_HISTORY_LIMIT) -> None:
-    history_jobs = (
+def _upsert_saved_config(
+    db: Session,
+    *,
+    project: DiyProject,
+    device_id: str,
+    device_name: str,
+    config_name: str,
+    config_payload: dict[str, Any],
+    existing_config: DiyProjectConfig | None = None,
+    config_id: str | None = None,
+    created_at: datetime | None = None,
+    last_applied_at: datetime | None = None,
+) -> tuple[DiyProjectConfig, dict[str, Any]]:
+    now = datetime.now(timezone.utc)
+    target_id = existing_config.id if existing_config is not None else (config_id or str(uuid.uuid4()))
+    normalized_payload = _strip_legacy_build_pointer_keys(config_payload)
+    payload_device_name = _normalize_staged_device_name(
+        normalized_payload.get("assigned_device_name"),
+        fallback_name=device_name or _trimmed_string(normalized_payload.get("project_name")) or "E-Connect Node",
+    )
+    pending_saved_config = next(
+        (
+            item
+            for item in db.new
+            if isinstance(item, DiyProjectConfig) and getattr(item, "id", None) == target_id
+        ),
+        None,
+    )
+    if pending_saved_config is not None:
+        existing_config = pending_saved_config
+    stamped_payload = _stamp_config_history_metadata(
+        normalized_payload,
+        config_id=target_id,
+        config_name=config_name,
+        device_id=device_id,
+        device_name=payload_device_name,
+        board_profile=project.board_profile,
+        saved_at=now,
+    )
+
+    saved_config = existing_config or db.query(DiyProjectConfig).filter(DiyProjectConfig.id == target_id).first()
+    if saved_config is None:
+        saved_config = DiyProjectConfig(
+            id=target_id,
+            project_id=project.id,
+            device_id=device_id,
+            board_profile=project.board_profile,
+            name=config_name,
+            config=stamped_payload,
+            last_applied_at=last_applied_at,
+        )
+        if created_at is not None:
+            saved_config.created_at = created_at
+        db.add(saved_config)
+    else:
+        saved_config.project_id = project.id
+        saved_config.device_id = device_id
+        saved_config.board_profile = project.board_profile
+        saved_config.name = config_name
+        saved_config.config = stamped_payload
+        if last_applied_at is not None:
+            saved_config.last_applied_at = last_applied_at
+
+    return saved_config, stamped_payload
+
+
+def _latest_builds_by_saved_config(db: Session, *, project_id: str) -> dict[str, BuildJob]:
+    jobs = (
         db.query(BuildJob)
         .filter(BuildJob.project_id == project_id)
         .order_by(BuildJob.created_at.desc(), BuildJob.updated_at.desc(), BuildJob.id.desc())
         .all()
     )
-    obsolete_jobs = history_jobs[keep:]
-    if not obsolete_jobs:
-        return
 
-    obsolete_ids = [job.id for job in obsolete_jobs]
-    removed_job_id_set = set(obsolete_ids)
-    project = db.query(DiyProject).filter(DiyProject.id == project_id).first()
-    if project is not None:
-        normalized_config, config_changed = _scrub_legacy_build_refs_from_payload(
-            project.config,
-            removed_job_ids=removed_job_id_set,
-        )
-        if config_changed:
-            project.config = normalized_config
-
-        normalized_pending_config, pending_changed = _scrub_legacy_build_refs_from_payload(
-            project.pending_config,
-            removed_job_ids=removed_job_id_set,
-        )
-        if pending_changed:
-            project.pending_config = normalized_pending_config
-
-        if project.pending_build_job_id in removed_job_id_set:
-            project.pending_build_job_id = None
-            project.pending_config = None
-
-    db.query(SerialSession).filter(SerialSession.build_job_id.in_(obsolete_ids)).delete(synchronize_session=False)
-    for job in obsolete_jobs:
-        _delete_build_job_files(job)
-        db.delete(job)
+    latest_jobs: dict[str, BuildJob] = {}
+    for job in jobs:
+        snapshot = resolve_build_job_config_snapshot(job)
+        if is_config_history_deleted_payload(snapshot):
+            continue
+        resolved_config_id = _trimmed_string(getattr(job, "saved_config_id", None))
+        if resolved_config_id is None:
+            resolved_config_id = _trimmed_string(snapshot.get("config_id") if isinstance(snapshot, dict) else None)
+        if resolved_config_id and resolved_config_id not in latest_jobs:
+            latest_jobs[resolved_config_id] = job
+    return latest_jobs
 
 
-def _serialize_config_history_entry(
-    job: BuildJob,
+def _serialize_saved_config_entry(
+    saved_config: DiyProjectConfig,
     *,
     project: DiyProject,
-    fallback_device: Device,
+    latest_job: BuildJob | None = None,
 ) -> ConfigHistoryEntryResponse:
-    snapshot = resolve_build_job_config_snapshot(job)
-    config_name = _normalize_config_name(
-        snapshot.get("config_name") if isinstance(snapshot, dict) else None,
-        fallback_name=fallback_device.name,
-    )
-    assigned_device_id = _trimmed_string(
-        snapshot.get("assigned_device_id") if isinstance(snapshot, dict) else None
-    ) or fallback_device.device_id
-    assigned_device_name = _trimmed_string(
-        snapshot.get("assigned_device_name") if isinstance(snapshot, dict) else None
-    ) or fallback_device.name
-
-    committed_config = project.config if isinstance(project.config, dict) else None
-    committed_config_id = _trimmed_string(committed_config.get("config_id") if committed_config else None)
-    is_committed = committed_config_id == job.id if committed_config_id else committed_config == snapshot
+    payload = _saved_config_public_payload(saved_config)
+    assigned_device_name = _trimmed_string(payload.get("assigned_device_name")) or saved_config.name
+    assigned_device_id = _trimmed_string(payload.get("assigned_device_id")) or saved_config.device_id
 
     return ConfigHistoryEntryResponse(
-        id=job.id,
-        project_id=job.project_id,
-        status=job.status,
-        config_name=config_name,
+        id=saved_config.id,
+        project_id=saved_config.project_id,
+        device_id=saved_config.device_id,
+        board_profile=saved_config.board_profile,
+        config_name=saved_config.name,
         assigned_device_id=assigned_device_id,
         assigned_device_name=assigned_device_name,
-        created_at=job.created_at,
-        updated_at=job.updated_at,
-        finished_at=job.finished_at,
-        error_message=job.error_message,
-        expected_firmware_version=build_job_firmware_version(job.id),
-        is_pending=project.pending_build_job_id == job.id,
-        is_committed=is_committed,
-        config=_public_config_payload(snapshot) or {},
+        created_at=saved_config.created_at,
+        updated_at=saved_config.updated_at,
+        last_applied_at=saved_config.last_applied_at,
+        latest_build_job_id=latest_job.id if latest_job is not None else None,
+        latest_build_status=latest_job.status if latest_job is not None else None,
+        latest_build_finished_at=latest_job.finished_at if latest_job is not None else None,
+        latest_build_error=latest_job.error_message if latest_job is not None else None,
+        expected_firmware_version=build_job_firmware_version(latest_job.id) if latest_job is not None else None,
+        is_pending=getattr(project, "pending_config_id", None) == saved_config.id,
+        is_committed=getattr(project, "current_config_id", None) == saved_config.id,
+        config=payload,
     )
+
+
+def _ensure_project_current_saved_config(
+    db: Session,
+    *,
+    project: DiyProject,
+    fallback_device: Device | None = None,
+    explicit_config_name: str | None = None,
+) -> tuple[DiyProjectConfig, dict[str, Any]]:
+    device_id, device_name = _resolve_project_bound_device_identity(project, fallback_device=fallback_device)
+    existing_config = None
+    if getattr(project, "current_config_id", None):
+        existing_config = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == project.current_config_id).first()
+
+    base_payload = project.config if isinstance(project.config, dict) else {}
+    config_name = _normalize_config_name(
+        explicit_config_name or (base_payload.get("config_name") if isinstance(base_payload, dict) else None),
+        fallback_name=device_name or project.name,
+    )
+    return _upsert_saved_config(
+        db,
+        project=project,
+        device_id=device_id,
+        device_name=device_name,
+        config_name=config_name,
+        config_payload=base_payload,
+        existing_config=existing_config,
+        config_id=getattr(project, "current_config_id", None) or project.id,
+    )
+
+
+def _materialize_saved_configs_for_project(
+    db: Session,
+    *,
+    project: DiyProject,
+    fallback_device: Device | None = None,
+) -> bool:
+    device_id, device_name = _resolve_project_bound_device_identity(project, fallback_device=fallback_device)
+    changed = False
+
+    if isinstance(project.config, dict):
+        existing_current = None
+        if getattr(project, "current_config_id", None):
+            existing_current = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == project.current_config_id).first()
+        current_saved_config, current_payload = _upsert_saved_config(
+            db,
+            project=project,
+            device_id=device_id,
+            device_name=device_name,
+            config_name=_normalize_config_name(project.config.get("config_name"), fallback_name=device_name),
+            config_payload=dict(project.config),
+            existing_config=existing_current,
+            config_id=getattr(project, "current_config_id", None) or _trimmed_string(project.config.get("config_id")) or project.id,
+            created_at=project.created_at,
+        )
+        if getattr(project, "current_config_id", None) != current_saved_config.id:
+            project.current_config_id = current_saved_config.id
+            changed = True
+        if project.config != current_payload:
+            project.config = current_payload
+            changed = True
+
+    if isinstance(project.pending_config, dict):
+        existing_pending = None
+        if getattr(project, "pending_config_id", None):
+            existing_pending = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == project.pending_config_id).first()
+        pending_saved_config, pending_payload = _upsert_saved_config(
+            db,
+            project=project,
+            device_id=device_id,
+            device_name=device_name,
+            config_name=_normalize_config_name(project.pending_config.get("config_name"), fallback_name=device_name),
+            config_payload=dict(project.pending_config),
+            existing_config=existing_pending,
+            config_id=(
+                getattr(project, "pending_config_id", None)
+                or _trimmed_string(project.pending_config.get("config_id"))
+                or getattr(project, "pending_build_job_id", None)
+                or str(uuid.uuid4())
+            ),
+            created_at=project.updated_at,
+        )
+        if getattr(project, "pending_config_id", None) != pending_saved_config.id:
+            project.pending_config_id = pending_saved_config.id
+            changed = True
+        if project.pending_config != pending_payload:
+            project.pending_config = pending_payload
+            changed = True
+
+    jobs = db.query(BuildJob).filter(BuildJob.project_id == project.id).all()
+    for job in jobs:
+        snapshot = resolve_build_job_config_snapshot(job)
+        if not isinstance(snapshot, dict) or not snapshot:
+            continue
+        if is_config_history_deleted_payload(snapshot):
+            if getattr(job, "saved_config_id", None) is not None:
+                job.saved_config_id = None
+                changed = True
+            continue
+        existing_config = None
+        if getattr(job, "saved_config_id", None):
+            existing_config = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == job.saved_config_id).first()
+        saved_config, _ = _upsert_saved_config(
+            db,
+            project=project,
+            device_id=device_id,
+            device_name=device_name,
+            config_name=_normalize_config_name(snapshot.get("config_name"), fallback_name=device_name),
+            config_payload=dict(snapshot),
+            existing_config=existing_config,
+            config_id=getattr(job, "saved_config_id", None) or _trimmed_string(snapshot.get("config_id")) or job.id,
+            created_at=job.created_at,
+            last_applied_at=job.finished_at if job.status == JobStatus.flashed else None,
+        )
+        if getattr(job, "saved_config_id", None) != saved_config.id:
+            job.saved_config_id = saved_config.id
+            changed = True
+
+    if changed:
+        db.flush()
+    return changed
 
 
 def _rename_config_payload(payload: Any, *, config_name: str) -> tuple[Any, bool]:
@@ -1327,9 +1539,14 @@ def _resolve_wifi_credential_for_payload(
 
 def _stamp_wifi_credential_config(
     config_payload: Optional[dict[str, Any]],
-    credential: WifiCredential,
+    credential: Optional[WifiCredential],
 ) -> dict[str, Any]:
     stamped = dict(config_payload or {})
+    if credential is None:
+        stamped["wifi_credential_id"] = None
+        stamped.pop("wifi_ssid", None)
+        stamped.pop("wifi_password", None)
+        return stamped
     stamped["wifi_credential_id"] = credential.id
     stamped["wifi_ssid"] = credential.ssid
     stamped["wifi_password"] = credential.password
@@ -2187,106 +2404,184 @@ async def update_device_config(
         raise HTTPException(status_code=400, detail="Not a managed DIY device")
 
     project = _get_project_in_household_or_404(db, current_user, device.provisioning_project_id)
+    _materialize_saved_configs_for_project(db, project=project, fallback_device=device)
 
     if not isinstance(project.config, dict):
         project.config = {}
+    else:
+        project.config = _strip_legacy_build_pointer_keys(project.config)
 
-    _require_current_user_password(
-        current_user,
-        config.get("password") if isinstance(config, dict) else None,
-        missing_action="updating this board config",
-        invalid_action="update this board config",
+    requested_config_id = _trimmed_string(config.get("config_id")) if isinstance(config, dict) else None
+    source_config_id = _trimmed_string(config.get("source_config_id")) if isinstance(config, dict) else None
+    create_new_config = bool(config.get("create_new_config")) if isinstance(config, dict) else False
+
+    if requested_config_id and create_new_config:
+        source_config_id = requested_config_id
+        requested_config_id = None
+
+    save_requires_password = requested_config_id is not None
+    if save_requires_password:
+        _require_current_user_password(
+            current_user,
+            config.get("password") if isinstance(config, dict) else None,
+            missing_action="overwriting this saved board config",
+            invalid_action="overwrite this saved board config",
+        )
+
+    target_saved_config = None
+    source_saved_config = None
+    if requested_config_id:
+        target_saved_config = _get_saved_config_for_project_device_or_404(
+            db,
+            project=project,
+            device_id=device.device_id,
+            config_id=requested_config_id,
+        )
+        source_saved_config = target_saved_config
+    elif source_config_id:
+        source_saved_config = _get_saved_config_for_project_device_or_404(
+            db,
+            project=project,
+            device_id=device.device_id,
+            config_id=source_config_id,
+        )
+    elif getattr(project, "current_config_id", None):
+        source_saved_config = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == project.current_config_id).first()
+
+    base_config = (
+        dict(source_saved_config.config)
+        if source_saved_config is not None and isinstance(source_saved_config.config, dict)
+        else dict(project.config)
     )
-
-    requested_pins = config.get("pins", []) if isinstance(config, dict) else []
-    current_config = dict(project.config)
+    base_config = _strip_legacy_build_pointer_keys(base_config)
+    requested_credential_id = config.get("wifi_credential_id") if isinstance(config, dict) else None
+    wifi_credential_was_explicitly_set = isinstance(config, dict) and "wifi_credential_id" in config
+    requested_pins = config.get("pins") if isinstance(config, dict) and "pins" in config else base_config.get("pins", [])
+    current_config = dict(base_config)
     current_config["pins"] = requested_pins
+    staged_device_name = _normalize_staged_device_name(
+        config.get("assigned_device_name") if isinstance(config, dict) else None,
+        fallback_name=(
+            _trimmed_string(base_config.get("assigned_device_name"))
+            or device.name
+            or _trimmed_string(base_config.get("project_name"))
+        ),
+    )
+    current_config["assigned_device_name"] = staged_device_name
+    current_config["project_name"] = staged_device_name
+    allow_empty_draft_save = isinstance(requested_pins, list) and len(requested_pins) == 0
+    allow_legacy_wifi_fallback = not (
+        wifi_credential_was_explicitly_set and requested_credential_id is None
+    )
     wifi_credential = _resolve_wifi_credential_for_payload(
         db,
         current_user,
-        requested_credential_id=config.get("wifi_credential_id") if isinstance(config, dict) else None,
-        existing_credential_id=project.wifi_credential_id,
-        config_payload=current_config,
-        create_from_legacy=True,
-        required=True,
+        requested_credential_id=requested_credential_id,
+        existing_credential_id=(
+            None
+            if wifi_credential_was_explicitly_set
+            else (
+                source_saved_config.config.get("wifi_credential_id")
+                if source_saved_config is not None and isinstance(source_saved_config.config, dict)
+                else project.wifi_credential_id
+            )
+        ),
+        config_payload=current_config if allow_legacy_wifi_fallback else None,
+        create_from_legacy=allow_legacy_wifi_fallback,
+        required=not allow_empty_draft_save,
         missing_message="Select a Wi-Fi credential before updating this board config.",
     )
     current_config = _stamp_wifi_credential_config(current_config, wifi_credential)
 
     validation_warnings = []
-    try:
-        _, validation_errors, validation_warnings = validate_diy_config(
-            board_profile=project.board_profile,
-            config=current_config
-        )
-        if validation_errors:
-            raise Exception(" ".join(validation_errors))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    if not allow_empty_draft_save:
+        try:
+            _, validation_errors, validation_warnings = validate_diy_config(
+                board_profile=project.board_profile,
+                config=current_config
+            )
+            if validation_errors:
+                raise Exception(" ".join(validation_errors))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
-    active_job = (
-        db.query(BuildJob)
-        .filter(
-            BuildJob.project_id == project.id,
-            BuildJob.status.in_(ACTIVE_BUILD_JOB_STATUSES),
+        active_job = (
+            db.query(BuildJob)
+            .filter(
+                BuildJob.project_id == project.id,
+                BuildJob.status.in_(ACTIVE_BUILD_JOB_STATUSES),
+            )
+            .with_for_update()
+            .order_by(BuildJob.created_at.desc())
+            .first()
         )
-        .with_for_update()
-        .order_by(BuildJob.created_at.desc())
-        .first()
-    )
-    if active_job:
-        raise HTTPException(
-            status_code=409,
-            detail={"error": "conflict", "message": "Another build or OTA job is already in progress for this device"},
-        )
+        if active_job:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "conflict", "message": "Another build or OTA job is already in progress for this device"},
+            )
 
-    try:
-        targets = infer_firmware_network_targets(
-            request.headers,
-            request.url.scheme,
-            _get_runtime_firmware_network_state(request),
-        )
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": "validation", "message": str(exc)},
-        )
-    network_target_warning = describe_network_target_change(current_config, targets)
-    if network_target_warning:
-        validation_warnings.append(network_target_warning)
-    job_id = str(uuid.uuid4())
+        try:
+            targets = infer_firmware_network_targets(
+                request.headers,
+                request.url.scheme,
+                _get_runtime_firmware_network_state(request),
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "validation", "message": str(exc)},
+            )
+        network_target_warning = describe_network_target_change(current_config, targets)
+        if network_target_warning:
+            validation_warnings.append(network_target_warning)
     config_name = _normalize_config_name(
         config.get("config_name") if isinstance(config, dict) else None,
-        fallback_name=device.name,
+        fallback_name=(
+            source_saved_config.name
+            if source_saved_config is not None
+            else device.name
+        ),
     )
-    staged_config = _stamp_project_network_targets(current_config, targets)
-    staged_config = stamp_project_secret(
-        staged_config,
+    prepared_config = stamp_project_secret(
+        current_config,
         project.id,
         _resolve_project_device_secret(project.id, project.pending_config, project.config, current_config),
     )
-    staged_config = _stamp_config_history_metadata(
-        staged_config,
-        config_id=job_id,
+    if not allow_empty_draft_save:
+        prepared_config = _stamp_project_network_targets(prepared_config, targets)
+    saved_config, prepared_config = _upsert_saved_config(
+        db,
+        project=project,
+        device_id=device.device_id,
+        device_name=staged_device_name,
         config_name=config_name,
-        device=device,
-        saved_at=datetime.now(timezone.utc),
+        config_payload=prepared_config,
+        existing_config=target_saved_config,
     )
+    if allow_empty_draft_save:
+        db.commit()
+        return {
+            "status": "draft_saved",
+            "config_id": saved_config.id,
+            "message": "Empty config draft saved to history. Build and flash stay blocked until at least one GPIO is mapped and a saved Wi-Fi credential is selected.",
+        }
+    job_id = str(uuid.uuid4())
 
     # Trigger rebuild only after validation passes and no active job exists.
     job = BuildJob(
         id=job_id,
         project_id=project.id,
         status=JobStatus.queued,
-        staged_project_config=staged_config,
+        saved_config_id=saved_config.id,
+        staged_project_config=prepared_config,
     )
     db.add(job)
-    project.pending_config = staged_config
+    project.pending_config = prepared_config
+    project.pending_config_id = saved_config.id
     project.pending_build_job_id = job.id
     db.commit()
     db.refresh(job)
-    _prune_project_config_history(db, project.id)
-    db.commit()
 
     background_tasks.add_task(
         build_firmware_task,
@@ -2298,6 +2593,7 @@ async def update_device_config(
     return {
         "status": "success",
         "job_id": job.id,
+        "config_id": saved_config.id,
         "message": "Config history entry queued and build started. The current saved config stays active until the board reports the rebuilt firmware.",
     }
 
@@ -2329,12 +2625,20 @@ async def send_command(
     """
     device = _get_device_or_404(db, device_id)
     _ensure_device_control_access(db, current_user, device)
+    command = dict(command or {})
+    supplied_password = command.pop("password", None)
 
     # If this is an OTA command, mark the build job as flashing
     ota_job = None
     if command.get("action") == "ota" and command.get("job_id"):
         if not _is_room_admin(current_user):
             raise HTTPException(status_code=403, detail="Admin or Owner privileges required for OTA")
+        _require_current_user_password(
+            current_user,
+            supplied_password,
+            missing_action="sending this OTA update",
+            invalid_action="send this OTA update",
+        )
         if not device.provisioning_project_id:
             raise HTTPException(status_code=400, detail="Device is not linked to a managed DIY project")
         ota_job = _get_build_job_in_household_or_404(db, current_user, command["job_id"])
@@ -2660,6 +2964,14 @@ async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(ge
         config=stamped_config,
     )
     db.add(new_project)
+    db.flush()
+    current_saved_config, current_payload = _ensure_project_current_saved_config(
+        db,
+        project=new_project,
+        explicit_config_name=project.config_name,
+    )
+    new_project.current_config_id = current_saved_config.id
+    new_project.config = current_payload
     db.commit()
     db.refresh(new_project)
     return _project_response_model(new_project)
@@ -2731,8 +3043,15 @@ async def list_diy_projects(
             "wifi_credential_id": p.wifi_credential_id,
             "name": p.name,
             "board_profile": p.board_profile,
+            "config_name": (
+                p.current_saved_config.name
+                if getattr(p, "current_saved_config", None) is not None
+                else (_trimmed_string(p.config.get("config_name")) if isinstance(p.config, dict) else None)
+            ),
             "config": _public_config_payload(p.config),
+            "current_config_id": getattr(p, "current_config_id", None),
             "pending_config": _public_config_payload(p.pending_config),
+            "pending_config_id": getattr(p, "pending_config_id", None),
             "pending_build_job_id": p.pending_build_job_id,
             "created_at": p.created_at,
             "updated_at": p.updated_at,
@@ -2806,6 +3125,7 @@ async def get_diy_project(project_id: str, db: Session = Depends(get_db), curren
     return _project_response_model(project)
 
 
+@router.get("/device/{device_id}/configs", response_model=List[ConfigHistoryEntryResponse])
 @router.get("/device/{device_id}/config-history", response_model=List[ConfigHistoryEntryResponse])
 async def list_device_config_history(
     device_id: str,
@@ -2817,32 +3137,30 @@ async def list_device_config_history(
         raise HTTPException(status_code=400, detail="Not a managed DIY device")
 
     project = _get_project_in_household_or_404(db, current_user, device.provisioning_project_id)
-    jobs = (
-        db.query(BuildJob)
-        .filter(BuildJob.project_id == project.id)
-        .order_by(BuildJob.created_at.desc(), BuildJob.updated_at.desc(), BuildJob.id.desc())
+    if _materialize_saved_configs_for_project(db, project=project, fallback_device=device):
+        db.commit()
+        db.refresh(project)
+    saved_configs = (
+        db.query(DiyProjectConfig)
+        .filter(
+            DiyProjectConfig.project_id == project.id,
+            DiyProjectConfig.device_id == device.device_id,
+            DiyProjectConfig.board_profile == project.board_profile,
+        )
+        .order_by(DiyProjectConfig.updated_at.desc(), DiyProjectConfig.created_at.desc(), DiyProjectConfig.id.desc())
         .all()
     )
+    latest_jobs = _latest_builds_by_saved_config(db, project_id=project.id)
+    return [
+        _serialize_saved_config_entry(saved_config, project=project, latest_job=latest_jobs.get(saved_config.id))
+        for saved_config in saved_configs
+    ]
 
-    history_entries: list[ConfigHistoryEntryResponse] = []
-    for job in jobs:
-        snapshot = resolve_build_job_config_snapshot(job)
-        assigned_device_id = _trimmed_string(
-            snapshot.get("assigned_device_id") if isinstance(snapshot, dict) else None
-        )
-        if assigned_device_id and assigned_device_id != device.device_id:
-            continue
-
-        history_entries.append(_serialize_config_history_entry(job, project=project, fallback_device=device))
-        if len(history_entries) >= CONFIG_HISTORY_LIMIT:
-            break
-
-    return history_entries
-
-@router.put("/device/{device_id}/config-history/{job_id}/name")
+@router.put("/device/{device_id}/configs/{config_id}/name")
+@router.put("/device/{device_id}/config-history/{config_id}/name")
 async def update_device_config_history_name(
     device_id: str,
-    job_id: str,
+    config_id: str,
     payload: ConfigHistoryRenameRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
@@ -2859,42 +3177,143 @@ async def update_device_config_history_name(
         )
     normalized_config_name = normalized_config_name[:255]
 
-    job = _get_build_job_in_household_or_404(db, current_user, job_id)
-    if job.project_id != device.provisioning_project_id:
-        raise HTTPException(status_code=400, detail="Job does not belong to this device's project")
-
-    snapshot_before_rename = resolve_build_job_config_snapshot(job)
-    assigned_device_id = _trimmed_string(
-        snapshot_before_rename.get("assigned_device_id") if isinstance(snapshot_before_rename, dict) else None
+    project = _get_project_in_household_or_404(db, current_user, device.provisioning_project_id)
+    if _materialize_saved_configs_for_project(db, project=project, fallback_device=device):
+        db.commit()
+        db.refresh(project)
+    saved_config = _get_saved_config_for_project_device_or_404(
+        db,
+        project=project,
+        device_id=device.device_id,
+        config_id=config_id,
     )
-    if assigned_device_id and assigned_device_id != device.device_id:
-        raise HTTPException(status_code=404, detail="Config history entry not found for this device")
+    saved_config.name = normalized_config_name
 
     next_staged_config, changed = _rename_config_payload(
-        job.staged_project_config,
+        saved_config.config,
         config_name=normalized_config_name,
     )
     if changed:
-        job.staged_project_config = next_staged_config
-        flag_modified(job, "staged_project_config")
+        saved_config.config = next_staged_config
 
-    project = _get_project_in_household_or_404(db, current_user, device.provisioning_project_id)
     if isinstance(project.pending_config, dict):
         pending_config_id = _trimmed_string(project.pending_config.get("config_id"))
-        if pending_config_id == job.id or project.pending_build_job_id == job.id:
+        if pending_config_id == saved_config.id or project.pending_config_id == saved_config.id:
             updated_pending_config = dict(project.pending_config)
             updated_pending_config["config_name"] = normalized_config_name
             project.pending_config = updated_pending_config
 
     if isinstance(project.config, dict):
         committed_config_id = _trimmed_string(project.config.get("config_id"))
-        if committed_config_id == job.id or project.config == snapshot_before_rename:
+        if committed_config_id == saved_config.id or project.current_config_id == saved_config.id:
             updated_committed_config = dict(project.config)
             updated_committed_config["config_name"] = normalized_config_name
             project.config = updated_committed_config
 
+    config_jobs = (
+        db.query(BuildJob)
+        .filter(BuildJob.project_id == project.id, BuildJob.saved_config_id == saved_config.id)
+        .all()
+    )
+    for job in config_jobs:
+        renamed_snapshot, snapshot_changed = _rename_config_payload(job.staged_project_config, config_name=normalized_config_name)
+        if snapshot_changed:
+            job.staged_project_config = renamed_snapshot
+
     db.commit()
     return {"status": "ok", "config_name": normalized_config_name}
+
+@router.delete("/device/{device_id}/configs/{config_id}")
+@router.delete("/device/{device_id}/config-history/{config_id}")
+async def delete_device_config_history(
+    device_id: str,
+    config_id: str,
+    payload: Optional[ConfigHistoryDeleteRequest] = Body(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    device = _get_device_in_household_or_404(db, current_user, device_id)
+    if not device.provisioning_project_id:
+        raise HTTPException(status_code=400, detail="Not a managed DIY device")
+
+    _require_current_user_password(
+        current_user,
+        payload.password if payload is not None else None,
+        missing_action="deleting this saved config",
+        invalid_action="delete this saved config",
+    )
+
+    project = _get_project_in_household_or_404(db, current_user, device.provisioning_project_id)
+    if _materialize_saved_configs_for_project(db, project=project, fallback_device=device):
+        db.commit()
+        db.refresh(project)
+    saved_config = _get_saved_config_for_project_device_or_404(
+        db,
+        project=project,
+        device_id=device.device_id,
+        config_id=config_id,
+    )
+
+    committed_config_id = (
+        _trimmed_string(project.config.get("config_id"))
+        if isinstance(project.config, dict)
+        else None
+    )
+    pending_config_id = (
+        _trimmed_string(project.pending_config.get("config_id"))
+        if isinstance(project.pending_config, dict)
+        else None
+    )
+    if saved_config.id in {getattr(project, "current_config_id", None), committed_config_id}:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "conflict",
+                "message": "The current committed config cannot be deleted from history.",
+            },
+        )
+
+    if saved_config.id in {getattr(project, "pending_config_id", None), pending_config_id}:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "conflict",
+                "message": "The pending OTA config cannot be deleted from history.",
+            },
+        )
+
+    active_job = (
+        db.query(BuildJob)
+        .filter(
+            BuildJob.project_id == project.id,
+            BuildJob.saved_config_id == saved_config.id,
+            BuildJob.status.in_(ACTIVE_BUILD_JOB_STATUSES),
+        )
+        .first()
+    )
+    if active_job is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "conflict",
+                "message": "This config is still referenced by an active build or OTA job.",
+            },
+        )
+
+    config_jobs = (
+        db.query(BuildJob)
+        .filter(BuildJob.project_id == project.id, BuildJob.saved_config_id == saved_config.id)
+        .all()
+    )
+    for job in config_jobs:
+        job.saved_config_id = None
+        deleted_snapshot, snapshot_changed = mark_config_history_deleted_payload(job.staged_project_config)
+        if snapshot_changed:
+            job.staged_project_config = deleted_snapshot
+
+    db.delete(saved_config)
+    db.commit()
+    return {"status": "deleted", "id": config_id}
 
 @router.put("/diy/projects/{project_id}", response_model=DiyProjectResponse)
 async def update_diy_project(project_id: str, project_update: DiyProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
@@ -2925,7 +3344,15 @@ async def update_diy_project(project_id: str, project_update: DiyProjectCreate, 
         _resolve_project_device_secret(project.id, project.pending_config, project.config),
     )
     project.pending_config = None
+    project.pending_config_id = None
     project.pending_build_job_id = None
+    current_saved_config, current_payload = _ensure_project_current_saved_config(
+        db,
+        project=project,
+        explicit_config_name=project_update.config_name,
+    )
+    project.current_config_id = current_saved_config.id
+    project.config = current_payload
     db.commit()
     db.refresh(project)
     return _project_response_model(project)
@@ -2991,12 +3418,31 @@ async def trigger_diy_build(
         project.id,
         _resolve_project_device_secret(project.id, project.pending_config, current_config),
     )
+    current_saved_config, current_payload = _ensure_project_current_saved_config(db, project=project)
+    current_saved_config.config = dict(project.config)
+    current_saved_config.name = _normalize_config_name(
+        project.config.get("config_name") if isinstance(project.config, dict) else None,
+        fallback_name=current_saved_config.name or project.name,
+    )
+    project.current_config_id = current_saved_config.id
+    project.config = current_payload = _stamp_config_history_metadata(
+        dict(project.config),
+        config_id=current_saved_config.id,
+        config_name=current_saved_config.name,
+        device_id=current_saved_config.device_id,
+        device_name=_trimmed_string(current_payload.get("assigned_device_name")) or current_saved_config.name,
+        board_profile=project.board_profile,
+        saved_at=datetime.now(timezone.utc),
+    )
+    current_saved_config.config = dict(project.config)
 
     job_id = str(uuid.uuid4())
     job = BuildJob(
         id=job_id,
         project_id=project.id,
-        status=JobStatus.queued
+        saved_config_id=current_saved_config.id,
+        status=JobStatus.queued,
+        staged_project_config=dict(project.config),
     )
     db.add(job)
     db.commit()

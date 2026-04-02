@@ -32,14 +32,18 @@ export interface RuntimeNetworkInfo {
 export interface DeviceConfigHistoryEntry {
     id: string;
     project_id: string;
-    status: string;
+    device_id: string;
+    board_profile: string;
     config_name: string;
     assigned_device_id?: string | null;
     assigned_device_name?: string | null;
     created_at: string;
     updated_at: string;
-    finished_at?: string | null;
-    error_message?: string | null;
+    last_applied_at?: string | null;
+    latest_build_job_id?: string | null;
+    latest_build_status?: string | null;
+    latest_build_finished_at?: string | null;
+    latest_build_error?: string | null;
     expected_firmware_version?: string | null;
     is_pending: boolean;
     is_committed: boolean;
@@ -459,8 +463,8 @@ export async function sendDeviceCommand(
 
 export async function saveDeviceConfig(
     uuid: string,
-    config: { pins: unknown[]; password: string; wifi_credential_id?: number | null; config_name?: string }
-): Promise<{ status: string; job_id?: string; message?: string }> {
+    config: { pins: unknown[]; password?: string; wifi_credential_id?: number | null; config_name?: string; assigned_device_name?: string; config_id?: string; source_config_id?: string; create_new_config?: boolean }
+): Promise<{ status: string; job_id?: string; config_id?: string; message?: string }> {
     try {
         const token = getToken();
         if (!token) return { status: "failed", message: "No token" };
@@ -528,6 +532,32 @@ export async function renameDeviceConfigHistory(
 
     if (!response.ok) {
         throw new Error(await parseApiError(response, "Failed to rename config history"));
+    }
+
+    return response.json();
+}
+
+export async function deleteDeviceConfigHistory(
+    uuid: string,
+    configId: string,
+    password: string,
+): Promise<{ status: string; id?: string }> {
+    const token = getToken();
+    if (!token) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/device/${uuid}/config-history/${configId}`, {
+        method: "DELETE",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ password }),
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to delete config history"));
     }
 
     return response.json();

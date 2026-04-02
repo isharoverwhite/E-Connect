@@ -443,6 +443,7 @@ class DiyProjectBase(BaseModel):
     board_profile: str
     room_id: Optional[int] = None
     wifi_credential_id: Optional[int] = None
+    config_name: Optional[str] = None
     config: Optional[Dict[str, Any]] = None
 
 class DiyProjectCreate(DiyProjectBase):
@@ -454,7 +455,9 @@ class DiyProjectDeleteRequest(BaseModel):
 class DiyProjectResponse(DiyProjectBase):
     id: str
     user_id: int
+    current_config_id: Optional[str] = None
     pending_config: Optional[Dict[str, Any]] = None
+    pending_config_id: Optional[str] = None
     pending_build_job_id: Optional[str] = None
     created_at: datetime
     updated_at: datetime
@@ -529,14 +532,18 @@ class BuildJobResponse(BaseModel):
 class ConfigHistoryEntryResponse(BaseModel):
     id: str
     project_id: str
-    status: JobStatus
+    device_id: str
+    board_profile: str
     config_name: str
     assigned_device_id: Optional[str] = None
     assigned_device_name: Optional[str] = None
     created_at: datetime
     updated_at: datetime
-    finished_at: Optional[datetime] = None
-    error_message: Optional[str] = None
+    last_applied_at: Optional[datetime] = None
+    latest_build_job_id: Optional[str] = None
+    latest_build_status: Optional[JobStatus] = None
+    latest_build_finished_at: Optional[datetime] = None
+    latest_build_error: Optional[str] = None
     expected_firmware_version: Optional[str] = None
     is_pending: bool = False
     is_committed: bool = False
@@ -544,6 +551,9 @@ class ConfigHistoryEntryResponse(BaseModel):
 
 class ConfigHistoryRenameRequest(BaseModel):
     config_name: str
+
+class ConfigHistoryDeleteRequest(BaseModel):
+    password: Optional[str] = None
 
 class SerialSessionResponse(BaseModel):
     id: int

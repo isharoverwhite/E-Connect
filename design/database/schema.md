@@ -11,11 +11,12 @@ This file documents the baseline schema for E-Connect.
 5. `pin_configurations`: GPIO mapping for devices.
 6. `device_history`: Time-series device state and events.
 7. `automations`: Visual automation rule graphs, enablement, and execution metadata.
-8. `diy_projects`: Web builder project state (`room_id`, `pending_config`, `pending_build_job_id`).
-9. `wifi_credentials`: Household-scoped SSID/password records selected by DIY projects and managed-device reconfiguration.
-10. `rooms`: Physical or logical grouping within a household (`household_id`).
-11. `build_jobs`: Server-side firmware compilation tracking (`finished_at`, `error_message`, `staged_project_config`).
-12. `system_logs`: 30-day retained operational events for server lifecycle, connectivity, firmware observations, and alert history.
+8. `diy_projects`: Web builder project state (`room_id`, `config`, `current_config_id`, `pending_config`, `pending_config_id`, `pending_build_job_id`).
+9. `diy_project_configs`: Durable named config-history rows for managed-device/project board configs, bound to one project, one device UUID, and one board profile.
+10. `wifi_credentials`: Household-scoped SSID/password records selected by DIY projects and managed-device reconfiguration.
+11. `rooms`: Physical or logical grouping within a household (`household_id`).
+12. `build_jobs`: Server-side firmware compilation tracking (`finished_at`, `error_message`, `saved_config_id`, `staged_project_config`).
+13. `system_logs`: 30-day retained operational events for server lifecycle, connectivity, firmware observations, and alert history.
 
 ## Automation Graph Contract
 
@@ -49,19 +50,27 @@ This file documents the baseline schema for E-Connect.
 ## Managed Reconfiguration Staging Contract
 
 1. `diy_projects.config` remains the committed config currently expected to match the board after the last verified OTA or flash.
-2. `diy_projects.pending_config` stores only the newest staged managed-device reconfiguration still awaiting verification on hardware; it is a convenience pointer, not the full history source of truth.
-3. `diy_projects.pending_build_job_id` points to the newest staged build job still awaiting verification.
-4. `build_jobs` is the durable config-history source of truth for managed-device reconfiguration. Each job id is the config-history id for the exact snapshot that was compiled.
-5. `build_jobs.staged_project_config` stores the immutable config snapshot compiled for that artifact, including:
-   - `config_id` (same value as the build job id)
-   - `config_name` (user-editable label, not forced to match the device name)
-   - `assigned_device_id`
-   - `assigned_device_name`
-   - `saved_at`
-   - the stamped Wi-Fi and firmware network target fields needed for that exact build
-6. Managed-device config history is ordered by `build_jobs.created_at` descending, not by device name, and the backend must retain only the newest `3` history entries for that board/project. Older build-job rows plus their generated artifact/log files must be deleted when a newer history entry is accepted.
-7. OTA promotion must always promote from the exact build job snapshot that the board reports back on. The frontend must not recompute the artifact URL from a different runtime target than the one embedded into that exact config-history snapshot.
-8. Legacy `diy_projects.config` or `pending_config` payloads may still contain builder-era `latest_build_job_id` / `latest_build_config_key` fields, but those keys are compatibility metadata only and must be scrubbed whenever they point at missing build rows. Startup cleanup must also backfill missing config-history labels and board assignment metadata into legacy `build_jobs.staged_project_config` rows so history does not degrade to generic entries.
+2. `diy_projects.current_config_id` points to the committed `diy_project_configs` row that currently represents the board's approved config.
+3. `diy_projects.pending_config` stores only the newest staged managed-device reconfiguration still awaiting verification on hardware; it is a convenience pointer, not the full history source of truth.
+4. `diy_projects.pending_config_id` points to the newest staged `diy_project_configs` row still awaiting verification on hardware.
+5. `diy_projects.pending_build_job_id` points to the newest staged build job still awaiting verification.
+6. `diy_project_configs` is the durable config-history source of truth for managed-device reconfiguration.
+7. Each `diy_project_configs` row must preserve:
+   - a stable `id` used as the saved-config id
+   - `project_id`
+   - `device_id`
+   - `board_profile`
+   - a user-editable `name`
+   - the persisted config payload, including stamped `config_id`, `config_name`, `assigned_device_id`, `assigned_device_name`, `board_profile`, `saved_at`, plus the Wi-Fi and firmware network target fields needed for that exact config
+   - `last_applied_at` when that saved config is the one the board most recently reported as active
+8. Managed-device config history is scoped by `device_id` plus `board_profile`. A single board/device pair may retain unlimited saved configs.
+9. The backend must support both:
+   - updating an existing saved config in place by id
+   - cloning an existing saved config into a new saved config row before rebuild
+10. `build_jobs` is build/flash execution state, not the config-history source of truth. Each job must point back to the saved config snapshot through `build_jobs.saved_config_id`, and `build_jobs.staged_project_config` remains the exact compiled snapshot for that artifact or OTA retry.
+11. Multiple build jobs may reference the same saved config when the same named config is rebuilt or retried without creating a new config row.
+12. OTA promotion must always promote from the exact saved config and exact compiled build snapshot that the board reports back on. The frontend must not recompute the artifact URL from a different runtime target than the one embedded into that exact staged snapshot.
+13. Legacy `diy_projects.config`, `pending_config`, or `build_jobs` payloads may still contain builder-era `latest_build_job_id` / `latest_build_config_key` fields, but those keys are compatibility metadata only and must be scrubbed whenever those payloads are materialized into the saved-config model. Startup cleanup must also backfill missing saved-config labels, ids, and board assignment metadata so legacy projects upgrade without losing history continuity.
 
 ## Server Timezone Contract
 

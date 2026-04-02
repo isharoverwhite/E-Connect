@@ -24,7 +24,7 @@ export function SvgPinMapPreview({ boardId, pins }: { boardId: string, pins: Pin
     }) {
         const top = 110;
         const y = top + gap * index;
-        const isReserved = pin.reserved || pin.bootSensitive;
+        const isReserved = pin.capabilities.length === 0;
         const fill = assignment
             ? PIN_FILL.assigned
             : isReserved
