@@ -374,6 +374,45 @@ export function Step2Pins({
                                     </div>
                                 )}
 
+                                {assignment?.mode === "INPUT" && (
+                                    <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5 flex flex-col gap-3">
+                                        <div className="flex flex-col gap-1">
+                                            <label htmlFor={`pin-input-type-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">Input Type</label>
+                                            <select
+                                                id={`pin-input-type-${pin.gpio}`}
+                                                name={`pin-input-type-${pin.gpio}`}
+                                                value={assignment.extra_params?.input_type ?? "switch"}
+                                                onChange={(e) => {
+                                                    handleExtraParamChange(pin, { input_type: e.target.value as "switch" | "tachometer" | "dht" });
+                                                }}
+                                                className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
+                                            >
+                                                <option value="switch">Switch (High/Low)</option>
+                                                <option value="tachometer">Tachometer (Pulse count)</option>
+                                                <option value="dht">DHT Sensor (Temp/Hum)</option>
+                                            </select>
+                                        </div>
+                                        {assignment.extra_params?.input_type === "dht" && (
+                                            <div className="flex flex-col gap-1">
+                                                <label htmlFor={`pin-dht-version-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">DHT Version</label>
+                                                <select
+                                                    id={`pin-dht-version-${pin.gpio}`}
+                                                    name={`pin-dht-version-${pin.gpio}`}
+                                                    value={assignment.extra_params?.dht_version ?? "DHT11"}
+                                                    onChange={(e) => {
+                                                        handleExtraParamChange(pin, { dht_version: e.target.value as "DHT11" | "DHT22" | "DHT21" });
+                                                    }}
+                                                    className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
+                                                >
+                                                    <option value="DHT11">DHT11</option>
+                                                    <option value="DHT22">DHT22</option>
+                                                    <option value="DHT21">DHT21</option>
+                                                </select>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
                                 {assignment?.mode === "PWM" && (() => {
                                     const rawMin = assignment.extra_params?.min_value ?? 0;
                                     const rawMax = assignment.extra_params?.max_value ?? 255;
@@ -501,6 +540,30 @@ export function Step2Pins({
                                                 </select>
                                             </div>
                                         </div>
+                                        
+                                        {(() => {
+                                            const currentLibName = assignment.extra_params?.i2c_library;
+                                            const currentLib = i2cCatalog.find(l => l.name === currentLibName);
+                                            if (currentLib && currentLib.versions && currentLib.versions.length > 0) {
+                                                return (
+                                                    <div className="flex flex-col gap-1">
+                                                        <label htmlFor={`pin-i2c-version-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">Library Variant</label>
+                                                        <select
+                                                            id={`pin-i2c-version-${pin.gpio}`}
+                                                            name={`pin-i2c-version-${pin.gpio}`}
+                                                            value={assignment.extra_params?.i2c_device_version ?? currentLib.versions[0]}
+                                                            onChange={(e) => handleExtraParamChange(pin, { i2c_device_version: e.target.value })}
+                                                            className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
+                                                        >
+                                                            {currentLib.versions.map(v => (
+                                                                <option key={v} value={v}>{v}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                );
+                                            }
+                                            return null;
+                                        })()}
                                     </div>
                                 )}
                             </div>

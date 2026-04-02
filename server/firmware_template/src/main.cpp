@@ -5,6 +5,10 @@
 #include <Wire.h>
 #include "board_support.h"
 
+#ifdef ECONNECT_HAS_DHT
+#include <DHT.h>
+#endif
+
 #if __has_include("generated_firmware_config.h")
 #include "generated_firmware_config.h"
 #endif
@@ -29,10 +33,13 @@ struct EConnectPinConfig {
   const char *i2c_role;
   const char *i2c_address;
   const char *i2c_library;
+  const char *i2c_device_version;
+  const char *input_type;
+  const char *dht_version;
 };
 
 static const EConnectPinConfig ECONNECT_PIN_CONFIGS[] = {
-    {ECONNECT_BUILTIN_LED_PIN, "OUTPUT", "builtin_led", "Built-in LED", 1, 0, 255, "", "", ""},
+    {ECONNECT_BUILTIN_LED_PIN, "OUTPUT", "builtin_led", "Built-in LED", 1, 0, 255, "", "", "", "", "switch", ""},
 };
 #endif
 
@@ -60,6 +67,20 @@ constexpr size_t PIN_STATE_CAPACITY = PIN_CONFIG_COUNT > 0 ? PIN_CONFIG_COUNT : 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
 PinRuntimeState pinStates[PIN_STATE_CAPACITY];
+
+#ifdef ECONNECT_HAS_DHT
+DHT* dhtSensors[PIN_STATE_CAPACITY] = {nullptr};
+unsigned long lastDHTReadTime[PIN_STATE_CAPACITY] = {0};
+#endif
+
+// Tachometer state
+volatile unsigned long tachoPulseCounts[PIN_STATE_CAPACITY] = {0};
+unsigned long lastTachoReadTime[PIN_STATE_CAPACITY] = {0};
+
+void IRAM_ATTR tachoInterruptHandler(void* arg) {
+  int idx = (int)(intptr_t)arg;
+  tachoPulseCounts[idx]++;
+}
 
 String deviceId = ECONNECT_DEVICE_ID;
 unsigned long lastHeartbeatAt = 0;
@@ -89,6 +110,7 @@ void appendPinConfigMetadata(JsonObject pin, const EConnectPinConfig &config);
 bool modeEquals(const char *left, const char *right);
 bool isOutputMode(const char *mode);
 bool isPwmMode(const char *mode);
+bool isNumericInputMode(const char *mode, const char *inputType);
 bool isReadableMode(const char *mode);
 bool isPwmInverted(const PinRuntimeState &pinState);
 int pwmLowerBound(const PinRuntimeState &pinState);
@@ -685,6 +707,33 @@ void initializePinStates() {
       analogWrite(pinStates[index].gpio, pinStates[index].brightness);
     } else if (isReadableMode(pinStates[index].mode)) {
       pinMode(pinStates[index].gpio, INPUT);
+
+      if (modeEquals(pinStates[index].mode, "INPUT")) {
+        if (strcmp(ECONNECT_PIN_CONFIGS[index].input_type, "dht") == 0) {
+#ifdef ECONNECT_HAS_DHT
+          int dhtType = DHT11;
+          if (strcmp(ECONNECT_PIN_CONFIGS[index].dht_version, "DHT22") == 0) {
+            dhtType = DHT22;
+          } else if (strcmp(ECONNECT_PIN_CONFIGS[index].dht_version, "DHT21") == 0) {
+            dhtType = DHT21;
+          }
+          dhtSensors[index] = new DHT(pinStates[index].gpio, dhtType);
+          dhtSensors[index]->begin();
+          Serial.printf("Initialized DHT%d on GPIO %d\n", dhtType == DHT22 ? 22 : 11, pinStates[index].gpio);
+#endif
+        } else if (strcmp(ECONNECT_PIN_CONFIGS[index].input_type, "tachometer") == 0) {
+          pinMode(pinStates[index].gpio, INPUT_PULLUP);
+          // Attach interrupt for tachometer
+          attachInterruptArg(
+            digitalPinToInterrupt(pinStates[index].gpio), 
+            tachoInterruptHandler, 
+            (void*)(intptr_t)index, 
+            RISING
+          );
+          lastTachoReadTime[index] = millis();
+          Serial.printf("Initialized Tachometer Interrupt on GPIO %d\n", pinStates[index].gpio);
+        }
+      }
     }
   }
 }
@@ -748,6 +797,18 @@ bool isPwmMode(const char *mode) {
   return modeEquals(mode, "PWM");
 }
 
+bool isNumericInputMode(const char *mode, const char *inputType) {
+  if (isPwmMode(mode) || modeEquals(mode, "ADC")) {
+    return true;
+  }
+  if (modeEquals(mode, "INPUT") && inputType != nullptr) {
+    if (strcmp(inputType, "dht") == 0 || strcmp(inputType, "tachometer") == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 bool isReadableMode(const char *mode) {
   return modeEquals(mode, "INPUT") || modeEquals(mode, "ADC") ||
          modeEquals(mode, "I2C");
@@ -796,7 +857,45 @@ int readRuntimeValue(PinRuntimeState &pinState) {
     return pinState.value;
   }
 
-  if (modeEquals(pinState.mode, "INPUT") || modeEquals(pinState.mode, "I2C")) {
+  if (modeEquals(pinState.mode, "INPUT")) {
+    int index = findPinIndex(pinState.gpio);
+    if (index >= 0) {
+      if (strcmp(ECONNECT_PIN_CONFIGS[index].input_type, "dht") == 0) {
+#ifdef ECONNECT_HAS_DHT
+        if (dhtSensors[index] != nullptr) {
+          unsigned long now = millis();
+          if (now - lastDHTReadTime[index] >= 2000) {
+            float t = dhtSensors[index]->readTemperature();
+            if (!isnan(t)) {
+              pinState.value = (int)(t * 10);
+            }
+            lastDHTReadTime[index] = now;
+          }
+        }
+#endif
+        return pinState.value;
+      } else if (strcmp(ECONNECT_PIN_CONFIGS[index].input_type, "tachometer") == 0) {
+        unsigned long now = millis();
+        unsigned long elapsed = now - lastTachoReadTime[index];
+        if (elapsed >= 1000) {
+          noInterrupts();
+          unsigned long pulses = tachoPulseCounts[index];
+          tachoPulseCounts[index] = 0;
+          interrupts();
+          
+          pinState.value = (int)((pulses * 60000ULL) / elapsed);
+          lastTachoReadTime[index] = now;
+        }
+        return pinState.value;
+      }
+    }
+    
+    // Default Digital Read
+    pinState.value = digitalRead(pinState.gpio);
+    return pinState.value;
+  }
+
+  if (modeEquals(pinState.mode, "I2C")) {
     pinState.value = digitalRead(pinState.gpio);
     return pinState.value;
   }
@@ -907,6 +1006,7 @@ void publishState(bool applied) {
 void appendPinConfigMetadata(JsonObject pin, const EConnectPinConfig &config) {
   pin["function"] = config.function_name;
   pin["label"] = config.label;
+  pin["datatype"] = isNumericInputMode(config.mode, config.input_type) ? "number" : "boolean";
 
   JsonObject extraParams = pin.createNestedObject("extra_params");
   bool hasExtraParams = false;

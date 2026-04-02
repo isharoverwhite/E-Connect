@@ -9,6 +9,7 @@ export interface I2CLibrary {
     pio_lib_deps: string[];
     supported_channels: string[];
     is_writable: boolean;
+    versions?: string[];
 }
 
 export interface PinMapping {
@@ -24,6 +25,9 @@ export interface PinMapping {
         i2c_role?: "SDA" | "SCL";
         i2c_address?: string;
         i2c_library?: string;
+        i2c_device_version?: string;
+        input_type?: "switch" | "tachometer" | "dht";
+        dht_version?: "DHT11" | "DHT22" | "DHT21";
     } | null;
 }
 
@@ -154,6 +158,15 @@ export function sanitizePins(input: unknown[], modeMetadata: Record<string, unkn
             }
             if ("i2c_library" in ep && typeof ep.i2c_library === "string") {
                 nextPin.extra_params.i2c_library = ep.i2c_library;
+            }
+            if ("i2c_device_version" in ep && typeof ep.i2c_device_version === "string") {
+                nextPin.extra_params.i2c_device_version = ep.i2c_device_version;
+            }
+            if ("input_type" in ep && (ep.input_type === "switch" || ep.input_type === "tachometer" || ep.input_type === "dht")) {
+                nextPin.extra_params.input_type = ep.input_type as "switch" | "tachometer" | "dht";
+            }
+            if ("dht_version" in ep && (ep.dht_version === "DHT11" || ep.dht_version === "DHT22" || ep.dht_version === "DHT21")) {
+                nextPin.extra_params.dht_version = ep.dht_version as "DHT11" | "DHT22" | "DHT21";
             }
         }
 

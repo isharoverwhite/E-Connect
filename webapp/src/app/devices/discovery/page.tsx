@@ -9,7 +9,7 @@ import { approveDiscoveredDevice, fetchDevices, rejectDiscoveredDevice } from "@
 import { createRoom, fetchRooms, type RoomRecord } from "@/lib/rooms";
 import { DeviceConfig } from "@/types/device";
 
-const SCAN_IDLE_DELAY_MS = 3000;
+const SCAN_IDLE_DELAY_MS = 150000;
 
 export default function DeviceDiscovery() {
     const [scanState, setScanState] = useState<"idle" | "scanning" | "found" | "connected">("scanning");
