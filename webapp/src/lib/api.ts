@@ -122,6 +122,50 @@ export interface ServerTimeContextResponse {
     current_server_time: string;
 }
 
+export interface ExtensionConfigField {
+    key: string;
+    label: string;
+    type: "string" | "number" | "boolean";
+    required: boolean;
+}
+
+export interface InstalledExtensionSchema {
+    schema_id: string;
+    name: string;
+    default_name: string;
+    description?: string | null;
+    card_type: "light";
+    config_fields: ExtensionConfigField[];
+}
+
+export interface InstalledExtension {
+    extension_id: string;
+    manifest_version: string;
+    name: string;
+    version: string;
+    author?: string | null;
+    description: string;
+    provider_key: string;
+    provider_name: string;
+    package_runtime: string;
+    package_entrypoint: string;
+    package_root?: string | null;
+    archive_sha256: string;
+    manifest: Record<string, unknown>;
+    device_schemas: InstalledExtensionSchema[];
+    external_device_count: number;
+    installed_at?: string | null;
+    updated_at?: string | null;
+}
+
+export interface CreateExternalDevicePayload {
+    installed_extension_id: string;
+    device_schema_id: string;
+    name?: string;
+    room_id?: number | null;
+    config?: Record<string, unknown>;
+}
+
 async function parseApiError(response: Response, fallback: string) {
     try {
         const payload = (await response.json()) as {
@@ -395,6 +439,75 @@ export async function fetchDashboardDevices(): Promise<DeviceConfig[]> {
         console.error("Failed to fetch dashboard devices:", error);
         return [];
     }
+}
+
+export async function fetchInstalledExtensions(token?: string): Promise<InstalledExtension[]> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/extensions`, {
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+        cache: "no-store",
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to load installed extensions"));
+    }
+
+    return response.json();
+}
+
+export async function uploadExtensionZip(file: File, token?: string): Promise<InstalledExtension> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const response = await fetch(`${API_URL}/extensions/upload`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+        body: formData,
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to upload extension ZIP"));
+    }
+
+    return response.json();
+}
+
+export async function createExternalDevice(
+    payload: CreateExternalDevicePayload,
+    token?: string,
+): Promise<DeviceConfig> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/external-devices`, {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to create external device"));
+    }
+
+    return response.json();
 }
 
 export async function fetchDevice(uuid: string): Promise<DeviceConfig | null> {

@@ -90,4 +90,13 @@
   .animate-stripe-slide {
     animation: stripe-slide 2s linear infinite;
   }
+
+  .canvas-dot-bg {
+    background-image: radial-gradient(circle, #cbd5e1 1.5px, transparent 1.5px);
+    background-size: 20px 20px;
+  }
+  
+  .dark .canvas-dot-bg {
+    background-image: radial-gradient(circle, #334155 1.5px, transparent 1.5px);
+  }
 }

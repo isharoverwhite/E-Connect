@@ -27,6 +27,7 @@ class ConnStatus(str, Enum):
 class DeviceMode(str, Enum):
     no_code = "no-code"
     library = "library"
+    portableDashboard = "portableDashboard"
 
 class PinMode(str, Enum):
     INPUT = "INPUT"
@@ -235,6 +236,16 @@ class DeviceResponse(DeviceBase):
     pairing_requested_at: Optional[datetime] = None
     last_state: Optional[Dict[str, Any]] = None
     provisioning_project_id: Optional[str] = None
+    board: Optional[str] = None
+    provider: Optional[str] = None
+    extension_name: Optional[str] = None
+    installed_extension_id: Optional[str] = None
+    device_schema_id: Optional[str] = None
+    external_config: Optional[Dict[str, Any]] = None
+    schema_snapshot: Optional[Dict[str, Any]] = None
+    is_external: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
     pin_configurations: List[PinConfigResponse] = []
 
     class Config:
@@ -465,6 +476,50 @@ class DiyProjectResponse(DiyProjectBase):
 
     class Config:
         from_attributes = True
+
+
+class ExtensionConfigField(BaseModel):
+    key: str
+    label: str
+    type: Literal["string", "number", "boolean"]
+    required: bool = False
+
+
+class ExtensionDeviceSchemaResponse(BaseModel):
+    schema_id: str
+    name: str
+    default_name: str
+    description: Optional[str] = None
+    card_type: Literal["light"]
+    config_fields: List[ExtensionConfigField] = Field(default_factory=list)
+
+
+class InstalledExtensionResponse(BaseModel):
+    extension_id: str
+    manifest_version: str
+    name: str
+    version: str
+    author: Optional[str] = None
+    description: str
+    provider_key: str
+    provider_name: str
+    package_runtime: str
+    package_entrypoint: str
+    package_root: Optional[str] = None
+    archive_sha256: str
+    manifest: Dict[str, Any] = Field(default_factory=dict)
+    device_schemas: List[ExtensionDeviceSchemaResponse] = Field(default_factory=list)
+    external_device_count: int = 0
+    installed_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class ExternalDeviceCreate(BaseModel):
+    installed_extension_id: str = Field(..., min_length=1)
+    device_schema_id: str = Field(..., min_length=1)
+    name: Optional[str] = Field(default=None, max_length=255)
+    room_id: Optional[int] = None
+    config: Dict[str, Any] = Field(default_factory=dict)
 
 class ProjectDeviceUsage(BaseModel):
     device_id: str

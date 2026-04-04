@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, BackgroundTasks, Form, Query, Request, WebSocket, WebSocketDisconnect, Body
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Any, Callable, Literal, Union
@@ -35,14 +35,15 @@ from .models import (
     DiyProjectCreate, DiyProjectDeleteRequest, DiyProjectResponse, BuildJobResponse, ConfigHistoryEntryResponse, JobStatus, SerialSessionResponse,
     ManagedUserResponse, DiyProjectUsageResponse, ProjectDeviceUsage,
     WifiCredentialCreate, WifiCredentialUpdate, WifiCredentialRevealRequest, WifiCredentialResponse, WifiCredentialSecretResponse,
-    ConfigHistoryRenameRequest, ConfigHistoryDeleteRequest
+    ConfigHistoryRenameRequest, ConfigHistoryDeleteRequest,
+    InstalledExtensionResponse, ExternalDeviceCreate,
 )
 from .sql_models import (
     User, Device, Automation, DeviceHistory,
     Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
     AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, DiyProjectConfig, BuildJob, SerialSession, SerialSessionStatus,
     SystemLog, SystemLogCategory as SqlSystemLogCategory, SystemLogSeverity as SqlSystemLogSeverity,
-    WifiCredential,
+    WifiCredential, InstalledExtension, ExternalDevice,
 )
 from .database import (
     SessionLocal,
@@ -91,6 +92,13 @@ from .services.provisioning import (
     strip_project_secret_from_payload,
 )
 from .services.i2c_registry import I2CLibrary, get_i2c_catalog
+from .services.extensions import (
+    ExtensionManifestValidationError,
+    get_manifest_device_schema,
+    parse_extension_archive,
+    persist_extension_archive,
+    validate_external_device_config,
+)
 from .services.system_metrics import collect_system_metrics
 from .services.system_logs import (
     SYSTEM_LOG_ALERT_SEVERITIES,
@@ -475,7 +483,7 @@ def _broadcast_pairing_queue_updated(device: Device, *, reason: str) -> None:
         pass
 
 
-def _resolve_build_artifact_path(job: BuildJob, artifact_name: Literal["firmware", "bootloader", "partitions"]) -> Optional[str]:
+def _resolve_build_artifact_path(job: BuildJob, artifact_name: Literal["firmware", "bootloader", "partitions", "boot_app0"]) -> Optional[str]:
     candidates: list[str] = []
     direct_path = _trimmed_string(job.artifact_path)
     if direct_path:
@@ -765,6 +773,7 @@ def _upsert_saved_config(
     config_id: str | None = None,
     created_at: datetime | None = None,
     last_applied_at: datetime | None = None,
+    update_in_place: bool = True,
 ) -> tuple[DiyProjectConfig, dict[str, Any]]:
     now = datetime.now(timezone.utc)
     target_id = existing_config.id if existing_config is not None else (config_id or str(uuid.uuid4()))
@@ -807,12 +816,14 @@ def _upsert_saved_config(
         if created_at is not None:
             saved_config.created_at = created_at
         db.add(saved_config)
-    else:
+    elif update_in_place:
+        from sqlalchemy.orm.attributes import flag_modified
         saved_config.project_id = project.id
         saved_config.device_id = device_id
         saved_config.board_profile = project.board_profile
         saved_config.name = config_name
         saved_config.config = stamped_payload
+        flag_modified(saved_config, "config")
         if last_applied_at is not None:
             saved_config.last_applied_at = last_applied_at
 
@@ -1409,6 +1420,18 @@ def _ensure_device_control_access(db: Session, current_user: User, device: Devic
         raise HTTPException(status_code=403, detail="Not authorized")
 
 
+def _ensure_external_device_control_access(db: Session, current_user: User, device: ExternalDevice) -> None:
+    if device.auth_status != AuthStatus.approved:
+        raise HTTPException(status_code=409, detail="Device is not approved for control")
+
+    if _is_room_admin(current_user):
+        return
+
+    accessible_room_ids = set(_get_accessible_room_ids_for_user(db, current_user))
+    if device.room_id is None or device.room_id not in accessible_room_ids:
+        raise HTTPException(status_code=403, detail="Not authorized")
+
+
 def _attach_room_name(device: Device) -> Device:
     setattr(device, "room_name", device.room.name if device.room else None)
     return device
@@ -1422,6 +1445,118 @@ def _serialize_device_availability(device: Device) -> dict[str, Any]:
         "auth_status": device.auth_status,
         "conn_status": device.conn_status,
         "pairing_requested_at": device.pairing_requested_at,
+    }
+
+
+def _serialize_external_device_availability(device: ExternalDevice) -> dict[str, Any]:
+    room_name = device.room.name if device.room is not None else None
+    return {
+        "device_id": device.device_id,
+        "room_id": device.room_id,
+        "room_name": room_name,
+        "auth_status": device.auth_status,
+        "conn_status": device.conn_status,
+        "pairing_requested_at": None,
+    }
+
+
+def _serialize_external_device(device: ExternalDevice) -> dict[str, Any]:
+    room_name = device.room.name if device.room is not None else None
+    manifest = device.installed_extension.manifest if device.installed_extension is not None else {}
+    extension_name = (
+        device.installed_extension.name
+        if device.installed_extension is not None
+        else None
+    )
+    return {
+        "device_id": device.device_id,
+        "mac_address": "",
+        "name": device.name,
+        "mode": DeviceMode.library,
+        "firmware_revision": None,
+        "firmware_version": device.installed_extension.version if device.installed_extension is not None else None,
+        "ip_address": None,
+        "topic_pub": None,
+        "topic_sub": None,
+        "room_id": device.room_id,
+        "room_name": room_name,
+        "owner_id": device.owner_id,
+        "auth_status": device.auth_status,
+        "conn_status": device.conn_status,
+        "last_seen": device.last_seen,
+        "pairing_requested_at": None,
+        "last_state": device.last_state,
+        "provisioning_project_id": None,
+        "board": None,
+        "provider": device.provider,
+        "extension_name": extension_name,
+        "installed_extension_id": device.installed_extension_id,
+        "device_schema_id": device.device_schema_id,
+        "external_config": device.config if isinstance(device.config, dict) else {},
+        "schema_snapshot": device.schema_snapshot if isinstance(device.schema_snapshot, dict) else {},
+        "is_external": True,
+        "created_at": device.created_at,
+        "updated_at": device.updated_at,
+        "pin_configurations": [],
+    }
+
+
+def _serialize_extension_device_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    config_schema = schema.get("config_schema") if isinstance(schema.get("config_schema"), dict) else {}
+    raw_fields = config_schema.get("fields") if isinstance(config_schema.get("fields"), list) else []
+    config_fields = []
+    for field in raw_fields:
+        if not isinstance(field, dict):
+            continue
+        config_fields.append(
+            {
+                "key": str(field.get("key") or ""),
+                "label": str(field.get("label") or ""),
+                "type": str(field.get("type") or "string"),
+                "required": bool(field.get("required", False)),
+            }
+        )
+
+    display = schema.get("display") if isinstance(schema.get("display"), dict) else {}
+    return {
+        "schema_id": str(schema.get("schema_id") or ""),
+        "name": str(schema.get("name") or ""),
+        "default_name": str(schema.get("default_name") or schema.get("name") or ""),
+        "description": schema.get("description"),
+        "card_type": str(display.get("card_type") or "light"),
+        "config_fields": config_fields,
+    }
+
+
+def _serialize_installed_extension(
+    extension: InstalledExtension,
+    *,
+    external_device_count: int = 0,
+) -> dict[str, Any]:
+    manifest = extension.manifest if isinstance(extension.manifest, dict) else {}
+    device_schemas = manifest.get("device_schemas") if isinstance(manifest.get("device_schemas"), list) else []
+    return {
+        "extension_id": extension.extension_id,
+        "manifest_version": extension.manifest_version,
+        "name": extension.name,
+        "version": extension.version,
+        "author": extension.author,
+        "description": extension.description,
+        "provider_key": extension.provider_key,
+        "provider_name": extension.provider_name,
+        "package_runtime": extension.package_runtime,
+        "package_entrypoint": extension.package_entrypoint,
+        "package_root": extension.package_root,
+        "archive_sha256": extension.archive_sha256,
+        "manifest": manifest,
+        "device_schemas": [
+            _serialize_extension_device_schema(schema)
+            for schema in device_schemas
+            if isinstance(schema, dict)
+        ],
+        "external_device_count": external_device_count,
+        "installed_at": extension.installed_at,
+        "updated_at": extension.updated_at,
     }
 
 
@@ -2240,6 +2375,190 @@ async def reveal_wifi_credential_password(
     }
 
 
+@router.get("/extensions", response_model=List[InstalledExtensionResponse])
+async def list_installed_extensions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_account_admin_user),
+):
+    _get_current_household_or_404(db, current_user)
+    extensions = (
+        db.query(InstalledExtension)
+        .order_by(InstalledExtension.name.asc(), InstalledExtension.version.desc())
+        .all()
+    )
+    if not extensions:
+        return []
+
+    extension_ids = [extension.extension_id for extension in extensions]
+    counts = {
+        extension_id: count
+        for extension_id, count in (
+            db.query(
+                ExternalDevice.installed_extension_id,
+                func.count(ExternalDevice.device_id),
+            )
+            .filter(ExternalDevice.installed_extension_id.in_(extension_ids))
+            .group_by(ExternalDevice.installed_extension_id)
+            .all()
+        )
+    }
+    return [
+        _serialize_installed_extension(
+            extension,
+            external_device_count=int(counts.get(extension.extension_id, 0)),
+        )
+        for extension in extensions
+    ]
+
+
+@router.get("/extensions/{extension_id}", response_model=InstalledExtensionResponse)
+async def get_installed_extension(
+    extension_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_account_admin_user),
+):
+    _get_current_household_or_404(db, current_user)
+    extension = (
+        db.query(InstalledExtension)
+        .filter(InstalledExtension.extension_id == extension_id)
+        .first()
+    )
+    if extension is None:
+        raise HTTPException(status_code=404, detail="Extension not found")
+
+    external_device_count = (
+        db.query(func.count(ExternalDevice.device_id))
+        .filter(ExternalDevice.installed_extension_id == extension.extension_id)
+        .scalar()
+    ) or 0
+    return _serialize_installed_extension(
+        extension,
+        external_device_count=int(external_device_count),
+    )
+
+
+@router.post("/extensions/upload", response_model=InstalledExtensionResponse)
+async def upload_extension_zip(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_account_admin_user),
+):
+    _get_current_household_or_404(db, current_user)
+
+    archive_bytes = await file.read()
+    try:
+        normalized_manifest, archive_metadata = parse_extension_archive(archive_bytes)
+    except ExtensionManifestValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": str(exc)},
+        ) from exc
+
+    archive_path = persist_extension_archive(
+        archive_bytes=archive_bytes,
+        extension_id=normalized_manifest["extension_id"],
+        version=normalized_manifest["version"],
+        archive_sha256=archive_metadata["archive_sha256"],
+    )
+
+    extension = (
+        db.query(InstalledExtension)
+        .filter(InstalledExtension.extension_id == normalized_manifest["extension_id"])
+        .first()
+    )
+    if extension is None:
+        extension = InstalledExtension(extension_id=normalized_manifest["extension_id"])
+        db.add(extension)
+
+    extension.manifest_version = normalized_manifest["manifest_version"]
+    extension.name = normalized_manifest["name"]
+    extension.version = normalized_manifest["version"]
+    extension.author = normalized_manifest.get("author")
+    extension.description = normalized_manifest["description"]
+    extension.provider_key = normalized_manifest["provider"]["key"]
+    extension.provider_name = normalized_manifest["provider"]["display_name"]
+    extension.package_runtime = normalized_manifest["package"]["runtime"]
+    extension.package_entrypoint = normalized_manifest["package"]["entrypoint"]
+    extension.package_root = archive_metadata.get("package_root")
+    extension.archive_path = str(archive_path)
+    extension.archive_sha256 = archive_metadata["archive_sha256"]
+    extension.manifest = normalized_manifest
+    db.commit()
+    db.refresh(extension)
+
+    external_device_count = (
+        db.query(func.count(ExternalDevice.device_id))
+        .filter(ExternalDevice.installed_extension_id == extension.extension_id)
+        .scalar()
+    ) or 0
+    return _serialize_installed_extension(
+        extension,
+        external_device_count=int(external_device_count),
+    )
+
+
+@router.get("/external-devices", response_model=List[DeviceResponse])
+async def list_external_devices(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_account_admin_user),
+):
+    external_devices = _load_visible_external_devices(db, current_user, AuthStatus.approved)
+    return [_serialize_external_device(device) for device in external_devices]
+
+
+@router.post("/external-devices", response_model=DeviceResponse)
+async def create_external_device(
+    payload: ExternalDeviceCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_account_admin_user),
+):
+    household = _get_current_household_or_404(db, current_user)
+    extension = (
+        db.query(InstalledExtension)
+        .filter(InstalledExtension.extension_id == payload.installed_extension_id.strip())
+        .first()
+    )
+    if extension is None:
+        raise HTTPException(status_code=404, detail="Installed extension not found")
+
+    manifest = extension.manifest if isinstance(extension.manifest, dict) else {}
+    try:
+        schema = get_manifest_device_schema(manifest, payload.device_schema_id.strip())
+        normalized_config = validate_external_device_config(schema, payload.config)
+    except ExtensionManifestValidationError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": str(exc)},
+        ) from exc
+
+    room_id = payload.room_id
+    if room_id is not None:
+        room = _get_room_in_household_or_404(db, current_user, room_id)
+        room_id = room.room_id
+
+    requested_name = payload.name.strip() if isinstance(payload.name, str) else ""
+    device_name = requested_name or str(schema.get("default_name") or schema.get("name") or extension.name)
+    external_device = ExternalDevice(
+        device_id=str(uuid.uuid4()),
+        installed_extension_id=extension.extension_id,
+        device_schema_id=str(schema["schema_id"]),
+        household_id=household.household_id,
+        room_id=room_id,
+        owner_id=current_user.user_id,
+        name=device_name[:255],
+        provider=extension.provider_name,
+        config=normalized_config,
+        schema_snapshot=schema,
+        auth_status=AuthStatus.approved,
+        conn_status=ConnStatus.offline,
+        last_state={"pin": 0, "value": 0, "brightness": 0},
+    )
+    db.add(external_device)
+    db.commit()
+    db.refresh(external_device)
+    return _serialize_external_device(external_device)
+
+
 @router.post("/config", response_model=DeviceHandshakeResponse)
 async def register_device_handshake(
     payload: DeviceRegister,
@@ -2350,7 +2669,72 @@ def _load_visible_devices(
 
     _expire_stale_devices(db, devices)
 
+    project_ids = [d.provisioning_project_id for d in devices if d.provisioning_project_id]
+    if project_ids:
+        from app.sql_models import DiyProject
+        projects = db.query(DiyProject.id, DiyProject.board_profile).filter(DiyProject.id.in_(project_ids)).all()
+        project_boards = {pid: board for pid, board in projects}
+        for d in devices:
+            if d.provisioning_project_id:
+                setattr(d, "board", project_boards.get(d.provisioning_project_id))
+
     return [_attach_room_name(_attach_runtime_state(db, device)) for device in devices]
+
+
+def _load_visible_external_devices(
+    db: Session,
+    current_user: User,
+    requested_status: AuthStatus,
+) -> list[ExternalDevice]:
+    household_id = resolve_household_id_for_user(db, current_user)
+    if household_id is None:
+        return []
+
+    query = (
+        db.query(ExternalDevice)
+        .filter(
+            ExternalDevice.household_id == household_id,
+            ExternalDevice.auth_status == requested_status,
+        )
+        .order_by(ExternalDevice.created_at.desc(), ExternalDevice.name.asc())
+    )
+
+    if not _is_room_admin(current_user):
+        if requested_status != AuthStatus.approved:
+            raise HTTPException(status_code=403, detail="Not authorized to view this device state")
+
+        accessible_room_ids = _get_accessible_room_ids_for_user(db, current_user)
+        if not accessible_room_ids:
+            return []
+        query = query.filter(ExternalDevice.room_id.in_(accessible_room_ids))
+
+    return query.all()
+
+
+def _get_external_device_in_household_or_404(
+    db: Session,
+    current_user: User,
+    device_id: str,
+) -> ExternalDevice:
+    household_id = resolve_household_id_for_user(db, current_user)
+    if household_id is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+
+    query = db.query(ExternalDevice).filter(
+        ExternalDevice.device_id == device_id,
+        ExternalDevice.household_id == household_id,
+    )
+
+    if not _is_room_admin(current_user):
+        accessible_room_ids = _get_accessible_room_ids_for_user(db, current_user)
+        if not accessible_room_ids:
+            raise HTTPException(status_code=404, detail="Device not found")
+        query = query.filter(ExternalDevice.room_id.in_(accessible_room_ids))
+
+    external_device = query.first()
+    if external_device is None:
+        raise HTTPException(status_code=404, detail="Device not found")
+    return external_device
 
 
 def _automation_device_scope_for_user(db: Session, current_user: User) -> dict[str, Device]:
@@ -2366,9 +2750,13 @@ async def list_devices(
 ):
     requested_status = auth_status or AuthStatus.approved
     devices = _load_visible_devices(db, current_user, requested_status)
+    external_devices = _load_visible_external_devices(db, current_user, requested_status)
     if _is_room_admin(current_user):
-        return devices
-    return [_serialize_device_availability(device) for device in devices]
+        return devices + [_serialize_external_device(device) for device in external_devices]
+    return [
+        *[_serialize_device_availability(device) for device in devices],
+        *[_serialize_external_device_availability(device) for device in external_devices],
+    ]
 
 
 @router.get("/dashboard/devices", response_model=List[DeviceResponse])
@@ -2376,16 +2764,28 @@ async def list_dashboard_devices(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    return _load_visible_devices(db, current_user, AuthStatus.approved)
+    devices = _load_visible_devices(db, current_user, AuthStatus.approved)
+    external_devices = _load_visible_external_devices(db, current_user, AuthStatus.approved)
+    return devices + [_serialize_external_device(device) for device in external_devices]
 
 @router.get("/device/{device_id}", response_model=DeviceResponse)
 async def get_device(device_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
     Get detailed information about a single device.
     """
-    device = _get_device_or_404(db, device_id)
-    _ensure_device_control_access(db, current_user, device)
-    return _attach_room_name(_attach_runtime_state(db, device))
+    device = db.query(Device).filter(Device.device_id == device_id).first()
+    if device is not None:
+        _ensure_device_control_access(db, current_user, device)
+        if device.provisioning_project_id:
+            from app.sql_models import DiyProject
+            project = db.query(DiyProject.id, DiyProject.board_profile).filter(DiyProject.id == device.provisioning_project_id).first()
+            if project:
+                setattr(device, "board", project.board_profile)
+        return _attach_room_name(_attach_runtime_state(db, device))
+
+    external_device = _get_external_device_in_household_or_404(db, current_user, device_id)
+    _ensure_external_device_control_access(db, current_user, external_device)
+    return _serialize_external_device(external_device)
 
 
 @router.put("/device/{device_id}/config")
@@ -2474,6 +2874,7 @@ async def update_device_config(
     allow_legacy_wifi_fallback = not (
         wifi_credential_was_explicitly_set and requested_credential_id is None
     )
+    board_definition = resolve_board_definition(project.board_profile)
     wifi_credential = _resolve_wifi_credential_for_payload(
         db,
         current_user,
@@ -2489,7 +2890,7 @@ async def update_device_config(
         ),
         config_payload=current_config if allow_legacy_wifi_fallback else None,
         create_from_legacy=allow_legacy_wifi_fallback,
-        required=not allow_empty_draft_save,
+        required=not allow_empty_draft_save and board_definition.canonical_id != "jc3827w543",
         missing_message="Select a Wi-Fi credential before updating this board config.",
     )
     current_config = _stamp_wifi_credential_config(current_config, wifi_credential)
@@ -2559,6 +2960,7 @@ async def update_device_config(
         config_name=config_name,
         config_payload=prepared_config,
         existing_config=target_saved_config,
+        update_in_place=allow_empty_draft_save,
     )
     if allow_empty_draft_save:
         db.commit()
@@ -2679,15 +3081,26 @@ async def delete_device(device_id: str, db: Session = Depends(get_db), current_u
     """
     Unpair a device from the dashboard while preserving its identity so it can be paired again.
     """
-    device = _get_device_in_household_or_404(db, current_user, device_id)
+    try:
+        device = _get_device_in_household_or_404(db, current_user, device_id)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        device = None
 
-    owner = db.query(User).filter(User.user_id == device.owner_id).first()
-    device.auth_status = AuthStatus.pending
-    device.pairing_requested_at = None
-    _remove_device_widgets(owner, device.device_id)
+    if device is not None:
+        owner = db.query(User).filter(User.user_id == device.owner_id).first()
+        device.auth_status = AuthStatus.pending
+        device.pairing_requested_at = None
+        _remove_device_widgets(owner, device.device_id)
+        db.commit()
+        _broadcast_pairing_queue_updated(device, reason="unpaired")
+        return {"status": "unpaired", "detail": f"Device {device_id} removed from the dashboard and is ready to pair again."}
+
+    external_device = _get_external_device_in_household_or_404(db, current_user, device_id)
+    db.delete(external_device)
     db.commit()
-    _broadcast_pairing_queue_updated(device, reason="unpaired")
-    return {"status": "unpaired", "detail": f"Device {device_id} removed from the dashboard and is ready to pair again."}
+    return {"status": "deleted", "detail": f"External device {device_id} removed from the dashboard."}
 
 @router.post("/device/{device_id}/command")
 async def send_command(
@@ -2700,7 +3113,18 @@ async def send_command(
     """
     Send a command to the device via MQTT and record the publish result.
     """
-    device = _get_device_or_404(db, device_id)
+    device = db.query(Device).filter(Device.device_id == device_id).first()
+    if device is None:
+        external_device = _get_external_device_in_household_or_404(db, current_user, device_id)
+        _ensure_external_device_control_access(db, current_user, external_device)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "unsupported",
+                "message": "External device runtime is not enabled yet for this extension.",
+            },
+        )
+
     _ensure_device_control_access(db, current_user, device)
     command = dict(command or {})
     supplied_password = command.pop("password", None)
@@ -3018,14 +3442,20 @@ async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(ge
             detail={"error": "validation", "message": "Select a room before creating a device project."},
         )
 
+    try:
+        board_definition = resolve_board_definition(project.board_profile)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"error": "validation", "message": str(e)})
+
     room = _get_room_in_household_or_404(db, current_user, project.room_id)
+    wifi_credential_required = board_definition.canonical_id != "jc3827w543"
     wifi_credential = _resolve_wifi_credential_for_payload(
         db,
         current_user,
         requested_credential_id=project.wifi_credential_id,
         config_payload=project.config,
         create_from_legacy=True,
-        required=True,
+        required=wifi_credential_required,
         missing_message="Select a Wi-Fi credential before creating a device project.",
     )
     project_id = str(uuid.uuid4())
@@ -3035,7 +3465,7 @@ async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(ge
         id=project_id,
         user_id=current_user.user_id,
         room_id=room.room_id,
-        wifi_credential_id=wifi_credential.id,
+        wifi_credential_id=wifi_credential.id if wifi_credential is not None else None,
         name=project.name,
         board_profile=project.board_profile,
         config=stamped_config,
@@ -3070,19 +3500,7 @@ async def list_diy_projects(
 
     projects = query.order_by(DiyProject.updated_at.desc(), DiyProject.created_at.desc()).all()
     if board_profile:
-        try:
-            expected_board = resolve_board_definition(board_profile)
-            matched_projects = []
-            for project in projects:
-                try:
-                    if resolve_board_definition(project.board_profile).canonical_id == expected_board.canonical_id:
-                        matched_projects.append(project)
-                except ValueError:
-                    if project.board_profile == board_profile:
-                        matched_projects.append(project)
-            projects = matched_projects
-        except ValueError:
-            projects = [project for project in projects if project.board_profile == board_profile]
+        projects = [project for project in projects if project.board_profile == board_profile]
 
     if not projects:
         return []
@@ -3419,6 +3837,12 @@ async def delete_device_config_history(
 @router.put("/diy/projects/{project_id}", response_model=DiyProjectResponse)
 async def update_diy_project(project_id: str, project_update: DiyProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
     project = _get_project_in_household_or_404(db, current_user, project_id)
+    board_definition = resolve_board_definition(project.board_profile)
+    if project_update.board_profile != project.board_profile:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": "Cannot change the board profile of an existing project."},
+        )
     if project_update.room_id is None:
         raise HTTPException(
             status_code=400,
@@ -3432,13 +3856,13 @@ async def update_diy_project(project_id: str, project_update: DiyProjectCreate, 
         existing_credential_id=project.wifi_credential_id,
         config_payload=project_update.config,
         create_from_legacy=True,
-        required=True,
+        required=board_definition.canonical_id != "jc3827w543",
         missing_message="Select a Wi-Fi credential before saving the device project.",
     )
     project.name = project_update.name
     project.board_profile = project_update.board_profile
     project.room_id = room.room_id
-    project.wifi_credential_id = wifi_credential.id
+    project.wifi_credential_id = wifi_credential.id if wifi_credential is not None else None
     project.config = stamp_project_secret(
         _stamp_wifi_credential_config(project_update.config, wifi_credential),
         project.id,
@@ -3585,7 +4009,7 @@ async def get_build_artifact(job_id: str, db: Session = Depends(get_db), current
 @router.get("/diy/build/{job_id}/artifact/{artifact_name}")
 async def get_build_artifact_part(
     job_id: str,
-    artifact_name: Literal["firmware", "bootloader", "partitions"],
+    artifact_name: Literal["firmware", "bootloader", "partitions", "boot_app0"],
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):

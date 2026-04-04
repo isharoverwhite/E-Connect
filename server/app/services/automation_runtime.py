@@ -20,6 +20,8 @@ from ..sql_models import (
     EventType,
     HouseholdMembership,
     PinMode,
+    SystemLog,
+    SystemLogCategory,
     User,
 )
 from .timezone_settings import DEFAULT_SERVER_TIMEZONE, normalize_supported_timezone
@@ -27,13 +29,14 @@ from .timezone_settings import DEFAULT_SERVER_TIMEZONE, normalize_supported_time
 TRIGGER_PORT = "event_out"
 FLOW_INPUT_PORT = "event_in"
 CONDITION_PASS_PORT = "pass_out"
+CONDITION_FAIL_PORT = "fail_out"
 TIME_TRIGGER_KIND = "time_schedule"
 TIME_TRIGGER_SCHEDULE_TYPE = "time"
 SUPPORTED_TRIGGER_SOURCES = ("manual", "device_state", "schedule")
 SUPPORTED_NODE_TYPES = ("trigger", "condition", "action")
 SUPPORTED_TRIGGER_KINDS = ("device_state", "device_value", "device_on_off_event", TIME_TRIGGER_KIND)
 SUPPORTED_CONDITION_KINDS = ("state_equals", "numeric_compare")
-SUPPORTED_ACTION_KINDS = ("set_output", "set_value")
+SUPPORTED_ACTION_KINDS = ("set_output", "set_value", "send_telegram_notification")
 SUPPORTED_COMPARISON_OPERATORS = ("gt", "gte", "lt", "lte", "between")
 EXPECTED_BINARY_VALUES = {"on", "off"}
 SET_OUTPUT_VALUES = {0, 1}
@@ -256,6 +259,16 @@ def _normalize_condition_config(kind: str, config: Mapping[str, Any]) -> dict[st
 
 
 def _normalize_action_config(kind: str, config: Mapping[str, Any]) -> dict[str, Any]:
+    if kind == "send_telegram_notification":
+        res = {
+            "message": str(config.get("message") or ""),
+            "severity": str(config.get("severity") or "info"),
+        }
+        if kind == "send_telegram_notification":
+            res["bot_api_key"] = str(config.get("bot_api_key") or "")
+            res["chat_id"] = str(config.get("chat_id") or "")
+        return res
+
     normalized = {
         "device_id": _normalize_text(config.get("device_id"), field_name="Action device_id"),
         "pin": _normalize_int(config.get("pin"), field_name="Action pin"),
@@ -340,6 +353,9 @@ def _validate_device_bindings(normalized_graph: dict[str, Any], *, device_scope:
         if node["type"] == "trigger" and node["kind"] == TIME_TRIGGER_KIND:
             continue
 
+        if node["type"] == "action" and node["kind"] == "send_telegram_notification":
+            continue
+
         device_id = config.get("device_id")
         device = device_scope.get(device_id)
         if device is None:
@@ -415,10 +431,11 @@ def normalize_automation_graph(
             if edge["source_port"] != TRIGGER_PORT:
                 raise AutomationGraphValidationError("Trigger nodes must emit from port 'event_out'.")
         elif source_node["type"] == "condition":
-            if edge["source_port"] != CONDITION_PASS_PORT:
-                raise AutomationGraphValidationError("Condition nodes must emit from port 'pass_out'.")
-        else:
-            raise AutomationGraphValidationError("Action nodes cannot have outgoing edges.")
+            if edge["source_port"] not in (CONDITION_PASS_PORT, CONDITION_FAIL_PORT):
+                raise AutomationGraphValidationError("Condition nodes must emit from port 'pass_out' or 'fail_out'.")
+        elif source_node["type"] == "action":
+            if edge["source_port"] != TRIGGER_PORT:
+                raise AutomationGraphValidationError("Action nodes must emit from port 'event_out'.")
 
         if target_node["type"] not in {"condition", "action"} or edge["target_port"] != FLOW_INPUT_PORT:
             raise AutomationGraphValidationError("Edges must connect into a condition/action 'event_in' port.")
@@ -451,8 +468,7 @@ def normalize_automation_graph(
 
         if node["type"] == "condition" and not outgoing[node_id]:
             raise AutomationGraphValidationError(f"Condition node '{node_id}' must connect to a downstream node.")
-        if node["type"] == "action" and outgoing[node_id]:
-            raise AutomationGraphValidationError(f"Action node '{node_id}' cannot connect to downstream nodes.")
+
 
     visited: set[str] = set()
     stack: set[str] = set()
@@ -814,10 +830,66 @@ def _dispatch_action(
     node: Mapping[str, Any],
     publish_command: Callable[[str, dict[str, Any]], bool],
     device_lookup: Mapping[str, Device],
+    automation: Automation,
 ) -> tuple[bool, str]:
     config = node["config"]
-    device_id = config["device_id"]
-    device = device_lookup.get(device_id)
+
+    if node["kind"] == "send_telegram_notification":
+        bot_api_key = config.get("bot_api_key", "").strip()
+        chat_id = config.get("chat_id", "").strip()
+        if not bot_api_key or not chat_id:
+            return False, f"{node['id']}: Telegram Notification aborted (missing bot API key or chat ID)"
+
+        message_template = config.get("message", "").strip()
+        
+        # Deduce message if missing
+        if not message_template:
+            # Gather other actions to form a digest
+            action_summaries = []
+            try:
+                graph = deserialize_automation_graph(automation.script_code)
+                for n in graph.get("nodes", []):
+                    if n["type"] == "action" and n["id"] != node["id"]:
+                        target_device = device_lookup.get(n["config"].get("device_id", ""))
+                        device_name = target_device.name if target_device else "Unknown device"
+                        if n["kind"] == "set_output":
+                            state = "ON" if int(n["config"].get("value", 0)) else "OFF"
+                            action_summaries.append(f"turned {state} {device_name} (pin {n['config'].get('pin')})")
+                        elif n["kind"] == "set_value":
+                            action_summaries.append(f"set {device_name} (pin {n['config'].get('pin')}) to {n['config'].get('value')}")
+                        elif n["kind"] == "send_telegram_notification":
+                            action_summaries.append(f"sent system notification")
+            except Exception:
+                pass
+            
+            if action_summaries:
+                message_template = f"Automation '{automation.name}' executed and {', '.join(action_summaries)}."
+            else:
+                message_template = f"Automation '{automation.name}' was triggered successfully."
+
+        message = message_template.replace("{{automation.name}}", automation.name)
+        
+        # Send HTTP request natively using urllib
+        import urllib.request
+        import ssl
+        try:
+            url = f"https://api.telegram.org/bot{bot_api_key}/sendMessage"
+            data = json.dumps({"chat_id": chat_id, "text": message}).encode("utf-8")
+            req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+            
+            # Avoid crashing if certification is a bit weird
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            
+            with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
+                pass
+            return True, f"{node['id']}: Telegram Notification sent to chat {chat_id}"
+        except Exception as e:
+            return False, f"{node['id']}: failed to send Telegram notification: {e}"
+
+    device_id = config.get("device_id")
+    device = device_lookup.get(device_id) if device_id else None
     if device is None:
         return False, f"{node['id']}: target device '{device_id}' is missing"
     if device.auth_status != AuthStatus.approved:
@@ -825,7 +897,7 @@ def _dispatch_action(
 
     command: dict[str, Any] = {
         "kind": "action",
-        "pin": config["pin"],
+        "pin": config.get("pin"),
         "command_id": str(uuid.uuid4()),
     }
     if node["kind"] == "set_output":
@@ -881,28 +953,33 @@ def _evaluate_graph_execution(
     executed_actions: set[str] = set()
 
     def walk(node_id: str) -> None:
+        node = node_by_id[node_id]
+        passed = True
+        if node["type"] == "condition":
+            passed, summary = _evaluate_condition_node(node, state_payloads=state_payloads)
+            evaluation_summaries.append(summary)
+            # We no longer count a false condition as a 'failure', it's just a branch decision.
+        elif node["type"] == "action":
+            if node_id in executed_actions:
+                return
+            success, summary = _dispatch_action(
+                db,
+                node=node,
+                publish_command=publish_command,
+                device_lookup=device_lookup,
+                automation=automation,
+            )
+            action_summaries.append(summary)
+            executed_actions.add(node_id)
+            if not success:
+                failures.append(summary)
+        if node["type"] in ("trigger", "action"):
+            active_port = TRIGGER_PORT
+        else:
+            active_port = CONDITION_PASS_PORT if passed else CONDITION_FAIL_PORT
         for edge in outgoing[node_id]:
-            target = node_by_id[edge["target_node_id"]]
-            if target["type"] == "condition":
-                passed, summary = _evaluate_condition_node(target, state_payloads=state_payloads)
-                evaluation_summaries.append(summary)
-                if passed:
-                    walk(target["id"])
-                else:
-                    failures.append(summary)
-            elif target["type"] == "action":
-                if target["id"] in executed_actions:
-                    continue
-                success, summary = _dispatch_action(
-                    db,
-                    node=target,
-                    publish_command=publish_command,
-                    device_lookup=device_lookup,
-                )
-                action_summaries.append(summary)
-                executed_actions.add(target["id"])
-                if not success:
-                    failures.append(summary)
+            if edge["source_port"] == active_port:
+                walk(edge["target_node_id"])
 
     walk(trigger_node["id"])
     status = ExecutionStatus.success if action_summaries and not failures else ExecutionStatus.failed

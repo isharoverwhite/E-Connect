@@ -345,7 +345,7 @@ export function Step4Flash({
                                 <div className="flex flex-wrap gap-2">
                                     <button
                                         onClick={onTriggerServerBuild}
-                                        disabled={buildBusy || hasActiveBuild || pinsLength === 0 || projectSyncState === "saving"}
+                                        disabled={buildBusy || hasActiveBuild || (pinsLength === 0 && board.id !== "jc3827w543") || projectSyncState === "saving"}
                                         className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
                                     >
                                         <span className="material-symbols-outlined text-base">

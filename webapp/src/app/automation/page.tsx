@@ -4,8 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import ConfirmModal from "@/components/ConfirmModal";
 import Sidebar from "@/components/Sidebar";
-import { AutomationRecord, AutomationListFilter, AutomationScheduleContext } from "@/types/automation";
-import { fetchAutomations, fetchAutomationScheduleContext, deleteAutomation } from "@/lib/api-automation";
+import { AutomationRecord, AutomationListFilter, AutomationScheduleContext, AutomationMutationPayload } from "@/types/automation";
+import { fetchAutomations, fetchAutomationScheduleContext, deleteAutomation, updateAutomation } from "@/lib/api-automation";
 import { getAutomationGraphSummary, getAutomationGraphReadiness, getReadinessClasses, formatAutomationRunTime } from "@/lib/automation-utils";
 
 function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => void }) {
@@ -58,6 +58,7 @@ export default function AutomationListPage() {
 
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [togglingId, setTogglingId] = useState<number | null>(null);
 
   const loadAutomations = async () => {
     try {
@@ -88,6 +89,35 @@ export default function AutomationListPage() {
       setDeletingId(null);
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleToggle = async (e: React.MouseEvent, automation: AutomationRecord) => {
+    e.stopPropagation();
+    try {
+      setTogglingId(automation.id);
+      const payload: AutomationMutationPayload = automation.graph
+        ? {
+            name: automation.name,
+            is_enabled: !automation.is_enabled,
+            graph: automation.graph,
+          }
+        : {
+            name: automation.name,
+            is_enabled: !automation.is_enabled,
+            script_code: automation.script_code ?? "",
+            schedule_type: automation.schedule_type,
+            timezone: automation.timezone,
+            schedule_hour: automation.schedule_hour,
+            schedule_minute: automation.schedule_minute,
+            schedule_weekdays: automation.schedule_weekdays,
+          };
+      const updated = await updateAutomation(automation.id, payload);
+      setAutomations((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to toggle automation");
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -147,6 +177,28 @@ export default function AutomationListPage() {
                     <span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide ${getReadinessClasses(readiness.tone)}`}>
                       {readiness.label}
                     </span>
+                    <button
+                      type="button"
+                      onClick={(e) => handleToggle(e, automation)}
+                      disabled={togglingId === automation.id}
+                      className={`opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity h-6 w-6 rounded-lg flex items-center justify-center focus:outline-none focus:ring-2 ${
+                        togglingId === automation.id
+                          ? "opacity-50 cursor-wait text-slate-400"
+                          : automation.is_enabled
+                          ? "text-slate-400 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-500/10 dark:hover:text-amber-400 focus:ring-amber-500/50"
+                          : "text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-500/10 dark:hover:text-emerald-400 focus:ring-emerald-500/50"
+                      }`}
+                      title={automation.is_enabled ? "Pause rule" : "Start rule"}
+                      aria-label={automation.is_enabled ? "Pause rule" : "Start rule"}
+                    >
+                      {togglingId === automation.id ? (
+                        <div className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-slate-600 dark:border-t-slate-300"></div>
+                      ) : (
+                        <span className="material-icons-round text-[16px]">
+                          {automation.is_enabled ? "pause" : "play_arrow"}
+                        </span>
+                      )}
+                    </button>
                     <button
                       type="button"
                       onClick={(e) => {
