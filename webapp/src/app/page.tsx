@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchDashboardDevices, fetchDevices, fetchSystemLogs, markSystemLogRead, markAllSystemLogsRead, SystemLogEntry, fetchSystemStatus } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
@@ -10,6 +10,7 @@ import { useWebSocket } from "@/hooks/useWebSocket";
 import { DynamicDeviceCard, getCardMinHeight } from "@/components/DeviceCard";
 import { Rnd } from "react-rnd";
 import DeviceScanConnectPanel from "@/components/DeviceScanConnectPanel";
+import { isSystemLogAlertEntry } from "@/lib/system-log";
 
 type CanvasLayout = { x: number; y: number; w: number | string; h: number | string };
 
@@ -23,19 +24,10 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [showNotifications, setShowNotifications] = useState(false);
   const [mountDropdown, setMountDropdown] = useState(false);
-  const [filterStatus, setFilterStatus] = useState<"all" | "online" | "offline">("all");
-  const [isClearing, setIsClearing] = useState(false);
   const [isScanModalOpen, setIsScanModalOpen] = useState(false);
-  const [clearingItemIds, setClearingItemIds] = useState<Set<string>>(new Set());
-  const [dismissedNotifIds, setDismissedNotifIds] = useState<Set<string>>(() => {
-    if (typeof window !== "undefined") {
-      try {
-        const saved = localStorage.getItem("dismissedNotifs");
-        if (saved) return new Set(JSON.parse(saved));
-      } catch {}
-    }
-    return new Set<string>();
-  });
+  const [markingAllNotifications, setMarkingAllNotifications] = useState(false);
+  const [markingNotificationIds, setMarkingNotificationIds] = useState<Set<number>>(new Set());
+  const [notificationError, setNotificationError] = useState("");
   
   const [isCustomizeMode, setIsCustomizeMode] = useState(false);
   const [canvasLayouts, setCanvasLayouts] = useState<Record<string, CanvasLayout>>(() => {
@@ -52,7 +44,6 @@ export default function Dashboard() {
   const [isMounted, setIsMounted] = useState(false);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsMounted(true);
     const handleResize = () => setWindowWidth(window.innerWidth);
     window.addEventListener("resize", handleResize);
@@ -76,11 +67,11 @@ export default function Dashboard() {
   };
 
   const isAdmin = user?.account_type === "admin";
-  async function syncDashboardData() {
+  const syncDashboardData = useCallback(async () => {
     const [dashboardDevices, pendingRequests, logsRes, statusRes] = await Promise.all([
       fetchDashboardDevices(),
       isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
-      isAdmin ? fetchSystemLogs(undefined, 50) : Promise.resolve({ entries: [] }),
+      isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
       isAdmin ? fetchSystemStatus() : Promise.resolve(null),
     ]);
     setDevices(dashboardDevices);
@@ -88,12 +79,12 @@ export default function Dashboard() {
     if (isAdmin) setSystemLogs(logsRes.entries);
     if (statusRes) setLatestFirmwareRevision(statusRes.latest_firmware_revision || null);
     setLoading(false);
-  }
+  }, [isAdmin]);
 
 
 
   const { isConnected } = useWebSocket((event) => {
-    if ((event.type === "pairing_requested" || event.type === "pairing_queue_updated") && isAdmin) {
+    if ((event.type === "pairing_requested" || event.type === "pairing_queue_updated" || event.type === "device_offline") && isAdmin) {
       void syncDashboardData();
       return;
     }
@@ -152,7 +143,7 @@ export default function Dashboard() {
         const [dashboardDevices, pendingRequests, logsRes, statusRes] = await Promise.all([
           fetchDashboardDevices(),
           isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
-          isAdmin ? fetchSystemLogs(undefined, 50) : Promise.resolve({ entries: [] }),
+          isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
           isAdmin ? fetchSystemStatus() : Promise.resolve(null),
         ]);
         if (cancelled) {
@@ -190,10 +181,10 @@ export default function Dashboard() {
   const newThisWeek = devices.filter(d => d.created_at && new Date(d.created_at) > oneWeekAgo).length;
 
   const visibleNotifications = useMemo(() => {
-    return systemLogs.filter(n => !dismissedNotifIds.has(n.id.toString()));
-  }, [systemLogs, dismissedNotifIds]);
+    return systemLogs.filter((entry) => isSystemLogAlertEntry(entry) && !entry.is_read);
+  }, [systemLogs]);
 
-  const alertCount = visibleNotifications.filter(n => !n.is_read).length;
+  const alertCount = visibleNotifications.length;
 
   const toggleDropdown = () => {
     if (showNotifications) {
@@ -205,26 +196,56 @@ export default function Dashboard() {
     }
   };
 
-  const handleClearAll = async () => {
-    setIsClearing(true);
-    setTimeout(async () => {
-      const newDismissed = new Set(dismissedNotifIds);
-      for (const n of visibleNotifications) {
-        newDismissed.add(n.id.toString());
-      }
-      setDismissedNotifIds(newDismissed);
-      try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(newDismissed))); } catch {}
+  const handleMarkAllNotificationsRead = async () => {
+    if (!isAdmin || markingAllNotifications || visibleNotifications.length === 0) {
+      return;
+    }
 
-      setSystemLogs(prev => prev.map(n => ({...n, is_read: true})));
-      try { await markAllSystemLogsRead(); } catch {}
-      setIsClearing(false);
-    }, 400); // Wait for slide out animation
+    setNotificationError("");
+    setMarkingAllNotifications(true);
+
+    try {
+      await markAllSystemLogsRead();
+      setSystemLogs((prev) =>
+        prev.map((entry) =>
+          isSystemLogAlertEntry(entry) && !entry.is_read
+            ? { ...entry, is_read: true }
+            : entry,
+        ),
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to mark all alerts as read";
+      setNotificationError(message);
+    } finally {
+      setMarkingAllNotifications(false);
+    }
   };
 
   const handleSingleNotifClick = async (notif: SystemLogEntry) => {
+    if (!isAdmin) {
+      return;
+    }
+
     if (!notif.is_read) {
-       setSystemLogs(prev => prev.map(n => n.id === notif.id ? { ...n, is_read: true } : n));
-       try { await markSystemLogRead(notif.id); } catch {}
+      setNotificationError("");
+      setMarkingNotificationIds((current) => new Set(current).add(notif.id));
+
+      try {
+        await markSystemLogRead(notif.id);
+        setSystemLogs((prev) => prev.map((entry) => (
+          entry.id === notif.id ? { ...entry, is_read: true } : entry
+        )));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed to mark alert as read";
+        setNotificationError(message);
+        return;
+      } finally {
+        setMarkingNotificationIds((current) => {
+          const next = new Set(current);
+          next.delete(notif.id);
+          return next;
+        });
+      }
     }
     router.push("/logs?view=alerts");
   };
@@ -271,14 +292,22 @@ export default function Dashboard() {
                     <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-100">Notifications</h3>
                     {visibleNotifications.length > 0 && (
                       <button
-                        onClick={handleClearAll}
-                        className="text-xs font-medium text-slate-500 hover:text-red-500 transition-colors flex items-center gap-1"
+                        onClick={() => void handleMarkAllNotificationsRead()}
+                        disabled={markingAllNotifications}
+                        className="text-xs font-medium text-slate-500 hover:text-primary transition-colors flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-60"
                       >
-                        <span className="material-icons-round text-[14px]">done_all</span>
-                        Make all read
+                        <span className={`material-icons-round text-[14px] ${markingAllNotifications ? "animate-spin" : ""}`}>
+                          {markingAllNotifications ? "progress_activity" : "mark_email_read"}
+                        </span>
+                        Mark all read
                       </button>
                     )}
                   </div>
+                  {notificationError ? (
+                    <div className="border-b border-rose-100 bg-rose-50 px-4 py-2 text-xs text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-300">
+                      {notificationError}
+                    </div>
+                  ) : null}
                   <div className="max-h-[32rem] overflow-y-auto">
                     {visibleNotifications.length === 0 ? (
                       <div className="p-8 text-center text-sm text-slate-500 flex flex-col items-center justify-center">
@@ -286,8 +315,8 @@ export default function Dashboard() {
                         <p>No new notifications</p>
                       </div>
                     ) : (
-                      visibleNotifications.map((notif, idx) => {
-                          const isUnread = !notif.is_read;
+                      visibleNotifications.map((notif) => {
+                          const isMarking = markingNotificationIds.has(notif.id);
                           const severityColor = notif.severity === 'info' ? 'text-sky-500 bg-sky-100 dark:bg-sky-500/10 dark:text-sky-400' :
                                                 notif.severity === 'warning' ? 'text-amber-500 bg-amber-100 dark:bg-amber-500/10 dark:text-amber-400' :
                                                 notif.severity === 'error' ? 'text-rose-500 bg-rose-100 dark:bg-rose-500/10 dark:text-rose-400' :
@@ -297,9 +326,8 @@ export default function Dashboard() {
                                        notif.severity === 'error' ? 'error' : 'report';
                           return (
                             <div key={notif.id} 
-                              className={`p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 group/notif cursor-pointer relative transition-all duration-400 ease-in-out ${isClearing || clearingItemIds.has(notif.id.toString()) ? 'opacity-0 -translate-x-full' : 'opacity-100 translate-x-0'}`}
-                              style={{ transitionDelay: isClearing ? `${idx * 40}ms` : '0ms' }}
-                              onClick={() => handleSingleNotifClick(notif)}
+                              className={`p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 cursor-pointer relative transition-opacity ${(isMarking || markingAllNotifications) ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}
+                              onClick={() => void handleSingleNotifClick(notif)}
                             >
                               <div className="flex gap-3">
                                 <div className="flex-shrink-0 mt-1">
@@ -309,39 +337,13 @@ export default function Dashboard() {
                                 </div>
                                 <div className="flex-1 min-w-0">
                                   <div className="flex justify-between items-start mb-1">
-                                    <p className={`text-sm text-slate-900 flex items-center gap-2 dark:text-white mt-1 capitalize ${isUnread ? 'font-bold' : 'font-medium'}`}>
+                                    <p className="text-sm text-slate-900 flex items-center gap-2 dark:text-white mt-1 font-bold capitalize">
                                       {notif.category}
-                                      {isUnread && <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>}
+                                      <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
                                     </p>
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setClearingItemIds(prev => {
-                                          const next = new Set(prev);
-                                          next.add(notif.id.toString());
-                                          return next;
-                                        });
-                                        setTimeout(() => {
-                                          setDismissedNotifIds(prev => {
-                                            const next = new Set(prev);
-                                            next.add(notif.id.toString());
-                                            try { localStorage.setItem('dismissedNotifs', JSON.stringify(Array.from(next))); } catch {}
-                                            return next;
-                                          });
-                                          setClearingItemIds(prev => {
-                                            const next = new Set(prev);
-                                            next.delete(notif.id.toString());
-                                            return next;
-                                          });
-                                        }, 400);
-                                      }}
-                                      className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-1 opacity-0 group-hover/notif:opacity-100 transition-opacity rounded-full hover:bg-slate-100 dark:hover:bg-slate-700 flex-shrink-0 ml-2"
-                                      title="Dismiss"
-                                    >
-                                      <span className="material-icons-round text-sm">close</span>
-                                    </button>
+                                    {isMarking ? <span className="material-icons-round animate-spin text-sm text-slate-400">progress_activity</span> : null}
                                   </div>
-                                  <p className={`text-xs break-all sm:break-words ${isUnread ? 'text-slate-700 dark:text-slate-300 font-medium' : 'text-slate-500 dark:text-slate-400'}`}>{notif.message}</p>
+                                  <p className="text-xs break-all sm:break-words text-slate-700 dark:text-slate-300 font-medium">{notif.message}</p>
                                   <p className="text-[10px] text-slate-400 mt-1">{new Date(notif.occurred_at).toLocaleString()}</p>
                                 </div>
                               </div>
@@ -547,4 +549,3 @@ export default function Dashboard() {
     </div>
   );
 }
-
