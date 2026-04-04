@@ -151,6 +151,7 @@
   - When a server build reaches `artifact_ready`, the frontend must also close any stale in-page `esp-web-tools` dialog, remount the install button, and re-check the selected port before the next browser flash launch.
   - The browser flasher becomes available only when the artifact/manifest is ready and the configured serial port is free; if any serial session still holds the port, the screen must show a release-first blocking message.
   - When Web Serial is unavailable because the page is not in a secure context, the lock message must direct the user to reopen the page on the HTTPS companion origin instead of implying that the plain HTTP dashboard origin is unsupported for all use cases.
+  - After the browser flasher closes, the primary completion CTA must return the admin to `/devices` instead of forcing `/devices/discovery`, because live scan/connect is already available from `/` and `/devices`.
 
 ## Managed Device Reconfiguration
 - **`/devices/[id]/config`**:
@@ -233,6 +234,8 @@
   - The page header must keep the title block readable while preserving the admin action set `SVG Builder`, `Discover New`, and `Refresh`.
   - Action labels must stay on a single line inside each button; when horizontal space becomes tight, the action group wraps beneath the title or onto a new row as whole buttons instead of compressing text inside the buttons.
   - On narrow widths, button tap targets, icon alignment, and vertical rhythm must remain consistent even when the action group spans multiple rows.
+  - The `Scan Device` action on `/devices` must open the same live scanner used by the dedicated discovery flow instead of behaving like a dead link or one-shot fetch.
+  - That live scanner must stay subscribed over WebSocket until a board reports an active pair request, so the admin can wait in place and press `Connect` immediately when the board appears.
   - Each admin device card must show both the developer-managed `firmware revision` and the runtime `firmware version` built from the current user configuration.
   - If a board has not reported either firmware field yet, the card must show a clear fallback such as `Unknown` instead of leaving the value blank.
   - External-device rows merged from the extension registry must render as provider-backed cards and clearly distinguish `provider/source` metadata from physical board metadata such as MAC address or firmware revision.
@@ -240,6 +243,7 @@
   - The pairing notification card only appears when the server has at least one active board-initiated pairing request.
   - A device that was merely unpaired from the dashboard must not create a pairing notification by itself.
   - Notification badge counts must include both offline alerts and active pairing requests.
+  - The dashboard header `Scan Device` action must reuse that same WebSocket-backed live scanner so admins can keep waiting for pair requests without leaving `/`.
 - **Dashboard summary routing**:
   - The `System Alerts` summary card on `/` must route directly into `/logs` and pre-focus alert-worthy entries rather than behaving like a dead KPI tile.
   - The notification drawer footer `View Activity Log` must continue routing into `/logs` as the full operational history view.
@@ -257,6 +261,7 @@
 - **Discovery screen**:
   - Discovery reflects only pairing requests that successfully reached the current server; it is not proof of generic LAN or mDNS visibility.
   - If the server moves to a new IP/hostname, boards flashed with older artifacts remain invisible here until rebuilt and reflashed against the new server/MQTT host.
+  - The dedicated `/devices/discovery` route and the inline `Scan Device` actions on `/` and `/devices` must render the same scanner state machine and the same `Connect` CTA so pairing behavior does not drift between entry points.
   - A board flashed from a website-managed server build may skip manual approval only when its secure onboarding identity still matches the system-issued firmware metadata: the `UUID` must match the project-derived device id and the reported `name` must match the firmware-stamped device name.
   - When an active scan observes a newly connected board that was auto-approved through that secure server-built onboarding path, the discovery UI must still surface a result card with the board identity and a clear CTA into managed devices instead of dropping straight to the empty state.
   - On the first successful secure onboarding handshake, the backend must bind the reported `MAC address` to that trusted device record. Later secure handshakes must keep `UUID`, stored `name`, and stored `MAC address` aligned; otherwise the request must fail closed instead of silently overwriting the trusted record or auto-provisioning dashboard widgets.

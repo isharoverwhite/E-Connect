@@ -2299,7 +2299,7 @@ export default function DIYBuilderPage() {
             onRefreshSerialStatus={() => refreshSerialStatus()}
             onLogPanelRef={(el) => { logPanelRef.current = el; }}
             onBack={() => setCurrentStep(4)}
-            onProceedToScan={() => router.push("/devices/discovery")}
+            onOpenDevices={() => router.push("/devices")}
             flasherClosed={flasherClosed}
             timezone={effectiveTimezone}
           />

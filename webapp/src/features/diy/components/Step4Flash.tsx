@@ -50,7 +50,7 @@ export interface Step4FlashProps {
     onReleaseSerialLock: () => Promise<void>;
     onRefreshSerialStatus: () => Promise<void>;
     onLogPanelRef?: (element: HTMLDivElement | null) => void;
-    onProceedToScan: () => void;
+    onOpenDevices: () => void;
     flasherClosed: boolean;
     timezone?: string | null;
 }
@@ -171,7 +171,7 @@ export function Step4Flash({
     onReleaseSerialLock,
     onRefreshSerialStatus,
     onLogPanelRef,
-    onProceedToScan,
+    onOpenDevices,
     flasherClosed,
     timezone,
 }: Step4FlashProps) {
@@ -665,10 +665,10 @@ export function Step4Flash({
 
                 {flasherClosed && (
                     <button
-                        onClick={onProceedToScan}
+                        onClick={onOpenDevices}
                         className="flex items-center gap-2 rounded-lg bg-primary px-6 py-2.5 font-bold text-white shadow-sm transition-colors hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 dark:focus:ring-offset-slate-900"
                     >
-                        Proceed to Scan Device
+                        Open Devices
                         <span className="material-symbols-outlined text-sm">arrow_forward</span>
                     </button>
                 )}
