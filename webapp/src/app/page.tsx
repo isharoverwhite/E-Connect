@@ -46,6 +46,22 @@ export default function Dashboard() {
     return {};
   });
 
+  const [windowWidth, setWindowWidth] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsMounted(true);
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
+  const isMobile = windowWidth < 1024;
+  const hasCustomLayout = Object.keys(canvasLayouts).length > 0;
+  // Use canvas if we are customizing, or if we have a custom layout AND we are not on mobile
+  const shouldUseCanvas = isMounted && (isCustomizeMode || (hasCustomLayout && !isMobile));
+
   const saveCanvasLayout = () => {
     localStorage.setItem("dashboardCanvasLayout", JSON.stringify(canvasLayouts));
     setIsCustomizeMode(false);
@@ -423,30 +439,32 @@ export default function Dashboard() {
 
             <div className="mb-8">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Canvas Panel</h2>
+                <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Device Dashboard</h2>
                 <div className="flex space-x-2">
-                  {isCustomizeMode ? (
-                    <>
-                      <button onClick={resetCanvasLayout} className="flex items-center px-3 py-1.5 border border-red-300 dark:border-red-600 rounded bg-white dark:bg-slate-800 shadow-sm text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
-                        <span className="material-icons-round text-[16px] mr-1.5">restart_alt</span> Reset
+                  {!isMobile && (
+                    isCustomizeMode ? (
+                      <>
+                        <button onClick={resetCanvasLayout} className="flex items-center px-3 py-1.5 border border-red-300 dark:border-red-600 rounded bg-white dark:bg-slate-800 shadow-sm text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
+                          <span className="material-icons-round text-[16px] mr-1.5">restart_alt</span> Reset
+                        </button>
+                        <button onClick={saveCanvasLayout} className="flex items-center px-3 py-1.5 bg-primary text-white rounded shadow-sm text-sm font-medium hover:bg-blue-600 transition-colors">
+                          <span className="material-icons-round text-[16px] mr-1.5">save</span> Save Layout
+                        </button>
+                      </>
+                    ) : (
+                      <button onClick={() => setIsCustomizeMode(true)} className="flex items-center px-3 py-1.5 border border-slate-300 dark:border-slate-600 rounded text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors bg-white dark:bg-slate-800 shadow-sm font-medium">
+                        <span className="material-icons-round text-[16px] mr-1.5">tune</span> Customize
                       </button>
-                      <button onClick={saveCanvasLayout} className="flex items-center px-3 py-1.5 bg-primary text-white rounded shadow-sm text-sm font-medium hover:bg-blue-600 transition-colors">
-                        <span className="material-icons-round text-[16px] mr-1.5">save</span> Save Layout
-                      </button>
-                    </>
-                  ) : (
-                    <button onClick={() => setIsCustomizeMode(true)} className="flex items-center px-3 py-1.5 border border-slate-300 dark:border-slate-600 rounded text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors bg-white dark:bg-slate-800 shadow-sm font-medium">
-                      <span className="material-icons-round text-[16px] mr-1.5">tune</span> Customize
-                    </button>
+                    )
                   )}
                 </div>
               </div>
-              <div className={`relative h-[600px] lg:h-[800px] w-full rounded-xl transition-colors duration-300 overflow-auto canvas-dot-bg ${isCustomizeMode ? 'bg-slate-100 dark:bg-slate-800/80 border-2 border-dashed border-primary/50' : 'bg-slate-50/50 dark:bg-slate-900/50'}`}>
+              <div className={`relative w-full rounded-xl transition-all duration-300 ${shouldUseCanvas ? `h-[600px] lg:h-[800px] overflow-auto canvas-dot-bg ${isCustomizeMode ? 'bg-slate-100 dark:bg-slate-800/80 border-2 border-dashed border-primary/50' : 'bg-slate-50/50 dark:bg-slate-900/50'}` : 'h-auto min-h-[400px] bg-transparent overflow-visible'}`}>
                 {loading ? (
                   <div className="py-12 text-center text-slate-400">Loading devices...</div>
                 ) : approvedDevices.length === 0 ? (
                   <div className="py-12 text-center text-slate-400">No devices found.</div>
-                ) : (
+                ) : shouldUseCanvas ? (
                   <div style={{ minHeight: `${Math.max(10, ...approvedDevices.map((config, idx) => {
                     if (!("device_id" in config)) return 0;
                     const c = config as DeviceConfig;
@@ -492,6 +510,20 @@ export default function Dashboard() {
                     );
                   })}
                 </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-1">
+                    {approvedDevices.map((config) => {
+                      if (!("device_id" in config)) return null;
+                      const c = config as DeviceConfig;
+                      return (
+                        <div key={c.device_id} className="w-full flex h-full">
+                          <div className="w-full h-full">
+                            <DynamicDeviceCard config={c} isOnline={isDeviceOnline(c)} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
             </div>
