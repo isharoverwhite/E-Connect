@@ -363,14 +363,6 @@ export default function DeviceScanConnectPanel({
             <p className="mx-auto max-w-md text-sm text-slate-500 dark:text-slate-400">
               Keep the board powered and trigger pairing. As soon as it reaches this server, the connect card appears here without another rescan.
             </p>
-            <div className="mt-8 flex justify-center">
-              <button
-                onClick={() => setScanState("idle")}
-                className="rounded-lg border border-transparent px-4 py-2 text-sm font-medium text-slate-500 transition-colors hover:border-slate-200 hover:text-slate-700 dark:hover:border-slate-700 dark:hover:text-slate-300"
-              >
-                Stop Listening
-              </button>
-            </div>
           </div>
         ) : null}
 
