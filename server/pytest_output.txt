@@ -1,0 +1,485 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.14.2, pytest-9.0.2, pluggy-1.6.0 -- /usr/local/bin/python3
+cachedir: .pytest_cache
+rootdir: /Users/kiendinhtrung/Documents/GitHub/Final-Project/server
+plugins: anyio-4.12.1
+collecting ... collected 237 items
+
+tests/test_auth.py::test_system_status_uninitialized PASSED              [  0%]
+tests/test_auth.py::test_initialserver_success PASSED                    [  0%]
+tests/test_auth.py::test_initialserver_validation_failures PASSED        [  1%]
+tests/test_auth.py::test_initialserver_second_attempt_fails PASSED       [  1%]
+tests/test_auth.py::test_admin_can_create_user PASSED                    [  2%]
+tests/test_auth.py::test_non_admin_cannot_create_user PASSED             [  2%]
+tests/test_auth.py::test_unauthenticated_cannot_create_user PASSED       [  2%]
+tests/test_auth.py::test_admin_created_user_can_log_in_immediately PASSED [  3%]
+tests/test_auth.py::test_deleted_user_cannot_access_authenticated_routes PASSED [  3%]
+tests/test_auth.py::test_login_token_uses_self_hosted_friendly_expiry PASSED [  4%]
+tests/test_auth.py::test_login_returns_refresh_token_and_expiry_metadata PASSED [  4%]
+tests/test_auth.py::test_refresh_endpoint_rotates_non_persistent_session PASSED [  5%]
+tests/test_auth.py::test_refresh_endpoint_rejects_access_token_payload PASSED [  5%]
+tests/test_auth.py::test_keep_login_returns_persistent_session_tokens PASSED [  5%]
+tests/test_auth.py::test_deleted_user_cannot_refresh_existing_session PASSED [  6%]
+tests/test_auth.py::test_create_access_token_still_honors_explicit_override PASSED [  6%]
+tests/test_automation.py::test_create_automation_persists_graph_contract PASSED [  7%]
+tests/test_automation.py::test_update_automation_persists_graph_contract PASSED [  7%]
+tests/test_automation.py::test_create_automation_persists_time_trigger_projection PASSED [  8%]
+tests/test_automation.py::test_delete_automation_removes_rule_and_execution_logs PASSED [  8%]
+tests/test_automation.py::test_create_automation_rejects_invalid_graph PASSED [  8%]
+tests/test_automation.py::test_create_automation_rejects_invalid_trigger_mode_for_pin PASSED [  9%]
+tests/test_automation.py::test_create_automation_rejects_invalid_time_trigger_weekday PASSED [  9%]
+tests/test_automation.py::test_automation_openapi_exposes_graph_contract PASSED [ 10%]
+tests/test_automation.py::test_list_automations_accepts_legacy_schedule_logs PASSED [ 10%]
+tests/test_automation.py::test_schedule_context_returns_effective_server_timezone PASSED [ 10%]
+tests/test_automation.py::test_system_time_context_returns_effective_server_timezone PASSED [ 11%]
+tests/test_automation.py::test_list_devices_includes_external_automation_pin_configurations PASSED [ 11%]
+tests/test_automation.py::test_manual_trigger_uses_persisted_external_device_switch_state PASSED [ 12%]
+tests/test_automation.py::test_process_state_event_runs_enabled_automation_for_external_device_value_trigger PASSED [ 12%]
+tests/test_automation.py::test_manual_trigger_dispatches_external_device_value_action PASSED [ 13%]
+tests/test_automation.py::test_manual_trigger_executes_graph_and_records_log PASSED [ 13%]
+tests/test_automation.py::test_manual_trigger_uses_enqueue_command PASSED [ 13%]
+tests/test_automation.py::test_process_state_event_runs_enabled_automation_for_device_value_trigger PASSED [ 14%]
+tests/test_automation.py::test_process_state_event_ignores_duplicate_numeric_snapshot PASSED [ 14%]
+tests/test_automation.py::test_process_state_event_runs_enabled_automation_for_on_off_trigger PASSED [ 15%]
+tests/test_automation.py::test_process_state_event_ignores_duplicate_on_off_snapshot PASSED [ 15%]
+tests/test_automation.py::test_process_state_event_ignores_follow_up_noop_after_self_target_change PASSED [ 16%]
+tests/test_automation.py::test_process_time_trigger_runs_enabled_automation_once_per_scheduled_minute PASSED [ 16%]
+tests/test_database_config.py::test_database_url_uses_explicit_env PASSED [ 16%]
+tests/test_database_config.py::test_database_url_defaults_to_local_docker_mariadb PASSED [ 17%]
+tests/test_database_config.py::test_initialize_database_runs_cleanup_backfills_and_approval_drop PASSED [ 17%]
+tests/test_database_config.py::test_initialize_database_backfills_legacy_history_and_cleans_stale_board_config PASSED [ 18%]
+tests/test_database_config.py::test_initialize_database_skips_backfill_for_history_deleted_snapshots PASSED [ 18%]
+tests/test_database_config.py::test_initialize_database_creates_extension_registry_tables PASSED [ 18%]
+tests/test_device_heartbeat.py::test_expire_stale_online_devices_once_marks_old_devices_offline PASSED [ 19%]
+tests/test_device_heartbeat.py::test_expire_stale_online_devices_once_leaves_recent_devices_online PASSED [ 19%]
+tests/test_diy_api.py::test_wifi_credentials_are_masked_in_list_and_reveal_requires_password PASSED [ 20%]
+tests/test_diy_api.py::test_owner_role_without_admin_account_cannot_crud_wifi_credentials PASSED [ 20%]
+tests/test_diy_api.py::test_owner_role_without_admin_account_cannot_create_project_from_legacy_wifi_payload PASSED [ 21%]
+tests/test_diy_api.py::test_create_project_creates_and_links_wifi_credential_from_legacy_payload PASSED [ 21%]
+tests/test_diy_api.py::test_create_jc3827_project_allows_board_local_wifi_flow PASSED [ 21%]
+tests/test_diy_api.py::test_jc3827_validation_rejects_internal_or_unsupported_pins PASSED [ 22%]
+tests/test_diy_api.py::test_delete_wifi_credential_conflicts_when_in_use_by_project PASSED [ 22%]
+tests/test_diy_api.py::test_system_status PASSED                         [ 23%]
+tests/test_diy_api.py::test_initial_server_setup PASSED                  [ 23%]
+tests/test_diy_api.py::test_create_project_and_build PASSED              [ 24%]
+tests/test_diy_api.py::test_delete_project_requires_password_confirmation PASSED [ 24%]
+tests/test_diy_api.py::test_delete_project_rejects_incorrect_password PASSED [ 24%]
+tests/test_diy_api.py::test_delete_project_succeeds_with_current_user_password PASSED [ 25%]
+tests/test_diy_api.py::test_trigger_build_stamps_reachable_server_host_into_project_config PASSED [ 25%]
+tests/test_diy_api.py::test_trigger_build_rejects_localhost_request_host PASSED [ 26%]
+tests/test_diy_api.py::test_trigger_build_stamps_distinct_public_mqtt_target PASSED [ 26%]
+tests/test_diy_api.py::test_trigger_build_prefers_configured_public_base_url_over_localhost_request PASSED [ 27%]
+tests/test_diy_api.py::test_trigger_build_prefers_browser_origin_header_over_internal_proxy_host PASSED [ 27%]
+tests/test_diy_api.py::test_get_diy_network_targets_uses_browser_origin_header PASSED [ 27%]
+tests/test_diy_api.py::test_get_diy_network_targets_falls_back_when_host_storage_mount_is_missing PASSED [ 28%]
+tests/test_diy_api.py::test_get_diy_network_targets_prefers_runtime_startup_target_over_localhost_request PASSED [ 28%]
+tests/test_diy_api.py::test_get_diy_network_targets_includes_startup_audit_warning PASSED [ 29%]
+tests/test_diy_api.py::test_get_diy_network_targets_rejects_authenticated_non_admin_user PASSED [ 29%]
+tests/test_diy_api.py::test_trigger_build_rejects_invalid_configured_public_base_url PASSED [ 29%]
+tests/test_diy_api.py::test_describe_network_target_change_requires_rebuild_for_new_server_ip PASSED [ 30%]
+tests/test_diy_api.py::test_i2c_catalog_api PASSED                       [ 30%]
+tests/test_diy_api.py::test_create_project_with_pwm_range PASSED         [ 31%]
+tests/test_diy_api.py::test_create_project_with_i2c_metadata PASSED      [ 31%]
+tests/test_diy_api.py::test_validate_diy_config_pwm_reverse_range_allowed PASSED [ 32%]
+tests/test_diy_api.py::test_validate_diy_config_pwm_equal_range_invalid PASSED [ 32%]
+tests/test_diy_api.py::test_validate_diy_config_i2c_missing_pin PASSED   [ 32%]
+tests/test_diy_api.py::test_validate_diy_config_i2c_bad_address PASSED   [ 33%]
+tests/test_diy_api.py::test_mqtt_only_rest_block PASSED                  [ 33%]
+tests/test_diy_api.py::test_resolve_board_definition_supports_explicit_esp8266_variants PASSED [ 34%]
+tests/test_diy_api.py::test_validate_diy_config_is_board_aware_for_esp8266 PASSED [ 34%]
+tests/test_diy_api.py::test_builder_generates_esp8266_platformio_ini PASSED [ 35%]
+tests/test_diy_api.py::test_builder_generates_jc3827_platformio_ini_with_repo_board_profile PASSED [ 35%]
+tests/test_diy_api.py::test_collect_build_outputs_supports_esp8266_firmware_only PASSED [ 35%]
+tests/test_diy_api.py::test_collect_build_outputs_includes_full_bundle_for_non_jc_esp32 PASSED [ 36%]
+tests/test_diy_api.py::test_collect_build_outputs_includes_boot_app0_for_jc3827_full_bundle PASSED [ 36%]
+tests/test_diy_api.py::test_resolve_build_artifact_path_keeps_firmware_and_part_paths_separate PASSED [ 37%]
+tests/test_diy_api.py::test_builder_generates_correct_config PASSED      [ 37%]
+tests/test_diy_api.py::test_firmware_template_declares_developer_managed_revision PASSED [ 37%]
+tests/test_diy_api.py::test_firmware_template_platformio_ini_uses_redacted_local_overrides PASSED [ 38%]
+tests/test_diy_api.py::test_builder_uses_distinct_stamped_public_mqtt_target PASSED [ 38%]
+tests/test_diy_api.py::test_builder_preserves_descending_pwm_range PASSED [ 39%]
+tests/test_diy_api.py::test_release_project_serial_reservation_releases_same_user_lock PASSED [ 39%]
+tests/test_diy_api.py::test_release_project_serial_reservation_ignores_other_user_lock PASSED [ 40%]
+tests/test_diy_api.py::test_create_project_invalid_board_profile PASSED  [ 40%]
+tests/test_diy_api.py::test_update_project_immutable_board_profile PASSED [ 40%]
+tests/test_diy_ota_config.py::test_put_device_config_success PASSED      [ 41%]
+tests/test_diy_ota_config.py::test_put_device_config_stages_device_name_until_flash PASSED [ 41%]
+tests/test_diy_ota_config.py::test_put_device_config_preserves_board_reported_pin_map_until_reconnect PASSED [ 42%]
+tests/test_diy_ota_config.py::test_put_device_config_prefers_forwarded_host_for_firmware_target PASSED [ 42%]
+tests/test_diy_ota_config.py::test_put_device_config_normalizes_secure_companion_origin_to_http_lan_transport PASSED [ 43%]
+tests/test_diy_ota_config.py::test_put_device_config_rejects_docker_local_host PASSED [ 43%]
+tests/test_diy_ota_config.py::test_get_build_job_includes_expected_firmware_version PASSED [ 43%]
+tests/test_diy_ota_config.py::test_get_build_job_includes_exact_build_ota_download_url PASSED [ 44%]
+tests/test_diy_ota_config.py::test_put_device_config_creates_named_saved_config_without_pruning_build_history PASSED [ 44%]
+tests/test_diy_ota_config.py::test_list_device_config_history_returns_all_saved_configs_with_board_assignment PASSED [ 45%]
+tests/test_diy_ota_config.py::test_config_history_keeps_legacy_jobs_and_current_saved_config PASSED [ 45%]
+tests/test_diy_ota_config.py::test_rename_device_config_history_updates_current_committed_snapshot_name PASSED [ 45%]
+tests/test_diy_ota_config.py::test_rename_device_config_history_updates_pending_snapshot_name PASSED [ 46%]
+tests/test_diy_ota_config.py::test_put_device_config_updates_existing_saved_config_when_config_id_is_provided PASSED [ 46%]
+tests/test_diy_ota_config.py::test_put_device_config_can_clone_existing_saved_config_into_new_config PASSED [ 47%]
+tests/test_diy_ota_config.py::test_put_device_config_invalid_not_diy PASSED [ 47%]
+tests/test_diy_ota_config.py::test_put_device_config_overwrite_requires_account_password PASSED [ 48%]
+tests/test_diy_ota_config.py::test_put_device_config_overwrite_rejects_wrong_account_password PASSED [ 48%]
+tests/test_diy_ota_config.py::test_put_device_config_updates_selected_wifi_credential PASSED [ 48%]
+tests/test_diy_ota_config.py::test_put_device_config_empty_payload_saves_draft_without_creating_job PASSED [ 49%]
+tests/test_diy_ota_config.py::test_put_device_config_empty_payload_can_save_draft_while_active_job_exists PASSED [ 49%]
+tests/test_diy_ota_config.py::test_put_device_config_conflicts_with_active_job PASSED [ 50%]
+tests/test_diy_ota_config.py::test_ota_download_unauthenticated_not_ready PASSED [ 50%]
+tests/test_diy_ota_config.py::test_delete_old_device_config_history_removes_saved_config_and_keeps_build_snapshot PASSED [ 51%]
+tests/test_diy_ota_config.py::test_delete_old_device_config_history_does_not_rematerialize_deleted_snapshot_on_reload PASSED [ 51%]
+tests/test_diy_ota_config.py::test_delete_device_config_history_rejects_current_committed_config PASSED [ 51%]
+tests/test_diy_ota_config.py::test_delete_device_config_history_rejects_pending_ota_config PASSED [ 52%]
+tests/test_diy_ota_config.py::test_legacy_ota_endpoints_are_locked PASSED [ 52%]
+tests/test_diy_ota_config.py::test_send_command_ota_publish_success PASSED [ 53%]
+tests/test_diy_ota_config.py::test_send_command_ota_requires_account_password PASSED [ 53%]
+tests/test_diy_ota_config.py::test_send_command_ota_rejects_wrong_account_password PASSED [ 54%]
+tests/test_diy_ota_config.py::test_send_command_ota_publish_failure PASSED [ 54%]
+tests/test_diy_ota_config.py::test_send_command_ota_retry_after_flash_failed_reuses_artifact PASSED [ 54%]
+tests/test_diy_ota_config.py::test_send_command_ota_rejects_wrong_project_job PASSED [ 55%]
+tests/test_diy_ota_config.py::test_mqtt_process_ota_status PASSED        [ 55%]
+tests/test_diy_ota_config.py::test_mqtt_state_multi_pin_payload_acknowledges_pending_command PASSED [ 56%]
+tests/test_diy_ota_config.py::test_mqtt_state_unknown_device_requests_repair PASSED [ 56%]
+tests/test_diy_ota_config.py::test_mqtt_enqueue_command_skips_wait_for_publish PASSED [ 56%]
+tests/test_diy_ota_config.py::test_mqtt_state_automation_dispatch_uses_enqueue_command PASSED [ 57%]
+tests/test_diy_ota_config.py::test_mqtt_state_hidden_pending_device_requests_repair PASSED [ 57%]
+tests/test_diy_ota_config.py::test_mqtt_state_active_pending_device_stays_waiting_for_approval PASSED [ 58%]
+tests/test_diy_ota_config.py::test_mqtt_state_firmware_network_mismatch_requires_manual_reflash PASSED [ 58%]
+tests/test_diy_ota_config.py::test_mqtt_state_rejected_device_reports_pairing_rejected PASSED [ 59%]
+tests/test_diy_ota_config.py::test_mqtt_register_firmware_network_mismatch_requires_manual_reflash PASSED [ 59%]
+tests/test_diy_ota_config.py::test_mqtt_register_success_ack_can_exceed_legacy_512_byte_parser_budget PASSED [ 59%]
+tests/test_diy_ota_config.py::test_mqtt_register_accepts_trusted_mac_mismatch_for_board_replacement PASSED [ 60%]
+tests/test_diy_ota_config.py::test_mqtt_reconcile_ota_success PASSED     [ 60%]
+tests/test_diy_ota_config.py::test_mqtt_state_persists_reported_firmware_revision PASSED [ 61%]
+tests/test_diy_ota_config.py::test_mqtt_reconcile_ota_mismatch_recent PASSED [ 61%]
+tests/test_diy_ota_config.py::test_mqtt_reconcile_ota_mismatch_stale PASSED [ 62%]
+tests/test_diy_ota_config.py::test_mqtt_state_recent_flashed_job_mismatch_fails_immediately PASSED [ 62%]
+tests/test_diy_ota_config.py::test_mqtt_register_reconcile_ota_success PASSED [ 62%]
+tests/test_diy_ota_config.py::test_mqtt_register_reconcile_ota_mismatch_recent PASSED [ 63%]
+tests/test_diy_ota_config.py::test_mqtt_register_reconcile_ota_mismatch_stale PASSED [ 63%]
+tests/test_diy_ota_config.py::test_mqtt_register_recent_flashed_job_keeps_board_reported_pin_map_on_old_firmware PASSED [ 64%]
+tests/test_extensions_api.py::test_parse_extension_archive_rejects_legacy_manifest_shape PASSED [ 64%]
+tests/test_extensions_api.py::test_upload_extension_zip_persists_manifest_and_lists_it PASSED [ 64%]
+tests/test_extensions_api.py::test_load_installed_extension_runtime_uses_existing_extracted_package_when_archive_is_missing PASSED [ 65%]
+tests/test_extensions_api.py::test_delete_installed_extension_removes_db_row_and_runtime_files PASSED [ 65%]
+tests/test_extensions_api.py::test_delete_installed_extension_rejects_packages_still_used_by_external_devices PASSED [ 66%]
+tests/test_extensions_api.py::test_create_external_device_is_merged_into_device_read_models PASSED [ 66%]
+tests/test_extensions_api.py::test_create_external_device_requires_schema_config_fields PASSED [ 67%]
+tests/test_extensions_api.py::test_create_external_device_persists_selected_room PASSED [ 67%]
+tests/test_extensions_api.py::test_external_device_command_executes_runtime_and_updates_state PASSED [ 67%]
+tests/test_extensions_api.py::test_external_device_command_accepts_color_temperature_for_legacy_color_schema PASSED [ 68%]
+tests/test_extensions_api.py::test_external_device_command_failure_marks_device_offline PASSED [ 68%]
+tests/test_extensions_api.py::test_external_device_command_connection_failure_is_reported_as_offline_without_asgi_error PASSED [ 69%]
+tests/test_extensions_api.py::test_execute_external_device_command_ignores_async_notification_frames PASSED [ 69%]
+tests/test_extensions_api.py::test_execute_external_device_command_supports_rgb_and_color_temperature PASSED [ 70%]
+tests/test_extensions_api.py::test_execute_external_device_command_enriches_legacy_color_schema_with_tone PASSED [ 70%]
+tests/test_extensions_api.py::test_execute_external_device_command_powers_on_before_tone_when_last_state_is_off PASSED [ 70%]
+tests/test_extensions_api.py::test_probe_external_device_state_reads_actual_props PASSED [ 71%]
+tests/test_extensions_api.py::test_probe_external_device_state_does_not_fallback_to_discovery_when_tcp_connect_fails PASSED [ 71%]
+tests/test_extensions_api.py::test_execute_external_device_command_secondary_retry_no_longer_raises_name_error PASSED [ 72%]
+tests/test_extensions_api.py::test_collect_yeelight_diagnostics_includes_discovery_and_timeout_trace PASSED [ 72%]
+tests/test_extensions_api.py::test_refresh_external_device_states_once_marks_online_and_broadcasts_state PASSED [ 72%]
+tests/test_extensions_api.py::test_refresh_external_device_states_once_marks_offline_on_probe_error PASSED [ 73%]
+tests/test_extensions_api.py::test_refresh_external_device_states_once_skips_missing_runtime_package_without_crashing PASSED [ 73%]
+tests/test_extensions_api.py::test_execute_external_device_command_reconciles_direct_timeout_with_observed_state PASSED [ 74%]
+tests/test_firmware_runtime_network.py::test_resolve_runtime_firmware_network_state_autodetects_startup_ip PASSED [ 74%]
+tests/test_firmware_runtime_network.py::test_resolve_runtime_firmware_network_state_uses_public_mqtt_override PASSED [ 75%]
+tests/test_firmware_runtime_network.py::test_resolve_runtime_firmware_network_state_ignores_internal_mqtt_broker_env PASSED [ 75%]
+tests/test_firmware_runtime_network.py::test_resolve_runtime_firmware_network_state_warns_for_docker_bridge PASSED [ 75%]
+tests/test_firmware_runtime_network.py::test_infer_firmware_network_targets_can_fallback_to_request_when_runtime_state_has_warning PASSED [ 76%]
+tests/test_firmware_runtime_network.py::test_infer_firmware_network_targets_normalizes_https_companion_origin_to_http_lan_transport PASSED [ 76%]
+tests/test_firmware_runtime_network.py::test_resolve_webapp_transport_reads_protocol_and_port_from_api_base_url PASSED [ 77%]
+tests/test_firmware_runtime_network.py::test_resolve_webapp_transport_defaults_to_http_3000_when_backend_has_no_value PASSED [ 77%]
+tests/test_firmware_runtime_network.py::test_describe_runtime_firmware_mismatch_requires_manual_reflash PASSED [ 78%]
+tests/test_firmware_runtime_network.py::test_audit_runtime_firmware_target_mismatches_flags_stale_projects PASSED [ 78%]
+tests/test_firmware_runtime_network.py::test_audit_runtime_firmware_target_mismatches_flags_legacy_host_only_projects PASSED [ 78%]
+tests/test_general_settings.py::test_general_settings_surfaces_env_timezone_as_current_runtime_timezone PASSED [ 79%]
+tests/test_general_settings.py::test_general_settings_uses_app_default_when_no_override_or_env PASSED [ 79%]
+tests/test_general_settings.py::test_update_general_settings_persists_override_and_beats_env PASSED [ 80%]
+tests/test_general_settings.py::test_update_general_settings_reschedules_time_trigger_automations PASSED [ 80%]
+tests/test_general_settings.py::test_clearing_general_settings_override_falls_back_to_current_runtime_timezone PASSED [ 81%]
+tests/test_general_settings.py::test_update_general_settings_rejects_unknown_timezone PASSED [ 81%]
+tests/test_mdns.py::test_resolve_mdns_registration_config_uses_runtime_ip_targets PASSED [ 81%]
+tests/test_mdns.py::test_resolve_mdns_registration_config_uses_explicit_ips_without_runtime_state PASSED [ 82%]
+tests/test_mdns.py::test_resolve_mdns_registration_config_prefers_explicit_ips PASSED [ 82%]
+tests/test_mdns.py::test_resolve_mdns_registration_config_rejects_non_local_hostname PASSED [ 83%]
+tests/test_mdns.py::test_resolve_mdns_registration_config_requires_ip_when_runtime_target_is_alias PASSED [ 83%]
+tests/test_mdns.py::test_mdns_publisher_registers_and_stops_services PASSED [ 83%]
+tests/test_mdns.py::test_mdns_publisher_allows_service_name_change_when_name_exists PASSED [ 84%]
+tests/test_pin_functions.py::test_pin_matches_function_keywords PASSED   [ 84%]
+tests/test_pin_functions.py::test_pin_supports_numeric_trigger PASSED    [ 85%]
+tests/test_pin_functions.py::test_pin_supports_binary_trigger PASSED     [ 85%]
+tests/test_reject_semantics.py::test_reject_device_forwards_rejection_and_hides_pending_device PASSED [ 86%]
+tests/test_room_access.py::test_room_access_filters_devices_and_commands PASSED [ 86%]
+tests/test_room_access.py::test_non_admin_cannot_create_project_delete_device_or_pair PASSED [ 86%]
+tests/test_room_access.py::test_unpair_stays_hidden_until_board_requests_pairing_again PASSED [ 87%]
+tests/test_room_access.py::test_secure_handshake_persists_firmware_revision_for_device_directory PASSED [ 87%]
+tests/test_room_access.py::test_secure_handshake_rejects_unexpected_provisioned_name PASSED [ 88%]
+tests/test_room_access.py::test_secure_handshake_accepts_mac_mismatch_for_board_replacement PASSED [ 88%]
+tests/test_room_access.py::test_secure_handshake_allows_system_renamed_name_with_same_uuid_and_mac PASSED [ 89%]
+tests/test_room_access.py::test_approve_device_broadcasts_pairing_queue_refresh PASSED [ 89%]
+tests/test_room_access.py::test_reject_device_forwards_rejection_and_hides_pending_device PASSED [ 89%]
+tests/test_room_access.py::test_unpair_device_broadcasts_pairing_queue_refresh PASSED [ 90%]
+tests/test_room_access.py::test_force_pairing_request_keeps_unknown_secure_device_pending PASSED [ 90%]
+tests/test_room_access.py::test_secure_handshake_reclaims_hidden_unpaired_legacy_mac_binding PASSED [ 91%]
+tests/test_room_access.py::test_same_household_admin_can_manage_project_and_build_job PASSED [ 91%]
+tests/test_room_access.py::test_foreign_household_admin_cannot_mutate_device_or_project PASSED [ 91%]
+tests/test_root_route.py::test_root_route_redirects_to_default_http_webapp_port PASSED [ 92%]
+tests/test_root_route.py::test_root_route_uses_runtime_webapp_transport_when_available PASSED [ 92%]
+tests/test_root_route.py::test_health_route_remains_available PASSED     [ 93%]
+tests/test_root_route.py::test_health_route_reports_initialized_after_first_user_exists PASSED [ 93%]
+tests/test_root_route.py::test_health_route_exposes_webapp_transport_from_runtime_network_targets PASSED [ 94%]
+tests/test_root_route.py::test_refresh_runtime_network_state_updates_startup_auto_target FAILED [ 94%]
+tests/test_root_route.py::test_health_route_prefers_mdns_advertised_server_ip_when_runtime_target_uses_alias PASSED [ 94%]
+tests/test_root_route.py::test_web_assistant_script_route_returns_jsonp_payload PASSED [ 95%]
+tests/test_root_route.py::test_web_assistant_script_route_rejects_invalid_callback PASSED [ 95%]
+tests/test_system_logs.py::test_record_server_startup_marks_unclean_shutdown_when_previous_session_lacked_shutdown PASSED [ 96%]
+tests/test_system_logs.py::test_prune_expired_system_logs_deletes_rows_older_than_retention PASSED [ 96%]
+tests/test_system_logs.py::test_system_status_and_logs_endpoints_return_recent_admin_view PASSED [ 97%]
+tests/test_system_logs.py::test_marking_alert_read_removes_it_from_active_status PASSED [ 97%]
+tests/test_system_logs.py::test_mark_all_reads_only_unread_alerts PASSED [ 97%]
+tests/test_system_logs.py::test_unexpected_mqtt_disconnect_records_critical_alert PASSED [ 98%]
+tests/test_system_metrics.py::test_collect_system_metrics_falls_back_to_root_when_host_mount_is_missing PASSED [ 98%]
+tests/test_ws_manager.py::test_connect_prunes_stale_connections_before_registering_new_socket PASSED [ 99%]
+tests/test_ws_manager.py::test_broadcast_device_event_prunes_stale_connections_without_warning PASSED [ 99%]
+tests/test_ws_manager.py::test_broadcast_system_event_removes_failed_socket_without_warning PASSED [100%]
+
+=================================== FAILURES ===================================
+________ test_refresh_runtime_network_state_updates_startup_auto_target ________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x10cd00830>
+
+    def test_refresh_runtime_network_state_updates_startup_auto_target(monkeypatch):
+        refreshed_state = {
+            "source": "startup_auto",
+            "targets": {
+                "advertised_host": "192.168.8.55",
+                "api_base_url": "http://192.168.8.55:3000/api/v1",
+                "mqtt_broker": "192.168.8.55",
+                "mqtt_port": 1883,
+                "target_key": "192.168.8.55|http://192.168.8.55:3000/api/v1|192.168.8.55|1883",
+            },
+            "error": None,
+        }
+        captured_states: list[dict[str, object]] = []
+        monkeypatch.setattr("main.resolve_runtime_firmware_network_state", lambda: refreshed_state)
+        monkeypatch.setattr("main.mqtt_manager.set_runtime_network_state", lambda state: captured_states.append(state))
+    
+        app.state.firmware_network_state = {
+            "source": "startup_auto",
+            "targets": {
+                "advertised_host": "192.168.2.16",
+                "api_base_url": "http://192.168.2.16:3000/api/v1",
+                "mqtt_broker": "192.168.2.16",
+                "mqtt_port": 1883,
+                "target_key": "192.168.2.16|http://192.168.2.16:3000/api/v1|192.168.2.16|1883",
+            },
+            "error": None,
+        }
+    
+        refreshed = main._refresh_runtime_network_state(app)
+    
+>       assert refreshed == refreshed_state
+E       AssertionError: assert {'source': 'startup_auto', 'targets': {'advertised_host': '192.168.2.65', 'api_base_url': 'http://192.168.2.65:3000/api/v1', 'mqtt_broker': '192.168.2.65', 'mqtt_port': 1883, 'target_key': '192.168.2.65|http://192.168.2.65:3000/api/v1|192.168.2.65|1883'}, 'error': None} == {'source': 'startup_auto', 'targets': {'advertised_host': '192.168.8.55', 'api_base_url': 'http://192.168.8.55:3000/api/v1', 'mqtt_broker': '192.168.8.55', 'mqtt_port': 1883, 'target_key': '192.168.8.55|http://192.168.8.55:3000/api/v1|192.168.8.55|1883'}, 'error': None}
+E         
+E         Common items:
+E         {'error': None, 'source': 'startup_auto'}
+E         Differing items:
+E         {'targets': {'advertised_host': '192.168.2.65', 'api_base_url': 'http://192.168.2.65:3000/api/v1', 'mqtt_broker': '192.168.2.65', 'mqtt_port': 1883, ...}} != {'targets': {'advertised_host': '192.168.8.55', 'api_base_url': 'http://192.168.8.55:3000/api/v1', 'mqtt_broker': '192.168.8.55', 'mqtt_port': 1883, ...}}
+E         
+E         Full diff:
+E           {
+E               'error': None,
+E               'source': 'startup_auto',
+E               'targets': {
+E         -         'advertised_host': '192.168.8.55',
+E         ?                                     ^ ^
+E         +         'advertised_host': '192.168.2.65',
+E         ?                                     ^ ^
+E         -         'api_base_url': 'http://192.168.8.55:3000/api/v1',
+E         ?                                         ^ ^
+E         +         'api_base_url': 'http://192.168.2.65:3000/api/v1',
+E         ?                                         ^ ^
+E         -         'mqtt_broker': '192.168.8.55',
+E         ?                                 ^ ^
+E         +         'mqtt_broker': '192.168.2.65',
+E         ?                                 ^ ^
+E                   'mqtt_port': 1883,
+E         -         'target_key': '192.168.8.55|http://192.168.8.55:3000/api/v1|192.168.8.55|1883',
+E         ?                                ^ ^                 ^ ^                      ^ ^
+E         +         'target_key': '192.168.2.65|http://192.168.2.65:3000/api/v1|192.168.2.65|1883',
+E         ?                                ^ ^                 ^ ^                      ^ ^
+E               },
+E           }
+
+tests/test_root_route.py:168: AssertionError
+=============================== warnings summary ===============================
+app/models.py:119
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:119: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class UserResponse(UserBase):
+
+app/models.py:136
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:136: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class HouseholdResponse(HouseholdBase):
+
+app/models.py:192
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:192: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class PinConfigResponse(PinConfigCreate):
+
+app/models.py:228
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:228: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class DeviceResponse(DeviceBase):
+
+app/models.py:280
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:280: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class RoomResponse(RoomCreate):
+
+app/models.py:307
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:307: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class AutomationLogResponse(BaseModel):
+
+app/models.py:321
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:321: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class AutomationResponse(AutomationCreate):
+
+app/models.py:352
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:352: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class DeviceHistoryResponse(DeviceHistoryCreate):
+
+app/models.py:362
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:362: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class SystemLogResponse(BaseModel):
+
+app/models.py:467
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:467: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class DiyProjectResponse(DiyProjectBase):
+
+app/models.py:531
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:531: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class ProjectDeviceUsage(BaseModel):
+
+app/models.py:576
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:576: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class BuildJobResponse(BaseModel):
+
+app/models.py:621
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:621: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class SerialSessionResponse(BaseModel):
+
+app/models.py:635
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/app/models.py:635: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.12/migration/
+    class FirmwareResponse(BaseModel):
+
+tests/test_auth.py::test_system_status_uninitialized
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_auth.py:48: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_auth.py: 16 warnings
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_auth.py:53: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_automation.py: 23 warnings
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_automation.py:62: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_device_heartbeat.py::test_expire_stale_online_devices_once_leaves_recent_devices_online
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_device_heartbeat.py:40: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_diy_api.py: 49 warnings
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_diy_api.py:62: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_diy_ota_config.py: 54 warnings
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_diy_ota_config.py:52: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_extensions_api.py: 23 warnings
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_extensions_api.py:91: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_firmware_runtime_network.py: 10 warnings
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_firmware_runtime_network.py:20: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_general_settings.py: 6 warnings
+tests/test_root_route.py: 8 warnings
+tests/test_system_logs.py: 3 warnings
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/main.py:476: DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).
+    app.state.server_started_at = datetime.utcnow()
+
+tests/test_general_settings.py::test_general_settings_surfaces_env_timezone_as_current_runtime_timezone
+tests/test_general_settings.py::test_general_settings_uses_app_default_when_no_override_or_env
+tests/test_general_settings.py::test_update_general_settings_persists_override_and_beats_env
+tests/test_general_settings.py::test_update_general_settings_reschedules_time_trigger_automations
+tests/test_general_settings.py::test_clearing_general_settings_override_falls_back_to_current_runtime_timezone
+tests/test_general_settings.py::test_update_general_settings_rejects_unknown_timezone
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_general_settings.py:58: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_reject_semantics.py::test_reject_device_forwards_rejection_and_hides_pending_device
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_reject_semantics.py:129: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_reject_semantics.py::test_reject_device_forwards_rejection_and_hides_pending_device
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_reject_semantics.py:133: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_room_access.py: 14 warnings
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_room_access.py:262: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_root_route.py::test_root_route_redirects_to_default_http_webapp_port
+tests/test_root_route.py::test_root_route_uses_runtime_webapp_transport_when_available
+tests/test_root_route.py::test_health_route_remains_available
+tests/test_root_route.py::test_health_route_reports_initialized_after_first_user_exists
+tests/test_root_route.py::test_health_route_exposes_webapp_transport_from_runtime_network_targets
+tests/test_root_route.py::test_refresh_runtime_network_state_updates_startup_auto_target
+tests/test_root_route.py::test_health_route_prefers_mdns_advertised_server_ip_when_runtime_target_uses_alias
+tests/test_root_route.py::test_web_assistant_script_route_returns_jsonp_payload
+tests/test_root_route.py::test_web_assistant_script_route_rejects_invalid_callback
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_root_route.py:37: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+tests/test_system_logs.py::test_record_server_startup_marks_unclean_shutdown_when_previous_session_lacked_shutdown
+tests/test_system_logs.py::test_prune_expired_system_logs_deletes_rows_older_than_retention
+tests/test_system_logs.py::test_system_status_and_logs_endpoints_return_recent_admin_view
+tests/test_system_logs.py::test_marking_alert_read_removes_it_from_active_status
+tests/test_system_logs.py::test_mark_all_reads_only_unread_alerts
+tests/test_system_logs.py::test_unexpected_mqtt_disconnect_records_critical_alert
+  /Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/test_system_logs.py:60: SAWarning: Can't sort tables for DROP; an unresolvable foreign key dependency exists between tables: diy_project_configs, diy_projects; and backend does not support ALTER.  To restore at least a partial sort, apply use_alter=True to ForeignKey and ForeignKeyConstraint objects involved in the cycle to mark these as known cycles that will be ignored.
+    Base.metadata.drop_all(bind=engine)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/test_root_route.py::test_refresh_runtime_network_state_updates_startup_auto_target - AssertionError: assert {'source': 'startup_auto', 'targets': {'advertised_host': '192.168.2.65', 'api_base_url': 'http://192.168.2.65:3000/api/v1', 'mqtt_broker': '192.168.2.65', 'mqtt_port': 1883, 'target_key': '192.168.2.65|http://192.168.2.65:3000/api/v1|192.168.2.65|1883'}, 'error': None} == {'source': 'startup_auto', 'targets': {'advertised_host': '192.168.8.55', 'api_base_url': 'http://192.168.8.55:3000/api/v1', 'mqtt_broker': '192.168.8.55', 'mqtt_port': 1883, 'target_key': '192.168.8.55|http://192.168.8.55:3000/api/v1|192.168.8.55|1883'}, 'error': None}
+  
+  Common items:
+  {'error': None, 'source': 'startup_auto'}
+  Differing items:
+  {'targets': {'advertised_host': '192.168.2.65', 'api_base_url': 'http://192.168.2.65:3000/api/v1', 'mqtt_broker': '192.168.2.65', 'mqtt_port': 1883, ...}} != {'targets': {'advertised_host': '192.168.8.55', 'api_base_url': 'http://192.168.8.55:3000/api/v1', 'mqtt_broker': '192.168.8.55', 'mqtt_port': 1883, ...}}
+  
+  Full diff:
+    {
+        'error': None,
+        'source': 'startup_auto',
+        'targets': {
+  -         'advertised_host': '192.168.8.55',
+  ?                                     ^ ^
+  +         'advertised_host': '192.168.2.65',
+  ?                                     ^ ^
+  -         'api_base_url': 'http://192.168.8.55:3000/api/v1',
+  ?                                         ^ ^
+  +         'api_base_url': 'http://192.168.2.65:3000/api/v1',
+  ?                                         ^ ^
+  -         'mqtt_broker': '192.168.8.55',
+  ?                                 ^ ^
+  +         'mqtt_broker': '192.168.2.65',
+  ?                                 ^ ^
+            'mqtt_port': 1883,
+  -         'target_key': '192.168.8.55|http://192.168.8.55:3000/api/v1|192.168.8.55|1883',
+  ?                                ^ ^                 ^ ^                      ^ ^
+  +         'target_key': '192.168.2.65|http://192.168.2.65:3000/api/v1|192.168.2.65|1883',
+  ?                                ^ ^                 ^ ^                      ^ ^
+        },
+    }
+============ 1 failed, 236 passed, 245 warnings in 91.26s (0:01:31) ============

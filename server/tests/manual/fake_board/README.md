@@ -1,6 +1,6 @@
 # Fake Board Test Guide
 
-Guide này mô tả cách dùng [harness.py](/Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/manual/fake_board/harness.py) để giả lập một board kết nối với server E-Connect, test pairing, discovery, remote command, heartbeat, và các failure path cơ bản.
+Guide này mô tả cách dùng [harness.py](./harness.py) để giả lập một board kết nối với server E-Connect, test pairing, discovery, remote command, heartbeat, và các failure path cơ bản.
 
 ## 1. Mục đích
 
@@ -347,6 +347,6 @@ Cách xử lý:
 
 ## 9. File liên quan
 
-- Harness chính: [harness.py](/Users/kiendinhtrung/Documents/GitHub/Final-Project/server/tests/manual/fake_board/harness.py)
-- Hướng dẫn run stack: [README.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/README.md)
-- Product baseline: [PRD.md](/Users/kiendinhtrung/Documents/GitHub/Final-Project/PRD.md)
+- Harness chính: [harness.py](./harness.py)
+- Hướng dẫn run stack: [README.md](../../../../README.md)
+- Product baseline: [PRD.md](../../../../PRD.md)

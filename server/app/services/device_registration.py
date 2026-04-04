@@ -4,7 +4,7 @@ import json
 import os
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -264,7 +264,7 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
     secret_verified = False
     pairing_requested = False
     reclaimed_stale_secure_mac = False
-    requested_at = datetime.utcnow()
+    requested_at = datetime.now(timezone.utc)
     force_pairing_request = bool(payload.force_pairing_request)
     normalized_payload_name = _normalize_device_name(payload.name)
     normalized_payload_mac = _normalize_mac_address(payload.mac_address)
@@ -387,7 +387,7 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
             firmware_revision=payload.firmware_revision,
             firmware_version=payload.firmware_version,
             ip_address=payload.ip_address,
-            last_seen=datetime.utcnow(),
+            last_seen=datetime.now(timezone.utc),
             pairing_requested_at=requested_at if should_start_pending else None,
             topic_pub=topic_pub,
             topic_sub=topic_sub,
@@ -414,7 +414,7 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
         device.firmware_version = payload.firmware_version
         device.ip_address = payload.ip_address or device.ip_address
         device.mode = payload.mode
-        device.last_seen = datetime.utcnow()
+        device.last_seen = datetime.now(timezone.utc)
         device.conn_status = ConnStatus.online
         device.topic_pub = topic_pub
         device.topic_sub = topic_sub

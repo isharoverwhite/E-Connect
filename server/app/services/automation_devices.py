@@ -338,7 +338,7 @@ def _coerce_runtime_reported_at(value: Any) -> datetime:
                     return parsed.astimezone(timezone.utc).replace(tzinfo=None)
                 return parsed
 
-    return datetime.utcnow()
+    return datetime.now(timezone.utc)
 
 
 def _canonicalize_state_payload(value: Any) -> Any:

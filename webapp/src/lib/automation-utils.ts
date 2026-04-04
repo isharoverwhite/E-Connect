@@ -343,7 +343,11 @@ export function isNumericPin(p: { mode?: string; function?: string | null; gpio_
     if (s && s.datatype) datatype = s.datatype;
   }
   if (datatype) return datatype === "number";
-  return mode === "ADC" || mode === "DHT22" || mode === "PWM" || p?.function?.toLowerCase().includes("temp") || p?.function?.toLowerCase().includes("hum") || p?.function?.toLowerCase().includes("moisture");
+  const funcLower = p?.function?.toLowerCase() || "";
+  return mode === "ADC" || mode === "DHT22" || mode === "PWM" || 
+         funcLower.includes("temp") || funcLower.includes("hum") || 
+         funcLower.includes("moisture") || funcLower.includes("analog") || 
+         funcLower.includes("sensor");
 }
 
 export function isSwitchPin(p: { mode?: string; function?: string | null; gpio_pin?: number } | undefined | null, lastState?: DeviceStateSnapshot | null) {
@@ -355,7 +359,12 @@ export function isSwitchPin(p: { mode?: string; function?: string | null; gpio_p
     if (s && s.datatype) datatype = s.datatype;
   }
   if (datatype) return datatype === "boolean";
-  return mode === "INPUT" || mode === "OUTPUT" || p?.function?.toLowerCase().includes("switch") || p?.function?.toLowerCase().includes("btn") || p?.function?.toLowerCase().includes("button") || p?.function?.toLowerCase().includes("relay") || p?.function?.toLowerCase().includes("contact") || p?.function?.toLowerCase().includes("pir");
+  const funcLower = p?.function?.toLowerCase() || "";
+  return mode === "INPUT" || mode === "OUTPUT" || 
+         funcLower.includes("switch") || funcLower.includes("btn") || 
+         funcLower.includes("button") || funcLower.includes("relay") || 
+         funcLower.includes("contact") || funcLower.includes("pir") || 
+         funcLower.includes("motion");
 }
 
 export function getTimeTriggerHour(config: AutomationGraphNodeConfig): number {
