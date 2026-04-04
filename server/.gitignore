@@ -1,1 +1,4 @@
 .env
+pytest_output.txt
+app/data/extensions/packages/
+app/data/extensions/extracted/
