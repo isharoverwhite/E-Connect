@@ -19,6 +19,12 @@ import { fetchWifiCredentials, type WifiCredentialRecord } from "@/lib/wifi-cred
 import { Step2Pins } from "@/features/diy/components/Step2Pins";
 import type { BoardProfile } from "@/features/diy/board-profiles";
 import { getBoardProfile } from "@/features/diy/board-profiles";
+import {
+  doesManagedConfigMatch,
+  normalizeManagedConfigPins,
+  resolveManagedConfigEditorBaseline,
+  type ManagedConfigComparable,
+} from "@/features/diy/managed-config-sync";
 import { resolveProjectBoardProfileId } from "@/features/diy/project-board";
 import type { BuildJobStatus, PinMapping } from "@/features/diy/types";
 import { validatePinMappings } from "@/features/diy/validation";
@@ -29,6 +35,7 @@ import { useToast } from "@/components/ToastContext";
 interface DiyProjectResponse {
   id: string;
   config?: Record<string, unknown> | null;
+  current_config_id?: string | null;
   pending_config?: Record<string, unknown> | null;
   pending_build_job_id?: string | null;
   pending_config_id?: string | null;
@@ -132,6 +139,16 @@ function readConfigName(projectConfig: Record<string, unknown> | null | undefine
   return typeof rawValue === "string" ? rawValue.trim() : "";
 }
 
+function readConfigId(projectConfig: Record<string, unknown> | null | undefined): string | null {
+  const rawValue = projectConfig?.config_id;
+  if (typeof rawValue !== "string") {
+    return null;
+  }
+
+  const normalized = rawValue.trim();
+  return normalized || null;
+}
+
 function readAssignedDeviceName(
   projectConfig: Record<string, unknown> | null | undefined,
   fallbackName: string,
@@ -157,28 +174,12 @@ function normalizeAssignedDeviceName(value: string, fallbackName: string): strin
   return (fallbackName.trim() || "E-Connect Node").slice(0, 255);
 }
 
-function normalizePins(pins: PinMapping[]): PinMapping[] {
-  return [...pins]
-    .map((pin) => ({
-      gpio_pin: pin.gpio_pin,
-      mode: pin.mode,
-      function: pin.function?.trim() || "",
-      label: pin.label?.trim() || "",
-      extra_params: pin.extra_params ?? null,
-    }))
-    .sort((left, right) => left.gpio_pin - right.gpio_pin);
-}
-
 function parseTimestamp(value?: string | null): number | null {
   if (!value) {
     return null;
   }
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
-}
-
-function serializePins(pins: PinMapping[]): string {
-  return JSON.stringify(normalizePins(pins));
 }
 
 function isExpectedFirmwareVersion(
@@ -330,6 +331,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   const saveShortcutStateRef = useRef({
     confirmModalOpen: false,
     hasChanges: false,
+    canReviewCurrentSelection: false,
     hasPendingActivation: false,
     getSaveBlockingMessage: () => null as string | null,
     openConfirmModal: () => { },
@@ -360,7 +362,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       return;
     }
 
-    if (currentShortcutState.hasChanges) {
+    if (currentShortcutState.hasChanges || currentShortcutState.canReviewCurrentSelection) {
       currentShortcutState.openConfirmModal();
       return;
     }
@@ -758,6 +760,20 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
     );
   }, [boardOnlineAfterOta, device, expectedFirmwareVersion, jobStatus, otaModalOpen]);
 
+  // Prevent leaving the page during active build or OTA
+  useEffect(() => {
+    const isWorking = jobStatus === "queued" || jobStatus === "building" || jobStatus === "flashing" || sendingOta;
+    if (!isWorking) return;
+
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [jobStatus, sendingOta]);
+
   useEffect(() => {
     if (!boardOnlineAfterOta) {
       return;
@@ -862,39 +878,56 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   const canInitiateOta = jobStatus === "artifact_ready" || jobStatus === "flash_failed";
   const hasPendingActivation = pendingPins !== null || pendingBuildJobId !== null;
   const pendingConfigId = project?.pending_config_id ?? null;
-  const isActivePendingConfig = loadedConfigId === pendingConfigId;
-  const baselinePins = isActivePendingConfig && pendingPins
-    ? pendingPins
-    : loadedConfigEntry 
-      ? mapProjectPins(loadedConfigEntry.config) 
-      : pendingPins ?? savedPins;
-  const baselineWifiCredentialId = isActivePendingConfig && pendingWifiCredentialId !== null
-    ? pendingWifiCredentialId
-    : loadedConfigEntry
-      ? readConfigWifiCredentialId(loadedConfigEntry.config)
-      : hasPendingActivation
-        ? pendingWifiCredentialId
-        : savedWifiCredentialId;
+  const currentConfigId = project.current_config_id ?? readConfigId(project.config);
+  const committedComparable: ManagedConfigComparable = {
+    pins: savedPins,
+    wifiCredentialId: savedWifiCredentialId,
+    assignedDeviceName: readAssignedDeviceName(project.config, device.name),
+  };
+  const pendingComparable: ManagedConfigComparable | null =
+    pendingPins !== null
+      ? {
+        pins: pendingPins,
+        wifiCredentialId: pendingWifiCredentialId,
+        assignedDeviceName: readAssignedDeviceName(project.pending_config, device.name),
+      }
+      : null;
+  const loadedComparable: ManagedConfigComparable | null = loadedConfigEntry
+    ? {
+      pins: mapProjectPins(loadedConfigEntry.config),
+      wifiCredentialId: readConfigWifiCredentialId(loadedConfigEntry.config),
+      assignedDeviceName: readAssignedDeviceName(
+        loadedConfigEntry.config,
+        loadedConfigEntry.assigned_device_name ?? device.name,
+      ),
+    }
+    : null;
+  const fallbackComparable = pendingComparable ?? committedComparable;
   const effectiveAssignedDeviceName = normalizeAssignedDeviceName(
     editingAssignedDeviceName ? assignedDeviceNameInput : assignedDeviceName,
     device.name,
   );
-  const baselineAssignedDeviceName = isActivePendingConfig && project.pending_config
-    ? readAssignedDeviceName(project.pending_config, device.name)
-    : loadedConfigEntry
-      ? readAssignedDeviceName(
-        loadedConfigEntry.config,
-        loadedConfigEntry.assigned_device_name ?? device.name,
-      )
-      : readAssignedDeviceName(
-        hasPendingActivation ? project.pending_config : project.config,
-        device.name,
-      );
+  const editorBaseline = resolveManagedConfigEditorBaseline({
+    loadedConfigId,
+    currentConfigId,
+    pendingConfigId,
+    committed: committedComparable,
+    pending: pendingComparable,
+    loaded: loadedComparable,
+    fallback: fallbackComparable,
+  });
+  const currentEditorComparable: ManagedConfigComparable = {
+    pins,
+    wifiCredentialId: selectedWifiCredentialId,
+    assignedDeviceName: effectiveAssignedDeviceName,
+  };
+  const matchesCommittedConfig = doesManagedConfigMatch(
+    currentEditorComparable,
+    committedComparable,
+  );
   const hasChanges =
     isNewConfigDraft ||
-    serializePins(pins) !== serializePins(baselinePins) ||
-    selectedWifiCredentialId !== baselineWifiCredentialId ||
-    effectiveAssignedDeviceName !== baselineAssignedDeviceName;
+    !doesManagedConfigMatch(currentEditorComparable, editorBaseline);
   const isEmptyDraftState =
     pins.length === 0 &&
     validation.errors.includes(EMPTY_CONFIG_VALIDATION_MESSAGE);
@@ -910,13 +943,35 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         ? "Select a valid Wi-Fi credential before saving this configuration."
         : null;
   const draftCardLabel = savedConfigName.trim() || "New Config";
+  const canOpenPendingOta = hasPendingActivation && Boolean(pendingBuildJobId);
+  const canReviewCurrentSelection =
+    !hasChanges &&
+    !canOpenPendingOta &&
+    !isEmptyDraftState &&
+    saveBlockingMessage === null &&
+    !matchesCommittedConfig;
+  const statusBadgeLabel = hasChanges
+    ? "Unsaved"
+    : hasPendingActivation
+      ? "Pending OTA"
+      : matchesCommittedConfig
+        ? "Saved"
+        : "Loaded";
 
   const activeBoardPinConfigurations = getActivePinConfigurations(device);
   const activeBoardPins = mapDevicePins(activeBoardPinConfigurations);
   const hasBoardReportedPins = activeBoardPinConfigurations.length > 0;
 
   const activeFirmwareVersion = device.firmware_version?.trim() || null;
-  const projectSyncState = isSaving ? "saving" : hasChanges ? "idle" : hasPendingActivation ? "pending_ota" : "saved";
+  const projectSyncState = isSaving
+    ? "saving"
+    : hasChanges
+      ? "idle"
+      : hasPendingActivation
+        ? "pending_ota"
+        : matchesCommittedConfig
+          ? "saved"
+          : "idle";
 
   const getSaveBlockingMessage = () => {
     return saveBlockingMessage;
@@ -964,7 +1019,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   };
 
   const openConfirmModal = () => {
-    if (isSaving || !hasChanges) {
+    if (isSaving || (!hasChanges && !canReviewCurrentSelection)) {
       return;
     }
 
@@ -1027,6 +1082,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
 
   saveShortcutStateRef.current.confirmModalOpen = confirmModalOpen;
   saveShortcutStateRef.current.hasChanges = hasChanges;
+  saveShortcutStateRef.current.canReviewCurrentSelection = canReviewCurrentSelection;
   saveShortcutStateRef.current.hasPendingActivation = hasPendingActivation;
   saveShortcutStateRef.current.getSaveBlockingMessage = getSaveBlockingMessage;
   saveShortcutStateRef.current.openConfirmModal = openConfirmModal;
@@ -1069,7 +1125,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       }
 
       const result = await saveDeviceConfig(device.device_id, saveParams);
-      const nextNormalizedPins = normalizePins(pins);
+      const nextNormalizedPins = normalizeManagedConfigPins(pins);
       const nextConfigId = result.config_id || result.job_id;
       const nextUpdatedAt = new Date().toISOString();
 
@@ -1648,13 +1704,21 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                   ? "bg-amber-100/50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
                   : hasPendingActivation
                     ? "bg-blue-100/50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300"
-                    : "bg-emerald-100/50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+                    : matchesCommittedConfig
+                      ? "bg-emerald-100/50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-400"
+                      : "bg-amber-100/50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-400"
                 }`}
             >
               <span className="material-icons-round text-[14px]">
-                {hasChanges ? "pending_actions" : hasPendingActivation ? "system_update_alt" : "task_alt"}
+                {hasChanges
+                  ? "pending_actions"
+                  : hasPendingActivation
+                    ? "system_update_alt"
+                    : matchesCommittedConfig
+                      ? "task_alt"
+                      : "history"}
               </span>
-              {hasChanges ? "Unsaved" : hasPendingActivation ? "Pending OTA" : "Saved"}
+              {statusBadgeLabel}
             </div>
           </div>
         </div>
@@ -1848,26 +1912,41 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                 <Step2Pins
                   board={boardProfile}
                   boardPins={[...boardProfile.leftPins, ...boardProfile.rightPins]}
-                  nextDisabled={isSaving || (hasChanges ? saveBlockingMessage !== null : isEmptyDraftState || !hasPendingActivation)}
+                  nextDisabled={
+                    isSaving ||
+                    (hasChanges
+                      ? saveBlockingMessage !== null
+                      : canOpenPendingOta
+                        ? false
+                        : !canReviewCurrentSelection)
+                  }
                   nextLabel={
                     hasChanges
                       ? isDraftOnlySave
                         ? "Save draft"
                         : "Review & rebuild"
-                      : isEmptyDraftState
-                        ? "Map pins to rebuild"
-                        : hasPendingActivation
+                      : canOpenPendingOta
                           ? "Open OTA status"
-                          : "Up to date"
+                          : isEmptyDraftState
+                            ? "Map pins to rebuild"
+                            : matchesCommittedConfig
+                              ? "Up to date"
+                              : "Review & rebuild"
                   }
-                  onBack={() => router.push("/devices")}
+                  onBack={() => {
+                    const isWorking = jobStatus === "queued" || jobStatus === "building" || jobStatus === "flashing" || sendingOta;
+                    if (isWorking && !window.confirm("A firmware operation is in progress. Are you sure you want to leave this page?")) {
+                      return;
+                    }
+                    router.push("/devices");
+                  }}
                   onNext={() => {
-                    if (hasChanges) {
+                    if (hasChanges || canReviewCurrentSelection) {
                       openConfirmModal();
-                    } else if (hasPendingActivation && pendingBuildJobId) {
+                    } else if (canOpenPendingOta && pendingBuildJobId) {
                       openPendingOtaModal();
                     } else {
-                      openConfirmModal();
+                      showToast("This config already matches the firmware currently committed for the board.", "info");
                     }
                   }}
                   pins={pins}
@@ -2150,7 +2229,8 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                 </p>
               </div>
               <button
-                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                className="rounded-full p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50 disabled:cursor-not-allowed dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                disabled={jobStatus === "queued" || jobStatus === "building" || jobStatus === "flashing" || sendingOta}
                 onClick={() => setOtaModalOpen(false)}
                 type="button"
               >
@@ -2314,7 +2394,8 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
 
             <div className="mt-8 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button
-                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:bg-slate-700"
+                disabled={jobStatus === "queued" || jobStatus === "building" || jobStatus === "flashing" || sendingOta}
                 onClick={() => {
                   if (boardOnlineAfterOta) {
                     router.push("/");

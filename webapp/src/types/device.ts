@@ -57,6 +57,14 @@ export interface DeviceStateSnapshot {
     firmware_revision?: string;
     firmware_version?: string;
     brightness?: number;
+    color_temperature?: number;
+    rgb?: {
+        r: number;
+        g: number;
+        b: number;
+    };
+    color_mode?: number;
+    capabilities?: string[];
     ip_address?: string;
     trend?: string;
     unit?: string;

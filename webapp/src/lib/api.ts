@@ -135,6 +135,11 @@ export interface InstalledExtensionSchema {
     default_name: string;
     description?: string | null;
     card_type: "light";
+    capabilities: Array<"power" | "brightness" | "rgb" | "color_temperature">;
+    temperature_range?: {
+        min: number;
+        max: number;
+    } | null;
     config_fields: ExtensionConfigField[];
 }
 
@@ -461,6 +466,26 @@ export async function fetchInstalledExtensions(token?: string): Promise<Installe
     return response.json();
 }
 
+export async function fetchExtension(extension_id: string, token?: string): Promise<InstalledExtension> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/extensions/${encodeURIComponent(extension_id)}`, {
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+        cache: "no-store",
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, `Failed to load extension: ${extension_id}`));
+    }
+
+    return response.json();
+}
+
 export async function uploadExtensionZip(file: File, token?: string): Promise<InstalledExtension> {
     const authToken = token ?? getToken();
     if (!authToken) {
@@ -480,6 +505,29 @@ export async function uploadExtensionZip(file: File, token?: string): Promise<In
 
     if (!response.ok) {
         throw new Error(await parseApiError(response, "Failed to upload extension ZIP"));
+    }
+
+    return response.json();
+}
+
+export async function deleteInstalledExtension(
+    extension_id: string,
+    token?: string,
+): Promise<{ status: string; extension_id: string }> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/extensions/${encodeURIComponent(extension_id)}`, {
+        method: "DELETE",
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, `Failed to delete extension: ${extension_id}`));
     }
 
     return response.json();

@@ -20,10 +20,12 @@ from app.sql_models import (
     Device,
     DeviceHistory,
     EventType,
+    ExternalDevice,
     ExecutionStatus,
     Household,
     HouseholdMembership,
     HouseholdRole,
+    InstalledExtension,
     PinConfiguration,
     PinMode,
     User,
@@ -161,6 +163,7 @@ def seeded_context():
 
         yield {
             "user": user,
+            "household": household,
             "graph": {
                 "nodes": [
                     {
@@ -349,6 +352,61 @@ def _create_automation_record(graph: dict, *, creator_id: int, name: str = "Auto
         db.commit()
         db.refresh(automation)
         return automation.id
+    finally:
+        db.close()
+
+
+def _create_external_device(
+    *,
+    user_id: int,
+    household_id: int,
+    device_id: str = "external-light",
+    name: str = "External Light",
+    capabilities: list[str] | None = None,
+    last_state: dict | None = None,
+) -> str:
+    db = TestingSessionLocal()
+    try:
+        extension = InstalledExtension(
+            extension_id="yeelight_control",
+            manifest_version="1.0",
+            name="Yeelight LAN Lights",
+            version="1.4.0",
+            author="Experience",
+            description="Yeelight external runtime",
+            provider_key="yeelight",
+            provider_name="Yeelight",
+            package_runtime="python",
+            package_entrypoint="main.py",
+            package_root="Yeelight_control",
+            archive_path="/tmp/yeelight_control-1.4.0.zip",
+            archive_sha256="test-sha",
+            manifest={"device_schemas": []},
+        )
+        db.merge(extension)
+        db.flush()
+
+        external_device = ExternalDevice(
+            device_id=device_id,
+            installed_extension_id="yeelight_control",
+            device_schema_id="yeelight_color_light",
+            household_id=household_id,
+            owner_id=user_id,
+            name=name,
+            provider="yeelight",
+            auth_status=AuthStatus.approved,
+            conn_status=ConnStatus.online,
+            schema_snapshot={
+                "display": {
+                    "card_type": "light",
+                    "capabilities": capabilities or ["power", "brightness"],
+                }
+            },
+            last_state=last_state or {"value": 1, "brightness": 180, "power": "on"},
+        )
+        db.merge(external_device)
+        db.commit()
+        return device_id
     finally:
         db.close()
 
@@ -714,6 +772,252 @@ def test_system_time_context_returns_effective_server_timezone(seeded_context):
     assert payload["effective_timezone"] == "Asia/Tokyo"
     assert payload["timezone_source"] == "setting"
     assert isinstance(payload["current_server_time"], str)
+
+
+def test_list_devices_includes_external_automation_pin_configurations(seeded_context):
+    user = seeded_context["user"]
+    household = seeded_context["household"]
+    external_device_id = _create_external_device(
+        user_id=user.user_id,
+        household_id=household.household_id,
+    )
+
+    response = client.get(
+        "/api/v1/devices",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    external_device = next(item for item in payload if item["device_id"] == external_device_id)
+    pins = {row["gpio_pin"]: row for row in external_device["pin_configurations"]}
+    assert pins[0]["mode"] == "OUTPUT"
+    assert pins[0]["function"] == "switch"
+    assert pins[1]["mode"] == "PWM"
+    assert pins[1]["function"] == "brightness"
+
+
+def test_manual_trigger_uses_persisted_external_device_switch_state(seeded_context, monkeypatch):
+    user = seeded_context["user"]
+    household = seeded_context["household"]
+    external_device_id = _create_external_device(
+        user_id=user.user_id,
+        household_id=household.household_id,
+        last_state={"value": 1, "brightness": 180, "power": "on"},
+    )
+    automation_id = _create_automation_record(
+        {
+            "nodes": [
+                {
+                    "id": "trigger-1",
+                    "type": "trigger",
+                    "kind": "time_schedule",
+                    "config": {"hour": 7, "minute": 30, "weekdays": []},
+                },
+                {
+                    "id": "condition-1",
+                    "type": "condition",
+                    "kind": "state_equals",
+                    "config": {"device_id": external_device_id, "pin": 0, "expected": "on"},
+                },
+                {
+                    "id": "action-1",
+                    "type": "action",
+                    "kind": "set_output",
+                    "config": {"device_id": "target-device", "pin": 12, "value": 1},
+                },
+            ],
+            "edges": [
+                {
+                    "source_node_id": "trigger-1",
+                    "source_port": "event_out",
+                    "target_node_id": "condition-1",
+                    "target_port": "event_in",
+                },
+                {
+                    "source_node_id": "condition-1",
+                    "source_port": "pass_out",
+                    "target_node_id": "action-1",
+                    "target_port": "event_in",
+                },
+            ],
+        },
+        creator_id=user.user_id,
+        name="External Switch Condition",
+    )
+    enqueue_calls: list[tuple[str, dict]] = []
+
+    def fake_enqueue(device_id: str, command: dict) -> bool:
+        enqueue_calls.append((device_id, command))
+        return True
+
+    monkeypatch.setattr(api_module.mqtt_manager, "enqueue_command", fake_enqueue)
+
+    response = client.post(
+        f"/api/v1/automation/{automation_id}/trigger",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    assert len(enqueue_calls) == 1
+    assert enqueue_calls[0][0] == "target-device"
+    assert enqueue_calls[0][1]["value"] == 1
+
+
+def test_process_state_event_runs_enabled_automation_for_external_device_value_trigger(seeded_context):
+    user = seeded_context["user"]
+    household = seeded_context["household"]
+    external_device_id = _create_external_device(
+        user_id=user.user_id,
+        household_id=household.household_id,
+        last_state={"value": 0, "brightness": 0, "power": "off"},
+    )
+    automation_id = _create_automation_record(
+        {
+            "nodes": [
+                {
+                    "id": "trigger-1",
+                    "type": "trigger",
+                    "kind": "device_value",
+                    "config": {"device_id": external_device_id, "pin": 1},
+                },
+                {
+                    "id": "condition-1",
+                    "type": "condition",
+                    "kind": "numeric_compare",
+                    "config": {"device_id": external_device_id, "pin": 1, "operator": "gt", "value": 100},
+                },
+                {
+                    "id": "action-1",
+                    "type": "action",
+                    "kind": "set_output",
+                    "config": {"device_id": "target-device", "pin": 12, "value": 1},
+                },
+            ],
+            "edges": [
+                {
+                    "source_node_id": "trigger-1",
+                    "source_port": "event_out",
+                    "target_node_id": "condition-1",
+                    "target_port": "event_in",
+                },
+                {
+                    "source_node_id": "condition-1",
+                    "source_port": "pass_out",
+                    "target_node_id": "action-1",
+                    "target_port": "event_in",
+                },
+            ],
+        },
+        creator_id=user.user_id,
+        name="External Value Trigger",
+    )
+    published_commands: list[tuple[str, dict]] = []
+
+    def fake_publish(device_id: str, command: dict) -> bool:
+        published_commands.append((device_id, command))
+        return True
+
+    db = TestingSessionLocal()
+    try:
+        logs = process_state_event_for_automations(
+            db,
+            device_id=external_device_id,
+            state_payload={"pins": [{"pin": 1, "value": 180, "brightness": 180}]},
+            previous_state_payload={"pins": [{"pin": 1, "value": 0, "brightness": 0}]},
+            publish_command=fake_publish,
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    assert len(logs) == 1
+    assert logs[0].automation_id == automation_id
+    assert published_commands
+    assert published_commands[0][0] == "target-device"
+    assert published_commands[0][1]["value"] == 1
+
+
+def test_manual_trigger_dispatches_external_device_value_action(monkeypatch, seeded_context):
+    user = seeded_context["user"]
+    household = seeded_context["household"]
+    external_device_id = _create_external_device(
+        user_id=user.user_id,
+        household_id=household.household_id,
+    )
+    automation_id = _create_automation_record(
+        {
+            "nodes": [
+                {
+                    "id": "trigger-1",
+                    "type": "trigger",
+                    "kind": "time_schedule",
+                    "config": {"hour": 7, "minute": 30, "weekdays": []},
+                },
+                {
+                    "id": "condition-1",
+                    "type": "condition",
+                    "kind": "state_equals",
+                    "config": {"device_id": "source-device", "pin": 4, "expected": "on"},
+                },
+                {
+                    "id": "action-1",
+                    "type": "action",
+                    "kind": "set_value",
+                    "config": {"device_id": external_device_id, "pin": 1, "value": 200},
+                },
+            ],
+            "edges": [
+                {
+                    "source_node_id": "trigger-1",
+                    "source_port": "event_out",
+                    "target_node_id": "condition-1",
+                    "target_port": "event_in",
+                },
+                {
+                    "source_node_id": "condition-1",
+                    "source_port": "pass_out",
+                    "target_node_id": "action-1",
+                    "target_port": "event_in",
+                },
+            ],
+        },
+        creator_id=user.user_id,
+        name="External Value Action",
+    )
+    dispatched: list[tuple[str, dict]] = []
+
+    def fake_dispatch(db, *, device_id: str, command: dict, on_state_change=None) -> bool:
+        dispatched.append((device_id, command))
+        return True
+
+    monkeypatch.setattr(api_module, "dispatch_external_device_automation_command", fake_dispatch)
+
+    db = TestingSessionLocal()
+    try:
+        db.add(
+            DeviceHistory(
+                device_id="source-device",
+                event_type=EventType.state_change,
+                payload=json.dumps({"pins": [{"pin": 4, "value": 1}]}),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/api/v1/automation/{automation_id}/trigger",
+        headers=_auth_headers(user),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "success"
+    assert dispatched
+    assert dispatched[0][0] == external_device_id
+    assert dispatched[0][1]["pin"] == 1
+    assert dispatched[0][1]["brightness"] == 200
 
 
 def test_manual_trigger_executes_graph_and_records_log(monkeypatch, seeded_context):

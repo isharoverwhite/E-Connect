@@ -35,7 +35,7 @@ import { Step2Pins } from "@/features/diy/components/Step2Pins";
 import { Step2Canvas } from "@/features/diy/components/Step2Canvas";
 import { Step3Validate } from "@/features/diy/components/Step3Validate";
 import { Step4Flash } from "@/features/diy/components/Step4Flash";
-import { buildFlashManifest } from "@/features/diy/flash-manifest";
+import { boardRequiresFullFlashBundle, buildFlashManifest } from "@/features/diy/flash-manifest";
 import { validatePinMappings } from "@/features/diy/validation";
 
 const FLASHER_SCRIPT =
@@ -1003,15 +1003,15 @@ export default function DIYBuilderPage() {
   }
 
   const refreshBuildJob = useCallback(
-    async (jobId: string, buildKey: string | null, overridingFamily?: ChipFamily) => {
+    async (jobId: string, buildKey: string | null, overridingBoardId?: string) => {
       const token = getToken();
       if (!token) {
         return;
       }
 
       try {
-        const effectiveFamily = overridingFamily ?? board.family;
-        const expectsFullBundle = effectiveFamily !== "ESP8266";
+        const effectiveBoard = getBoardProfile(overridingBoardId ?? board.id) ?? board;
+        const expectsFullBundle = boardRequiresFullFlashBundle(effectiveBoard);
         const jobResponse = await fetch(`${API_URL}/diy/build/${jobId}`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: "no-store",
@@ -1070,7 +1070,7 @@ export default function DIYBuilderPage() {
         error: getErrorMessage(error),
       }));
     }
-  }, [board.family, handleBuildAuthFailure]);
+  }, [board, handleBuildAuthFailure]);
 
   const refreshSerialStatus = useCallback(async (options?: { silent?: boolean; freeMessage?: string }) => {
     if (!isAdmin) {
@@ -1254,7 +1254,7 @@ export default function DIYBuilderPage() {
     setBoardConfigsError("");
 
     if (savedBuildJobId) {
-      void refreshBuildJob(savedBuildJobId, savedBuildKey, nextBoard.family);
+      void refreshBuildJob(savedBuildJobId, savedBuildKey, nextBoard.id);
     }
   }, [refreshBuildJob]);
 
@@ -1433,7 +1433,6 @@ export default function DIYBuilderPage() {
       return;
     }
 
-    const previousBoard = getBoardProfile(attachedConfigBoardId);
     lastSavedPayloadRef.current = null;
     setProjectId(null);
     setAttachedConfigBoardId(null);
@@ -2372,14 +2371,16 @@ function getFlashLockedReason({
       return "The GPIO mapping changed after the last server build. Rebuild before flashing.";
     }
 
-    if (board.id === "jc3827w543" && !serverBuildHasFullBundle) {
-      return "JC3827W543 requires the full server bundle (bootloader, partition table, boot data, firmware). Wait for all artifacts before flashing.";
+    if (boardRequiresFullFlashBundle(board) && !serverBuildHasFullBundle) {
+      return board.id === "jc3827w543"
+        ? "JC3827W543 requires the full server bundle (bootloader, partition table, boot data, firmware). Wait for all artifacts before flashing."
+        : "ESP32-family server builds require the full flash bundle (bootloader, partition table, boot data, firmware). Wait for all artifacts before flashing.";
     }
 
     if (eraseFirst && !serverBuildHasFullBundle) {
       return board.family === "ESP8266"
         ? "ESP8266 server builds expose a single firmware.bin only. Leave 'erase all flash' disabled."
-        : "Server builds currently expose the application binary only. Turn off 'erase all flash'.";
+        : "ESP32-family boards must use the full server flash bundle before enabling 'erase all flash'.";
     }
 
     if (serverBuildStatus !== "artifact_ready") {
