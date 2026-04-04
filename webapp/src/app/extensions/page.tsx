@@ -255,13 +255,13 @@ export default function ExtensionsLibrary() {
                                         {extensions.map((extension) => (
                                             <article
                                                 key={extension.extension_id}
-                                                className="group relative flex flex-col justify-between overflow-hidden rounded-[24px] border border-slate-200/80 bg-white shadow-sm transition-all hover:border-slate-300 hover:shadow-md dark:border-white/5 dark:bg-surface-container-low dark:hover:bg-surface-container"
+                                                className="group relative flex flex-col justify-between overflow-hidden rounded-[24px] border border-slate-200/80 bg-white shadow-sm transition-all hover:border-slate-300 hover:shadow-md dark:border-slate-800 dark:bg-surface-dark dark:hover:border-slate-700 dark:hover:bg-slate-800/50"
                                             >
                                                 <div className="p-8 pb-6">
                                                     <div className="flex items-start justify-between gap-4">
                                                         <div>
                                                             <div className="mb-4 inline-flex items-center gap-2">
-                                                                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 dark:bg-surface-container-highest dark:text-slate-300">
+                                                                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                                                                     <span className="material-icons-round text-[16px]">extension</span>
                                                                 </span>
                                                                 <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
@@ -272,7 +272,7 @@ export default function ExtensionsLibrary() {
                                                                 {extension.name}
                                                             </h2>
                                                             <div className="mt-3 flex items-center gap-3">
-                                                                <span className="rounded-full bg-slate-200/50 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-surface-container-highest dark:text-slate-300">
+                                                                <span className="rounded-full bg-slate-200/50 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                                                                     v{extension.version}
                                                                 </span>
                                                                 <span className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
@@ -312,7 +312,7 @@ export default function ExtensionsLibrary() {
                                                     ) : null}
                                                     <Link
                                                         href={`/extensions/${extension.extension_id}`}
-                                                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-200 px-4 py-3 text-sm font-semibold text-slate-800 transition-colors group-hover:bg-slate-300 dark:bg-surface-container-high dark:text-white dark:group-hover:bg-surface-container-highest"
+                                                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500"
                                                     >
                                                         View Details
                                                         <span className="material-icons-round text-[18px]">arrow_forward</span>
@@ -326,12 +326,12 @@ export default function ExtensionsLibrary() {
                         ) : (
                             <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                                 <div className="max-w-2xl">
-                                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-amber-600 dark:text-amber-400">
-                                        Marketplace unavailable
+                                    <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-600 dark:text-blue-400">
+                                        Coming soon
                                     </p>
-                                    <h2 className="mt-3 text-2xl font-bold text-slate-900 dark:text-white">Discover remains out of scope for this slice</h2>
+                                    <h2 className="mt-3 text-2xl font-bold text-slate-900 dark:text-white">Extension Marketplace</h2>
                                     <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-400">
-                                        This implementation adds admin-controlled ZIP upload, manifest validation, installed package storage, and external device creation. Public marketplace browsing is intentionally still disabled.
+                                        We&apos;re building a public marketplace for you to easily discover and install community-created extensions. Stay tuned!
                                     </p>
                                 </div>
                             </div>
