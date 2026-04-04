@@ -34,32 +34,39 @@ export function DeviceToggle({
   checked,
   disabled,
   loading,
+  readOnly,
   onChange,
 }: {
   id: string;
   checked: boolean;
   disabled: boolean;
   loading: boolean;
+  readOnly?: boolean;
   onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
 }) {
   const trackClass = loading
     ? "bg-sky-100 border-sky-400 dark:bg-sky-900/40 dark:border-sky-600"
     : checked
-      ? "bg-primary border-primary/70"
-      : "bg-slate-300 border-slate-300 dark:bg-slate-600 dark:border-slate-600";
+      ? (readOnly ? "bg-emerald-500 border-emerald-500/70" : "bg-primary border-primary/70")
+      : (readOnly ? "bg-slate-200 border-slate-200 dark:bg-slate-700 dark:border-slate-700" : "bg-slate-300 border-slate-300 dark:bg-slate-600 dark:border-slate-600");
+
+  const cursorClass = disabled ? "cursor-not-allowed opacity-70" : (readOnly ? "cursor-default" : "cursor-pointer");
 
   return (
-    <div className="flex flex-col items-end gap-1">
+    <div className="flex items-center gap-2">
+      {loading ? (
+        <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300 animate-pulse">
+          Syncing...
+        </span>
+      ) : null}
       <label
-        className={`relative inline-flex h-6 w-11 items-center ${
-          disabled ? "cursor-not-allowed opacity-70" : "cursor-pointer"
-        }`}
+        className={`relative inline-flex h-6 w-11 items-center ${cursorClass}`}
         htmlFor={id}
       >
         <input
           checked={checked}
           className="sr-only"
-          disabled={disabled}
+          disabled={disabled || readOnly}
           id={id}
           onChange={onChange}
           type="checkbox"
@@ -81,11 +88,6 @@ export function DeviceToggle({
           </span>
         ) : null}
       </label>
-      {loading ? (
-        <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300">
-          Syncing...
-        </span>
-      ) : null}
     </div>
   );
 }
@@ -166,6 +168,8 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
   const deliveryForPendingCommand = Boolean(
     config.last_delivery && pendingCmdId && config.last_delivery.command_id === pendingCmdId
   );
+  const acknowledgedPendingCommand =
+    deliveryForPendingCommand && config.last_delivery?.status === "acknowledged";
   const failedPendingCommand =
     deliveryForPendingCommand && config.last_delivery?.status === "failed";
 
@@ -188,8 +192,16 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
     (optimisticSliderValue === null || sliderTargetMatched);
 
   const pending = requestPending || (pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced);
-  const toggleLoading = optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
-  const sliderLoading = optimisticSliderValue !== null && !sliderTargetMatched && !failedPendingCommand;
+  const toggleLoading =
+    optimisticToggleState !== null &&
+    !toggleTargetMatched &&
+    !acknowledgedPendingCommand &&
+    !failedPendingCommand;
+  const sliderLoading =
+    optimisticSliderValue !== null &&
+    !sliderTargetMatched &&
+    !acknowledgedPendingCommand &&
+    !failedPendingCommand;
 
   const toggleState = optimisticToggleState !== null ? optimisticToggleState : baselineToggleState;
   const sliderValue = optimisticSliderValue !== null ? optimisticSliderValue : baselineSliderValue;
@@ -301,14 +313,13 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
           <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
           <div className="flex items-center gap-3">
              <span className="text-xs font-bold text-primary">
-               {sliderLoading && <span className="text-[10px] uppercase font-normal text-primary/70 mr-1 animate-pulse">Syncing...</span>}
                {sliderValue}
              </span>
              <DeviceToggle
                 checked={toggleState}
                 disabled={pending || !isOnline}
                 id={`pin-toggle-${config.device_id}-${pin.gpio_pin}`}
-                loading={toggleLoading}
+                loading={toggleLoading || sliderLoading}
                 onChange={handleToggle}
              />
           </div>
@@ -335,12 +346,26 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
     const isTach = inputType === "tachometer";
     const numValue = getNumericStateValue(pinState?.value);
     
-    let displayValue: React.ReactNode = numValue ?? '--';
+    const displayValue: React.ReactNode = numValue ?? '--';
     let unit = pinState?.unit;
 
     if (isSwitch) {
-      displayValue = numValue === 1 ? 'ON' : (numValue === 0 ? 'OFF' : '--');
-    } else if (isTach) {
+      return (
+        <div className="flex justify-between items-center py-3 border-t border-slate-100 dark:border-slate-800/50">
+          <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
+          <DeviceToggle
+            id={`input-switch-${config.device_id}-${pin.gpio_pin}`}
+            checked={numValue === 1}
+            disabled={!isOnline}
+            loading={false}
+            readOnly={true}
+            onChange={() => {}}
+          />
+        </div>
+      );
+    }
+    
+    if (isTach) {
       unit = unit || "RPM";
     }
 
@@ -348,7 +373,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
       <div className="flex justify-between items-center py-3 border-t border-slate-100 dark:border-slate-800/50">
         <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
         <div className="flex items-baseline space-x-1">
-          <span className={`text-lg font-bold ${isSwitch && numValue === 1 ? 'text-green-600 dark:text-green-400' : 'text-slate-800 dark:text-white'}`}>
+          <span className="text-lg font-bold text-slate-800 dark:text-white">
             {displayValue}
           </span>
           {unit && <span className="text-xs font-medium text-slate-500 ml-1">{unit}</span>}
@@ -379,11 +404,185 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
   return null;
 }
 
+// Helper functions for Color Conversion
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  s /= 100;
+  l /= 100;
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+  return [Math.round(255 * f(0)), Math.round(255 * f(8)), Math.round(255 * f(4))];
+}
+
+function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
+  r /= 255;
+  g /= 255;
+  b /= 255;
+  const l = Math.max(r, g, b);
+  const s = l - Math.min(r, g, b);
+  const h = s
+    ? l === r
+      ? (g - b) / s
+      : l === g
+      ? 2 + (b - r) / s
+      : 4 + (r - g) / s
+    : 0;
+  return [
+    Math.round(60 * h < 0 ? 60 * h + 360 : 60 * h),
+    Math.round(100 * (s ? (l <= 0.5 ? s / (2 * l - s) : s / (2 - (2 * l - s))) : 0)),
+    Math.round((100 * (2 * l - s)) / 2),
+  ];
+}
+
+function ColorWheel({ rgb, onChange, disabled }: { rgb: [number, number, number], onChange: (rgb: [number, number, number]) => void, disabled: boolean }) {
+  const [h, s] = rgbToHsl(rgb[0], rgb[1], rgb[2]);
+  
+  const handleColorClick = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (disabled) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left - rect.width / 2;
+    const y = e.clientY - rect.top - rect.height / 2;
+    const radius = Math.min(rect.width, rect.height) / 2;
+    const distance = Math.sqrt(x * x + y * y);
+    if (distance <= radius) {
+      let angle = Math.atan2(y, x) * (180 / Math.PI) + 90;
+      if (angle < 0) angle += 360;
+      const saturation = Math.min(100, Math.round((distance / radius) * 100));
+      onChange(hslToRgb(angle, saturation, 50)); // lock lightness at 50%
+    }
+  };
+
+  return (
+    <div className={`relative w-40 h-40 rounded-full mx-auto cursor-crosshair transform transition-all shadow-inner ${disabled ? 'opacity-50 grayscale cursor-not-allowed' : 'hover:scale-[1.02]'}`}
+         style={{ background: 'conic-gradient(from 90deg, red, yellow, lime, aqua, blue, magenta, red)' }}
+         onClick={handleColorClick}>
+       {/* Saturation Overlays */}
+       <div className="absolute inset-0 rounded-full bg-slate-100 dark:bg-slate-900 mix-blend-screen opacity-10 pointer-events-none"></div>
+       <div className="absolute inset-0 rounded-full bg-[radial-gradient(circle,rgba(255,255,255,1)_0%,rgba(255,255,255,0)_100%)] pointer-events-none"></div>
+
+      {/* Thumb Indicator */}
+      <div className="absolute w-5 h-5 rounded-full border-2 border-white shadow-md transform -translate-x-1/2 -translate-y-1/2 transition-all duration-200"
+           style={{
+             backgroundColor: `rgb(${rgb[0]},${rgb[1]},${rgb[2]})`,
+             left: `calc(50% + ${Math.sin(h * (Math.PI / 180)) * (s / 100) * 50}%)`,
+             top: `calc(50% - ${Math.cos(h * (Math.PI / 180)) * (s / 100) * 50}%)`
+           }}>
+      </div>
+    </div>
+  );
+}
+
+function getExtensionSchemaDisplay(config: DeviceConfig): Record<string, unknown> | null {
+  if (!config.schema_snapshot || typeof config.schema_snapshot !== "object" || Array.isArray(config.schema_snapshot)) {
+    return null;
+  }
+
+  const rawDisplay = (config.schema_snapshot as Record<string, unknown>).display;
+  if (!rawDisplay || typeof rawDisplay !== "object" || Array.isArray(rawDisplay)) {
+    return null;
+  }
+
+  return rawDisplay as Record<string, unknown>;
+}
+
+function getExtensionSchemaCapabilities(config: DeviceConfig): string[] {
+  const display = getExtensionSchemaDisplay(config);
+  if (!display || !Array.isArray(display.capabilities)) {
+    return [];
+  }
+
+  return display.capabilities.filter((capability): capability is string => typeof capability === "string");
+}
+
+function getExtensionSchemaTemperatureRange(config: DeviceConfig): { min: number; max: number } | null {
+  const display = getExtensionSchemaDisplay(config);
+  const rawRange = display?.temperature_range;
+  if (!rawRange || typeof rawRange !== "object" || Array.isArray(rawRange)) {
+    return null;
+  }
+
+  const min = (rawRange as Record<string, unknown>).min;
+  const max = (rawRange as Record<string, unknown>).max;
+  if (typeof min !== "number" || typeof max !== "number" || min >= max) {
+    return null;
+  }
+
+  return { min, max };
+}
+
+function getRuntimeStateCapabilities(config: DeviceConfig): string[] {
+  const runtimeCaps = Array.isArray(config.last_state?.capabilities)
+    ? config.last_state.capabilities.filter((capability): capability is string => typeof capability === "string")
+    : [];
+
+  const normalized = new Set(runtimeCaps.map((capability) => capability.trim().toLowerCase()).filter(Boolean));
+  if (config.last_state?.rgb) {
+    normalized.add("rgb");
+  }
+  if (typeof config.last_state?.color_temperature === "number") {
+    normalized.add("color_temperature");
+  }
+
+  return Array.from(normalized);
+}
+
+function getExtensionCompatibilityCapabilities(config: DeviceConfig): string[] {
+  const provider = config.provider?.trim().toLowerCase();
+  if (provider !== "yeelight") {
+    return [];
+  }
+
+  switch (config.device_schema_id) {
+    case "yeelight_ambient_light":
+      return ["power", "brightness", "color_temperature"];
+    case "yeelight_color_light":
+    case "yeelight_full_spectrum_light":
+      return ["power", "brightness", "rgb", "color_temperature"];
+    case "yeelight_white_light":
+      return ["power", "brightness"];
+    default:
+      return [];
+  }
+}
+
+function getEffectiveExtensionCapabilities(config: DeviceConfig): string[] {
+  const runtimeCaps = getRuntimeStateCapabilities(config);
+  const schemaCaps = getExtensionSchemaCapabilities(config);
+  const compatibilityCaps = getExtensionCompatibilityCapabilities(config);
+  const preferred = runtimeCaps.length > 0 ? runtimeCaps : schemaCaps;
+  return Array.from(new Set([...preferred, ...compatibilityCaps]));
+}
+
+type ExtensionAdvancedMode = "color" | "temperature";
+
+function getPreferredExtensionAdvancedMode(config: DeviceConfig): ExtensionAdvancedMode {
+  const effectiveCaps = getEffectiveExtensionCapabilities(config);
+  const supportsRgb = effectiveCaps.includes("rgb");
+  const supportsTone = effectiveCaps.includes("color_temperature");
+
+  if (supportsRgb && !supportsTone) {
+    return "color";
+  }
+  if (!supportsRgb && supportsTone) {
+    return "temperature";
+  }
+
+  const colorMode = typeof config.last_state?.color_mode === "number" ? config.last_state.color_mode : null;
+  if (colorMode === 1 || colorMode === 3) {
+    return "color";
+  }
+  return "temperature";
+}
+
 export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
   const [requestPending, setRequestPending] = useState(false);
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
   const [optimisticSliderValue, setOptimisticSliderValue] = useState<number | null>(null);
+  const [optimisticRgb, setOptimisticRgb] = useState<[number, number, number] | null>(null);
+  const [optimisticTone, setOptimisticTone] = useState<number | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [advancedModeOverride, setAdvancedModeOverride] = useState<ExtensionAdvancedMode | null>(null);
 
   const deliveryForPendingCommand = Boolean(
     config.last_delivery && pendingCmdId && config.last_delivery.command_id === pendingCmdId
@@ -393,38 +592,73 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
 
   const baselineToggleState = getBinaryState(config.last_state);
   const baselineSliderValue = getBrightnessState(config.last_state, null, 0);
+  
+  // Extract RGB from state
+  const rgbStateObj = config.last_state?.rgb;
+  const baselineRgb: [number, number, number] = rgbStateObj 
+    ? [rgbStateObj.r, rgbStateObj.g, rgbStateObj.b] 
+    : [255, 255, 255]; // fallback logic
+  const baselineTone = typeof config.last_state?.color_temperature === 'number' ? config.last_state.color_temperature : 4000;
 
   const toggleTargetMatched =
     optimisticToggleState !== null && baselineToggleState === optimisticToggleState;
   const sliderTargetMatched =
     optimisticSliderValue !== null && baselineSliderValue === optimisticSliderValue;
+  const rgbTargetMatched =
+    optimisticRgb !== null && baselineRgb[0] === optimisticRgb[0] && baselineRgb[1] === optimisticRgb[1] && baselineRgb[2] === optimisticRgb[2];
+  const toneTargetMatched = 
+    optimisticTone !== null && baselineTone === optimisticTone;
+
   const commandStateSynced =
     (optimisticToggleState === null || toggleTargetMatched) &&
-    (optimisticSliderValue === null || sliderTargetMatched);
+    (optimisticSliderValue === null || sliderTargetMatched) &&
+    (optimisticRgb === null || rgbTargetMatched) &&
+    (optimisticTone === null || toneTargetMatched);
 
   const pending = requestPending || (pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced);
   const toggleLoading = optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
   const sliderLoading = optimisticSliderValue !== null && !sliderTargetMatched && !failedPendingCommand;
+  const rgbLoading = optimisticRgb !== null && !rgbTargetMatched && !failedPendingCommand;
+  const toneLoading = optimisticTone !== null && !toneTargetMatched && !failedPendingCommand;
 
   const toggleState = optimisticToggleState !== null ? optimisticToggleState : baselineToggleState;
   const sliderValue = optimisticSliderValue !== null ? optimisticSliderValue : baselineSliderValue;
+  const rgbValue = optimisticRgb !== null ? optimisticRgb : baselineRgb;
+  const toneValue = optimisticTone !== null ? optimisticTone : baselineTone;
+  const controlReady = isOnline || Boolean(config.is_external);
+  const effectiveCaps = getEffectiveExtensionCapabilities(config);
+  const temperatureRange = getExtensionSchemaTemperatureRange(config);
+  const supportsRgb = effectiveCaps.includes("rgb");
+  const supportsTone = effectiveCaps.includes("color_temperature");
+  const hasAdvanced = supportsRgb || supportsTone;
+  const preferredAdvancedMode = getPreferredExtensionAdvancedMode(config);
+  const statusLabel = isOnline ? "Online" : "Offline";
+  const visibleAdvancedMode: ExtensionAdvancedMode = supportsRgb && !supportsTone
+    ? "color"
+    : !supportsRgb && supportsTone
+      ? "temperature"
+      : advancedModeOverride ?? preferredAdvancedMode;
 
   useEffect(() => {
-    if ((optimisticToggleState !== null || optimisticSliderValue !== null) && commandStateSynced) {
+    if ((optimisticToggleState !== null || optimisticSliderValue !== null || optimisticRgb !== null || optimisticTone !== null) && commandStateSynced) {
       const timer = window.setTimeout(() => {
         setOptimisticToggleState(null);
         setOptimisticSliderValue(null);
+        setOptimisticRgb(null);
+        setOptimisticTone(null);
         setPendingCmdId(null);
       }, 0);
       return () => window.clearTimeout(timer);
     }
-  }, [commandStateSynced, optimisticToggleState, optimisticSliderValue]);
+  }, [commandStateSynced, optimisticToggleState, optimisticSliderValue, optimisticRgb, optimisticTone]);
 
   useEffect(() => {
     if (deliveryForPendingCommand || failedPendingCommand) {
       const timer = window.setTimeout(() => {
         setOptimisticToggleState(null);
         setOptimisticSliderValue(null);
+        setOptimisticRgb(null);
+        setOptimisticTone(null);
         setPendingCmdId(null);
       }, failedPendingCommand ? 0 : 500);
       return () => window.clearTimeout(timer);
@@ -436,6 +670,8 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
       const timer = window.setTimeout(() => {
         setOptimisticToggleState(null);
         setOptimisticSliderValue(null);
+        setOptimisticRgb(null);
+        setOptimisticTone(null);
         setPendingCmdId(null);
       }, 3000);
       return () => window.clearTimeout(timer);
@@ -471,7 +707,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
     setOptimisticToggleState(null);
     setOptimisticSliderValue(rawValue);
     try {
-      const payload = { kind: "action", pin: 0, brightness: rawValue };
+      const payload = { kind: "action", pin: 0, brightness: Math.round(rawValue) };
       const response = await sendDeviceCommand(config.device_id, payload);
       setRequestPending(false);
       if (response && response.status === "failed") {
@@ -484,38 +720,92 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
       setOptimisticSliderValue(null);
     }
   };
+  
+  const handleRgbCommit = async (rgb: [number, number, number]) => {
+    setRequestPending(true);
+    setPendingCmdId(null);
+    setAdvancedModeOverride("color");
+    setOptimisticRgb(rgb);
+    try {
+      const payload = { kind: "action", pin: 0, rgb: {r: rgb[0], g: rgb[1], b: rgb[2]} };
+      const response = await sendDeviceCommand(config.device_id, payload);
+      setRequestPending(false);
+      if (response && response.status === "failed") {
+        setOptimisticRgb(null);
+      } else {
+        setPendingCmdId(response?.command_id || null);
+      }
+    } catch {
+      setRequestPending(false);
+      setOptimisticRgb(null);
+    }
+  };
+
+  const handleToneCommit = async (tone: number) => {
+    setRequestPending(true);
+    setPendingCmdId(null);
+    setAdvancedModeOverride("temperature");
+    setOptimisticTone(tone);
+    try {
+      const payload = { kind: "action", pin: 0, color_temperature: Math.round(tone) };
+      const response = await sendDeviceCommand(config.device_id, payload);
+      setRequestPending(false);
+      if (response && response.status === "failed") {
+        setOptimisticTone(null);
+      } else {
+        setPendingCmdId(response?.command_id || null);
+      }
+    } catch {
+      setRequestPending(false);
+      setOptimisticTone(null);
+    }
+  };
 
   return (
-    <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-indigo-100 dark:border-indigo-900/50 p-5 shadow-sm hover:shadow-md transition-shadow relative overflow-y-auto w-full h-full flex flex-col">
-      <div className="absolute top-0 right-0">
-        <div className="bg-indigo-500 text-white text-[10px] px-2 py-1 rounded-bl-lg rounded-tr text-xs font-bold flex items-center shadow-sm z-20">
-          <span className="material-icons-round text-[14px] mr-1">extension</span> EXT
-        </div>
+    <div className={`bg-surface-light dark:bg-surface-dark rounded-xl border border-indigo-100 dark:border-indigo-900/50 p-5 shadow-sm hover:shadow-md transition-all relative w-full flex flex-col ${isExpanded ? 'h-auto z-10' : 'h-full'}`}>
+      <div className="absolute top-2 right-2">
+         {/* Removed the 'EXT' text which was overlapping, kept a subtle extension icon */}
+         <div className="text-indigo-400 dark:text-indigo-600/50 p-1 flex items-center justify-center rounded-full bg-indigo-50 dark:bg-indigo-900/20" title="Extension integration">
+            <span className="material-icons-round text-[16px]">extension</span>
+         </div>
       </div>
+      
+      {/* Header and Toggle */}
       <div className="flex justify-between items-start mb-2 mt-1">
-        <div className="h-10 w-10 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+        <div className="h-10 w-10 flex-shrink-0 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
           <span className="material-icons-round">wb_incandescent</span>
         </div>
-        <DeviceToggle
-          checked={toggleState}
-          disabled={pending || !isOnline}
-          id={`ext-${config.device_id}`}
-          loading={toggleLoading}
-          onChange={handleToggle}
-        />
+        <div className="flex flex-col items-end pr-8"> 
+           {/* offset toggle to not overlap with the icon */}
+          <DeviceToggle
+            checked={toggleState}
+            disabled={pending || !controlReady}
+            id={`ext-${config.device_id}`}
+            loading={toggleLoading || sliderLoading || rgbLoading || toneLoading}
+            onChange={handleToggle}
+          />
+        </div>
       </div>
-      <div className="mb-5">
-        <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
-        <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Chưa gán phòng'}>{config.room_name || 'Chưa gán phòng'}</p>
+      
+      {/* Name and Room */}
+      <div className="flex justify-between items-start mb-5">
+        <div className="flex-1 min-w-0 pr-4">
+          <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
+          <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Chưa gán phòng'}>{config.room_name || 'Chưa gán phòng'}</p>
+        </div>
+        <span className="flex items-center text-xs text-slate-500 flex-shrink-0 mt-0.5">
+          <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'} mr-1`}></span>
+          {statusLabel}
+        </span>
       </div>
+      
+      {/* Brightness Slider */}
       <div className="mb-4">
         <div className="flex justify-between items-end mb-2">
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
             Brightness
-            {sliderLoading && <span className="h-3 w-3 animate-spin rounded-full border-2 border-indigo-500 border-t-transparent" />}
           </label>
           <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
-            {sliderLoading && <span className="text-[10px] tracking-wide text-indigo-500/80 animate-pulse font-normal uppercase">Syncing...</span>}
             {sliderValue}
           </span>
         </div>
@@ -525,19 +815,102 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
           min={0}
           max={255}
           value={sliderValue}
-          disabled={pending || !isOnline}
+          disabled={pending || !controlReady}
           onChange={(e) => setOptimisticSliderValue(parseInt(e.target.value))}
           onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
           onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
         />
       </div>
-      <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-100 dark:border-slate-800 pt-3">
+
+      {hasAdvanced && (
+          <div className="mt-auto flex justify-center pb-2">
+              <button 
+                onClick={() => setIsExpanded(!isExpanded)}
+                className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                disabled={!controlReady}
+              >
+                  <span className="material-icons-round text-[14px]">tune</span>
+                  {isExpanded ? 'Show Less' : 'Tune'}
+              </button>
+          </div>
+      )}
+
+      {/* Expanded Advanced Controls */}
+      <div className={`grid transition-all duration-300 ease-in-out ${isExpanded && hasAdvanced ? 'grid-rows-[1fr] opacity-100 mt-4' : 'grid-rows-[0fr] opacity-0'}`}>
+        <div className="overflow-hidden">
+          <div className="flex flex-col gap-6 pt-4 border-t border-slate-100 dark:border-slate-800">
+            {supportsRgb && supportsTone ? (
+              <div className="flex justify-center">
+                <div className="inline-flex items-center rounded-full bg-slate-100 p-1 text-xs font-medium dark:bg-slate-800">
+                  <button
+                    type="button"
+                    className={`rounded-full px-3 py-1.5 transition-colors ${visibleAdvancedMode === "color" ? "bg-indigo-500 text-white shadow-sm" : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"}`}
+                    onClick={() => setAdvancedModeOverride("color")}
+                    disabled={pending || !controlReady}
+                  >
+                    Color
+                  </button>
+                  <button
+                    type="button"
+                    className={`rounded-full px-3 py-1.5 transition-colors ${visibleAdvancedMode === "temperature" ? "bg-amber-500 text-white shadow-sm" : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"}`}
+                    onClick={() => setAdvancedModeOverride("temperature")}
+                    disabled={pending || !controlReady}
+                  >
+                    White
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            
+            {/* RGB Color Wheel */}
+            {supportsRgb && visibleAdvancedMode === "color" && (
+              <div className="flex flex-col items-center">
+                <div className="flex justify-between items-center w-full mb-3">
+                   <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Color</label>
+                </div>
+                <ColorWheel 
+                    rgb={rgbValue} 
+                    onChange={handleRgbCommit} 
+                    disabled={pending || !controlReady} 
+                />
+              </div>
+            )}
+
+            {/* Color Temperature (Tone) */}
+            {supportsTone && visibleAdvancedMode === "temperature" && (
+              <div className="mb-2 pb-2">
+                  <div className="flex justify-between items-end mb-2">
+                  <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                      Light Temperature
+                  </label>
+                  <span className="text-xs font-bold text-orange-600 dark:text-orange-400 flex items-center gap-1.5">
+                      {toneValue}K
+                  </span>
+                  </div>
+                  <input
+                  type="range"
+                  className="w-full accent-orange-500 h-2 rounded-lg appearance-none cursor-pointer"
+                  style={{
+                      background: 'linear-gradient(to right, #ff8c00, #ffddaa, #eef2ff, #aaccff)'
+                  }}
+                  min={temperatureRange?.min ?? 1700}
+                  max={temperatureRange?.max ?? 6500}
+                  step={50}
+                  value={toneValue}
+                  disabled={pending || !controlReady}
+                  onChange={(e) => setOptimisticTone(parseInt(e.target.value))}
+                  onMouseUp={(e) => void handleToneCommit(parseInt(e.currentTarget.value))}
+                  onTouchEnd={(e) => void handleToneCommit(parseInt(e.currentTarget.value))}
+                  />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      
+      {/* Footer Info */}
+      <div className={`flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 ${isExpanded ? 'mt-4 pt-4' : 'mt-auto pt-3'} border-t border-slate-100 dark:border-slate-800`}>
         <span className="flex items-center text-indigo-600 dark:text-indigo-400 font-medium">Source: {config.provider}</span>
-        {config.is_external && !isOnline ? (
-          <span className="text-[10px] uppercase tracking-[0.16em] text-amber-600 dark:text-amber-300">
-            Runtime pending
-          </span>
-        ) : null}
       </div>
     </div>
   );

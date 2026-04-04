@@ -83,7 +83,7 @@ This file documents the baseline schema for E-Connect.
 
 ## Extension Package Contract
 
-1. `installed_extensions` is the durable registry for uploaded extension packages. It stores validated metadata, not trusted execution state.
+1. `installed_extensions` is the durable registry for uploaded extension packages. It stores validated metadata plus the durable archive identity used to derive the extracted runtime directory on disk.
 2. Each row must preserve:
    - stable `extension_id`
    - `manifest_version`
@@ -93,7 +93,9 @@ This file documents the baseline schema for E-Connect.
    - archive metadata (`archive_path`, `archive_sha256`)
    - the normalized manifest JSON used for device-schema creation
 3. Re-uploading the same `extension_id` may update the installed package metadata in place, but external device instances must keep working from their own stored schema snapshot.
-4. This slice does not grant execution permission to uploaded code. Package storage exists for auditability and future sandbox/runtime work only.
+4. Python packages in this slice are extracted onto server disk and executed in-process through manifest-declared hooks after upload-time validation.
+5. The extracted package directory is derived from `extension_id`, `version`, and `archive_sha256` in server-owned storage; it is filesystem state, not a new database column in this slice.
+6. Deleting one `installed_extensions` row is allowed only when no `external_devices.installed_extension_id` rows still reference it, and a successful delete must also remove the stored ZIP archive and extracted runtime directory from server-owned storage.
 
 ## External Device Contract
 
@@ -111,6 +113,7 @@ This file documents the baseline schema for E-Connect.
    - additive lifecycle/read-model fields such as `auth_status`, `conn_status`, `last_state`, and `last_seen`
 3. Creating or deleting an external device must not mutate `devices`, `pin_configurations`, `diy_projects`, or provisioning history.
 4. The dashboard/device inventory read model may merge `external_devices` alongside `devices`, but the persistence truth sources remain separate.
+5. For automation in this slice, `external_devices.last_state` is also the durable runtime state source for provider-backed switch/value bindings; the system must not require a mirrored `device_history` row for every external-device state update.
 
 ## Auth Session Note
 

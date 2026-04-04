@@ -1233,17 +1233,23 @@ def collect_build_outputs(project_dir: str, board_profile: str) -> dict[str, str
     board_definition = resolve_board_definition(board_profile)
     env_build_dir = Path(project_dir) / ".pio" / "build" / board_definition.platformio_board
     outputs: dict[str, str] = {}
+    requires_full_bundle = board_definition.platform == "espressif32"
 
     candidates = {
         "firmware": env_build_dir / "firmware.bin",
-        "bootloader": env_build_dir / "bootloader.bin",
-        "partitions": env_build_dir / "partitions.bin",
     }
+    if requires_full_bundle:
+        candidates.update(
+            {
+                "bootloader": env_build_dir / "bootloader.bin",
+                "partitions": env_build_dir / "partitions.bin",
+            }
+        )
     for artifact_name, candidate in candidates.items():
         if candidate.exists():
             outputs[artifact_name] = str(candidate)
 
-    if board_definition.platform == "espressif32":
+    if requires_full_bundle:
         boot_app0_candidates = (
             Path(PLATFORMIO_CORE_DIR) / BOOT_APP0_RELATIVE_PATH,
             Path.home() / ".platformio" / BOOT_APP0_RELATIVE_PATH,
@@ -1255,9 +1261,14 @@ def collect_build_outputs(project_dir: str, board_profile: str) -> dict[str, str
 
     missing_build_artifacts = {
         "firmware": "firmware.bin",
-        "bootloader": "bootloader.bin",
-        "partitions": "partitions.bin",
     }
+    if requires_full_bundle:
+        missing_build_artifacts.update(
+            {
+                "bootloader": "bootloader.bin",
+                "partitions": "partitions.bin",
+            }
+        )
     missing_build_artifacts = {
         artifact_name: filename
         for artifact_name, filename in missing_build_artifacts.items()

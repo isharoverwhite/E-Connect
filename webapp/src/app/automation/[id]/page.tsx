@@ -265,12 +265,11 @@ export default function AutomationPage() {
       setDevices(dList);
       setScheduleContext(nextScheduleContext);
       
-      if (rawId === "new" && !draftAutomation) {
-          const starterGraph = buildStarterGraph();
-          setDraftAutomation({
+      if (rawId === "new") {
+          setDraftAutomation(prev => prev || {
             name: "New Automation",
             is_enabled: true,
-            graph: starterGraph,
+            graph: buildStarterGraph(),
             last_triggered: null,
             last_execution: null,
           });
@@ -281,7 +280,7 @@ export default function AutomationPage() {
       setFetchError(err instanceof Error ? err.message : "Failed to load.");
       setPageState("error");
     }
-  }, [draftAutomation, rawId]);
+  }, [rawId]);
 
   useEffect(() => {
     void loadData();
@@ -1930,16 +1929,34 @@ export default function AutomationPage() {
                {lastResult && activeAutomation && !selectedNodeId && (
                    <div className="p-5 border-t border-slate-200 dark:border-slate-700 m-4 rounded-xl bg-slate-50 dark:bg-slate-900 border">
                       <span className="text-xs font-bold uppercase tracking-wider text-slate-500 mb-2 block">Execution Result</span>
-                      <span className={`text-xs font-bold px-2 py-1 rounded inline-block mb-3 ${lastResult.status === 'success' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-400' : 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-400'}`}>
-                          {lastResult.status}
-                      </span>
-                      {lastResult.log?.error_message && (
-                          <div className="text-xs font-mono text-rose-500 whitespace-pre-wrap">{lastResult.log.error_message}</div>
-                      )}
-                      {lastResult.log?.log_output && (
-                          <div className="text-xs font-mono text-slate-600 dark:text-slate-400 whitespace-pre-wrap">{lastResult.log.log_output}</div>
-                      )}
-                      {!lastResult.log && <div className="text-xs italic text-slate-500">{lastResult.message}</div>}
+                      {(() => {
+                         const isConditionMiss = lastResult.log?.error_message === "No action applied because no branch passed all conditions.";
+                         const displayStatus = isConditionMiss ? "skipped" : lastResult.status;
+                         const statusClasses = isConditionMiss 
+                             ? "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
+                             : lastResult.status === 'success' 
+                                 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-400' 
+                                 : 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-400';
+                         
+                         return (
+                            <>
+                                <span className={`text-xs font-bold px-2 py-1 rounded inline-block mb-3 uppercase ${statusClasses}`}>
+                                    {displayStatus}
+                                </span>
+                                {lastResult.log?.error_message && (
+                                    <div className={`text-xs font-mono whitespace-pre-wrap mb-2 ${isConditionMiss ? "text-slate-500 dark:text-slate-400" : "text-rose-500"}`}>
+                                        {isConditionMiss ? "Condition not met: Execution stopped." : lastResult.log.error_message}
+                                    </div>
+                                )}
+                                {lastResult.log?.log_output && (
+                                    <div className="text-xs font-mono text-slate-600 dark:text-slate-400 whitespace-pre-wrap mt-2 max-h-40 overflow-y-auto hidden-scrollbar">
+                                        {lastResult.log.log_output}
+                                    </div>
+                                )}
+                                {!lastResult.log && <div className="text-xs italic text-slate-500">{lastResult.message}</div>}
+                            </>
+                         );
+                      })()}
                    </div>
                )}
                 </div>

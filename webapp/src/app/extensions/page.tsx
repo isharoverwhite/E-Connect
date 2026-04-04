@@ -1,35 +1,18 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 
 import Sidebar from "@/components/Sidebar";
 import { useToast } from "@/components/ToastContext";
 import {
-    createExternalDevice,
+    deleteInstalledExtension,
     fetchInstalledExtensions,
     InstalledExtension,
-    InstalledExtensionSchema,
     uploadExtensionZip,
 } from "@/lib/api";
 
-type SchemaDialogState = {
-    extension: InstalledExtension;
-    schema: InstalledExtensionSchema;
-} | null;
 
-type ConfigDraft = Record<string, string | number | boolean>;
-
-function buildInitialConfig(schema: InstalledExtensionSchema): ConfigDraft {
-    const draft: ConfigDraft = {};
-    for (const field of schema.config_fields) {
-        if (field.type === "boolean") {
-            draft[field.key] = false;
-        } else {
-            draft[field.key] = "";
-        }
-    }
-    return draft;
-}
 
 export default function ExtensionsLibrary() {
     const { showToast } = useToast();
@@ -40,11 +23,7 @@ export default function ExtensionsLibrary() {
     const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const [isUploading, setIsUploading] = useState(false);
-    const [schemaDialog, setSchemaDialog] = useState<SchemaDialogState>(null);
-    const [deviceName, setDeviceName] = useState("");
-    const [configDraft, setConfigDraft] = useState<ConfigDraft>({});
-    const [createError, setCreateError] = useState<string | null>(null);
-    const [isCreatingDevice, setIsCreatingDevice] = useState(false);
+    const [deletingExtensionId, setDeletingExtensionId] = useState<string | null>(null);
 
     const loadExtensions = useCallback(async () => {
         setLoading(true);
@@ -103,66 +82,27 @@ export default function ExtensionsLibrary() {
         }
     };
 
-    const openCreateDeviceDialog = (extension: InstalledExtension, schema: InstalledExtensionSchema) => {
-        setSchemaDialog({ extension, schema });
-        setDeviceName(schema.default_name);
-        setConfigDraft(buildInitialConfig(schema));
-        setCreateError(null);
-    };
-
-    const closeCreateDeviceDialog = () => {
-        setSchemaDialog(null);
-        setDeviceName("");
-        setConfigDraft({});
-        setCreateError(null);
-        setIsCreatingDevice(false);
-    };
-
-    const updateConfigValue = (key: string, value: string | number | boolean) => {
-        setConfigDraft((previous) => ({ ...previous, [key]: value }));
-    };
-
-    const handleCreateDevice = async (event: FormEvent<HTMLFormElement>) => {
-        event.preventDefault();
-        if (!schemaDialog) {
+    const handleDeleteExtension = async (extension: InstalledExtension) => {
+        if (extension.external_device_count > 0) {
+            showToast("Delete linked external devices before removing this package.", "warning");
             return;
         }
 
-        setIsCreatingDevice(true);
-        setCreateError(null);
+
+        showToast(`Deleting "${extension.name}" v${extension.version}...`, "info", 2000);
+        setDeletingExtensionId(extension.extension_id);
         try {
-            const normalizedConfig = Object.fromEntries(
-                Object.entries(configDraft).filter(([, value]) => {
-                    if (value === "") {
-                        return false;
-                    }
-                    if (typeof value === "number" && Number.isNaN(value)) {
-                        return false;
-                    }
-                    return true;
-                }),
-            );
-            await createExternalDevice({
-                installed_extension_id: schemaDialog.extension.extension_id,
-                device_schema_id: schemaDialog.schema.schema_id,
-                name: deviceName.trim() || schemaDialog.schema.default_name,
-                config: normalizedConfig,
-            });
-            setExtensions((previous) =>
-                previous.map((item) =>
-                    item.extension_id === schemaDialog.extension.extension_id
-                        ? { ...item, external_device_count: item.external_device_count + 1 }
-                        : item,
-                ),
-            );
-            closeCreateDeviceDialog();
-            showToast("External device created. It will now appear in Devices and Dashboard.", "success");
+            await deleteInstalledExtension(extension.extension_id);
+            setExtensions((previous) => previous.filter((item) => item.extension_id !== extension.extension_id));
+            showToast(`Deleted ${extension.name} ${extension.version}.`, "success");
         } catch (nextError) {
-            const message = nextError instanceof Error ? nextError.message : "Failed to create external device";
-            setCreateError(message);
-            setIsCreatingDevice(false);
+            const message = nextError instanceof Error ? nextError.message : "Failed to delete installed extension";
+            showToast(message, "error");
+        } finally {
+            setDeletingExtensionId(null);
         }
     };
+
 
     return (
         <div className="flex min-h-screen bg-background-light font-sans text-slate-800 dark:bg-background-dark dark:text-slate-200">
@@ -217,7 +157,7 @@ export default function ExtensionsLibrary() {
                                 </label>
 
                                 <div className="rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-100">
-                                    This slice stores validated package metadata and external-device schemas only. Runtime sandbox execution is still out of scope.
+                                    Installed extensions now run from the uploaded ZIP package and extracted server runtime files only.
                                 </div>
 
                                 <div className="flex justify-end gap-3">
@@ -250,112 +190,7 @@ export default function ExtensionsLibrary() {
                     </div>
                 ) : null}
 
-                {schemaDialog ? (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/55 p-4 backdrop-blur-sm">
-                        <div className="w-full max-w-xl rounded-2xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
-                            <div className="flex items-center justify-between border-b border-slate-100 p-6 dark:border-slate-800">
-                                <div>
-                                    <h2 className="text-lg font-bold text-slate-900 dark:text-white">Create external device</h2>
-                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                                        {schemaDialog.extension.name} / {schemaDialog.schema.name}
-                                    </p>
-                                </div>
-                                <button
-                                    onClick={closeCreateDeviceDialog}
-                                    className="rounded-full p-1 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
-                                >
-                                    <span className="material-icons-round">close</span>
-                                </button>
-                            </div>
 
-                            <form className="space-y-5 p-6" onSubmit={handleCreateDevice}>
-                                <div>
-                                    <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200">Device name</label>
-                                    <input
-                                        value={deviceName}
-                                        onChange={(event) => setDeviceName(event.target.value)}
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                                        placeholder={schemaDialog.schema.default_name}
-                                    />
-                                </div>
-
-                                {schemaDialog.schema.config_fields.map((field) => (
-                                    <div key={field.key}>
-                                        <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200">
-                                            {field.label}
-                                            {field.required ? <span className="ml-1 text-rose-500">*</span> : null}
-                                        </label>
-
-                                        {field.type === "boolean" ? (
-                                            <label className="flex items-center gap-3 rounded-xl border border-slate-200 px-4 py-3 text-sm dark:border-slate-700">
-                                                <input
-                                                    type="checkbox"
-                                                    checked={Boolean(configDraft[field.key])}
-                                                    onChange={(event) => updateConfigValue(field.key, event.target.checked)}
-                                                />
-                                                <span className="text-slate-700 dark:text-slate-200">Enabled</span>
-                                            </label>
-                                        ) : (
-                                            <input
-                                                value={String(configDraft[field.key] ?? "")}
-                                                type={field.type === "number" ? "number" : "text"}
-                                                onChange={(event) =>
-                                                    updateConfigValue(
-                                                        field.key,
-                                                        field.type === "number"
-                                                            ? event.target.value === ""
-                                                                ? ""
-                                                                : Number(event.target.value)
-                                                            : event.target.value,
-                                                    )
-                                                }
-                                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                                                placeholder={field.type === "number" ? "0" : field.label}
-                                            />
-                                        )}
-                                    </div>
-                                ))}
-
-                                {createError ? (
-                                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-300">
-                                        {createError}
-                                    </div>
-                                ) : null}
-
-                                <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-200">
-                                    The device will be created immediately but starts offline until a trusted extension runtime is added.
-                                </div>
-
-                                <div className="flex justify-end gap-3">
-                                    <button
-                                        type="button"
-                                        onClick={closeCreateDeviceDialog}
-                                        className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
-                                    >
-                                        Cancel
-                                    </button>
-                                    <button
-                                        type="submit"
-                                        disabled={isCreatingDevice}
-                                        className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
-                                    >
-                                        {isCreatingDevice ? (
-                                            <>
-                                                <span className="material-icons-round mr-2 animate-spin text-[18px]">progress_activity</span>
-                                                Creating...
-                                            </>
-                                        ) : (
-                                            <>
-                                                <span className="material-icons-round mr-2 text-[18px]">add_circle</span>
-                                                Create device
-                                            </>
-                                        )}
-                                    </button>
-                                </div>
-                            </form>
-                        </div>
-                    </div>
-                ) : null}
 
                 <div className="flex-1 overflow-y-auto p-6 md:p-8">
                     <div className="mx-auto max-w-6xl">
@@ -418,95 +253,72 @@ export default function ExtensionsLibrary() {
                                 ) : (
                                     <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                                         {extensions.map((extension) => (
-                                            <section
+                                            <article
                                                 key={extension.extension_id}
-                                                className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900"
+                                                className="group relative flex flex-col justify-between overflow-hidden rounded-[24px] border border-slate-200/80 bg-white shadow-sm transition-all hover:border-slate-300 hover:shadow-md dark:border-white/5 dark:bg-surface-container-low dark:hover:bg-surface-container"
                                             >
-                                                <div className="border-b border-slate-100 bg-gradient-to-r from-slate-900 to-slate-800 p-6 text-white dark:border-slate-800">
+                                                <div className="p-8 pb-6">
                                                     <div className="flex items-start justify-between gap-4">
                                                         <div>
-                                                            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-200">
-                                                                {extension.provider_name}
-                                                            </p>
-                                                            <h2 className="mt-2 text-2xl font-bold">{extension.name}</h2>
-                                                            <p className="mt-2 max-w-2xl text-sm text-slate-200">{extension.description}</p>
-                                                        </div>
-                                                        <div className="rounded-xl bg-white/10 px-3 py-2 text-right text-xs backdrop-blur">
-                                                            <div className="font-semibold">{extension.version}</div>
-                                                            <div className="mt-1 text-slate-300">
-                                                                {extension.external_device_count} device{extension.external_device_count === 1 ? "" : "s"}
+                                                            <div className="mb-4 inline-flex items-center gap-2">
+                                                                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 dark:bg-surface-container-highest dark:text-slate-300">
+                                                                    <span className="material-icons-round text-[16px]">extension</span>
+                                                                </span>
+                                                                <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+                                                                    {extension.provider_name}
+                                                                </span>
                                                             </div>
+                                                            <h2 className="text-[28px] font-bold tracking-tight text-slate-900 dark:text-white leading-tight">
+                                                                {extension.name}
+                                                            </h2>
+                                                            <div className="mt-3 flex items-center gap-3">
+                                                                <span className="rounded-full bg-slate-200/50 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-surface-container-highest dark:text-slate-300">
+                                                                    v{extension.version}
+                                                                </span>
+                                                                <span className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
+                                                                    <span className={`h-1.5 w-1.5 rounded-full ${extension.external_device_count > 0 ? "bg-primary" : "bg-slate-400 dark:bg-slate-600"}`}></span>
+                                                                    {extension.external_device_count} device{extension.external_device_count !== 1 ? "s" : ""}
+                                                                </span>
+                                                            </div>
+                                                            {extension.description && (
+                                                                <p className="mt-4 text-sm text-slate-500 dark:text-slate-400 line-clamp-2">
+                                                                    {extension.description}
+                                                                </p>
+                                                            )}
                                                         </div>
-                                                    </div>
-                                                </div>
-
-                                                <div className="space-y-5 p-6">
-                                                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                                                        <InfoPill label="Extension ID" value={extension.extension_id} />
-                                                        <InfoPill label="Runtime" value={extension.package_runtime} />
-                                                        <InfoPill label="Entrypoint" value={extension.package_entrypoint} />
-                                                    </div>
-
-                                                    <div>
-                                                        <div className="mb-3 flex items-center justify-between">
-                                                            <h3 className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
-                                                                Device Schemas
-                                                            </h3>
-                                                            <span className="text-xs text-slate-500 dark:text-slate-400">
-                                                                {extension.device_schemas.length} available
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => void handleDeleteExtension(extension)}
+                                                            disabled={deletingExtensionId === extension.extension_id || extension.external_device_count > 0}
+                                                            title={
+                                                                extension.external_device_count > 0
+                                                                    ? "Delete linked external devices before removing this package."
+                                                                    : `Delete ${extension.name}`
+                                                            }
+                                                            className="inline-flex shrink-0 items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition-colors hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200 dark:hover:bg-rose-500/20 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-500"
+                                                        >
+                                                            <span className={`material-icons-round text-[16px] ${deletingExtensionId === extension.extension_id ? "animate-spin" : ""}`}>
+                                                                {deletingExtensionId === extension.extension_id ? "progress_activity" : "delete"}
                                                             </span>
-                                                        </div>
-
-                                                        <div className="space-y-3">
-                                                            {extension.device_schemas.map((schema) => (
-                                                                <div
-                                                                    key={schema.schema_id}
-                                                                    className="rounded-2xl border border-slate-200 p-4 dark:border-slate-800"
-                                                                >
-                                                                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                                                        <div className="min-w-0 flex-1">
-                                                                            <div className="flex flex-wrap items-center gap-2">
-                                                                                <h4 className="font-semibold text-slate-900 dark:text-white">{schema.name}</h4>
-                                                                                <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-indigo-700 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-300">
-                                                                                    {schema.card_type}
-                                                                                </span>
-                                                                            </div>
-                                                                            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                                                {schema.description || "No schema description provided."}
-                                                                            </p>
-                                                                            <div className="mt-3 flex flex-wrap gap-2">
-                                                                                {schema.config_fields.length > 0 ? (
-                                                                                    schema.config_fields.map((field) => (
-                                                                                        <span
-                                                                                            key={field.key}
-                                                                                            className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300"
-                                                                                        >
-                                                                                            {field.label} · {field.type}
-                                                                                            {field.required ? " · required" : ""}
-                                                                                        </span>
-                                                                                    ))
-                                                                                ) : (
-                                                                                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
-                                                                                        No extra config fields
-                                                                                    </span>
-                                                                                )}
-                                                                            </div>
-                                                                        </div>
-
-                                                                        <button
-                                                                            onClick={() => openCreateDeviceDialog(extension, schema)}
-                                                                            className="inline-flex shrink-0 items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600"
-                                                                        >
-                                                                            <span className="material-icons-round mr-2 text-[18px]">add_circle</span>
-                                                                            Create device
-                                                                        </button>
-                                                                    </div>
-                                                                </div>
-                                                            ))}
-                                                        </div>
+                                                            {deletingExtensionId === extension.extension_id ? "Deleting" : "Delete"}
+                                                        </button>
                                                     </div>
                                                 </div>
-                                            </section>
+                                                <div className="px-8 pb-8 pt-4">
+                                                    {extension.external_device_count > 0 ? (
+                                                        <p className="mb-3 text-xs text-amber-700 dark:text-amber-300">
+                                                            Remove linked external devices before deleting this package.
+                                                        </p>
+                                                    ) : null}
+                                                    <Link
+                                                        href={`/extensions/${extension.extension_id}`}
+                                                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-200 px-4 py-3 text-sm font-semibold text-slate-800 transition-colors group-hover:bg-slate-300 dark:bg-surface-container-high dark:text-white dark:group-hover:bg-surface-container-highest"
+                                                    >
+                                                        View Details
+                                                        <span className="material-icons-round text-[18px]">arrow_forward</span>
+                                                    </Link>
+                                                </div>
+                                            </article>
                                         ))}
                                     </div>
                                 )}
@@ -527,15 +339,6 @@ export default function ExtensionsLibrary() {
                     </div>
                 </div>
             </main>
-        </div>
-    );
-}
-
-function InfoPill({ label, value }: { label: string; value: string }) {
-    return (
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/50">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{label}</p>
-            <p className="mt-2 truncate text-sm font-medium text-slate-800 dark:text-slate-100">{value}</p>
         </div>
     );
 }

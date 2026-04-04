@@ -4,6 +4,11 @@ import type {
     ProjectSyncState,
     ServerBuildState,
 } from "../types";
+import {
+    boardRequiresFullFlashBundle,
+    getFullBundleBootloaderOffset,
+    getSingleBinaryOffset,
+} from "../flash-manifest";
 import { formatServerTimestamp } from "@/lib/server-time";
 
 export interface Step4FlashProps {
@@ -52,10 +57,6 @@ export interface Step4FlashProps {
 
 function toHex(value: number) {
     return `0x${value.toString(16).toUpperCase()}`;
-}
-
-function getSingleBinaryOffset(board: BoardProfile) {
-    return board.family === "ESP8266" ? 0 : 65536;
 }
 
 function formatStatusLabel(value: ProjectSyncState | ServerBuildState["status"]) {
@@ -515,7 +516,9 @@ export function Step4Flash({
                     <div className="border-t border-slate-800 px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
                         {board.family === "ESP8266"
                             ? `ESP8266 server builds currently expose firmware.bin only at ${toHex(getSingleBinaryOffset(board))}.`
-                            : `Server builds currently expose the application binary at ${toHex(getSingleBinaryOffset(board))}.`}
+                            : boardRequiresFullFlashBundle(board)
+                                ? `ESP32-family server builds expose a full flash bundle: bootloader @ ${toHex(getFullBundleBootloaderOffset(board))}, partitions @ 0x8000, boot_app0 @ 0xE000, firmware @ 0x10000.`
+                                : `Server builds currently expose the application binary at ${toHex(getSingleBinaryOffset(board))}.`}
                     </div>
                     </div>
             </div>
@@ -732,8 +735,10 @@ function getReadinessModel({
                     progress: 82,
                     theme: "blue" as const,
                     headline: "Artifact ready",
-                    detail: flashLockedReason || "The `.bin` artifact is ready. Clear any lingering serial session to unlock browser flashing.",
-                    subline: `Binary ready at ${toHex(getSingleBinaryOffset(board))}`,
+                    detail: flashLockedReason || "The server flash artifacts are ready. Clear any lingering serial session to unlock browser flashing.",
+                    subline: boardRequiresFullFlashBundle(board)
+                        ? "Bundle ready for clean flashing"
+                        : `Binary ready at ${toHex(getSingleBinaryOffset(board))}`,
                 };
             case "build_failed":
             case "flash_failed":

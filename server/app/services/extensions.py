@@ -4,6 +4,7 @@ import hashlib
 import io
 import json
 import re
+import shutil
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -11,12 +12,20 @@ from typing import Any
 
 EXTENSIONS_DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "extensions"
 EXTENSION_PACKAGES_DIR = EXTENSIONS_DATA_DIR / "packages"
+EXTENSION_EXTRACTED_DIR = EXTENSIONS_DATA_DIR / "extracted"
 MAX_EXTENSION_ARCHIVE_BYTES = 5 * 1024 * 1024
 SUPPORTED_CARD_TYPES = {"light"}
 SUPPORTED_CONFIG_FIELD_TYPES = {"string", "number", "boolean"}
+SUPPORTED_LIGHT_CAPABILITIES = {"power", "brightness", "rgb", "color_temperature"}
 IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,119}$")
+PYTHON_SYMBOL_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+DEFAULT_PACKAGE_HOOKS = {
+    "validate_command": "validate_command",
+    "execute_command": "execute_command",
+    "probe_state": "probe_state",
+}
 
-for path in (EXTENSIONS_DATA_DIR, EXTENSION_PACKAGES_DIR):
+for path in (EXTENSIONS_DATA_DIR, EXTENSION_PACKAGES_DIR, EXTENSION_EXTRACTED_DIR):
     path.mkdir(parents=True, exist_ok=True)
 
 
@@ -37,6 +46,23 @@ def _validate_identifier(value: str, *, field_name: str) -> str:
         raise ExtensionManifestValidationError(
             f"Manifest field '{field_name}' must match lowercase slug format [a-z0-9_-]."
         )
+    return normalized
+
+
+def _validate_python_symbol(value: str, *, field_name: str) -> str:
+    normalized = value.strip()
+    if not PYTHON_SYMBOL_PATTERN.fullmatch(normalized):
+        raise ExtensionManifestValidationError(
+            f"Manifest field '{field_name}' must be a valid Python symbol name."
+        )
+    return normalized
+
+
+def _validate_package_entrypoint(value: str) -> str:
+    normalized = value.strip()
+    path = PurePosixPath(normalized)
+    if path.is_absolute() or ".." in path.parts or normalized.endswith("/"):
+        raise ExtensionManifestValidationError("Manifest field 'package.entrypoint' must be a safe relative file path.")
     return normalized
 
 
@@ -98,6 +124,51 @@ def _normalize_device_schema(schema_payload: Any, *, seen_schema_ids: set[str]) 
             f"Schema '{schema_id}' uses unsupported card type '{card_type}'."
         )
 
+    raw_capabilities = display_payload.get("capabilities") or ["power", "brightness"]
+    if not isinstance(raw_capabilities, list) or len(raw_capabilities) == 0:
+        raise ExtensionManifestValidationError(
+            f"Schema '{schema_id}' display.capabilities must be a non-empty list."
+        )
+
+    capabilities: list[str] = []
+    seen_capabilities: set[str] = set()
+    for raw_capability in raw_capabilities:
+        if not isinstance(raw_capability, str) or not raw_capability.strip():
+            raise ExtensionManifestValidationError(
+                f"Schema '{schema_id}' has an invalid display capability entry."
+            )
+        capability = raw_capability.strip().lower()
+        if capability not in SUPPORTED_LIGHT_CAPABILITIES:
+            raise ExtensionManifestValidationError(
+                f"Schema '{schema_id}' uses unsupported capability '{capability}'."
+            )
+        if capability in seen_capabilities:
+            continue
+        seen_capabilities.add(capability)
+        capabilities.append(capability)
+
+    temperature_range: dict[str, int] | None = None
+    raw_temperature_range = display_payload.get("temperature_range")
+    if raw_temperature_range is not None:
+        if not isinstance(raw_temperature_range, dict):
+            raise ExtensionManifestValidationError(
+                f"Schema '{schema_id}' display.temperature_range must be an object."
+            )
+        min_kelvin = raw_temperature_range.get("min")
+        max_kelvin = raw_temperature_range.get("max")
+        if not isinstance(min_kelvin, int) or not isinstance(max_kelvin, int):
+            raise ExtensionManifestValidationError(
+                f"Schema '{schema_id}' temperature range must use integer min/max values."
+            )
+        if min_kelvin >= max_kelvin:
+            raise ExtensionManifestValidationError(
+                f"Schema '{schema_id}' temperature range min must be lower than max."
+            )
+        temperature_range = {"min": min_kelvin, "max": max_kelvin}
+
+    if "color_temperature" in capabilities and temperature_range is None:
+        temperature_range = {"min": 1700, "max": 6500}
+
     config_schema_payload = schema_payload.get("config_schema") or {}
     if not isinstance(config_schema_payload, dict):
         raise ExtensionManifestValidationError(
@@ -121,7 +192,11 @@ def _normalize_device_schema(schema_payload: Any, *, seen_schema_ids: set[str]) 
         "name": name,
         "default_name": default_name,
         "description": normalized_description,
-        "display": {"card_type": card_type},
+        "display": {
+            "card_type": card_type,
+            "capabilities": capabilities,
+            "temperature_range": temperature_range,
+        },
         "config_schema": {"fields": fields},
     }
 
@@ -160,7 +235,17 @@ def normalize_manifest_v1(manifest_payload: Any) -> dict[str, Any]:
         raise ExtensionManifestValidationError(
             f"Unsupported package runtime '{package_runtime}'. Expected 'python'."
         )
-    package_entrypoint = _read_nonempty_string(package_payload, "entrypoint")
+    package_entrypoint = _validate_package_entrypoint(_read_nonempty_string(package_payload, "entrypoint"))
+    raw_hooks = package_payload.get("hooks") or DEFAULT_PACKAGE_HOOKS
+    if not isinstance(raw_hooks, dict):
+        raise ExtensionManifestValidationError("Manifest field 'package.hooks' must be an object.")
+    package_hooks = {
+        hook_key: _validate_python_symbol(
+            _read_nonempty_string(raw_hooks, hook_key),
+            field_name=f"package.hooks.{hook_key}",
+        )
+        for hook_key in DEFAULT_PACKAGE_HOOKS
+    }
 
     raw_device_schemas = manifest_payload.get("device_schemas")
     if not isinstance(raw_device_schemas, list) or len(raw_device_schemas) == 0:
@@ -186,6 +271,7 @@ def normalize_manifest_v1(manifest_payload: Any) -> dict[str, Any]:
         "package": {
             "runtime": package_runtime,
             "entrypoint": package_entrypoint,
+            "hooks": package_hooks,
         },
         "device_schemas": device_schemas,
     }
@@ -268,6 +354,65 @@ def persist_extension_archive(*, archive_bytes: bytes, extension_id: str, versio
     return archive_path
 
 
+def resolve_extracted_extension_dir(*, extension_id: str, version: str, archive_sha256: str) -> Path:
+    safe_name = f"{extension_id}-{version}-{archive_sha256[:12]}"
+    return EXTENSION_EXTRACTED_DIR / safe_name
+
+
+def resolve_extension_entrypoint_path(*, package_root_dir: Path, entrypoint: str) -> Path:
+    entrypoint_path = package_root_dir / PurePosixPath(entrypoint)
+    return entrypoint_path.resolve()
+
+
+def remove_extracted_extension_dir(*, extension_id: str, version: str, archive_sha256: str) -> None:
+    extract_dir = resolve_extracted_extension_dir(
+        extension_id=extension_id,
+        version=version,
+        archive_sha256=archive_sha256,
+    )
+    if extract_dir.exists():
+        shutil.rmtree(extract_dir)
+
+
+def _validated_archive_member_path(filename: str) -> PurePosixPath:
+    member_path = PurePosixPath(filename)
+    if member_path.is_absolute() or ".." in member_path.parts:
+        raise ExtensionManifestValidationError("Extension ZIP contains an unsafe archive path.")
+    return member_path
+
+
+def extract_extension_archive(*, archive_path: str | Path, extension_id: str, version: str, archive_sha256: str) -> Path:
+    source_archive_path = Path(archive_path)
+    extract_dir = resolve_extracted_extension_dir(
+        extension_id=extension_id,
+        version=version,
+        archive_sha256=archive_sha256,
+    )
+    temp_dir = extract_dir.with_name(f"{extract_dir.name}.tmp")
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        with zipfile.ZipFile(source_archive_path) as archive:
+            for member in archive.infolist():
+                member_path = _validated_archive_member_path(member.filename)
+                destination = temp_dir.joinpath(*member_path.parts)
+                if member.is_dir():
+                    destination.mkdir(parents=True, exist_ok=True)
+                    continue
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.open(member) as source_handle, destination.open("wb") as destination_handle:
+                    shutil.copyfileobj(source_handle, destination_handle)
+
+        if extract_dir.exists():
+            shutil.rmtree(extract_dir)
+        temp_dir.replace(extract_dir)
+    except Exception:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+    return extract_dir
 def get_manifest_device_schema(manifest: dict[str, Any], schema_id: str) -> dict[str, Any]:
     for schema in manifest.get("device_schemas", []):
         if isinstance(schema, dict) and schema.get("schema_id") == schema_id:

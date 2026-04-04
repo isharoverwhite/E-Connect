@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, Backgro
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, joinedload, sessionmaker
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Any, Callable, Literal, Union
 import ast
@@ -12,10 +12,10 @@ import logging
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
-import anyio
 import asyncio
 import hashlib
 from urllib.parse import urlencode
+from pathlib import Path
 
 from .mqtt import build_pairing_rejected_ack_payload, mqtt_manager
 from .ws_manager import manager as ws_manager
@@ -97,7 +97,21 @@ from .services.extensions import (
     get_manifest_device_schema,
     parse_extension_archive,
     persist_extension_archive,
+    remove_extracted_extension_dir,
     validate_external_device_config,
+)
+from .services.extension_runtime_loader import (
+    ExtensionRuntimeLoadError,
+    clear_extension_runtime_cache,
+    validate_extension_package_runtime,
+)
+from .services.external_runtime import (
+    ExternalDeviceRuntimeError,
+    ExternalDeviceRuntimeUnsupportedError,
+    ExternalDeviceRuntimeValidationError,
+    execute_external_device_command,
+    probe_external_device_state,
+    validate_external_device_command,
 )
 from .services.system_metrics import collect_system_metrics
 from .services.system_logs import (
@@ -122,6 +136,12 @@ from .services.automation_runtime import (
     serialize_graph_for_storage,
     sync_automation_schedule_projection,
     trigger_automation_manually,
+)
+from .services.automation_devices import (
+    attach_external_device_automation_metadata,
+    build_external_device_state_payload,
+    dispatch_external_device_automation_command,
+    serialize_external_device_automation_pins,
 )
 
 router = APIRouter()
@@ -486,7 +506,7 @@ def _broadcast_pairing_queue_updated(device: Device, *, reason: str) -> None:
 def _resolve_build_artifact_path(job: BuildJob, artifact_name: Literal["firmware", "bootloader", "partitions", "boot_app0"]) -> Optional[str]:
     candidates: list[str] = []
     direct_path = _trimmed_string(job.artifact_path)
-    if direct_path:
+    if direct_path and artifact_name == "firmware":
         candidates.append(direct_path)
 
     try:
@@ -1128,7 +1148,7 @@ def _apply_automation_payload(
     automation: Automation,
     payload: AutomationCreate | AutomationUpdate,
     *,
-    device_scope: dict[str, Device] | None = None,
+    device_scope: dict[str, Any] | None = None,
     effective_timezone: str,
 ) -> Automation:
     try:
@@ -1462,7 +1482,7 @@ def _serialize_external_device_availability(device: ExternalDevice) -> dict[str,
 
 def _serialize_external_device(device: ExternalDevice) -> dict[str, Any]:
     room_name = device.room.name if device.room is not None else None
-    manifest = device.installed_extension.manifest if device.installed_extension is not None else {}
+    config = device.config if isinstance(device.config, dict) else {}
     extension_name = (
         device.installed_extension.name
         if device.installed_extension is not None
@@ -1475,7 +1495,7 @@ def _serialize_external_device(device: ExternalDevice) -> dict[str, Any]:
         "mode": DeviceMode.library,
         "firmware_revision": None,
         "firmware_version": device.installed_extension.version if device.installed_extension is not None else None,
-        "ip_address": None,
+        "ip_address": config.get("ip_address"),
         "topic_pub": None,
         "topic_sub": None,
         "room_id": device.room_id,
@@ -1492,12 +1512,12 @@ def _serialize_external_device(device: ExternalDevice) -> dict[str, Any]:
         "extension_name": extension_name,
         "installed_extension_id": device.installed_extension_id,
         "device_schema_id": device.device_schema_id,
-        "external_config": device.config if isinstance(device.config, dict) else {},
+        "external_config": config,
         "schema_snapshot": device.schema_snapshot if isinstance(device.schema_snapshot, dict) else {},
         "is_external": True,
         "created_at": device.created_at,
         "updated_at": device.updated_at,
-        "pin_configurations": [],
+        "pin_configurations": serialize_external_device_automation_pins(device),
     }
 
 
@@ -1518,14 +1538,392 @@ def _serialize_extension_device_schema(schema: dict[str, Any]) -> dict[str, Any]
         )
 
     display = schema.get("display") if isinstance(schema.get("display"), dict) else {}
+    raw_capabilities = display.get("capabilities") if isinstance(display.get("capabilities"), list) else []
+    capabilities = [
+        str(capability).strip().lower()
+        for capability in raw_capabilities
+        if isinstance(capability, str) and capability.strip()
+    ]
+    raw_temperature_range = (
+        display.get("temperature_range")
+        if isinstance(display.get("temperature_range"), dict)
+        else None
+    )
+    temperature_range = None
+    if isinstance(raw_temperature_range, dict):
+        min_kelvin = raw_temperature_range.get("min")
+        max_kelvin = raw_temperature_range.get("max")
+        if isinstance(min_kelvin, int) and isinstance(max_kelvin, int):
+            temperature_range = {"min": min_kelvin, "max": max_kelvin}
     return {
         "schema_id": str(schema.get("schema_id") or ""),
         "name": str(schema.get("name") or ""),
         "default_name": str(schema.get("default_name") or schema.get("name") or ""),
         "description": schema.get("description"),
         "card_type": str(display.get("card_type") or "light"),
+        "capabilities": capabilities,
+        "temperature_range": temperature_range,
         "config_fields": config_fields,
     }
+
+
+def _coerce_runtime_reported_at(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        return value
+
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized:
+            try:
+                parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+            except ValueError:
+                parsed = None
+            if parsed is not None:
+                if parsed.tzinfo is not None:
+                    return parsed.astimezone(timezone.utc).replace(tzinfo=None)
+                return parsed
+
+    return datetime.utcnow()
+
+
+def _persist_external_runtime_state(
+    db: Session,
+    device: ExternalDevice,
+    *,
+    state: dict[str, Any],
+) -> None:
+    _stage_external_runtime_state(device, state=state)
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+
+
+def _stage_external_runtime_state(
+    device: ExternalDevice,
+    *,
+    state: dict[str, Any],
+) -> None:
+    device.last_state = state
+    device.last_seen = _coerce_runtime_reported_at(state.get("reported_at"))
+    device.conn_status = ConnStatus.online
+
+
+def _mark_external_device_offline(
+    db: Session,
+    device: ExternalDevice,
+) -> None:
+    _stage_external_device_offline(device)
+    db.add(device)
+    db.commit()
+    db.refresh(device)
+
+
+def _stage_external_device_offline(
+    device: ExternalDevice,
+) -> None:
+    device.conn_status = ConnStatus.offline
+
+
+def _canonicalize_external_runtime_state(value: Any) -> Any:
+    if isinstance(value, dict):
+        normalized: dict[str, Any] = {}
+        for key in sorted(value):
+            if key == "reported_at":
+                continue
+            normalized[key] = _canonicalize_external_runtime_state(value[key])
+        return normalized
+
+    if isinstance(value, list):
+        return [_canonicalize_external_runtime_state(item) for item in value]
+
+    return value
+
+
+def _external_runtime_state_changed(
+    previous_state: Any,
+    next_state: Any,
+) -> bool:
+    return _canonicalize_external_runtime_state(previous_state) != _canonicalize_external_runtime_state(next_state)
+
+
+def _build_automation_command_dispatcher(
+    db: Session,
+    *,
+    physical_publish: Callable[[str, dict[str, Any]], bool],
+    triggered_at: datetime | None = None,
+) -> Callable[[str, dict[str, Any]], bool]:
+    def dispatch(device_id: str, command: dict[str, Any]) -> bool:
+        physical_device = db.query(Device).filter(Device.device_id == device_id).first()
+        if physical_device is not None:
+            return physical_publish(device_id, command)
+
+        callback_time = triggered_at or datetime.now(timezone.utc).replace(tzinfo=None)
+
+        def on_state_change(
+            changed_device_id: str,
+            current_payload: dict[str, Any],
+            previous_payload: dict[str, Any] | None,
+        ) -> None:
+            process_state_event_for_automations(
+                db,
+                device_id=changed_device_id,
+                state_payload=current_payload,
+                previous_state_payload=previous_payload,
+                publish_command=dispatch,
+                triggered_at=callback_time,
+            )
+
+        return dispatch_external_device_automation_command(
+            db,
+            device_id=device_id,
+            command=command,
+            on_state_change=on_state_change,
+        )
+
+    return dispatch
+
+
+def _execute_external_device_command_task(
+    session_factory: sessionmaker,
+    *,
+    device_id: str,
+    command: dict[str, Any],
+) -> None:
+    db = session_factory()
+    try:
+        external_device = (
+            db.query(ExternalDevice)
+            .options(joinedload(ExternalDevice.installed_extension))
+            .filter(ExternalDevice.device_id == device_id)
+            .first()
+        )
+        if external_device is None:
+            return
+
+        command_id = str(command.get("command_id") or "")
+        previous_state = external_device.last_state if isinstance(external_device.last_state, dict) else {}
+        previous_payload = build_external_device_state_payload(external_device, state=previous_state)
+        try:
+            runtime_result = execute_external_device_command(external_device, command)
+        except ExternalDeviceRuntimeValidationError as exc:
+            try:
+                ws_manager.broadcast_device_event_sync(
+                    "command_delivery",
+                    external_device.device_id,
+                    external_device.room_id,
+                    {
+                        "command_id": command_id,
+                        "status": "failed",
+                        "reason": str(exc),
+                    },
+                )
+            except Exception:
+                pass
+            return
+        except ExternalDeviceRuntimeUnsupportedError as exc:
+            try:
+                ws_manager.broadcast_device_event_sync(
+                    "command_delivery",
+                    external_device.device_id,
+                    external_device.room_id,
+                    {
+                        "command_id": command_id,
+                        "status": "failed",
+                        "reason": str(exc),
+                    },
+                )
+            except Exception:
+                pass
+            return
+        except ExternalDeviceRuntimeError as exc:
+            if exc.mark_offline:
+                _mark_external_device_offline(db, external_device)
+                try:
+                    ws_manager.broadcast_device_event_sync(
+                        "device_offline",
+                        external_device.device_id,
+                        external_device.room_id,
+                        {
+                            "reported_at": datetime.now(timezone.utc).isoformat(),
+                            "reason": str(exc),
+                        },
+                    )
+                except Exception:
+                    pass
+
+            try:
+                ws_manager.broadcast_device_event_sync(
+                    "command_delivery",
+                    external_device.device_id,
+                    external_device.room_id,
+                    {
+                        "command_id": command_id,
+                        "status": "failed",
+                        "reason": str(exc),
+                    },
+                )
+            except Exception:
+                pass
+            return
+
+        runtime_state = runtime_result.state if isinstance(runtime_result.state, dict) else {}
+        state_changed = _external_runtime_state_changed(previous_state, runtime_state)
+        _persist_external_runtime_state(db, external_device, state=runtime_state)
+        current_payload = build_external_device_state_payload(external_device, state=runtime_state)
+
+        try:
+            ws_manager.broadcast_device_event_sync(
+                "device_state",
+                external_device.device_id,
+                external_device.room_id,
+                runtime_state,
+            )
+            ws_manager.broadcast_device_event_sync(
+                "command_delivery",
+                external_device.device_id,
+                external_device.room_id,
+                {
+                    "command_id": command_id,
+                    "status": "acknowledged",
+                },
+            )
+        except Exception:
+            pass
+
+        if state_changed:
+            try:
+                process_state_event_for_automations(
+                    db,
+                    device_id=external_device.device_id,
+                    state_payload=current_payload,
+                    previous_state_payload=previous_payload,
+                    publish_command=_build_automation_command_dispatcher(
+                        db,
+                        physical_publish=mqtt_manager.publish_command,
+                    ),
+                    triggered_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                )
+                db.commit()
+            except Exception:
+                logger.exception(
+                    "Automation graph evaluation failed for external device command state %s",
+                    external_device.device_id,
+                )
+    finally:
+        db.close()
+
+
+def refresh_external_device_states_once(
+    *,
+    session_factory: Optional[Callable[[], Session]] = None,
+) -> dict[str, int]:
+    db = (session_factory or SessionLocal)()
+    try:
+        external_devices = (
+            db.query(ExternalDevice)
+            .options(joinedload(ExternalDevice.installed_extension))
+            .filter(ExternalDevice.auth_status == AuthStatus.approved)
+            .all()
+        )
+        stats = {"probed": 0, "online": 0, "offline": 0, "changed": 0}
+        if not external_devices:
+            return stats
+
+        for external_device in external_devices:
+            stats["probed"] += 1
+            previous_status = external_device.conn_status
+            previous_state = external_device.last_state if isinstance(external_device.last_state, dict) else {}
+            previous_payload = build_external_device_state_payload(external_device, state=previous_state)
+
+            try:
+                runtime_result = probe_external_device_state(external_device)
+            except ExternalDeviceRuntimeValidationError as exc:
+                logger.debug(
+                    "Skipping external-device poll for %s because the runtime config is invalid: %s",
+                    external_device.device_id,
+                    exc,
+                )
+                continue
+            except ExternalDeviceRuntimeUnsupportedError:
+                continue
+            except ExternalDeviceRuntimeError as exc:
+                if not exc.mark_offline:
+                    continue
+                if external_device.conn_status != ConnStatus.offline:
+                    _mark_external_device_offline(db, external_device)
+                    stats["offline"] += 1
+                    try:
+                        ws_manager.broadcast_device_event_sync(
+                            "device_offline",
+                            external_device.device_id,
+                            external_device.room_id,
+                            {
+                                "reported_at": datetime.now(timezone.utc).isoformat(),
+                                "reason": str(exc),
+                            },
+                        )
+                    except Exception:
+                        pass
+                continue
+
+            runtime_state = runtime_result.state if isinstance(runtime_result.state, dict) else {}
+            if not runtime_state:
+                continue
+
+            state_changed = _external_runtime_state_changed(previous_state, runtime_state)
+            _persist_external_runtime_state(db, external_device, state=runtime_state)
+            current_payload = build_external_device_state_payload(external_device, state=runtime_state)
+
+            if previous_status != ConnStatus.online:
+                stats["online"] += 1
+                try:
+                    ws_manager.broadcast_device_event_sync(
+                        "device_online",
+                        external_device.device_id,
+                        external_device.room_id,
+                        runtime_state,
+                    )
+                except Exception:
+                    pass
+
+            if previous_status != ConnStatus.online or state_changed:
+                if state_changed:
+                    stats["changed"] += 1
+                try:
+                    ws_manager.broadcast_device_event_sync(
+                        "device_state",
+                        external_device.device_id,
+                        external_device.room_id,
+                        runtime_state,
+                    )
+                except Exception:
+                    pass
+
+            if state_changed:
+                try:
+                    process_state_event_for_automations(
+                        db,
+                        device_id=external_device.device_id,
+                        state_payload=current_payload,
+                        previous_state_payload=previous_payload,
+                        publish_command=_build_automation_command_dispatcher(
+                            db,
+                            physical_publish=mqtt_manager.publish_command,
+                        ),
+                        triggered_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                    )
+                    db.commit()
+                except Exception:
+                    logger.exception(
+                        "Automation graph evaluation failed for external device poll state %s",
+                        external_device.device_id,
+                    )
+
+        return stats
+    finally:
+        db.close()
 
 
 def _serialize_installed_extension(
@@ -1787,8 +2185,15 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
             # alive and wait for disconnects
             data = await websocket.receive_text()
             if data == "ping":
-                await websocket.send_text("pong")
+                try:
+                    await websocket.send_text("pong")
+                except RuntimeError:
+                    break
     except WebSocketDisconnect:
+        pass
+    except RuntimeError:
+        pass
+    finally:
         ws_manager.disconnect(websocket)
 
 # --- Auth Endpoints ---
@@ -2437,6 +2842,59 @@ async def get_installed_extension(
     )
 
 
+@router.delete("/extensions/{extension_id}")
+async def delete_installed_extension(
+    extension_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_account_admin_user),
+):
+    _get_current_household_or_404(db, current_user)
+    extension = (
+        db.query(InstalledExtension)
+        .filter(InstalledExtension.extension_id == extension_id)
+        .first()
+    )
+    if extension is None:
+        raise HTTPException(status_code=404, detail="Extension not found")
+
+    external_device_count = (
+        db.query(func.count(ExternalDevice.device_id))
+        .filter(ExternalDevice.installed_extension_id == extension.extension_id)
+        .scalar()
+    ) or 0
+    if external_device_count:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "conflict",
+                "message": (
+                    f"Cannot delete extension '{extension.name}' because it is used by "
+                    f"{int(external_device_count)} external device(s)."
+                ),
+            },
+        )
+
+    archive_path_value = str(extension.archive_path or "").strip()
+    archive_path = Path(archive_path_value) if archive_path_value else None
+    version = str(extension.version or "").strip()
+    archive_sha256 = str(extension.archive_sha256 or "").strip()
+
+    db.delete(extension)
+    db.commit()
+
+    if version and archive_sha256:
+        remove_extracted_extension_dir(
+            extension_id=extension_id,
+            version=version,
+            archive_sha256=archive_sha256,
+        )
+    if archive_path is not None:
+        archive_path.unlink(missing_ok=True)
+    clear_extension_runtime_cache()
+
+    return {"status": "deleted", "extension_id": extension_id}
+
+
 @router.post("/extensions/upload", response_model=InstalledExtensionResponse)
 async def upload_extension_zip(
     file: UploadFile = File(...),
@@ -2460,6 +2918,26 @@ async def upload_extension_zip(
         version=normalized_manifest["version"],
         archive_sha256=archive_metadata["archive_sha256"],
     )
+    try:
+        validate_extension_package_runtime(
+            extension_id=normalized_manifest["extension_id"],
+            version=normalized_manifest["version"],
+            archive_sha256=archive_metadata["archive_sha256"],
+            archive_path=archive_path,
+            package_root=archive_metadata.get("package_root"),
+            manifest=normalized_manifest,
+        )
+    except ExtensionRuntimeLoadError as exc:
+        archive_path.unlink(missing_ok=True)
+        remove_extracted_extension_dir(
+            extension_id=normalized_manifest["extension_id"],
+            version=normalized_manifest["version"],
+            archive_sha256=archive_metadata["archive_sha256"],
+        )
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": str(exc)},
+        ) from exc
 
     extension = (
         db.query(InstalledExtension)
@@ -2737,9 +3215,17 @@ def _get_external_device_in_household_or_404(
     return external_device
 
 
-def _automation_device_scope_for_user(db: Session, current_user: User) -> dict[str, Device]:
+def _automation_device_scope_for_user(db: Session, current_user: User) -> dict[str, Any]:
     visible_devices = _load_visible_devices(db, current_user, AuthStatus.approved)
-    return {device.device_id: device for device in visible_devices}
+    visible_external_devices = _load_visible_external_devices(db, current_user, AuthStatus.approved)
+    scope: dict[str, Any] = {device.device_id: device for device in visible_devices}
+    scope.update(
+        {
+            device.device_id: attach_external_device_automation_metadata(device)
+            for device in visible_external_devices
+        }
+    )
+    return scope
 
 
 @router.get("/devices", response_model=List[Union[DeviceResponse, DeviceAvailabilityResponse]])
@@ -3107,27 +3593,45 @@ async def send_command(
     device_id: str,
     command: dict,
     request: Request,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
     Send a command to the device via MQTT and record the publish result.
     """
+    command = dict(command or {})
+    supplied_password = command.pop("password", None)
+
     device = db.query(Device).filter(Device.device_id == device_id).first()
     if device is None:
         external_device = _get_external_device_in_household_or_404(db, current_user, device_id)
         _ensure_external_device_control_access(db, current_user, external_device)
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "unsupported",
-                "message": "External device runtime is not enabled yet for this extension.",
-            },
+        try:
+            validate_external_device_command(external_device, command)
+        except ExternalDeviceRuntimeValidationError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"error": "validation", "message": str(exc)},
+            ) from exc
+        except ExternalDeviceRuntimeUnsupportedError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "unsupported", "message": str(exc)},
+            ) from exc
+
+        command_id = str(uuid.uuid4())
+        command["command_id"] = command_id
+
+        background_tasks.add_task(
+            _execute_external_device_command_task,
+            _background_session_factory(db),
+            device_id=external_device.device_id,
+            command=dict(command),
         )
+        return {"status": "pending", "command_id": command_id, "message": "Command requested"}
 
     _ensure_device_control_access(db, current_user, device)
-    command = dict(command or {})
-    supplied_password = command.pop("password", None)
 
     # If this is an OTA command, mark the build job as flashing
     ota_job = None
@@ -4426,7 +4930,10 @@ async def push_history(device_id: str, entry: DeviceHistoryCreate, db: Session =
                 db,
                 device_id=device_id,
                 state_payload=decoded_payload,
-                publish_command=mqtt_manager.publish_command,
+                publish_command=_build_automation_command_dispatcher(
+                    db,
+                    physical_publish=mqtt_manager.publish_command,
+                ),
                 triggered_at=datetime.now(timezone.utc).replace(tzinfo=None),
             )
         except Exception:
@@ -4550,7 +5057,11 @@ async def trigger_automation(automation_id: int, db: Session = Depends(get_db), 
     execution_log = trigger_automation_manually(
         db,
         automation=auto,
-        publish_command=mqtt_manager.enqueue_command,
+        publish_command=_build_automation_command_dispatcher(
+            db,
+            physical_publish=mqtt_manager.enqueue_command,
+            triggered_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        ),
         device_scope=device_scope,
         triggered_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )

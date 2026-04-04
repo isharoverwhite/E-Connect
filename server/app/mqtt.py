@@ -29,6 +29,7 @@ from app.services.device_registration import (
     register_device_payload,
 )
 from app.services.automation_runtime import process_state_event_for_automations
+from app.services.automation_devices import dispatch_external_device_automation_command
 from app.sql_models import (
     AuthStatus,
     ConnStatus,
@@ -557,11 +558,37 @@ class MQTTClientManager:
                 try:
                     import time
                     start_time = time.perf_counter()
+                    def dispatch_command(target_device_id: str, command: dict[str, Any]) -> bool:
+                        physical_device = db.query(Device).filter(Device.device_id == target_device_id).first()
+                        if physical_device is not None:
+                            return self.enqueue_command(target_device_id, command)
+
+                        def on_state_change(
+                            changed_device_id: str,
+                            current_payload: dict[str, Any],
+                            previous_payload: dict[str, Any] | None,
+                        ) -> None:
+                            process_state_event_for_automations(
+                                db,
+                                device_id=changed_device_id,
+                                state_payload=current_payload,
+                                previous_state_payload=previous_payload,
+                                publish_command=dispatch_command,
+                                triggered_at=observed_at,
+                            )
+
+                        return dispatch_external_device_automation_command(
+                            db,
+                            device_id=target_device_id,
+                            command=command,
+                            on_state_change=on_state_change,
+                        )
+
                     process_state_event_for_automations(
                         db,
                         device_id=device_id,
                         state_payload=payload_json,
-                        publish_command=self.enqueue_command,
+                        publish_command=dispatch_command,
                         triggered_at=observed_at,
                     )
                     end_time = time.perf_counter()
