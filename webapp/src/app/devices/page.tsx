@@ -11,6 +11,7 @@ import { DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
 import { useToast } from "@/components/ToastContext";
 import ConfirmModal from "@/components/ConfirmModal";
 import { useWebSocket } from "@/hooks/useWebSocket";
+import DeviceScanConnectPanel from "@/components/DeviceScanConnectPanel";
 
 import { rebuildFirmware, fetchDevice } from "@/lib/api";
 import { OtaUpdateModal } from "@/components/OtaUpdateModal";
@@ -48,6 +49,7 @@ export default function DevicesPage() {
     const [passwordInput, setPasswordInput] = useState("");
     const [passwordError, setPasswordError] = useState<string | null>(null);
     const [isRebuilding, setIsRebuilding] = useState(false);
+    const [isScanModalOpen, setIsScanModalOpen] = useState(false);
     
     const isAdmin = user?.account_type === "admin";
     const primaryActionButtonClassName =
@@ -431,6 +433,15 @@ export default function DevicesPage() {
 
     return (
         <div className="flex h-screen w-full overflow-hidden bg-background-light font-sans text-slate-800 transition-colors duration-300 selection:bg-primary selection:text-white dark:bg-background-dark dark:text-slate-200">
+            {isAdmin && isScanModalOpen ? (
+                <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
+                    <div className="absolute inset-0" onClick={() => setIsScanModalOpen(false)} />
+                    <div className="relative z-10 w-full max-w-xl">
+                        <DeviceScanConnectPanel onClose={() => setIsScanModalOpen(false)} />
+                    </div>
+                </div>
+            ) : null}
+
             <ConfirmModal
                 isOpen={modalConfig.isOpen}
                 title={modalConfig.isExternal ? "Remove External Device?" : "Unpair Device?"}
@@ -539,7 +550,11 @@ export default function DevicesPage() {
                                     <span className="material-icons-round text-sm">hardware</span>
                                     <span>Create New Device</span>
                                 </Link>
-                                <Link href="/devices/discovery" className={`${secondaryActionButtonClassName} relative`}>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsScanModalOpen(true)}
+                                    className={`${secondaryActionButtonClassName} relative`}
+                                >
                                     <span className="material-icons-round text-sm">radar</span>
                                     <span>Scan Device</span>
                                     {pairingRequests.length > 0 && (
@@ -548,7 +563,7 @@ export default function DevicesPage() {
                                             <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 border-2 border-white dark:border-slate-800"></span>
                                         </span>
                                     )}
-                                </Link>
+                                </button>
                             </>
                         ) : null}
 
@@ -642,7 +657,11 @@ export default function DevicesPage() {
                                             <span className="material-icons-round mr-2 text-sm">hardware</span>
                                             Configure via SVG
                                         </Link>
-                                        <Link href="/devices/discovery" className="relative flex min-w-44 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700">
+                                        <button
+                                            type="button"
+                                            onClick={() => setIsScanModalOpen(true)}
+                                            className="relative flex min-w-44 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                                        >
                                             <span className="material-icons-round mr-2 text-sm">radar</span>
                                             Scan Device
                                             {pairingRequests.length > 0 && (
@@ -651,7 +670,7 @@ export default function DevicesPage() {
                                                     <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 border-2 border-white dark:border-slate-800"></span>
                                                 </span>
                                             )}
-                                        </Link>
+                                        </button>
                                     </div>
                                 ) : null}
                             </div>

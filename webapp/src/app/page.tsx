@@ -9,6 +9,7 @@ import { DeviceConfig } from "@/types/device";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { DynamicDeviceCard, getCardMinHeight } from "@/components/DeviceCard";
 import { Rnd } from "react-rnd";
+import DeviceScanConnectPanel from "@/components/DeviceScanConnectPanel";
 
 type CanvasLayout = { x: number; y: number; w: number | string; h: number | string };
 
@@ -24,6 +25,7 @@ export default function Dashboard() {
   const [mountDropdown, setMountDropdown] = useState(false);
   const [filterStatus, setFilterStatus] = useState<"all" | "online" | "offline">("all");
   const [isClearing, setIsClearing] = useState(false);
+  const [isScanModalOpen, setIsScanModalOpen] = useState(false);
   const [clearingItemIds, setClearingItemIds] = useState<Set<string>>(new Set());
   const [dismissedNotifIds, setDismissedNotifIds] = useState<Set<string>>(() => {
     if (typeof window !== "undefined") {
@@ -229,6 +231,18 @@ export default function Dashboard() {
 
   return (
     <div className="bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-200 font-sans h-screen flex overflow-hidden selection:bg-primary selection:text-white">
+      {isAdmin && isScanModalOpen ? (
+        <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
+          <div
+            className="absolute inset-0"
+            onClick={() => setIsScanModalOpen(false)}
+          />
+          <div className="relative z-10 w-full max-w-xl">
+            <DeviceScanConnectPanel onClose={() => setIsScanModalOpen(false)} />
+          </div>
+        </div>
+      ) : null}
+
       <Sidebar />
 
       <main className="flex-1 flex flex-col min-w-0 relative">
@@ -344,7 +358,7 @@ export default function Dashboard() {
             </div>
             {isAdmin ? (
               <button
-                onClick={() => router.push("/devices/discovery")}
+                onClick={() => setIsScanModalOpen(true)}
                 className="relative flex items-center bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-all shadow-md hover:shadow-lg"
               >
                 <span className="material-icons-round text-sm mr-2">radar</span>
@@ -533,5 +547,4 @@ export default function Dashboard() {
     </div>
   );
 }
-
 
