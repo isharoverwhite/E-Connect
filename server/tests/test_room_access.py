@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import Mock
 
 import pytest
@@ -513,7 +513,7 @@ def test_secure_handshake_rejects_unexpected_provisioned_name():
     db.close()
 
 
-def test_secure_handshake_rejects_mac_mismatch_for_existing_trusted_device():
+def test_secure_handshake_accepts_mac_mismatch_for_board_replacement():
     household, admin, _member, _observer = _seed_household(prefix="secure-mac")
     room = _create_room(
         _auth_headers(
@@ -560,15 +560,13 @@ def test_secure_handshake_rejects_mac_mismatch_for_existing_trusted_device():
         },
     )
 
-    assert mismatch_response.status_code == 401, mismatch_response.text
-    payload = mismatch_response.json()["detail"]
-    assert payload["error"] == "unauthorized_device"
-    assert "Trusted MAC address mismatch" in payload["message"]
+    assert mismatch_response.status_code == 200, mismatch_response.text
+    assert mismatch_response.json()["auth_status"] == "approved"
 
     db = TestingSessionLocal()
     device = db.query(Device).filter(Device.device_id == project["device_id"]).first()
     assert device is not None
-    assert device.mac_address == "AA:BB:CC:11:22:33"
+    assert device.mac_address == "AA:BB:CC:99:88:77"
     assert device.name == "Locked MAC Node"
     db.close()
 
@@ -658,7 +656,7 @@ def test_approve_device_broadcasts_pairing_queue_refresh(monkeypatch):
         owner_id=admin["user_id"],
         auth_status=AuthStatus.pending,
         conn_status=ConnStatus.online,
-        pairing_requested_at=datetime.utcnow(),
+        pairing_requested_at=datetime.now(timezone.utc),
     )
     db.add(device)
     db.commit()
@@ -714,7 +712,7 @@ def test_reject_device_forwards_rejection_and_hides_pending_device(monkeypatch):
         owner_id=admin["user_id"],
         auth_status=AuthStatus.pending,
         conn_status=ConnStatus.online,
-        pairing_requested_at=datetime.utcnow(),
+        pairing_requested_at=datetime.now(timezone.utc),
     )
     db.add(device)
     db.commit()

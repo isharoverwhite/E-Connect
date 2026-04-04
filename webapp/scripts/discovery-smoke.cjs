@@ -17,6 +17,17 @@ function pushLimited(list, value) {
   }
 }
 
+function extractRelevantHosts(scanUrl) {
+  try {
+    const parsed = new URL(scanUrl);
+    return [parsed.host, parsed.hostname]
+      .map((value) => value.toLowerCase())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 function formatSection(title, values) {
   if (!values.length) {
     return `${title}: none`;
@@ -25,9 +36,11 @@ function formatSection(title, values) {
   return `${title}:\n- ${values.join("\n- ")}`;
 }
 
-function isRelevantUrl(value) {
-  return /find\.isharoverwhite\.com|econnect|192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.|:8000|:9123|:3000/i.test(
-    value,
+function isRelevantUrl(value, relevantHosts) {
+  const normalized = value.toLowerCase();
+  return (
+    relevantHosts.some((host) => normalized.includes(host)) ||
+    /econnect|192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.|:8000|:9123|:3000/i.test(normalized)
   );
 }
 
@@ -49,6 +62,7 @@ async function main() {
   const allowScanFailed = /^(1|true|yes)$/i.test(process.env.DISCOVERY_ALLOW_SCAN_FAILED || "");
   const secureGuidanceMatch =
     /If you opened this public page through HTTPS or Cloudflare Tunnel/i;
+  const relevantHosts = extractRelevantHosts(scanUrl);
 
   const consoleEvents = [];
   const pageErrors = [];
@@ -73,7 +87,7 @@ async function main() {
   });
 
   page.on("requestfailed", (request) => {
-    if (!isRelevantUrl(request.url())) {
+    if (!isRelevantUrl(request.url(), relevantHosts)) {
       return;
     }
 
@@ -82,7 +96,7 @@ async function main() {
   });
 
   page.on("response", (response) => {
-    if (!isRelevantUrl(response.url())) {
+    if (!isRelevantUrl(response.url(), relevantHosts)) {
       return;
     }
 

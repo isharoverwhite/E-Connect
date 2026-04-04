@@ -6,14 +6,14 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 
 ## Actors
 
-- `Public Page`: the developer-hosted `find_website` at [find.isharoverwhite.com](https://find.isharoverwhite.com)
+- `Public Page`: the developer-hosted `find_website` at your configured public discovery origin, for example [find.example.com](https://find.example.com)
 - `Browser Scanner`: JavaScript running inside the user's browser tab
 - `E-Connect Server`: the self-hosted `server` inside the user's LAN, paired with the user's own `webapp`, `mqtt`, and `db`
 
 ## Flow
 
 1. The user completes setup of the self-hosted E-Connect stack on their own server or mini-PC at home.
-2. From a device on the same LAN, the user opens [find.isharoverwhite.com](https://find.isharoverwhite.com).
+2. From a device on the same LAN, the user opens the configured public discovery origin, for example [find.example.com](https://find.example.com).
 3. On local HTTP-hosted copies of the page, the browser may still start scanning immediately on load.
 4. On the secure public host, the page auto-starts LAN discovery shortly after load and immediately attempts the local bridge fast path from the user's browser session.
 5. The browser probes preferred aliases first:
@@ -79,7 +79,7 @@ Let end users finish setting up their self-hosted E-Connect stack at home, then 
 - Backend:
   - `web-assistant.js` returns JavaScript with a validated callback
 - Browser:
-  - the browser session running [find.isharoverwhite.com](https://find.isharoverwhite.com) is on the same LAN as the user's self-hosted server
+  - the browser session running the configured public discovery origin, for example [find.example.com](https://find.example.com), is on the same LAN as the user's self-hosted server
   - the deployment can resolve `econnect.local` to the server LAN IP when the alias fast path is configured
   - on the secure public host, opening the page auto-starts the local bridge window flow and receives a `postMessage` payload from the LAN server
   - when host port `80` is available, opening `http://econnect.local` returns a redirect to the advertised WebUI host and port

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -68,7 +68,7 @@ def create_system_log(
     occurred_at: datetime | None = None,
 ) -> SystemLog:
     entry = SystemLog(
-        occurred_at=occurred_at or datetime.utcnow(),
+        occurred_at=occurred_at or datetime.now(timezone.utc),
         severity=severity,
         category=category,
         event_code=event_code.strip(),
@@ -123,7 +123,7 @@ def prune_expired_system_logs(
     *,
     reference_time: datetime | None = None,
 ) -> int:
-    cutoff = (reference_time or datetime.utcnow()) - SYSTEM_LOG_RETENTION
+    cutoff = (reference_time or datetime.now(timezone.utc)) - SYSTEM_LOG_RETENTION
     deleted = (
         db.query(SystemLog)
         .filter(SystemLog.occurred_at < cutoff)
@@ -138,7 +138,7 @@ def record_server_startup(
     occurred_at: datetime | None = None,
     advertised_host: str | None = None,
 ) -> None:
-    event_time = occurred_at or datetime.utcnow()
+    event_time = occurred_at or datetime.now(timezone.utc)
     latest_lifecycle_event = (
         db.query(SystemLog)
         .filter(SystemLog.category == SystemLogCategory.lifecycle)
@@ -182,7 +182,7 @@ def record_server_shutdown(
 ) -> None:
     create_system_log(
         db,
-        occurred_at=occurred_at or datetime.utcnow(),
+        occurred_at=occurred_at or datetime.now(timezone.utc),
         severity=SystemLogSeverity.info,
         category=SystemLogCategory.lifecycle,
         event_code=SYSTEM_SHUTDOWN_EVENT_CODE,

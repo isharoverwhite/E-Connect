@@ -148,8 +148,8 @@ def test_refresh_runtime_network_state_updates_startup_auto_target(monkeypatch):
         "error": None,
     }
     captured_states: list[dict[str, object]] = []
-    monkeypatch.setattr("main.resolve_runtime_firmware_network_state", lambda: refreshed_state)
-    monkeypatch.setattr("main.mqtt_manager.set_runtime_network_state", lambda state: captured_states.append(state))
+    monkeypatch.setattr(main, "resolve_runtime_firmware_network_state", lambda: refreshed_state)
+    monkeypatch.setattr(main.mqtt_manager, "set_runtime_network_state", lambda state: captured_states.append(state))
 
     app.state.firmware_network_state = {
         "source": "startup_auto",
