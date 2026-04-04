@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import app.api as api_module
 import app.mqtt as mqtt_module
@@ -104,7 +104,7 @@ def test_record_server_startup_marks_unclean_shutdown_when_previous_session_lack
     try:
         create_system_log(
             db,
-            occurred_at=datetime.utcnow() - timedelta(hours=1),
+            occurred_at=datetime.now(timezone.utc) - timedelta(hours=1),
             event_code="server_started",
             message="Previous server start.",
             severity=SystemLogSeverity.info,
@@ -114,7 +114,7 @@ def test_record_server_startup_marks_unclean_shutdown_when_previous_session_lack
 
         record_server_startup(
             db,
-            occurred_at=datetime.utcnow(),
+            occurred_at=datetime.now(timezone.utc),
             advertised_host="192.168.1.25",
         )
         db.commit()
@@ -136,19 +136,19 @@ def test_prune_expired_system_logs_deletes_rows_older_than_retention():
     try:
         create_system_log(
             db,
-            occurred_at=datetime.utcnow() - timedelta(days=SYSTEM_LOG_RETENTION_DAYS + 1),
+            occurred_at=datetime.now(timezone.utc) - timedelta(days=SYSTEM_LOG_RETENTION_DAYS + 1),
             event_code="expired_entry",
             message="Expired entry",
         )
         create_system_log(
             db,
-            occurred_at=datetime.utcnow(),
+            occurred_at=datetime.now(timezone.utc),
             event_code="recent_entry",
             message="Recent entry",
         )
         db.commit()
 
-        deleted = prune_expired_system_logs(db, reference_time=datetime.utcnow())
+        deleted = prune_expired_system_logs(db, reference_time=datetime.now(timezone.utc))
         db.commit()
 
         remaining_codes = [row.event_code for row in db.query(SystemLog).all()]
@@ -165,7 +165,7 @@ def test_system_status_and_logs_endpoints_return_recent_admin_view(monkeypatch):
     try:
         create_system_log(
             db,
-            occurred_at=datetime.utcnow() - timedelta(minutes=5),
+            occurred_at=datetime.now(timezone.utc) - timedelta(minutes=5),
             event_code="mqtt_disconnected",
             message="MQTT broker connection dropped.",
             severity=SystemLogSeverity.critical,
@@ -173,7 +173,7 @@ def test_system_status_and_logs_endpoints_return_recent_admin_view(monkeypatch):
         )
         create_system_log(
             db,
-            occurred_at=datetime.utcnow() - timedelta(days=SYSTEM_LOG_RETENTION_DAYS + 2),
+            occurred_at=datetime.now(timezone.utc) - timedelta(days=SYSTEM_LOG_RETENTION_DAYS + 2),
             event_code="expired_entry",
             message="Should not appear in API list.",
             severity=SystemLogSeverity.info,
@@ -196,7 +196,7 @@ def test_system_status_and_logs_endpoints_return_recent_admin_view(monkeypatch):
     )
     monkeypatch.setattr(api_module.mqtt_manager, "connected", False)
     with TestClient(main.app) as client:
-        main.app.state.server_started_at = datetime.utcnow() - timedelta(minutes=15)
+        main.app.state.server_started_at = datetime.now(timezone.utc) - timedelta(minutes=15)
         main.app.state.database_ready = True
         main.app.state.firmware_network_state = {
             "source": "startup_auto",
@@ -252,7 +252,7 @@ def test_marking_alert_read_removes_it_from_active_status(monkeypatch):
     try:
         create_system_log(
             db,
-            occurred_at=datetime.utcnow() - timedelta(minutes=3),
+            occurred_at=datetime.now(timezone.utc) - timedelta(minutes=3),
             event_code="mqtt_disconnected",
             message="MQTT broker connection dropped.",
             severity=SystemLogSeverity.critical,
@@ -277,7 +277,7 @@ def test_marking_alert_read_removes_it_from_active_status(monkeypatch):
     monkeypatch.setattr(api_module.mqtt_manager, "connected", False)
 
     with TestClient(main.app) as client:
-        main.app.state.server_started_at = datetime.utcnow() - timedelta(minutes=15)
+        main.app.state.server_started_at = datetime.now(timezone.utc) - timedelta(minutes=15)
         main.app.state.database_ready = True
         token = get_token(client)
         mark_response = client.post(
@@ -313,7 +313,7 @@ def test_mark_all_reads_only_unread_alerts(monkeypatch):
     try:
         create_system_log(
             db,
-            occurred_at=datetime.utcnow() - timedelta(minutes=4),
+            occurred_at=datetime.now(timezone.utc) - timedelta(minutes=4),
             event_code="mqtt_disconnected",
             message="MQTT broker connection dropped.",
             severity=SystemLogSeverity.critical,
@@ -321,7 +321,7 @@ def test_mark_all_reads_only_unread_alerts(monkeypatch):
         )
         create_system_log(
             db,
-            occurred_at=datetime.utcnow() - timedelta(minutes=2),
+            occurred_at=datetime.now(timezone.utc) - timedelta(minutes=2),
             event_code="runtime_target_warning",
             message="Runtime network target refresh reported a warning.",
             severity=SystemLogSeverity.warning,
@@ -329,7 +329,7 @@ def test_mark_all_reads_only_unread_alerts(monkeypatch):
         )
         create_system_log(
             db,
-            occurred_at=datetime.utcnow() - timedelta(minutes=1),
+            occurred_at=datetime.now(timezone.utc) - timedelta(minutes=1),
             event_code="server_started",
             message="Server startup completed.",
             severity=SystemLogSeverity.info,
@@ -353,7 +353,7 @@ def test_mark_all_reads_only_unread_alerts(monkeypatch):
     monkeypatch.setattr(api_module.mqtt_manager, "connected", True)
 
     with TestClient(main.app) as client:
-        main.app.state.server_started_at = datetime.utcnow() - timedelta(minutes=15)
+        main.app.state.server_started_at = datetime.now(timezone.utc) - timedelta(minutes=15)
         main.app.state.database_ready = True
         token = get_token(client)
         mark_response = client.post(

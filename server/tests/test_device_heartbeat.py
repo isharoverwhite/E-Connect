@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock
 
 from sqlalchemy import create_engine
@@ -91,7 +91,7 @@ def _seed_device(*, last_seen: datetime) -> tuple[str, int]:
 
 
 def test_expire_stale_online_devices_once_marks_old_devices_offline(monkeypatch):
-    stale_seen_at = datetime.utcnow() - DEVICE_HEARTBEAT_TIMEOUT - timedelta(seconds=1)
+    stale_seen_at = datetime.now(timezone.utc) - DEVICE_HEARTBEAT_TIMEOUT - timedelta(seconds=1)
     device_id, room_id = _seed_device(last_seen=stale_seen_at)
     broadcast_mock = Mock()
     monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", broadcast_mock)
@@ -138,7 +138,7 @@ def test_expire_stale_online_devices_once_marks_old_devices_offline(monkeypatch)
 
 
 def test_expire_stale_online_devices_once_leaves_recent_devices_online(monkeypatch):
-    device_id, _ = _seed_device(last_seen=datetime.utcnow())
+    device_id, _ = _seed_device(last_seen=datetime.now(timezone.utc))
     broadcast_mock = Mock()
     monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", broadcast_mock)
 

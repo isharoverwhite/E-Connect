@@ -1,5 +1,5 @@
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import close_all_sessions, sessionmaker
@@ -424,7 +424,7 @@ def test_put_device_config_creates_named_saved_config_without_pruning_build_hist
     user, room, project, device = create_test_data(db)
 
     old_job_ids: list[str] = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for offset in range(3):
         job_id = str(uuid.uuid4())
         old_job_ids.append(job_id)
@@ -525,7 +525,7 @@ def test_list_device_config_history_returns_all_saved_configs_with_board_assignm
     user, room, project, device = create_test_data(db)
 
     snapshots = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     for index in range(4):
         job_id = str(uuid.uuid4())
         snapshot = {
@@ -577,7 +577,7 @@ def test_config_history_keeps_legacy_jobs_and_current_saved_config():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     legacy_job_ids: list[str] = []
     for index in range(3):
         job_id = str(uuid.uuid4())
@@ -1551,7 +1551,7 @@ def test_send_command_ota_retry_after_flash_failed_reuses_artifact(tmp_path):
     user, room, project, device = create_test_data(db)
 
     job_id = str(uuid.uuid4())
-    failed_at = datetime.utcnow()
+    failed_at = datetime.now(timezone.utc)
     job = BuildJob(
         id=job_id,
         project_id=project.id,
@@ -1684,7 +1684,7 @@ def test_mqtt_state_multi_pin_payload_acknowledges_pending_command():
         "pin": 2,
         "value": 1,
         "brightness": None,
-        "timestamp": datetime.utcnow().timestamp(),
+        "timestamp": datetime.now(timezone.utc).timestamp(),
         "command_id": "cmd-1",
     }
 
@@ -1833,7 +1833,7 @@ def test_mqtt_state_active_pending_device_stays_waiting_for_approval():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
     device.auth_status = AuthStatus.pending
-    device.pairing_requested_at = datetime.utcnow()
+    device.pairing_requested_at = datetime.now(timezone.utc)
     db.commit()
 
     mgr = MQTTClientManager()
@@ -2043,7 +2043,7 @@ def test_mqtt_register_success_ack_can_exceed_legacy_512_byte_parser_budget():
     assert len(serialized_ack) > 512
 
 
-def test_mqtt_register_rejects_trusted_mac_mismatch_without_overwriting_identity():
+def test_mqtt_register_accepts_trusted_mac_mismatch_for_board_replacement():
     from app.mqtt import MQTTClientManager
     from unittest.mock import MagicMock
 
@@ -2078,12 +2078,11 @@ def test_mqtt_register_rejects_trusted_mac_mismatch_without_overwriting_identity
     topic, published_payload = mgr.publish_json.call_args.args[:2]
     assert topic == mgr.registration_ack_topic(device.device_id)
     assert ack_payload == published_payload
-    assert ack_payload["status"] == "error"
-    assert ack_payload["error"] == "unauthorized_device"
-    assert "Trusted MAC address mismatch" in ack_payload["message"]
+    assert ack_payload["status"] == "ok"
+    assert ack_payload["secret_verified"] is True
 
     db.refresh(device)
-    assert device.mac_address == "00:11:22:33:EE:FF"
+    assert device.mac_address == "AA:BB:CC:99:88:77"
     assert device.name == "OTA Device"
 
 
@@ -2091,7 +2090,7 @@ def test_mqtt_reconcile_ota_success():
     from app.mqtt import MQTTClientManager
     import json
     from unittest.mock import MagicMock
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
@@ -2110,7 +2109,7 @@ def test_mqtt_reconcile_ota_success():
         status=JobStatus.flashing,
         staged_project_config=project.pending_config,
     )
-    job.updated_at = datetime.utcnow() - timedelta(seconds=10)
+    job.updated_at = datetime.now(timezone.utc) - timedelta(seconds=10)
     project.pending_build_job_id = job_id
     db.add(job)
     device.provisioning_project_id = project.id
@@ -2166,14 +2165,14 @@ def test_mqtt_reconcile_ota_mismatch_recent():
     from app.mqtt import MQTTClientManager
     import json
     from unittest.mock import MagicMock
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
     
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
-    job.updated_at = datetime.utcnow() - timedelta(seconds=30) # under 60s
+    job.updated_at = datetime.now(timezone.utc) - timedelta(seconds=30) # under 60s
     db.add(job)
     device.provisioning_project_id = project.id
     db.commit()
@@ -2196,14 +2195,14 @@ def test_mqtt_reconcile_ota_mismatch_stale():
     from app.mqtt import MQTTClientManager
     import json
     from unittest.mock import MagicMock
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
     
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
-    job.updated_at = datetime.utcnow() - timedelta(seconds=90) # over 60s
+    job.updated_at = datetime.now(timezone.utc) - timedelta(seconds=90) # over 60s
     db.add(job)
     device.provisioning_project_id = project.id
     db.commit()
@@ -2227,14 +2226,14 @@ def test_mqtt_state_recent_flashed_job_mismatch_fails_immediately():
     from app.mqtt import MQTTClientManager
     import json
     from unittest.mock import MagicMock
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
 
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashed)
-    job.finished_at = datetime.utcnow() - timedelta(seconds=5)
+    job.finished_at = datetime.now(timezone.utc) - timedelta(seconds=5)
     job.updated_at = job.finished_at
     db.add(job)
     device.provisioning_project_id = project.id
@@ -2258,14 +2257,14 @@ def test_mqtt_register_reconcile_ota_success():
     from app.mqtt import MQTTClientManager
     import json
     from unittest.mock import MagicMock
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
     
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
-    job.updated_at = datetime.utcnow() - timedelta(seconds=10)
+    job.updated_at = datetime.now(timezone.utc) - timedelta(seconds=10)
     db.add(job)
     device.provisioning_project_id = project.id
     db.commit()
@@ -2294,14 +2293,14 @@ def test_mqtt_register_reconcile_ota_mismatch_recent():
     from app.mqtt import MQTTClientManager
     import json
     from unittest.mock import MagicMock
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
     
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
-    job.updated_at = datetime.utcnow() - timedelta(seconds=30) # under 60s
+    job.updated_at = datetime.now(timezone.utc) - timedelta(seconds=30) # under 60s
     db.add(job)
     device.provisioning_project_id = project.id
     db.commit()
@@ -2328,14 +2327,14 @@ def test_mqtt_register_reconcile_ota_mismatch_stale():
     from app.mqtt import MQTTClientManager
     import json
     from unittest.mock import MagicMock
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
     
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
     
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
-    job.updated_at = datetime.utcnow() - timedelta(seconds=90) # over 60s
+    job.updated_at = datetime.now(timezone.utc) - timedelta(seconds=90) # over 60s
     db.add(job)
     device.provisioning_project_id = project.id
     db.commit()
@@ -2363,7 +2362,7 @@ def test_mqtt_register_recent_flashed_job_keeps_board_reported_pin_map_on_old_fi
     from app.mqtt import MQTTClientManager
     import json
     from unittest.mock import MagicMock
-    from datetime import datetime, timedelta
+    from datetime import datetime, timedelta, timezone
 
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
@@ -2377,7 +2376,7 @@ def test_mqtt_register_recent_flashed_job_keeps_board_reported_pin_map_on_old_fi
         status=JobStatus.flashed,
         staged_project_config=project.pending_config,
     )
-    job.finished_at = datetime.utcnow() - timedelta(seconds=5)
+    job.finished_at = datetime.now(timezone.utc) - timedelta(seconds=5)
     job.updated_at = job.finished_at
     project.pending_build_job_id = job_id
     db.add(job)

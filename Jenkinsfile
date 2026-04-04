@@ -30,6 +30,11 @@ pipeline {
             defaultValue: '',
             description: 'Optional explicit LAN IP for the alias. Leave blank to auto-detect on the Jenkins node.'
         )
+        string(
+            name: 'PUBLIC_DISCOVERY_URL',
+            defaultValue: '',
+            description: 'Optional public find_website URL for smoke tests. Leave blank to skip the public-origin probe.'
+        )
     }
 
     environment {
@@ -361,11 +366,16 @@ pipeline {
                         "${DISCOVERY_ALIAS_IP},${DISCOVERY_MDNS_HOSTNAME}" \
                         "false"
 
-                    retry 3 5 run_browser_discovery_smoke \
-                        "public discovery page" \
-                        "https://find.isharoverwhite.com/" \
-                        "${DISCOVERY_MDNS_HOSTNAME},${DISCOVERY_ALIAS_IP}" \
-                        "true"
+                    public_discovery_url="${PUBLIC_DISCOVERY_URL:-}"
+                    if [ -n "$public_discovery_url" ]; then
+                        retry 3 5 run_browser_discovery_smoke \
+                            "public discovery page" \
+                            "$public_discovery_url" \
+                            "${DISCOVERY_MDNS_HOSTNAME},${DISCOVERY_ALIAS_IP}" \
+                            "true"
+                    else
+                        echo "Skipping public discovery smoke: PUBLIC_DISCOVERY_URL is not configured."
+                    fi
                 '''
             }
         }

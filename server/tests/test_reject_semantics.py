@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 from unittest.mock import Mock
 
@@ -152,7 +152,7 @@ def test_reject_device_forwards_rejection_and_hides_pending_device(monkeypatch):
         owner_id=admin["user_id"],
         auth_status=AuthStatus.pending,
         conn_status=ConnStatus.online,
-        pairing_requested_at=datetime.utcnow(),
+        pairing_requested_at=datetime.now(timezone.utc),
     )
     db.add(device)
     db.commit()

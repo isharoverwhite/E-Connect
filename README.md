@@ -54,7 +54,7 @@ E-Connect emphasizes a self-hosted smart home model where the main operational c
 
 #### 1. Clone the Repository
 ```bash
-git clone https://github.com/isharoverwhite/Final-Project.git
+git clone <your-repository-url>
 cd Final-Project
 ```
 
@@ -77,6 +77,8 @@ BACKEND_INTERNAL_URL=http://server:8000
 Use a valid IANA timezone for `TZ`, for example `Asia/Ho_Chi_Minh`.
 
 `TZ` still defines the deployment runtime timezone when no admin override is saved in `Settings -> General`. The Settings UI only shows the currently active timezone and current server time; it does not expose `TZ` as a separate field.
+
+DIY firmware builds should keep Wi-Fi, MQTT, project IDs, and device secrets in private runtime config only. Do not commit local overrides into `server/firmware_template/platformio.ini`; the server-side builder stamps those values into generated artifacts when you launch a real build job.
 
 #### 3. Run the Self-hosted Stack
 This command launches the official approved topology for self-hosted environments:
@@ -105,6 +107,8 @@ To run the full repository including the public discovery portal (for local test
 docker compose up -d --build
 ```
 The `find_website` will then be available at `http://localhost:9123`.
+
+If your Jenkins pipeline should also probe a deployed public discovery origin, set the `PUBLIC_DISCOVERY_URL` job parameter to that deployment URL. Leaving it empty skips the public-origin smoke without affecting the LAN-hosted discovery check.
 
 *To stop the stack:* `docker compose down` (use `-v` to wipe data volumes).
 
@@ -169,7 +173,7 @@ E-Connect hướng tới sự tinh gọn theo mô hình tự host, trong đó đ
 
 #### 1. Clone dự án
 ```bash
-git clone https://github.com/isharoverwhite/Final-Project.git
+git clone <your-repository-url>
 cd Final-Project
 ```
 
@@ -192,6 +196,8 @@ BACKEND_INTERNAL_URL=http://server:8000
 Hãy dùng timezone IANA hợp lệ cho `TZ`, ví dụ `Asia/Ho_Chi_Minh`.
 
 `TZ` vẫn là timezone runtime của môi trường triển khai khi chưa có override do admin lưu trong `Settings -> General`. Giao diện Settings chỉ hiển thị timezone đang hoạt động thực tế và giờ server hiện tại, không tách riêng `TZ` thành một trường riêng.
+
+Các bản build DIY chỉ nên nhận Wi-Fi, MQTT, project ID và device secret từ cấu hình runtime riêng tư. Không commit local override vào `server/firmware_template/platformio.ini`; luồng build server-side sẽ tự đóng dấu các giá trị thật vào artifact khi bạn chạy build job.
 
 #### 3. Khởi chạy hệ thống Self-Hosted tiêu chuẩn
 Câu lệnh được dùng để chuẩn bị cấu hình kiến trúc self-hosted nguyên bản:
@@ -220,6 +226,8 @@ Với nhóm lập trình kiểm tra toàn bộ pipeline, câu chạy có thể b
 docker compose up -d --build
 ```
 Dịch vụ khám phá `find_website` sẽ được kết xuất tại địa chỉ: `http://localhost:9123`.
+
+Nếu Jenkins cần probe thêm public discovery origin đã deploy, hãy cấu hình job parameter `PUBLIC_DISCOVERY_URL` bằng URL đó. Để trống thì pipeline chỉ skip bước smoke của public origin, còn kiểm tra discovery chạy trên LAN-hosted service vẫn giữ nguyên.
 
 *Cách ngắt các hệ thống:* Chạy `docker compose down` (và bổ sung `-v` để hủy và làm mới lại các cơ sở dữ liệu từ container đã tải).
 

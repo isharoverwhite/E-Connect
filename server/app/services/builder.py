@@ -4,7 +4,7 @@ import os
 import shutil
 import subprocess
 import socket
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 from urllib.parse import urlsplit
@@ -822,7 +822,7 @@ def release_project_serial_reservation(project, db: Session) -> str | None:
         return None
 
     active_lock.status = SerialSessionStatus.released
-    active_lock.released_at = datetime.utcnow()
+    active_lock.released_at = datetime.now(timezone.utc)
     return configured_port.strip()
 
 
@@ -1060,7 +1060,7 @@ def promote_build_job_project_config(job: BuildJob) -> bool:
 
     from sqlalchemy.orm.attributes import flag_modified
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     staged_config = dict(job.staged_project_config)
     project.config = staged_config
     flag_modified(project, "config")
@@ -1352,7 +1352,7 @@ def build_firmware_task(
         )
 
         with open(log_path, "w") as log_file:
-            log_file.write(f"--- Build started for job {job_id} at {datetime.utcnow().isoformat()} ---\\n")
+            log_file.write(f"--- Build started for job {job_id} at {datetime.now(timezone.utc).isoformat()} ---\\n")
             for warning in warnings or []:
                 log_file.write(f"{warning}\\n")
             log_file.flush()
@@ -1393,7 +1393,7 @@ def build_firmware_task(
                 durable_artifacts = copy_durable_artifacts(job_id, build_outputs)
                 job.status = JobStatus.artifact_ready
                 job.artifact_path = durable_artifacts["firmware"]
-                job.finished_at = datetime.utcnow()
+                job.finished_at = datetime.now(timezone.utc)
                 released_port = release_project_serial_reservation(project, db)
                 if released_port:
                     with open(log_path, "a") as log_file:
@@ -1405,7 +1405,7 @@ def build_firmware_task(
                     f.write(f"Artifacts successfully saved: {artifact_names}.\\n")
             else:
                 job.status = JobStatus.build_failed
-                job.finished_at = datetime.utcnow()
+                job.finished_at = datetime.now(timezone.utc)
                 job.error_message = "firmware.bin not found after successful compilation."
                 with open(log_path, "a") as log_file:
                     log_file.write("\\nError: firmware.bin not found after successful compilation.\\n")
@@ -1426,19 +1426,19 @@ def build_firmware_task(
             except Exception:
                 pass
             job.status = JobStatus.build_failed
-            job.finished_at = datetime.utcnow()
+            job.finished_at = datetime.now(timezone.utc)
             job.error_message = last_error_line or "PlatformIO returned a non-zero exit code."
             with open("/tmp/builder_debug.log", "a") as f:
                 f.write(f"Build failed.\\n")
 
-        job.updated_at = datetime.utcnow()
+        job.updated_at = datetime.now(timezone.utc)
         db.commit()
 
     except Exception as exc:
         db.rollback()
         job = db.query(BuildJob).filter(BuildJob.id == job_id).first()
         if job:
-            failure_timestamp = datetime.utcnow()
+            failure_timestamp = datetime.now(timezone.utc)
             error_message = str(exc).strip() or exc.__class__.__name__
             fallback_log_path = job.log_path or os.path.join(LOGS_DIR, f"{job_id}.log")
             os.makedirs(os.path.dirname(fallback_log_path), exist_ok=True)

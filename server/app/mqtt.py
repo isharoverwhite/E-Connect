@@ -4,7 +4,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import paho.mqtt.client as mqtt
@@ -61,7 +61,7 @@ OTA_RECENT_FLASH_CONFIRMATION_WINDOW = timedelta(
 
 
 def _job_reference_time(job) -> datetime:
-    return job.finished_at or job.updated_at or job.created_at or datetime.utcnow()
+    return job.finished_at or job.updated_at or job.created_at or datetime.now(timezone.utc)
 
 
 def _mark_ota_job_failed(job, *, now: datetime, message: str) -> None:
@@ -77,7 +77,7 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> s
 
     from app.sql_models import BuildJob, JobStatus
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     flashing_jobs = db.query(BuildJob).filter(
         BuildJob.project_id == device.provisioning_project_id,
         BuildJob.status == JobStatus.flashing
@@ -444,7 +444,7 @@ class MQTTClientManager:
                 )
                 return
 
-            observed_at = datetime.utcnow()
+            observed_at = datetime.now(timezone.utc)
             was_offline = device.conn_status != ConnStatus.online
             previous_revision = device.firmware_revision
             previous_version = device.firmware_version
@@ -611,7 +611,7 @@ class MQTTClientManager:
                             job.status = JobStatus.flash_failed
                             job.error_message = payload_json.get("message")
 
-                        job.finished_at = datetime.utcnow()
+                        job.finished_at = datetime.now(timezone.utc)
                         db.commit()
 
             db.commit()
@@ -779,7 +779,7 @@ class MQTTClientManager:
                 from app.sql_models import SystemLogSeverity, SystemLogCategory
                 create_system_log(
                     db,
-                    occurred_at=datetime.utcnow(),
+                    occurred_at=datetime.now(timezone.utc),
                     severity=SystemLogSeverity.error,
                     category=SystemLogCategory.connectivity,
                     event_code="device_registration_rejected",
