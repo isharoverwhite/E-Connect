@@ -158,7 +158,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                 <header className="sticky top-0 z-10 flex h-16 flex-shrink-0 items-center border-b border-slate-200 bg-surface-light px-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark gap-4">
                     <Link
                         href="/extensions"
-                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100/80 text-slate-600 transition-colors hover:bg-slate-200 hover:text-slate-900 dark:bg-surface-container-low dark:text-slate-400 dark:hover:bg-surface-container dark:hover:text-white"
+                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100/80 text-slate-600 transition-colors hover:bg-slate-200 hover:text-slate-900 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white"
                         title="Back to Extensions"
                     >
                         <span className="material-icons-round text-[20px]">arrow_back</span>
@@ -184,12 +184,12 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                             </div>
                         ) : extension ? (
                             <div className="space-y-6">
-                                <div className="overflow-hidden rounded-[24px] bg-slate-100 dark:bg-surface-container-low">
+                                <div className="overflow-hidden rounded-[24px] border border-slate-200 bg-white dark:border-slate-800 dark:bg-surface-dark">
                                     <div className="p-8 pb-6">
                                         <div className="flex items-start justify-between">
                                             <div>
                                                 <div className="mb-4 inline-flex items-center gap-2">
-                                                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 dark:bg-surface-container-highest dark:text-slate-300">
+                                                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                                                         <span className="material-icons-round text-[16px]">extension</span>
                                                     </span>
                                                     <span className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
@@ -200,7 +200,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                                     {extension.name}
                                                 </h2>
                                                 <div className="mt-3 flex items-center gap-3">
-                                                    <span className="rounded-full bg-slate-200/50 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-surface-container-highest dark:text-slate-300">
+                                                    <span className="rounded-full bg-slate-200/50 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                                                         v{extension.version}
                                                     </span>
                                                     <span className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
@@ -238,7 +238,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                         <h3 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
                                             Available Device Schemas
                                         </h3>
-                                        <span className="rounded-full bg-slate-200/50 px-3 py-1 text-xs font-medium text-slate-600 dark:bg-surface-container-highest dark:text-slate-300">
+                                        <span className="rounded-full bg-slate-200/50 px-3 py-1 text-xs font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                                             {extension.device_schemas.length} Schema{extension.device_schemas.length === 1 ? "" : "s"}
                                         </span>
                                     </div>
@@ -247,7 +247,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                         {extension.device_schemas.map((schema) => (
                                             <div
                                                 key={schema.schema_id}
-                                                className="group relative flex flex-col justify-between overflow-hidden rounded-[20px] bg-white transition-colors hover:bg-slate-50 dark:bg-surface-container-low dark:hover:bg-surface-container"
+                                                className="group relative flex flex-col justify-between overflow-hidden rounded-[20px] border border-slate-200 bg-white transition-colors hover:border-slate-300 dark:border-slate-800 dark:bg-surface-dark dark:hover:border-slate-700 dark:hover:bg-slate-800/50"
                                             >
                                                 <div className="p-6">
                                                     <div className="flex flex-wrap items-center gap-2">
@@ -305,7 +305,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
 
                 {schemaDialog && extension ? (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/55 p-4 backdrop-blur-sm">
-                        <div className="w-full max-w-xl rounded-[24px] border border-slate-200 bg-white shadow-xl dark:border-slate-700/50 dark:bg-surface-container-low">
+                        <div className="w-full max-w-xl rounded-[24px] border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-surface-dark">
                             <div className="flex items-center justify-between border-b border-slate-100 p-6 dark:border-white/5">
                                 <div>
                                     <h2 className="text-lg font-bold text-slate-900 dark:text-white">Create external device</h2>
@@ -315,7 +315,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                 </div>
                                 <button
                                     onClick={closeCreateDeviceDialog}
-                                    className="rounded-full p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-surface-container-high dark:hover:text-slate-300"
+                                    className="rounded-full p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
                                 >
                                     <span className="material-icons-round text-[20px]">close</span>
                                 </button>
@@ -327,7 +327,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                     <input
                                         value={deviceName}
                                         onChange={(event) => setDeviceName(event.target.value)}
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 dark:border-slate-700/50 dark:bg-surface-container-highest dark:text-slate-100"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 dark:border-slate-700/50 dark:bg-slate-800 dark:text-slate-100"
                                         placeholder={schemaDialog.schema.default_name}
                                     />
                                 </div>
@@ -338,7 +338,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                         value={selectedRoomId}
                                         onChange={(event) => setSelectedRoomId(event.target.value)}
                                         disabled={roomsLoading}
-                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-700/50 dark:bg-surface-container-highest dark:text-slate-100"
+                                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                                     >
                                         <option value="">{roomsLoading ? "Loading rooms..." : "Unassigned"}</option>
                                         {rooms.map((room) => (
@@ -387,7 +387,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                                             : event.target.value,
                                                     )
                                                 }
-                                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 dark:border-slate-700/50 dark:bg-surface-container-highest dark:text-slate-100"
+                                                className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                                                 placeholder={field.type === "number" ? "0" : field.label}
                                             />
                                         )}
@@ -404,7 +404,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                     <button
                                         type="button"
                                         onClick={closeCreateDeviceDialog}
-                                        className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-surface-container-high"
+                                        className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
                                     >
                                         Cancel
                                     </button>
