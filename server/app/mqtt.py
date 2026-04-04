@@ -60,8 +60,17 @@ OTA_RECENT_FLASH_CONFIRMATION_WINDOW = timedelta(
 )
 
 
+def _utcnow_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def _job_reference_time(job) -> datetime:
-    return job.finished_at or job.updated_at or job.created_at or datetime.now(timezone.utc)
+    candidate = job.finished_at or job.updated_at or job.created_at
+    if candidate is None:
+        return _utcnow_naive()
+    if getattr(candidate, "tzinfo", None) is not None:
+        return candidate.astimezone(timezone.utc).replace(tzinfo=None)
+    return candidate
 
 
 def _mark_ota_job_failed(job, *, now: datetime, message: str) -> None:
@@ -77,7 +86,7 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> s
 
     from app.sql_models import BuildJob, JobStatus
 
-    now = datetime.now(timezone.utc)
+    now = _utcnow_naive()
     flashing_jobs = db.query(BuildJob).filter(
         BuildJob.project_id == device.provisioning_project_id,
         BuildJob.status == JobStatus.flashing

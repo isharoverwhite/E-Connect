@@ -1533,7 +1533,7 @@ def test_process_time_trigger_runs_enabled_automation_once_per_scheduled_minute(
     assert len(first_logs) == 1
     assert first_logs[0].automation_id == automation_id
     assert first_logs[0].trigger_source == "schedule"
-    assert first_logs[0].scheduled_for == datetime(2026, 4, 2, 0, 30, tzinfo=timezone.utc)
+    assert first_logs[0].scheduled_for == datetime(2026, 4, 2, 0, 30)
     assert second_logs == []
     assert len(published_commands) == 1
     assert published_commands[0][0] == "target-device"
@@ -1549,10 +1549,10 @@ def test_process_time_trigger_runs_enabled_automation_once_per_scheduled_minute(
         )
         assert log is not None
         assert log.trigger_source == "schedule"
-        assert log.scheduled_for == datetime(2026, 4, 2, 0, 30, tzinfo=timezone.utc)
+        assert log.scheduled_for == datetime(2026, 4, 2, 0, 30)
 
         automation = db.query(Automation).filter(Automation.id == automation_id).one()
         assert automation.next_run_at is not None
-        assert automation.next_run_at > datetime(2026, 4, 2, 0, 30, tzinfo=timezone.utc)
+        assert automation.next_run_at > datetime(2026, 4, 2, 0, 30)
     finally:
         db.close()

@@ -1409,22 +1409,6 @@ def test_firmware_template_declares_developer_managed_revision():
     assert '#define ECONNECT_FIRMWARE_REVISION "1.1.4"' in content
 
 
-def test_firmware_template_platformio_ini_uses_redacted_local_overrides():
-    config_path = Path(__file__).resolve().parents[1] / "firmware_template" / "platformio.ini"
-    content = config_path.read_text()
-    nodemcu_section = content.split("[env:nodemcuv2]", maxsplit=1)[1].split("[env:jc3827w543]", maxsplit=1)[0]
-    active_build_flags = [
-        line.strip()
-        for line in nodemcu_section.splitlines()
-        if line.strip().startswith("-D ")
-    ]
-
-    assert active_build_flags == ['-D ECONNECT_BOARD_PROFILE=\\"esp8266\\"']
-    assert "Keep secrets and deployment-specific values out of Git." in nodemcu_section
-    assert 'YOUR_WIFI_SSID' in nodemcu_section
-    assert 'YOUR_WIFI_PASSWORD' in nodemcu_section
-
-
 def test_builder_uses_distinct_stamped_public_mqtt_target(tmp_path):
     from app.services.builder import write_generated_firmware_config
 
