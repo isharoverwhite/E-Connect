@@ -12,6 +12,7 @@ from sqlalchemy.orm import close_all_sessions, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import router
+from app.api import _resolve_build_artifact_path
 from app.database import Base, get_db
 from app.sql_models import (
     AccountType,
@@ -1257,7 +1258,36 @@ def test_collect_build_outputs_supports_esp8266_firmware_only(tmp_path):
     assert outputs == {"firmware": str(firmware_path)}
 
 
-def test_collect_build_outputs_includes_boot_app0_for_esp32_family(tmp_path, monkeypatch):
+def test_collect_build_outputs_includes_full_bundle_for_non_jc_esp32(tmp_path, monkeypatch):
+    import app.services.builder as builder
+
+    build_dir = tmp_path / ".pio" / "build" / "esp32-c3-devkitm-1"
+    build_dir.mkdir(parents=True)
+
+    firmware_path = build_dir / "firmware.bin"
+    bootloader_path = build_dir / "bootloader.bin"
+    partitions_path = build_dir / "partitions.bin"
+    fake_core_dir = tmp_path / ".platformio-core"
+    boot_app0_path = fake_core_dir / "packages" / "framework-arduinoespressif32" / "tools" / "partitions" / "boot_app0.bin"
+    boot_app0_path.parent.mkdir(parents=True)
+    firmware_path.write_bytes(b"esp32-c3-firmware")
+    bootloader_path.write_bytes(b"bootloader")
+    partitions_path.write_bytes(b"partitions")
+    boot_app0_path.write_bytes(b"boot-app0")
+
+    monkeypatch.setattr(builder, "PLATFORMIO_CORE_DIR", str(fake_core_dir))
+
+    outputs = builder.collect_build_outputs(str(tmp_path), "esp32-c3-devkitm-1")
+
+    assert outputs == {
+        "firmware": str(firmware_path),
+        "bootloader": str(bootloader_path),
+        "partitions": str(partitions_path),
+        "boot_app0": str(boot_app0_path),
+    }
+
+
+def test_collect_build_outputs_includes_boot_app0_for_jc3827_full_bundle(tmp_path, monkeypatch):
     import app.services.builder as builder
 
     build_dir = tmp_path / ".pio" / "build" / "jc3827w543"
@@ -1285,6 +1315,32 @@ def test_collect_build_outputs_includes_boot_app0_for_esp32_family(tmp_path, mon
         "partitions": str(partitions_path),
         "boot_app0": str(boot_app0_path),
     }
+
+
+def test_resolve_build_artifact_path_keeps_firmware_and_part_paths_separate(tmp_path):
+    from app.services.builder import get_durable_artifact_path
+
+    job_id = str(uuid.uuid4())
+    firmware_path = tmp_path / f"{job_id}.bin"
+    firmware_path.write_bytes(b"firmware")
+
+    bootloader_path = Path(get_durable_artifact_path(job_id, "bootloader"))
+    partitions_path = Path(get_durable_artifact_path(job_id, "partitions"))
+    boot_app0_path = Path(get_durable_artifact_path(job_id, "boot_app0"))
+    for path, contents in (
+        (bootloader_path, b"bootloader"),
+        (partitions_path, b"partitions"),
+        (boot_app0_path, b"boot_app0"),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(contents)
+
+    job = BuildJob(id=job_id, artifact_path=str(firmware_path))
+
+    assert _resolve_build_artifact_path(job, "firmware") == str(firmware_path)
+    assert _resolve_build_artifact_path(job, "bootloader") == str(bootloader_path)
+    assert _resolve_build_artifact_path(job, "partitions") == str(partitions_path)
+    assert _resolve_build_artifact_path(job, "boot_app0") == str(boot_app0_path)
 
 
 

@@ -59,8 +59,15 @@
 - The `Install via ZIP` action must open a real file-picker/upload flow and call the backend upload endpoint instead of showing a static placeholder.
 - The upload interaction must expose explicit `idle`, `uploading`, `validation error`, `success`, and `server error` states.
 - Installed extension cards must render normalized manifest metadata: extension name, provider name, version, description, and the declared device schemas.
+- Installed extension schema rows must also surface manifest-declared light capabilities such as `brightness`, `rgb`, and `color temperature`, plus any declared temperature range, so the admin can choose the correct external-light variant before creation.
 - Each installed extension card must expose a create-device action for each supported schema so the admin can instantiate an external device without leaving `/extensions`.
-- The create-device flow must collect the optional display name plus any manifest-declared config fields and surface inline validation for missing required values.
+- Each installed extension card must expose a delete-package action that removes the installed ZIP-backed package from the UI when the backend confirms deletion.
+- The delete-package action must be disabled or fail with a clear conflict message while one or more external devices still reference that installed extension.
+- The create-device flow must collect the optional display name, optional room assignment, plus any manifest-declared config fields and surface inline validation for missing required values.
+- When household rooms already exist, the create-device dialog must load those rooms and let the admin assign the external device to one room before creation.
+- If the room list cannot be loaded, the create-device dialog must show an inline warning and still allow the admin to continue with an unassigned external device.
+- Yeelight-backed external device cards must execute real repo-owned runtime commands from the existing dashboard toggle and brightness controls; the UI must not keep the previous `runtime pending` placeholder behavior for that provider once the executor is enabled.
+- Capability-aware external light cards must render controls from the active extension schema snapshot rather than hardcoded provider assumptions: brightness slider for dimmable lights, RGB wheel for color-capable lights, and color-temperature slider for tunable-white lights.
 - If no extensions are installed yet, the page must show an explicit empty state that directs the admin to upload the first ZIP package.
 - The marketplace/discover tab may remain non-functional for this slice, but it must be labeled as unavailable instead of implying a live marketplace.
 
@@ -75,6 +82,7 @@
   - `Condition`: boolean state match, numeric threshold/range check, and logical combination when multiple conditions are needed
   - `Action`: turn a target output on/off or set a numeric output value on another circuit/device
 - The UI must let the user bind real source devices/inputs and target devices/outputs directly from the current inventory. It must not expose a free-form script editor or recurring schedule form as the primary authoring model.
+- External devices from installed extensions must appear in the same automation picker with provider-defined virtual IO points, so power-style controls can be bound as switch targets and numeric telemetry/brightness-style controls can be bound as value targets without exposing raw extension internals.
 - Trigger-mode editing must stay inside the current rule builder: server-time scheduling uses an HH:MM picker plus optional weekday chips tied to the effective server timezone, while device triggers continue to bind real devices/pins.
 - The automation inspector must surface the active effective server timezone and a current server-time preview whenever the selected trigger uses server time.
 - The UI must not expose raw cron syntax, free-form recurrence strings, or any control that implies the device clock is the scheduling source.
@@ -134,8 +142,7 @@
   - When the backend runs inside Docker and startup auto-detect only sees a container-bridge IP, the flow must instruct operators to use `network_mode: host` or an explicit public-base override before trusting automatic firmware IP stamping.
   - If the runtime server target or runtime MQTT broker target differs from the last successful build target, the old artifact is stale and must not be treated as flash-ready for nearby pairing.
   - Boards that reconnect while reporting embedded firmware targets different from the current runtime target must be told that manual reflash is required instead of being treated as healthy pair candidates.
-  - ESP32-family application-only server builds remain single-binary manifests at `0x10000`.
-  - ESP32-family full-bundle server manifests must include `bootloader.bin` at `0x0`, `partitions.bin` at `0x8000`, `boot_app0.bin` at `0xe000`, and `firmware.bin` at `0x10000`.
+  - ESP32-family server builds must produce a full-bundle manifest. `ESP32`, `ESP32-S2`, and `ESP32-S3` bootloader parts must flash at `0x1000`; `ESP32-C2` and `ESP32-C3` bootloader parts must flash at `0x0`; all ESP32-family manifests must still place `partitions.bin` at `0x8000`, `boot_app0.bin` at `0xe000`, and `firmware.bin` at `0x10000`.
   - ESP8266 single-binary server builds and maintained demo manifests must produce a manifest that flashes `firmware.bin` at `0x0`.
   - The standard self-hosted Docker Compose runtime must expose a plain `http://` dashboard origin on port `3000` so the public finder can launch the LAN UI without depending on browser trust for a self-signed certificate.
   - The webapp runtime must also expose an HTTPS companion origin on port `3443`, auto-generate local TLS assets when missing, and preserve secure-origin access for Web Serial / ESP Web Tools on LAN hosts that explicitly reopen the secure companion URL.
@@ -238,6 +245,12 @@
   - The notification drawer footer `View Activity Log` must continue routing into `/logs` as the full operational history view.
 - **Dashboard runtime controls**:
   - Card type selection and runtime controls on `/` must follow the active pin configuration reported by the board instead of a newer saved pin map that has not been applied on hardware yet.
+  - External light cards on `/` must prefer runtime-detected capabilities persisted in the active device state and only fall back to the stored extension schema snapshot before the first successful runtime probe, so corrected Yeelight capability detection can surface tunable-white controls without waiting for a schema rewrite.
+  - External lights that support both RGB and tunable white must separate those advanced controls into two explicit modes, `Color` and `White`, instead of rendering the color wheel and light-temperature slider at the same time.
+  - Yeelight runtime control must not prepend a redundant `set_power on` call before RGB, color-temperature, or positive-brightness commands when the last known runtime state is already `on`, because some bulbs apply the real command but stall on duplicate power-on acknowledgements.
+  - Yeelight-backed dashboard controls must publish the post-command state update as soon as the lamp acknowledges the write through the installed uploaded extension runtime, and must not block the visible dashboard response on a slower follow-up probe before the main screen can reflect the new target state.
+  - Approved external LAN devices on `/` must be re-polled at least every 5 seconds so the dashboard can refresh `online/offline` status without waiting for a manual control action.
+  - External light cards on `/` must render an explicit inline `Online` / `Offline` status badge on the card itself instead of forcing the user to infer availability from another page.
   - When a user toggles an on/off control, the switch must stay in an inline loading state until the backend/device reports the requested target state.
   - The switch must not visually flip to the requested state before the confirmed `device_state` / command result arrives.
   - If the command fails or times out, the loading state clears and the switch remains at the last confirmed state.

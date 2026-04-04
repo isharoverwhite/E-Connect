@@ -320,43 +320,45 @@ export default function DevicesPage() {
                             </span>
                         </div>
                     </div>
-                    <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
-                        <span className={`${latestFirmwareRevision && firmwareRevision && latestFirmwareRevision !== firmwareRevision ? "text-green-600 dark:text-green-400 font-medium" : "text-slate-500 dark:text-slate-400"}`}><span className="material-icons-round mr-1 align-text-bottom text-xs">sell</span> FW Revision</span>
-                        <div className="flex items-center gap-1.5">
-                            <span
-                                className="max-w-[8rem] truncate font-mono text-xs text-slate-700 dark:text-slate-300"
-                                title={firmwareRevision || "Unknown"}
-                            >
-                                {firmwareRevision || "Unknown"}
-                            </span>
-                            {latestFirmwareRevision && firmwareRevision && latestFirmwareRevision !== firmwareRevision && (
-                                <>
-                                    <span className="material-icons-round text-[10px] text-green-500 block -mt-[1px]">arrow_forward</span>
-                                    <span className="font-mono text-xs font-semibold text-green-600 dark:text-green-400" title={`New firmware (${latestFirmwareRevision}) available to build.`}>
-                                        {latestFirmwareRevision}
-                                    </span>
-                                </>
-                            )}
+                    {!isExternal && (
+                        <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
+                            <span className={`${latestFirmwareRevision && firmwareRevision && latestFirmwareRevision !== firmwareRevision ? "text-green-600 dark:text-green-400 font-medium" : "text-slate-500 dark:text-slate-400"}`}><span className="material-icons-round mr-1 align-text-bottom text-xs">sell</span> FW Revision</span>
+                            <div className="flex items-center gap-1.5">
+                                <span
+                                    className="max-w-[8rem] truncate font-mono text-xs text-slate-700 dark:text-slate-300"
+                                    title={firmwareRevision || "Unknown"}
+                                >
+                                    {firmwareRevision || "Unknown"}
+                                </span>
+                                {latestFirmwareRevision && firmwareRevision && latestFirmwareRevision !== firmwareRevision && (
+                                    <>
+                                        <span className="material-icons-round text-[10px] text-green-500 block -mt-[1px]">arrow_forward</span>
+                                        <span className="font-mono text-xs font-semibold text-green-600 dark:text-green-400" title={`New firmware (${latestFirmwareRevision}) available to build.`}>
+                                            {latestFirmwareRevision}
+                                        </span>
+                                    </>
+                                )}
+                            </div>
                         </div>
-                    </div>
+                    )}
                     <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
-                        <span className="text-slate-500 dark:text-slate-400">
-                            <span className="material-icons-round mr-1 align-text-bottom text-xs">{isExternal ? "sell" : "tag"}</span>
-                            {isExternal ? " Package Version" : " FW Version"}
+                        <span className="text-slate-500 dark:text-slate-400 flex items-center">
+                            <span className="material-icons-round mr-1 text-xs">{isExternal ? "sell" : "tag"}</span>
+                            {isExternal ? "Extension Version" : "FW Version"}
                         </span>
                         <span
-                            className="max-w-[10rem] truncate font-mono text-xs text-slate-700 dark:text-slate-300"
+                            className="max-w-[10rem] truncate font-mono text-xs text-slate-700 dark:text-slate-300 text-right"
                             title={isExternal ? device.firmware_version || "Unknown" : firmwareVersion || "Unknown"}
                         >
                             {isExternal ? device.firmware_version || "Unknown" : firmwareVersion || "Unknown"}
                         </span>
                     </div>
                     <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
-                        <span className="text-slate-500 dark:text-slate-400">
-                            <span className="material-icons-round mr-1 align-text-bottom text-xs">{isExternal ? "deployed_code" : "lan"}</span>
-                            {isExternal ? " Schema" : " IP"}
+                        <span className="text-slate-500 dark:text-slate-400 flex items-center">
+                            <span className="material-icons-round mr-1 text-xs">{isExternal ? "data_object" : "lan"}</span>
+                            {isExternal ? "Schema" : "IP"}
                         </span>
-                        <span className="font-mono text-xs text-slate-700 dark:text-slate-300">
+                        <span className="font-mono text-xs text-slate-700 dark:text-slate-300 max-w-[10rem] truncate text-right" title={isExternal ? device.device_schema_id || "N/A" : deviceIp || "N/A"}>
                             {isExternal ? device.device_schema_id || "N/A" : deviceIp || "N/A"}
                         </span>
                     </div>

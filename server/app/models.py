@@ -485,12 +485,19 @@ class ExtensionConfigField(BaseModel):
     required: bool = False
 
 
+class ExtensionTemperatureRangeResponse(BaseModel):
+    min: int
+    max: int
+
+
 class ExtensionDeviceSchemaResponse(BaseModel):
     schema_id: str
     name: str
     default_name: str
     description: Optional[str] = None
     card_type: Literal["light"]
+    capabilities: List[Literal["power", "brightness", "rgb", "color_temperature"]] = Field(default_factory=list)
+    temperature_range: Optional[ExtensionTemperatureRangeResponse] = None
     config_fields: List[ExtensionConfigField] = Field(default_factory=list)
 
 

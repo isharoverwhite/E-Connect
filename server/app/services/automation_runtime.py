@@ -16,6 +16,7 @@ from ..sql_models import (
     AutomationExecutionLog,
     Device,
     DeviceHistory,
+    ExternalDevice,
     ExecutionStatus as SqlExecutionStatus,
     EventType,
     HouseholdMembership,
@@ -24,6 +25,7 @@ from ..sql_models import (
     SystemLogCategory,
     User,
 )
+from .automation_devices import attach_external_device_automation_metadata, build_external_device_state_payload
 from .timezone_settings import DEFAULT_SERVER_TIMEZONE, normalize_supported_timezone
 
 TRIGGER_PORT = "event_out"
@@ -44,6 +46,7 @@ NUMERIC_TRIGGER_FUNCTION_KEYWORDS = ("temp", "temperature", "hum", "humidity", "
 BINARY_TRIGGER_FUNCTION_KEYWORDS = ("switch", "btn", "button", "relay", "contact", "pir", "motion")
 SUPPORTED_TIME_TRIGGER_WEEKDAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 TIME_TRIGGER_WEEKDAY_INDEX = {value: index for index, value in enumerate(SUPPORTED_TIME_TRIGGER_WEEKDAYS)}
+_PREVIOUS_STATE_UNSET = object()
 
 
 class AutomationGraphValidationError(ValueError):
@@ -344,7 +347,7 @@ def _normalize_graph_edge(edge: object, *, node_ids: set[str]) -> dict[str, Any]
     }
 
 
-def _validate_device_bindings(normalized_graph: dict[str, Any], *, device_scope: Mapping[str, Device] | None) -> None:
+def _validate_device_bindings(normalized_graph: dict[str, Any], *, device_scope: Mapping[str, Any] | None) -> None:
     if device_scope is None:
         return
 
@@ -399,7 +402,7 @@ def _validate_device_bindings(normalized_graph: dict[str, Any], *, device_scope:
 def normalize_automation_graph(
     raw_graph: object,
     *,
-    device_scope: Mapping[str, Device] | None = None,
+    device_scope: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     graph = _normalize_graph_payload(raw_graph)
     nodes = [_normalize_graph_node(node) for node in graph["nodes"]]
@@ -682,7 +685,38 @@ def _load_latest_state_payloads(db: Session, device_ids: set[str]) -> dict[str, 
         decoded = _decode_history_payload(latest_state.payload if latest_state else None)
         if decoded is not None:
             payloads[device_id] = decoded
+            continue
+
+        external_device = (
+            db.query(ExternalDevice)
+            .filter(ExternalDevice.device_id == device_id)
+            .first()
+        )
+        if external_device is not None:
+            payloads[device_id] = build_external_device_state_payload(external_device)
     return payloads
+
+
+def _load_runtime_device_lookup(db: Session, device_ids: set[str]) -> dict[str, Any]:
+    if not device_ids:
+        return {}
+
+    lookup = {
+        device.device_id: device
+        for device in db.query(Device).filter(Device.device_id.in_(sorted(device_ids))).all()
+    }
+    external_devices = (
+        db.query(ExternalDevice)
+        .filter(ExternalDevice.device_id.in_(sorted(device_ids)))
+        .all()
+    )
+    lookup.update(
+        {
+            external_device.device_id: attach_external_device_automation_metadata(external_device)
+            for external_device in external_devices
+        }
+    )
+    return lookup
 
 
 def _load_previous_state_payload(
@@ -829,7 +863,7 @@ def _dispatch_action(
     *,
     node: Mapping[str, Any],
     publish_command: Callable[[str, dict[str, Any]], bool],
-    device_lookup: Mapping[str, Device],
+    device_lookup: Mapping[str, Any],
     automation: Automation,
 ) -> tuple[bool, str]:
     config = node["config"]
@@ -911,19 +945,20 @@ def _dispatch_action(
         human_action = str(numeric_value)
 
     success = publish_command(device_id, command)
-    db.add(
-        DeviceHistory(
-            device_id=device_id,
-            event_type=EventType.command_requested if success else EventType.command_failed,
-            payload=json.dumps(command),
-            changed_by=None,
+    if not bool(getattr(device, "is_external", False)):
+        db.add(
+            DeviceHistory(
+                device_id=device_id,
+                event_type=EventType.command_requested if success else EventType.command_failed,
+                payload=json.dumps(command),
+                changed_by=None,
+            )
         )
-    )
 
     action_summary = f"{node['id']}: {device.name} GPIO {config['pin']} -> {human_action}"
     if success:
         return True, action_summary
-    return False, f"{action_summary} (MQTT publish failed)"
+    return False, f"{action_summary} (command dispatch failed)"
 
 
 def _evaluate_graph_execution(
@@ -933,7 +968,7 @@ def _evaluate_graph_execution(
     normalized_graph: Mapping[str, Any],
     trigger_source: str,
     state_payloads: Mapping[str, dict[str, Any]],
-    device_lookup: Mapping[str, Device],
+    device_lookup: Mapping[str, Any],
     publish_command: Callable[[str, dict[str, Any]], bool],
     triggered_at: datetime | None = None,
     scheduled_for: datetime | None = None,
@@ -1034,7 +1069,7 @@ def trigger_automation_manually(
     *,
     automation: Automation,
     publish_command: Callable[[str, dict[str, Any]], bool],
-    device_scope: Mapping[str, Device] | None = None,
+    device_scope: Mapping[str, Any] | None = None,
     triggered_at: datetime | None = None,
 ) -> AutomationExecutionLog:
     normalized_graph = normalize_automation_graph(
@@ -1048,12 +1083,7 @@ def trigger_automation_manually(
     }
     device_lookup = dict(device_scope or {})
     if referenced_device_ids:
-        runtime_devices = (
-            db.query(Device)
-            .filter(Device.device_id.in_(sorted(referenced_device_ids)))
-            .all()
-        )
-        device_lookup.update({device.device_id: device for device in runtime_devices})
+        device_lookup.update(_load_runtime_device_lookup(db, referenced_device_ids))
 
     state_payloads = _load_latest_state_payloads(db, referenced_device_ids)
     return _evaluate_graph_execution(
@@ -1108,14 +1138,19 @@ def process_state_event_for_automations(
     state_payload: Mapping[str, Any],
     publish_command: Callable[[str, dict[str, Any]], bool],
     triggered_at: datetime | None = None,
+    previous_state_payload: Mapping[str, Any] | None | object = _PREVIOUS_STATE_UNSET,
 ) -> list[AutomationExecutionLog]:
     execution_logs: list[AutomationExecutionLog] = []
     db.flush()
-    previous_state_payload = _load_previous_state_payload(
-        db,
-        device_id,
-        current_payload=state_payload,
-    )
+    resolved_previous_state_payload: Mapping[str, Any] | None
+    if previous_state_payload is _PREVIOUS_STATE_UNSET:
+        resolved_previous_state_payload = _load_previous_state_payload(
+            db,
+            device_id,
+            current_payload=state_payload,
+        )
+    else:
+        resolved_previous_state_payload = previous_state_payload if isinstance(previous_state_payload, Mapping) else None
     enabled_automations = (
         db.query(Automation)
         .filter(Automation.is_enabled.is_(True))
@@ -1133,7 +1168,7 @@ def process_state_event_for_automations(
             normalized_graph,
             device_id=device_id,
             state_payload=state_payload,
-            previous_state_payload=previous_state_payload,
+            previous_state_payload=resolved_previous_state_payload,
         ):
             continue
 
@@ -1144,10 +1179,7 @@ def process_state_event_for_automations(
         }
         state_payloads = _load_latest_state_payloads(db, referenced_device_ids)
         state_payloads[device_id] = dict(state_payload)
-        device_lookup = {
-            device.device_id: device
-            for device in db.query(Device).filter(Device.device_id.in_(sorted(referenced_device_ids))).all()
-        }
+        device_lookup = _load_runtime_device_lookup(db, referenced_device_ids)
         previous_last_triggered = automation.last_triggered
         execution_log = _evaluate_graph_execution(
             db,
@@ -1238,10 +1270,7 @@ def process_time_trigger_automations(
             if "device_id" in node["config"]
         }
         state_payloads = _load_latest_state_payloads(db, referenced_device_ids)
-        device_lookup = {
-            device.device_id: device
-            for device in db.query(Device).filter(Device.device_id.in_(sorted(referenced_device_ids))).all()
-        }
+        device_lookup = _load_runtime_device_lookup(db, referenced_device_ids)
         execution_logs.append(
             _evaluate_graph_execution(
                 db,

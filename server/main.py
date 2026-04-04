@@ -18,7 +18,12 @@ import os
 from pathlib import Path
 import re
 from urllib.parse import urlparse
-from app.api import DEVICE_HEARTBEAT_TIMEOUT_SECONDS, expire_stale_online_devices_once, router as device_router
+from app.api import (
+    DEVICE_HEARTBEAT_TIMEOUT_SECONDS,
+    expire_stale_online_devices_once,
+    refresh_external_device_states_once,
+    router as device_router,
+)
 from sqlalchemy.exc import OperationalError
 
 from app.database import SessionLocal, check_database_connection, get_db, initialize_database
@@ -56,6 +61,10 @@ SYSTEM_LOG_RETENTION_SWEEP_INTERVAL_SECONDS = max(
 AUTOMATION_TIME_TRIGGER_INTERVAL_SECONDS = max(
     5.0,
     min(60.0, float(os.getenv("AUTOMATION_TIME_TRIGGER_INTERVAL_SECONDS", "15"))),
+)
+EXTERNAL_DEVICE_POLL_INTERVAL_SECONDS = max(
+    1.0,
+    float(os.getenv("EXTERNAL_DEVICE_POLL_INTERVAL_SECONDS", "5")),
 )
 JSONP_CALLBACK_PATTERN = re.compile(r"^[A-Za-z_$][0-9A-Za-z_$.]*$")
 DISCOVERY_BRIDGE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
@@ -379,6 +388,7 @@ async def lifespan(app: FastAPI):
     runtime_network_watchdog_task: asyncio.Task[None] | None = None
     system_log_retention_task: asyncio.Task[None] | None = None
     automation_time_trigger_task: asyncio.Task[None] | None = None
+    external_device_watchdog_task: asyncio.Task[None] | None = None
 
     async def stale_device_watchdog() -> None:
         while True:
@@ -446,6 +456,17 @@ async def lifespan(app: FastAPI):
                 logger.exception("Automation time-trigger watchdog failed")
             finally:
                 db.close()
+
+    async def external_device_watchdog() -> None:
+        while True:
+            await asyncio.sleep(EXTERNAL_DEVICE_POLL_INTERVAL_SECONDS)
+            if _using_overridden_database(app) or not getattr(app.state, "database_ready", False):
+                continue
+
+            try:
+                refresh_external_device_states_once(session_factory=SessionLocal)
+            except Exception:
+                logger.exception("External-device watchdog failed")
 
     app.state.database_ready = False
     app.state.database_error = None
@@ -536,6 +557,13 @@ async def lifespan(app: FastAPI):
         audit_warning = getattr(app.state, "firmware_network_audit", {}).get("warning")
         if isinstance(audit_warning, str) and audit_warning.strip():
             logger.warning(audit_warning)
+        try:
+            initial_external_poll = refresh_external_device_states_once(session_factory=SessionLocal)
+        except Exception:
+            logger.exception("Initial external-device poll failed")
+        else:
+            if initial_external_poll.get("probed", 0):
+                logger.info("Initial external-device poll complete: %s", initial_external_poll)
 
     mqtt_manager.start()
     app.state.mqtt_started = True
@@ -544,6 +572,7 @@ async def lifespan(app: FastAPI):
     runtime_network_watchdog_task = asyncio.create_task(runtime_network_watchdog())
     system_log_retention_task = asyncio.create_task(system_log_retention_watchdog())
     automation_time_trigger_task = asyncio.create_task(automation_time_trigger_watchdog())
+    external_device_watchdog_task = asyncio.create_task(external_device_watchdog())
     app.state.stale_device_watchdog_started = True
 
     try:
@@ -569,6 +598,10 @@ async def lifespan(app: FastAPI):
             automation_time_trigger_task.cancel()
             with suppress(asyncio.CancelledError):
                 await automation_time_trigger_task
+        if external_device_watchdog_task is not None:
+            external_device_watchdog_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await external_device_watchdog_task
         if getattr(app.state, "database_ready", False) and not _using_overridden_database(app):
             shutdown_runtime_state = _serialize_firmware_network_state(app)
             db = SessionLocal()
