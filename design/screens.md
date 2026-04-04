@@ -54,6 +54,16 @@
   - Clicking a config triggers a detailed dialog showing JSON mapping plus board-assignment details, including the board type, exact board profile, and linked board list.
   - Deleting a config successfully cleans up backend records and is updated responsively on the UI.
 
+## Extensions Page
+- `/extensions` must use the shared application shell and work as the admin entry point for extension package management.
+- The `Install via ZIP` action must open a real file-picker/upload flow and call the backend upload endpoint instead of showing a static placeholder.
+- The upload interaction must expose explicit `idle`, `uploading`, `validation error`, `success`, and `server error` states.
+- Installed extension cards must render normalized manifest metadata: extension name, provider name, version, description, and the declared device schemas.
+- Each installed extension card must expose a create-device action for each supported schema so the admin can instantiate an external device without leaving `/extensions`.
+- The create-device flow must collect the optional display name plus any manifest-declared config fields and surface inline validation for missing required values.
+- If no extensions are installed yet, the page must show an explicit empty state that directs the admin to upload the first ZIP package.
+- The marketplace/discover tab may remain non-functional for this slice, but it must be labeled as unavailable instead of implying a live marketplace.
+
 ## Automation Page
 - **Stitch Reference:** Project `13695840913426182114`, Screen `c22331a5ca494ab3839da9da688a1f6e` (Automation Rule Builder).
 - The automation page must keep the shared application shell and visual language already used by `/settings`, `/devices`, and other admin surfaces.
@@ -105,6 +115,19 @@
   - Dashboard slider controls must still render with a valid numeric range even when the stored PWM endpoints are descending.
   - The SVG board visualizer must support interactive pan and zoom (scroll/pinch) so that dense pin maps are legible.
   - The workspace layout must scale responsively, switching from a top-to-bottom layout on mobile to a side-by-side flex representation on desktop widths.
+- **JC3827W543 PortableControl**:
+  - `JC3827W543` must appear as its own board family and exact board profile in the DIY flow; it must not be hidden under the generic `ESP32-S3` board list.
+  - This project only supports the `JC3827W543` `CTP` / `board C` variant with the `480x272` capacitive-touch panel.
+  - **Stitch Reference:** Project `17999173267648364956` (`E-Connect HandControl`) using screens `Select Wi-Fi Network`, `Enter Wi-Fi Password`, `Smart Home Dashboard`, and `Empty Canvas Frame`.
+  - On Step 1, this board must not require an admin-managed Wi-Fi credential because Wi-Fi onboarding happens on the board screen after flash.
+  - On the board-specific Step 3, the admin must get a dual-tab workspace:
+    - `Canvas Builder` for placing server-approved control cards onto the board-local screen.
+    - `Jump Pins` for mapping the on-board key and exposed jump pins that are not reserved by the display, touch controller, USB, SD, or backlight wiring.
+  - The canvas preview must use the real panel aspect ratio and coordinate space (`480x272`) with the persistent left sidebar from the Stitch dashboard concept instead of reusing the generic browser dashboard shell.
+  - The saved DIY project config for this board must persist a `portable_dashboard` payload containing the CTP variant, screen dimensions, sidebar width, selected device cards, their stored pin snapshots, and their exact on-board layout rectangles.
+  - The `Jump Pins` tab must expose GPIO `0` as the on-board button in input-only mode and only the approved auxiliary jump pins (`5`, `6`, `7`, `9`, `14`, `15`, `16`, `17`, `18`, `36`, `37`, `46`).
+  - Internal panel/touch pins such as backlight, GT911, LCD data, SD, and USB lines must remain hidden from user mapping and must fail validation if they appear in a saved config.
+  - The board-local runtime must show explicit `Wi-Fi scan`, `password entry`, `pairing`, and `dashboard` states on the device itself after flashing.
 - **Step 4 / Flash**:
   - The flash step must surface the current server/MQTT host that the next server build will embed into firmware.
   - The flash step must only expose website-managed firmware sources. `Upload Custom Build` is not an allowed source in the DIY wizard.
@@ -112,6 +135,7 @@
   - If the runtime server target or runtime MQTT broker target differs from the last successful build target, the old artifact is stale and must not be treated as flash-ready for nearby pairing.
   - Boards that reconnect while reporting embedded firmware targets different from the current runtime target must be told that manual reflash is required instead of being treated as healthy pair candidates.
   - ESP32-family application-only server builds remain single-binary manifests at `0x10000`.
+  - ESP32-family full-bundle server manifests must include `bootloader.bin` at `0x0`, `partitions.bin` at `0x8000`, `boot_app0.bin` at `0xe000`, and `firmware.bin` at `0x10000`.
   - ESP8266 single-binary server builds and maintained demo manifests must produce a manifest that flashes `firmware.bin` at `0x0`.
   - The standard self-hosted Docker Compose runtime must expose a plain `http://` dashboard origin on port `3000` so the public finder can launch the LAN UI without depending on browser trust for a self-signed certificate.
   - The webapp runtime must also expose an HTTPS companion origin on port `3443`, auto-generate local TLS assets when missing, and preserve secure-origin access for Web Serial / ESP Web Tools on LAN hosts that explicitly reopen the secure companion URL.
@@ -204,6 +228,7 @@
   - On narrow widths, button tap targets, icon alignment, and vertical rhythm must remain consistent even when the action group spans multiple rows.
   - Each admin device card must show both the developer-managed `firmware revision` and the runtime `firmware version` built from the current user configuration.
   - If a board has not reported either firmware field yet, the card must show a clear fallback such as `Unknown` instead of leaving the value blank.
+  - External-device rows merged from the extension registry must render as provider-backed cards and clearly distinguish `provider/source` metadata from physical board metadata such as MAC address or firmware revision.
 - **Dashboard notifications**:
   - The pairing notification card only appears when the server has at least one active board-initiated pairing request.
   - A device that was merely unpaired from the dashboard must not create a pairing notification by itself.

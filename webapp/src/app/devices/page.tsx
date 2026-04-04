@@ -38,7 +38,8 @@ export default function DevicesPage() {
         isOpen: boolean;
         deviceId: string;
         deviceName: string;
-    }>({ isOpen: false, deviceId: "", deviceName: "" });
+        isExternal: boolean;
+    }>({ isOpen: false, deviceId: "", deviceName: "", isExternal: false });
     const [passwordModal, setPasswordModal] = useState<{
         isOpen: boolean;
         deviceId: string | null;
@@ -85,8 +86,8 @@ export default function DevicesPage() {
             const res = await rebuildFirmware(passwordModal.deviceId, passwordInput);
             otaState.openPendingOtaModal(res.job_id);
             setPasswordModal({ isOpen: false, deviceId: null, deviceName: null });
-        } catch (err: any) {
-            setPasswordError(err.message || "Failed to trigger update");
+        } catch (err: unknown) {
+            setPasswordError(err instanceof Error ? err.message : "Failed to trigger update");
         } finally {
             setIsRebuilding(false);
         }
@@ -216,12 +217,12 @@ export default function DevicesPage() {
         };
     }, [isConnected, isAdmin]);
 
-    const handleDeleteClick = (deviceId: string, deviceName: string) => {
-        setModalConfig({ isOpen: true, deviceId, deviceName });
+    const handleDeleteClick = (deviceId: string, deviceName: string, isExternal = false) => {
+        setModalConfig({ isOpen: true, deviceId, deviceName, isExternal });
     };
 
     const handleConfirmDelete = async () => {
-        const { deviceId, deviceName } = modalConfig;
+        const { deviceId, deviceName, isExternal } = modalConfig;
         setModalConfig(prev => ({ ...prev, isOpen: false }));
         
         setIsDeleting(deviceId);
@@ -229,9 +230,19 @@ export default function DevicesPage() {
 
         if (success) {
             setDevices((previous) => previous.filter((device) => device.device_id !== deviceId));
-            showToast(`"${deviceName}" unpaired successfully.`, "success");
+            showToast(
+                isExternal
+                    ? `"${deviceName}" removed successfully.`
+                    : `"${deviceName}" unpaired successfully.`,
+                "success",
+            );
         } else {
-            showToast(`Failed to unpair "${deviceName}". You might not have permission.`, "error");
+            showToast(
+                isExternal
+                    ? `Failed to remove "${deviceName}". You might not have permission.`
+                    : `Failed to unpair "${deviceName}". You might not have permission.`,
+                "error",
+            );
         }
         setIsDeleting(null);
     };
@@ -241,20 +252,24 @@ export default function DevicesPage() {
 
     const renderAdminDeviceCard = (device: DeviceConfig) => {
         const isOnline = device.conn_status === "online";
+        const isExternal = Boolean(device.is_external || device.provider);
         const activePins = getActivePinConfigurations(device);
-        const modeColor = device.mode === "no-code"
+        const modeColor = isExternal
+            ? "border-indigo-200 bg-indigo-50 text-indigo-600 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-300"
+            : device.mode === "no-code"
             ? "border-purple-200 bg-purple-50 text-purple-500 dark:border-purple-500/20 dark:bg-purple-500/10"
             : "border-blue-200 bg-blue-50 text-blue-500 dark:border-blue-500/20 dark:bg-blue-500/10";
         const deviceIp = device.ip_address || device.last_state?.ip_address;
         const firmwareRevision = readTrimmedString(device.firmware_revision) || readTrimmedString(device.last_state?.firmware_revision);
         const firmwareVersion = readTrimmedString(device.firmware_version) || readTrimmedString(device.last_state?.firmware_version);
+        const configFieldCount = Object.keys(device.external_config ?? {}).length;
 
         return (
             <div key={device.device_id} className="group flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-surface-light transition-shadow hover:shadow-md dark:border-slate-700 dark:bg-surface-dark">
                 <div className="flex items-start justify-between border-b border-slate-100 p-5 dark:border-slate-700/50">
                     <div className="flex w-full items-center gap-3">
                         <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${isOnline ? "bg-primary/10 text-primary" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>
-                            <span className="material-icons-round">{device.mode === "no-code" ? "extension" : "developer_board"}</span>
+                            <span className="material-icons-round">{isExternal || device.mode === "no-code" ? "extension" : "developer_board"}</span>
                         </div>
                         <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
@@ -284,14 +299,26 @@ export default function DevicesPage() {
                         <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{device.room_name || "Unassigned"}</span>
                     </div>
                     <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
-                        <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">fingerprint</span> MAC</span>
-                        <span className="font-mono text-xs text-slate-700 dark:text-slate-300">{device.mac_address || "N/A"}</span>
+                        <span className="text-slate-500 dark:text-slate-400">
+                            <span className="material-icons-round mr-1 align-text-bottom text-xs">{isExternal ? "extension" : "fingerprint"}</span>
+                            {isExternal ? " Source" : " MAC"}
+                        </span>
+                        <span className="font-mono text-xs text-slate-700 dark:text-slate-300">
+                            {isExternal ? device.provider || device.extension_name || "N/A" : device.mac_address || "N/A"}
+                        </span>
                     </div>
                     <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
                         <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">settings_ethernet</span> Mode</span>
-                        <span className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${modeColor}`}>
-                            {device.mode}
-                        </span>
+                        <div className="flex items-center gap-2">
+                            {device.board && !isExternal && (
+                                <span className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400" title="Board Model">
+                                    {device.board}
+                                </span>
+                            )}
+                            <span className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${modeColor}`}>
+                                {isExternal ? "external" : device.mode}
+                            </span>
+                        </div>
                     </div>
                     <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
                         <span className={`${latestFirmwareRevision && firmwareRevision && latestFirmwareRevision !== firmwareRevision ? "text-green-600 dark:text-green-400 font-medium" : "text-slate-500 dark:text-slate-400"}`}><span className="material-icons-round mr-1 align-text-bottom text-xs">sell</span> FW Revision</span>
@@ -313,26 +340,39 @@ export default function DevicesPage() {
                         </div>
                     </div>
                     <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
-                        <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">tag</span> FW Version</span>
+                        <span className="text-slate-500 dark:text-slate-400">
+                            <span className="material-icons-round mr-1 align-text-bottom text-xs">{isExternal ? "sell" : "tag"}</span>
+                            {isExternal ? " Package Version" : " FW Version"}
+                        </span>
                         <span
                             className="max-w-[10rem] truncate font-mono text-xs text-slate-700 dark:text-slate-300"
-                            title={firmwareVersion || "Unknown"}
+                            title={isExternal ? device.firmware_version || "Unknown" : firmwareVersion || "Unknown"}
                         >
-                            {firmwareVersion || "Unknown"}
+                            {isExternal ? device.firmware_version || "Unknown" : firmwareVersion || "Unknown"}
                         </span>
                     </div>
                     <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
-                        <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">lan</span> IP</span>
-                        <span className="font-mono text-xs text-slate-700 dark:text-slate-300">{deviceIp || "N/A"}</span>
+                        <span className="text-slate-500 dark:text-slate-400">
+                            <span className="material-icons-round mr-1 align-text-bottom text-xs">{isExternal ? "deployed_code" : "lan"}</span>
+                            {isExternal ? " Schema" : " IP"}
+                        </span>
+                        <span className="font-mono text-xs text-slate-700 dark:text-slate-300">
+                            {isExternal ? device.device_schema_id || "N/A" : deviceIp || "N/A"}
+                        </span>
                     </div>
                     <div className="flex items-center justify-between">
-                        <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">memory</span> Board Pins</span>
-                        <span className="font-medium text-slate-700 dark:text-slate-300">{activePins.length} Maps</span>
+                        <span className="text-slate-500 dark:text-slate-400">
+                            <span className="material-icons-round mr-1 align-text-bottom text-xs">{isExternal ? "tune" : "memory"}</span>
+                            {isExternal ? " Config Fields" : " Board Pins"}
+                        </span>
+                        <span className="font-medium text-slate-700 dark:text-slate-300">
+                            {isExternal ? `${configFieldCount} values` : `${activePins.length} Maps`}
+                        </span>
                     </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 border-t border-slate-100 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800/50">
-                    {device.provisioning_project_id ? (
+                    {device.provisioning_project_id && !isExternal ? (
                         <Link
                             href={`/devices/${device.device_id}/config`}
                             className="flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-blue-50 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-600"
@@ -341,14 +381,17 @@ export default function DevicesPage() {
                             Configure
                         </Link>
                     ) : (
-                        <div className="flex items-center justify-center rounded-full border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-medium text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500 cursor-not-allowed" title="Not a DIY configure device">
+                        <div
+                            className="flex cursor-not-allowed items-center justify-center rounded-full border border-slate-200 bg-slate-100 px-3 py-2 text-xs font-medium text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
+                            title={isExternal ? "Create and manage this device from Extensions." : "Not a DIY configure device"}
+                        >
                             <span className="material-icons-round mr-1.5 text-sm text-slate-400">app_registration</span>
-                            Configure
+                            {isExternal ? "Managed in Extensions" : "Configure"}
                         </div>
                     )}
 
                     <button
-
+                        onClick={() => handleDeleteClick(device.device_id, device.name, isExternal)}
                         disabled={isDeleting === device.device_id}
                         className="flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-red-600 shadow-sm transition-colors hover:border-red-200 hover:bg-red-50 disabled:opacity-50 dark:border-slate-600 dark:bg-slate-700 dark:text-red-400 dark:hover:border-red-500/30 dark:hover:bg-red-500/10"
                     >
@@ -357,7 +400,7 @@ export default function DevicesPage() {
                         ) : (
                             <>
                                 <span className="material-icons-round mr-1.5 text-sm">link_off</span>
-                                Unpair
+                                {isExternal ? "Remove" : "Unpair"}
                             </>
                         )}
                     </button>
@@ -388,9 +431,11 @@ export default function DevicesPage() {
         <div className="flex h-screen w-full overflow-hidden bg-background-light font-sans text-slate-800 transition-colors duration-300 selection:bg-primary selection:text-white dark:bg-background-dark dark:text-slate-200">
             <ConfirmModal
                 isOpen={modalConfig.isOpen}
-                title="Unpair Device?"
-                message={`Are you sure you want to unpair "${modalConfig.deviceName}" from the dashboard? You can pair it again later from Discovery.`}
-                confirmText="Unpair Device"
+                title={modalConfig.isExternal ? "Remove External Device?" : "Unpair Device?"}
+                message={modalConfig.isExternal
+                    ? `Are you sure you want to remove "${modalConfig.deviceName}" from the external device registry and dashboard?`
+                    : `Are you sure you want to unpair "${modalConfig.deviceName}" from the dashboard? You can pair it again later from Discovery.`}
+                confirmText={modalConfig.isExternal ? "Remove Device" : "Unpair Device"}
                 onConfirm={handleConfirmDelete}
                 onCancel={() => setModalConfig(prev => ({ ...prev, isOpen: false }))}
                 type="danger"

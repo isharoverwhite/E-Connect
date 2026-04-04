@@ -17,6 +17,8 @@ This file documents the baseline schema for E-Connect.
 11. `rooms`: Physical or logical grouping within a household (`household_id`).
 12. `build_jobs`: Server-side firmware compilation tracking (`finished_at`, `error_message`, `saved_config_id`, `staged_project_config`).
 13. `system_logs`: 30-day retained operational events for server lifecycle, connectivity, firmware observations, and alert history.
+14. `installed_extensions`: Validated extension package registry storing normalized `manifest v1` metadata plus durable uploaded ZIP package paths.
+15. `external_devices`: Household-scoped device instances created from one installed extension schema, stored separately from physical DIY/MQTT `devices`.
 
 ## Automation Graph Contract
 
@@ -78,6 +80,37 @@ This file documents the baseline schema for E-Connect.
 2. When `households.timezone` is set, that value becomes the effective server timezone for runtime display/scheduling behavior and must take precedence over the container `TZ` environment variable.
 3. When `households.timezone` is empty, the backend falls back to the deployment `TZ` environment variable if it is a supported timezone; otherwise it falls back to the app default `Asia/Ho_Chi_Minh`.
 4. The backend may apply the effective timezone to the running process, but operational timestamps remain stored in the existing database shape unless a separate persistence change is approved.
+
+## Extension Package Contract
+
+1. `installed_extensions` is the durable registry for uploaded extension packages. It stores validated metadata, not trusted execution state.
+2. Each row must preserve:
+   - stable `extension_id`
+   - `manifest_version`
+   - package `name`, `version`, `description`, and optional `author`
+   - provider identity (`provider_key`, `provider_name`)
+   - package identity (`package_runtime`, `package_entrypoint`, `package_root`)
+   - archive metadata (`archive_path`, `archive_sha256`)
+   - the normalized manifest JSON used for device-schema creation
+3. Re-uploading the same `extension_id` may update the installed package metadata in place, but external device instances must keep working from their own stored schema snapshot.
+4. This slice does not grant execution permission to uploaded code. Package storage exists for auditability and future sandbox/runtime work only.
+
+## External Device Contract
+
+1. `external_devices` stores per-household instances derived from one installed extension schema and must stay separate from physical `devices`.
+2. Each row must preserve:
+   - stable `device_id`
+   - owning `household_id`
+   - creator `owner_id`
+   - optional `room_id`
+   - `installed_extension_id`
+   - `device_schema_id`
+   - user-visible `name`
+   - provider-facing `config` JSON
+   - immutable `schema_snapshot` JSON used to render the instance even if the package is later updated
+   - additive lifecycle/read-model fields such as `auth_status`, `conn_status`, `last_state`, and `last_seen`
+3. Creating or deleting an external device must not mutate `devices`, `pin_configurations`, `diy_projects`, or provisioning history.
+4. The dashboard/device inventory read model may merge `external_devices` alongside `devices`, but the persistence truth sources remain separate.
 
 ## Auth Session Note
 

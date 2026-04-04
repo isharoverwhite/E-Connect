@@ -1,7 +1,7 @@
 export type PinMode = "INPUT" | "OUTPUT" | "PWM" | "ADC" | "I2C";
 export type AuthStatus = "pending" | "approved" | "rejected";
 export type ConnStatus = "online" | "offline";
-export type DeviceMode = "no-code" | "library";
+export type DeviceMode = "no-code" | "library" | "portableDashboard";
 
 export interface PinExtraParams {
     active_level?: 0 | 1;
@@ -69,6 +69,12 @@ export interface DeviceConfig extends DeviceAvailabilitySummary {
     mode: DeviceMode;
     board?: string;
     provider?: string;
+    extension_name?: string;
+    installed_extension_id?: string;
+    device_schema_id?: string;
+    external_config?: Record<string, unknown> | null;
+    schema_snapshot?: Record<string, unknown> | null;
+    is_external?: boolean;
     firmware_revision?: string;
     firmware_version?: string;
     ip_address?: string;
@@ -76,6 +82,7 @@ export interface DeviceConfig extends DeviceAvailabilitySummary {
     topic_sub?: string;
     owner_id?: number;
     created_at?: string;
+    updated_at?: string;
     last_seen?: string;
     pairing_requested_at?: string | null;
     last_state?: DeviceStateSnapshot | null;

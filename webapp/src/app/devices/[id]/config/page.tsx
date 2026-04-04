@@ -31,6 +31,7 @@ interface DiyProjectResponse {
   config?: Record<string, unknown> | null;
   pending_config?: Record<string, unknown> | null;
   pending_build_job_id?: string | null;
+  pending_config_id?: string | null;
   board_profile: string;
   name?: string;
   wifi_credential_id?: number | null;
@@ -860,25 +861,35 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
           : null;
   const canInitiateOta = jobStatus === "artifact_ready" || jobStatus === "flash_failed";
   const hasPendingActivation = pendingPins !== null || pendingBuildJobId !== null;
-  const baselinePins = loadedConfigEntry ? mapProjectPins(loadedConfigEntry.config) : pendingPins ?? savedPins;
-  const baselineWifiCredentialId = loadedConfigEntry
-    ? readConfigWifiCredentialId(loadedConfigEntry.config)
-    : hasPendingActivation
-      ? pendingWifiCredentialId
-      : savedWifiCredentialId;
+  const pendingConfigId = project?.pending_config_id ?? null;
+  const isActivePendingConfig = loadedConfigId === pendingConfigId;
+  const baselinePins = isActivePendingConfig && pendingPins
+    ? pendingPins
+    : loadedConfigEntry 
+      ? mapProjectPins(loadedConfigEntry.config) 
+      : pendingPins ?? savedPins;
+  const baselineWifiCredentialId = isActivePendingConfig && pendingWifiCredentialId !== null
+    ? pendingWifiCredentialId
+    : loadedConfigEntry
+      ? readConfigWifiCredentialId(loadedConfigEntry.config)
+      : hasPendingActivation
+        ? pendingWifiCredentialId
+        : savedWifiCredentialId;
   const effectiveAssignedDeviceName = normalizeAssignedDeviceName(
     editingAssignedDeviceName ? assignedDeviceNameInput : assignedDeviceName,
     device.name,
   );
-  const baselineAssignedDeviceName = loadedConfigEntry
-    ? readAssignedDeviceName(
-      loadedConfigEntry.config,
-      loadedConfigEntry.assigned_device_name ?? device.name,
-    )
-    : readAssignedDeviceName(
-      hasPendingActivation ? project.pending_config : project.config,
-      device.name,
-    );
+  const baselineAssignedDeviceName = isActivePendingConfig && project.pending_config
+    ? readAssignedDeviceName(project.pending_config, device.name)
+    : loadedConfigEntry
+      ? readAssignedDeviceName(
+        loadedConfigEntry.config,
+        loadedConfigEntry.assigned_device_name ?? device.name,
+      )
+      : readAssignedDeviceName(
+        hasPendingActivation ? project.pending_config : project.config,
+        device.name,
+      );
   const hasChanges =
     isNewConfigDraft ||
     serializePins(pins) !== serializePins(baselinePins) ||
@@ -1505,31 +1516,67 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                 )}
 
                 {wifiCredentialsError && (
-                  <span className="flex items-center gap-1 rounded-full bg-rose-100/50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 border border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/20 max-w-[150px] cursor-help" title={wifiCredentialsError}>
-                    <span className="material-icons-round text-[12px] flex-shrink-0">wifi_off</span>
-                    <span className="truncate">Wi-Fi Error</span>
-                  </span>
+                  <div className="relative group flex items-center">
+                    <span className="flex items-center gap-1 rounded-full bg-rose-100/50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 border border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/20 max-w-[150px] cursor-default">
+                      <span className="material-icons-round text-[12px] flex-shrink-0">wifi_off</span>
+                      <span className="truncate">Wi-Fi Error</span>
+                    </span>
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-max max-w-xs z-50 hidden group-hover:block transition-opacity opacity-0 group-hover:opacity-100 pointer-events-none">
+                      <div className="bg-slate-900 border border-slate-700 shadow-xl rounded-lg p-3 text-xs text-slate-300 whitespace-normal break-words">
+                        {wifiCredentialsError}
+                      </div>
+                    </div>
+                  </div>
                 )}
 
                 {isEmptyDraftState && (
-                  <span className="flex items-center gap-1 rounded-full bg-sky-100/50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 border border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/20 cursor-help" title="Empty configuration. Save to history allowed, but build and flash stay blocked.">
-                    <span className="material-icons-round text-[12px]">info</span>
-                    Empty Config
-                  </span>
+                  <div className="relative group flex items-center">
+                    <span className="flex items-center gap-1 rounded-full bg-sky-100/50 px-2 py-0.5 text-[11px] font-semibold text-sky-700 border border-sky-200 dark:bg-sky-500/10 dark:text-sky-400 dark:border-sky-500/20 cursor-default">
+                      <span className="material-icons-round text-[12px]">info</span>
+                      Empty Config
+                    </span>
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-max max-w-xs z-50 hidden group-hover:block transition-opacity opacity-0 group-hover:opacity-100 pointer-events-none">
+                      <div className="bg-slate-900 border border-slate-700 shadow-xl rounded-lg p-3 text-xs text-slate-300 whitespace-normal break-words">
+                        Empty configuration. Save to history allowed, but build and flash stay blocked.
+                      </div>
+                    </div>
+                  </div>
                 )}
 
                 {visibleValidationErrors.length > 0 && (
-                  <span className="flex items-center gap-1 rounded-full bg-rose-100/50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 border border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/20 cursor-help" title={visibleValidationErrors.join("; ")}>
-                    <span className="material-icons-round text-[12px]">report</span>
-                    {visibleValidationErrors.length} Errors
-                  </span>
+                  <div className="relative group flex items-center">
+                    <span className="flex items-center gap-1 rounded-full bg-rose-100/50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 border border-rose-200 dark:bg-rose-500/10 dark:text-rose-400 dark:border-rose-500/20 cursor-default">
+                      <span className="material-icons-round text-[12px]">report</span>
+                      {visibleValidationErrors.length} Errors
+                    </span>
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-max max-w-xs z-50 hidden group-hover:block transition-opacity opacity-0 group-hover:opacity-100 pointer-events-none">
+                      <div className="bg-slate-900 border border-slate-700 shadow-xl rounded-lg p-3 text-xs text-slate-300 whitespace-normal break-words">
+                        <ul className="list-disc pl-4 space-y-1">
+                          {visibleValidationErrors.map((err, i) => (
+                            <li key={i}>{err}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
                 )}
 
                 {validation.warnings.length > 0 && (
-                  <span className="flex items-center gap-1 rounded-full bg-amber-100/50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20 cursor-help" title={validation.warnings.join("; ")}>
-                    <span className="material-icons-round text-[12px]">warning</span>
-                    {validation.warnings.length} Warnings
-                  </span>
+                  <div className="relative group flex items-center">
+                    <span className="flex items-center gap-1 rounded-full bg-amber-100/50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 border border-amber-200 dark:bg-amber-500/10 dark:text-amber-400 dark:border-amber-500/20 cursor-default">
+                      <span className="material-icons-round text-[12px]">warning</span>
+                      {validation.warnings.length} Warnings
+                    </span>
+                    <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 w-max max-w-xs z-50 hidden group-hover:block transition-opacity opacity-0 group-hover:opacity-100 pointer-events-none">
+                      <div className="bg-slate-900 border border-slate-700 shadow-xl rounded-lg p-3 text-xs text-slate-300 whitespace-normal break-words">
+                        <ul className="list-disc pl-4 space-y-1">
+                          {validation.warnings.map((warn, i) => (
+                            <li key={i}>{warn}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
               <div className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 mt-0.5">
@@ -1930,7 +1977,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
                         Update existing configuration
                       </div>
                       <div className="text-sm text-slate-500 dark:text-slate-400">
-                        Overwrite the history entry you loaded directly
+                        Overwrite the existing config. Changes appear here and on the board after the OTA reconnects.
                       </div>
                     </div>
                   </label>

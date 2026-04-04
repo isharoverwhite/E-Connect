@@ -1,24 +1,37 @@
 {
-    "module_name": "Yeelight Bulb Control Module",
-    "file_path" : "yeelight_control.py",
-    "version" : "1.0.0",
-    "author" : "experience",
-    "description" : "This module controls Yeelight bulbs using the Yeelight API.",
-    "functions" : [
-        "connect()",
-        "toggle()",
-        "get_props()",
-        "set_power()",
-        "set_bright()",
-        "set_rgb()",
-        "set_hue()",
-        "set_sat()",
-        "set_color_mode()"
-    ],
-    "data_type" : [
-        "ip",
-        "toggle",
-        "data_output",
-        ""
-    ]
+  "manifest_version": "1.0",
+  "extension_id": "yeelight_control",
+  "name": "Yeelight Control",
+  "version": "1.0.0",
+  "author": "experience",
+  "description": "Metadata package for registering Yeelight bulb integrations as external devices.",
+  "provider": {
+    "key": "yeelight",
+    "display_name": "Yeelight"
+  },
+  "package": {
+    "runtime": "python",
+    "entrypoint": "main.py"
+  },
+  "device_schemas": [
+    {
+      "schema_id": "yeelight_bulb",
+      "name": "Yeelight Bulb",
+      "default_name": "Yeelight Bulb",
+      "description": "Dimmable Yeelight Wi-Fi bulb exposed through the extension registry.",
+      "display": {
+        "card_type": "light"
+      },
+      "config_schema": {
+        "fields": [
+          {
+            "key": "ip_address",
+            "label": "IP Address",
+            "type": "string",
+            "required": true
+          }
+        ]
+      }
+    }
+  ]
 }

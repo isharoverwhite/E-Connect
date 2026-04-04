@@ -23,10 +23,12 @@ ARTIFACTS_DIR = os.path.join(BUILD_BASE_DIR, "artifacts")
 LOGS_DIR = os.path.join(BUILD_BASE_DIR, "logs")
 PLATFORMIO_CORE_DIR = os.getenv("PLATFORMIO_CORE_DIR", os.path.join(BUILD_BASE_DIR, ".platformio"))
 FIRMWARE_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "firmware_template"
+BOOT_APP0_RELATIVE_PATH = Path("packages") / "framework-arduinoespressif32" / "tools" / "partitions" / "boot_app0.bin"
 ARTIFACT_FILENAMES = {
     "firmware": "{job_id}.bin",
     "bootloader": "{job_id}.bootloader.bin",
     "partitions": "{job_id}.partitions.bin",
+    "boot_app0": "{job_id}.boot_app0.bin",
 }
 
 for path in (BUILD_BASE_DIR, JOBS_DIR, ARTIFACTS_DIR, LOGS_DIR, PLATFORMIO_CORE_DIR):
@@ -838,12 +840,23 @@ def generate_platformio_ini(project, project_dir: str):
             "-D ARDUINO_USB_MODE=1",
             "-D ARDUINO_USB_CDC_ON_BOOT=1",
         ])
+    if board_definition.canonical_id == "jc3827w543":
+        build_flags.extend([
+            "-D BOARD_JC3827W543=1",
+            "-D LV_CONF_SKIP=1",
+            "-I src/display_ui",
+        ])
 
     board_config_lines = []
+
     if isinstance(cpu_mhz, int) and cpu_mhz > 0:
         board_config_lines.append(f"board_build.f_cpu = {cpu_mhz}000000L")
         
-    if isinstance(flash_size, str) and flash_size.upper().endswith("MB"):
+    if (
+        board_definition.canonical_id != "jc3827w543"
+        and isinstance(flash_size, str)
+        and flash_size.upper().endswith("MB")
+    ):
         board_config_lines.append(f"board_upload.flash_size = {flash_size.upper()}")
         
     if isinstance(psram_size, str):
@@ -856,6 +869,12 @@ def generate_platformio_ini(project, project_dir: str):
         "knolleary/PubSubClient@^2.8",
         "bblanchon/ArduinoJson@^6.21.3",
     ]
+    if board_definition.canonical_id == "jc3827w543":
+        lib_deps.extend([
+            "lovyan03/LovyanGFX@^1.1.12",
+            "lvgl/lvgl@^9.1.0",
+            "TAMC_GT911",
+        ])
 
     # Add dynamic I2C and DHT library dependencies
     raw_pins = config_json.get("pins", [])
@@ -1039,9 +1058,12 @@ def promote_build_job_project_config(job: BuildJob) -> bool:
     if project is None or not isinstance(job.staged_project_config, dict):
         return False
 
+    from sqlalchemy.orm.attributes import flag_modified
+
     now = datetime.utcnow()
     staged_config = dict(job.staged_project_config)
     project.config = staged_config
+    flag_modified(project, "config")
 
     staged_project_name = staged_config.get("project_name")
     if staged_project_name:
@@ -1055,6 +1077,7 @@ def promote_build_job_project_config(job: BuildJob) -> bool:
         job.saved_config.config = dict(staged_config)
         job.saved_config.name = str(staged_config.get("config_name") or job.saved_config.name or "Saved config").strip() or "Saved config"
         job.saved_config.last_applied_at = now
+        flag_modified(job.saved_config, "config")
         project.current_config_id = job.saved_config.id
 
     if project.pending_build_job_id == job.id:
@@ -1082,6 +1105,7 @@ def write_generated_firmware_config(
     )
     include_dir = os.path.join(project_dir, "include")
     os.makedirs(include_dir, exist_ok=True)
+    board_definition = resolve_board_definition(project.board_profile)
 
     persisted_secret = extract_project_secret_from_payload(config_json)
     if persisted_secret is None and isinstance(project.config, dict):
@@ -1090,6 +1114,9 @@ def write_generated_firmware_config(
     project_name = str(config_json.get("project_name") or project.name or "E-Connect Node").strip()
     firmware_version = build_job_firmware_version(job_id)
     wifi_ssid, wifi_password = _resolve_project_wifi_credentials(project, config_json=config_json)
+    if board_definition.canonical_id == "jc3827w543":
+        wifi_ssid = ""
+        wifi_password = ""
     mqtt_broker = _resolve_mqtt_broker(config_json)
     mqtt_port = _resolve_mqtt_port(config_json)
     mqtt_namespace = str(os.getenv("FIRMWARE_MQTT_NAMESPACE", os.getenv("MQTT_NAMESPACE", "local")))
@@ -1116,6 +1143,7 @@ def write_generated_firmware_config(
         i2c_library = ""
         i2c_device_version = ""
         input_type = "switch"
+        switch_type = "momentary"
         dht_version = ""
 
         if isinstance(raw_extra_params, dict):
@@ -1140,10 +1168,11 @@ def write_generated_firmware_config(
 
             # Input
             input_type = str(raw_extra_params.get("input_type") or "switch")
+            switch_type = str(raw_extra_params.get("switch_type") or "momentary")
             dht_version = str(raw_extra_params.get("dht_version") or "")
 
         pin_rows.append(
-            f'    {{ {gpio}, "{_escape_c_string(mode)}", "{_escape_c_string(function_name)}", "{_escape_c_string(label)}", {active_level}, {pwm_min}, {pwm_max}, "{_escape_c_string(i2c_role)}", "{_escape_c_string(i2c_address)}", "{_escape_c_string(i2c_library)}", "{_escape_c_string(i2c_device_version)}", "{_escape_c_string(input_type)}", "{_escape_c_string(dht_version)}" }}'
+            f'    {{ {gpio}, "{_escape_c_string(mode)}", "{_escape_c_string(function_name)}", "{_escape_c_string(label)}", {active_level}, {pwm_min}, {pwm_max}, "{_escape_c_string(i2c_role)}", "{_escape_c_string(i2c_address)}", "{_escape_c_string(i2c_library)}", "{_escape_c_string(i2c_device_version)}", "{_escape_c_string(input_type)}", "{_escape_c_string(switch_type)}", "{_escape_c_string(dht_version)}" }}'
         )
 
     api_base_url_block = ""
@@ -1151,6 +1180,13 @@ def write_generated_firmware_config(
         api_base_url_block = f'#define API_BASE_URL "{_escape_c_string(api_base_url)}"\n'
 
     pin_rows_block = ",\n".join(pin_rows)
+    portable_dashboard_json = ""
+    if board_definition.canonical_id == "jc3827w543":
+        portable_dashboard_json = json.dumps(
+            config_json.get("portable_dashboard") or {},
+            separators=(",", ":"),
+            ensure_ascii=False,
+        )
 
     header_content = f"""#pragma once
 
@@ -1167,6 +1203,7 @@ struct EConnectPinConfig {{
   const char *i2c_library;
   const char *i2c_device_version;
   const char *input_type;
+  const char *switch_type;
   const char *dht_version;
 }};
 
@@ -1182,6 +1219,7 @@ struct EConnectPinConfig {{
 #define MQTT_BROKER "{_escape_c_string(mqtt_broker)}"
 #define MQTT_PORT {mqtt_port}
 #define MQTT_NAMESPACE "{_escape_c_string(mqtt_namespace)}"
+#define ECONNECT_PORTABLE_DASHBOARD_JSON "{_escape_c_string(portable_dashboard_json)}"
 {api_base_url_block}static const EConnectPinConfig ECONNECT_PIN_CONFIGS[] = {{
 {pin_rows_block}
 }};
@@ -1205,10 +1243,33 @@ def collect_build_outputs(project_dir: str, board_profile: str) -> dict[str, str
         if candidate.exists():
             outputs[artifact_name] = str(candidate)
 
-    if "firmware" not in outputs:
+    if board_definition.platform == "espressif32":
+        boot_app0_candidates = (
+            Path(PLATFORMIO_CORE_DIR) / BOOT_APP0_RELATIVE_PATH,
+            Path.home() / ".platformio" / BOOT_APP0_RELATIVE_PATH,
+        )
+        for candidate in boot_app0_candidates:
+            if candidate.exists():
+                outputs["boot_app0"] = str(candidate)
+                break
+
+    missing_build_artifacts = {
+        "firmware": "firmware.bin",
+        "bootloader": "bootloader.bin",
+        "partitions": "partitions.bin",
+    }
+    missing_build_artifacts = {
+        artifact_name: filename
+        for artifact_name, filename in missing_build_artifacts.items()
+        if artifact_name not in outputs
+    }
+    if missing_build_artifacts:
         for root, _, files in os.walk(Path(project_dir) / ".pio" / "build"):
-            if "firmware.bin" in files:
-                outputs["firmware"] = os.path.join(root, "firmware.bin")
+            for artifact_name, filename in list(missing_build_artifacts.items()):
+                if filename in files:
+                    outputs[artifact_name] = os.path.join(root, filename)
+                    del missing_build_artifacts[artifact_name]
+            if not missing_build_artifacts:
                 break
 
     return outputs

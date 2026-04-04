@@ -17,6 +17,13 @@
 #endif
 #include "secrets.h"
 
+#ifdef BOARD_JC3827W543
+#include "jc3827w543_manager.h"
+#define DEVICE_MODE_STRING "portableDashboard"
+#else
+#define DEVICE_MODE_STRING "no-code"
+#endif
+
 #ifndef ECONNECT_FIRMWARE_REVISION
 #define ECONNECT_FIRMWARE_REVISION "1.0.0"
 #endif
@@ -35,11 +42,12 @@ struct EConnectPinConfig {
   const char *i2c_library;
   const char *i2c_device_version;
   const char *input_type;
+  const char *switch_type;
   const char *dht_version;
 };
 
 static const EConnectPinConfig ECONNECT_PIN_CONFIGS[] = {
-    {ECONNECT_BUILTIN_LED_PIN, "OUTPUT", "builtin_led", "Built-in LED", 1, 0, 255, "", "", "", "", "switch", ""},
+    {ECONNECT_BUILTIN_LED_PIN, "OUTPUT", "builtin_led", "Built-in LED", 1, 0, 255, "", "", "", "", "switch", "momentary", ""},
 };
 #endif
 
@@ -58,6 +66,9 @@ struct PinRuntimeState {
   int brightness;
   int pwmMin;
   int pwmMax;
+  int lastPhysicalValue;
+  int stablePhysicalValue;
+  unsigned long lastDebounceTime;
 };
 
 constexpr size_t PIN_CONFIG_COUNT =
@@ -76,6 +87,10 @@ unsigned long lastDHTReadTime[PIN_STATE_CAPACITY] = {0};
 // Tachometer state
 volatile unsigned long tachoPulseCounts[PIN_STATE_CAPACITY] = {0};
 unsigned long lastTachoReadTime[PIN_STATE_CAPACITY] = {0};
+
+#ifndef IRAM_ATTR
+#define IRAM_ATTR
+#endif
 
 void IRAM_ATTR tachoInterruptHandler(void* arg) {
   int idx = (int)(intptr_t)arg;
@@ -126,7 +141,9 @@ int resolvePhysicalLevel(const PinRuntimeState &pinState, int logicalValue);
 WifiTarget scanWifiTarget();
 void logVisibleWifiTargets(const WifiTarget &target);
 void formatBssid(const uint8_t *bssid, char *buffer, size_t bufferSize);
+const char *getActiveWifiSsid();
 const char *wifiPassphrase();
+size_t totalReportedPinCount();
 template <typename TDocument>
 void appendEmbeddedNetworkTargets(TDocument &doc);
 bool runtimeNetworkDiffers(JsonVariantConst runtimeNetwork);
@@ -154,6 +171,11 @@ void setup() {
   Serial.printf("Provisioned MQTT broker: %s:%d\n", MQTT_BROKER, MQTT_PORT);
   Serial.printf("Provisioned API base URL: %s\n", API_BASE_URL);
 
+#ifdef BOARD_JC3827W543
+  jc3827w543_setup();
+  jc3827w543_set_pairing_state(false);
+#endif
+
   while (!connectToWiFi()) {
     Serial.println("Wi-Fi provisioning failed. Retrying...");
     delay(HANDSHAKE_RETRY_DELAY_MS);
@@ -174,11 +196,71 @@ void setup() {
   }
 }
 
+void updateInputs() {
+  unsigned long now = millis();
+  bool stateChanged = false;
+
+  for (size_t i = 0; i < PIN_CONFIG_COUNT; i++) {
+    if (modeEquals(pinStates[i].mode, "INPUT") && strcmp(ECONNECT_PIN_CONFIGS[i].input_type, "switch") == 0) {
+      if (strcmp(ECONNECT_PIN_CONFIGS[i].switch_type, "momentary_toggle") == 0) {
+        int currentRaw = digitalRead(pinStates[i].gpio);
+        if (currentRaw != pinStates[i].lastPhysicalValue) {
+          pinStates[i].lastDebounceTime = now;
+          pinStates[i].lastPhysicalValue = currentRaw;
+        }
+
+        if ((now - pinStates[i].lastDebounceTime) > 50) {
+          if (currentRaw != pinStates[i].stablePhysicalValue) {
+            int oldStable = pinStates[i].stablePhysicalValue;
+            pinStates[i].stablePhysicalValue = currentRaw;
+
+            if (oldStable != -1) {
+              int activeState = pinStates[i].activeLevel;
+              // If it transitioned from inactive to active, toggle the logical value
+              if (currentRaw == activeState) {
+                pinStates[i].value = pinStates[i].value == 0 ? 1 : 0;
+                // Output pins bound to this logic will be handled if any... wait, we only report state.
+                stateChanged = true;
+              }
+            }
+          }
+        }
+      } else if (strcmp(ECONNECT_PIN_CONFIGS[i].switch_type, "momentary") == 0 || strcmp(ECONNECT_PIN_CONFIGS[i].switch_type, "toggle") == 0) {
+        // Immediate reaction for regular switches if state changed
+        int currentRaw = digitalRead(pinStates[i].gpio);
+        if (currentRaw != pinStates[i].lastPhysicalValue) {
+          pinStates[i].lastDebounceTime = now;
+          pinStates[i].lastPhysicalValue = currentRaw;
+        }
+
+        if ((now - pinStates[i].lastDebounceTime) > 50) {
+          if (currentRaw != pinStates[i].stablePhysicalValue) {
+            pinStates[i].stablePhysicalValue = currentRaw;
+            int newLogical = (currentRaw == pinStates[i].activeLevel) ? 1 : 0;
+            if (newLogical != pinStates[i].value) {
+              pinStates[i].value = newLogical;
+              stateChanged = true;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (stateChanged && securePairingVerified) {
+    publishState(true);
+  }
+}
+
 void loop() {
   if (pairingRejectedUntilPowerCycle || manualReflashRequired) {
     delay(HANDSHAKE_RETRY_DELAY_MS);
     return;
   }
+
+#ifdef BOARD_JC3827W543
+  jc3827w543_loop();
+#endif
 
   if (!securePairingVerified) {
     securePairingVerified = performSecureHandshake();
@@ -199,16 +281,24 @@ void loop() {
 
   mqttClient.loop();
 
+#ifdef BOARD_JC3827W543
+  if (mqttClient.connected()) {
+    jc3827w543_publish_pending_command(mqttClient);
+  }
+#endif
+
   if (millis() - lastHeartbeatAt >= HEARTBEAT_INTERVAL_MS) {
     publishState(false);
     lastHeartbeatAt = millis();
   }
 
+  updateInputs();
+
   delay(10);
 }
 
 bool connectToWiFi() {
-  if (strlen(WIFI_SSID) == 0) {
+  if (strlen(getActiveWifiSsid()) == 0) {
     Serial.println("BLOCKER: WIFI_SSID is empty. Build firmware from the server before flashing.");
     return false;
   }
@@ -230,7 +320,7 @@ bool connectToWiFi() {
   };
 
   auto beginWifiConnection = [&](bool useLockedTarget, bool useChannelHint) {
-    Serial.printf("Connecting to Wi-Fi SSID: %s ", WIFI_SSID);
+    Serial.printf("Connecting to Wi-Fi SSID: %s ", getActiveWifiSsid());
     if (useLockedTarget && target.found) {
       char bssidBuffer[18];
       formatBssid(target.bssid, bssidBuffer, sizeof(bssidBuffer));
@@ -240,18 +330,18 @@ bool connectToWiFi() {
           bssidBuffer,
           boardAuthModeName(target.authMode),
           target.rssi);
-      WiFi.begin(WIFI_SSID, wifiPassphrase(), target.channel, target.bssid, true);
+      WiFi.begin(getActiveWifiSsid(), wifiPassphrase(), target.channel, target.bssid, true);
       return awaitWifiConnection();
     }
 
     if (useChannelHint && target.found) {
       Serial.printf("(channel-hint=%d) ", target.channel);
-      WiFi.begin(WIFI_SSID, wifiPassphrase(), target.channel);
+      WiFi.begin(getActiveWifiSsid(), wifiPassphrase(), target.channel);
       return awaitWifiConnection();
     }
 
     Serial.print("(broadcast lookup) ");
-    WiFi.begin(WIFI_SSID, wifiPassphrase());
+    WiFi.begin(getActiveWifiSsid(), wifiPassphrase());
     return awaitWifiConnection();
   };
 
@@ -301,7 +391,7 @@ WifiTarget scanWifiTarget() {
 
   for (int index = 0; index < networkCount; index++) {
     const String ssid = WiFi.SSID(index);
-    if (!ssid.equals(WIFI_SSID)) {
+    if (!ssid.equals(getActiveWifiSsid())) {
       continue;
     }
 
@@ -337,7 +427,7 @@ void logVisibleWifiTargets(const WifiTarget &target) {
   formatBssid(target.bssid, bssidBuffer, sizeof(bssidBuffer));
   Serial.printf(
       "Matched AP: ssid=%s candidates=%d channel=%d rssi=%d auth=%s bssid=%s\n",
-      WIFI_SSID,
+      getActiveWifiSsid(),
       target.candidateCount,
       target.channel,
       target.rssi,
@@ -345,7 +435,21 @@ void logVisibleWifiTargets(const WifiTarget &target) {
       bssidBuffer);
 }
 
+const char *getActiveWifiSsid() {
+#ifdef BOARD_JC3827W543
+  if (jc3827w543_has_custom_wifi()) {
+    return jc3827w543_get_custom_ssid();
+  }
+#endif
+  return WIFI_SSID;
+}
+
 const char *wifiPassphrase() {
+#ifdef BOARD_JC3827W543
+  if (jc3827w543_has_custom_wifi()) {
+    return jc3827w543_get_custom_pass();
+  }
+#endif
   return strlen(WIFI_PASS) > 0 ? WIFI_PASS : nullptr;
 }
 
@@ -389,7 +493,7 @@ bool performSecureHandshake() {
   doc["mac_address"] = WiFi.macAddress();
   doc["ip_address"] = WiFi.localIP().toString();
   doc["name"] = ECONNECT_DEVICE_NAME;
-  doc["mode"] = "no-code";
+  doc["mode"] = DEVICE_MODE_STRING;
   doc["firmware_revision"] = ECONNECT_FIRMWARE_REVISION;
   doc["firmware_version"] = ECONNECT_FIRMWARE_VERSION;
   appendEmbeddedNetworkTargets(doc);
@@ -401,6 +505,9 @@ bool performSecureHandshake() {
     pin["mode"] = ECONNECT_PIN_CONFIGS[index].mode;
     appendPinConfigMetadata(pin, ECONNECT_PIN_CONFIGS[index]);
   }
+#ifdef BOARD_JC3827W543
+  jc3827w543_append_builtin_pin_config(pins);
+#endif
 
   String requestBody;
   serializeJson(doc, requestBody);
@@ -499,6 +606,9 @@ void reconnectMQTT() {
     subscribeStateAckTopic();
     if (securePairingVerified) {
       subscribeCommandTopic();
+#ifdef BOARD_JC3827W543
+      jc3827w543_on_mqtt_connected(mqttClient);
+#endif
       publishState(true);
       lastHeartbeatAt = millis();
     }
@@ -529,6 +639,11 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
   }
 
   const String incomingTopic = String(topic);
+#ifdef BOARD_JC3827W543
+  if (jc3827w543_handle_mqtt_message(topic, doc.as<JsonVariantConst>())) {
+    return;
+  }
+#endif
   if (incomingTopic == registerAckTopic()) {
     if (String(doc["status"] | "") == "manual_reflash_required" ||
         runtimeNetworkDiffers(doc["runtime_network"])) {
@@ -558,6 +673,10 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
     subscribeRegisterAckTopic();
     subscribeStateAckTopic();
     subscribeCommandTopic();
+#ifdef BOARD_JC3827W543
+    jc3827w543_set_pairing_state(true);
+    jc3827w543_on_mqtt_connected(mqttClient);
+#endif
     publishState(true);
     lastHeartbeatAt = millis();
     Serial.printf("Secure MQTT handshake complete. Device id: %s\n", deviceId.c_str());
@@ -578,6 +697,9 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
       forcePairingRequestOnNextHandshake = false;
       securePairingVerified = false;
       persistRejectedPairingLock(true);
+#ifdef BOARD_JC3827W543
+      jc3827w543_set_pairing_state(false);
+#endif
       if (mqttClient.connected()) {
         mqttClient.disconnect();
       }
@@ -596,6 +718,9 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
       forcePairingRequestOnNextHandshake = true;
       securePairingVerified = false;
       persistRejectedPairingLock(false);
+#ifdef BOARD_JC3827W543
+      jc3827w543_set_pairing_state(false);
+#endif
       Serial.printf(
           "Server requested re-pair: %s\n",
           String(doc["message"] | "Unknown reason").c_str());
@@ -673,6 +798,14 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
   const int value = doc["value"] | -1;
   const int brightness = doc["brightness"] | -1;
 
+#ifdef BOARD_JC3827W543
+  if (jc3827w543_is_builtin_pin(targetPin)) {
+    const bool applied = jc3827w543_apply_builtin_command(targetPin, value, brightness);
+    publishState(applied);
+    return;
+  }
+#endif
+
   const int pinIndex = findPinIndex(targetPin);
   if (pinIndex < 0) {
     Serial.printf("Ignoring command for unmapped GPIO %d\n", targetPin);
@@ -695,6 +828,9 @@ void initializePinStates() {
     pinStates[index].brightness = 0;
     pinStates[index].pwmMin = ECONNECT_PIN_CONFIGS[index].pwm_min;
     pinStates[index].pwmMax = ECONNECT_PIN_CONFIGS[index].pwm_max;
+    pinStates[index].lastPhysicalValue = -1;
+    pinStates[index].stablePhysicalValue = -1;
+    pinStates[index].lastDebounceTime = 0;
 
     if (isOutputMode(pinStates[index].mode)) {
       pinMode(pinStates[index].gpio, OUTPUT);
@@ -887,6 +1023,9 @@ int readRuntimeValue(PinRuntimeState &pinState) {
           lastTachoReadTime[index] = now;
         }
         return pinState.value;
+      } else if (strcmp(ECONNECT_PIN_CONFIGS[index].input_type, "switch") == 0) {
+        // Switch values are updated by the polling loop (updateInputs), returning the last known stable state
+        return pinStates[index].value;
       }
     }
     
@@ -982,13 +1121,25 @@ void publishState(bool applied) {
       pin["brightness"] = brightness;
     }
   }
+#ifdef BOARD_JC3827W543
+  jc3827w543_append_builtin_pin_state(pins);
+#endif
 
-  if (PIN_CONFIG_COUNT == 1) {
-    PinRuntimeState &pinState = pinStates[0];
-    doc["pin"] = pinState.gpio;
-    doc["value"] = readRuntimeValue(pinState);
-    if (isPwmMode(pinState.mode)) {
-      doc["brightness"] = readRuntimeBrightness(pinState);
+  if (totalReportedPinCount() == 1) {
+#ifdef BOARD_JC3827W543
+    if (PIN_CONFIG_COUNT == 0) {
+      doc["pin"] = jc3827w543_builtin_pin();
+      doc["value"] = jc3827w543_builtin_value();
+      doc["brightness"] = jc3827w543_builtin_brightness();
+    } else
+#endif
+    {
+      PinRuntimeState &pinState = pinStates[0];
+      doc["pin"] = pinState.gpio;
+      doc["value"] = readRuntimeValue(pinState);
+      if (isPwmMode(pinState.mode)) {
+        doc["brightness"] = readRuntimeBrightness(pinState);
+      }
     }
   }
 
@@ -1036,6 +1187,14 @@ void appendPinConfigMetadata(JsonObject pin, const EConnectPinConfig &config) {
   if (!hasExtraParams) {
     pin.remove("extra_params");
   }
+}
+
+size_t totalReportedPinCount() {
+  size_t reportedPinCount = PIN_CONFIG_COUNT;
+#ifdef BOARD_JC3827W543
+  reportedPinCount += 1;
+#endif
+  return reportedPinCount;
 }
 
 template <typename TDocument>

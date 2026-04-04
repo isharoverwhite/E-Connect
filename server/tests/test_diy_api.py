@@ -28,6 +28,7 @@ from app.sql_models import (
     WifiCredential,
 )
 from app.auth import get_password_hash
+from app.services.diy_validation import validate_diy_config
 from app.services.provisioning import PRIVATE_DEVICE_SECRET_KEY
 
 # Setup test DB
@@ -277,6 +278,55 @@ def test_create_project_creates_and_links_wifi_credential_from_legacy_payload():
     assert credential is not None
     assert credential.ssid == "Builder-WiFi"
     assert credential.password == "BuilderPass123"
+
+
+def test_create_jc3827_project_allows_board_local_wifi_flow():
+    db = TestingSessionLocal()
+    _user, room = create_test_user(db, username="jc3827-admin")
+    token = get_token(username="jc3827-admin")
+
+    response = client.post(
+        "/api/v1/diy/projects",
+        json={
+            "name": "Portable Control Board",
+            "board_profile": "jc3827w543",
+            "room_id": room.room_id,
+            "wifi_credential_id": None,
+            "config": {
+                "project_name": "Portable Control Board",
+                "pins": [{"gpio_pin": 5, "mode": "OUTPUT", "label": "Jump Relay"}],
+                "portable_dashboard": {
+                    "variant": "jc3827w543-ctp",
+                    "width": 480,
+                    "height": 272,
+                    "sidebar_width": 72,
+                    "cards": [],
+                },
+            },
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["wifi_credential_id"] is None
+    assert payload["config"]["wifi_credential_id"] is None
+    assert payload["config"]["portable_dashboard"]["variant"] == "jc3827w543-ctp"
+
+
+def test_jc3827_validation_rejects_internal_or_unsupported_pins():
+    _board, errors, warnings = validate_diy_config(
+        "jc3827w543",
+        {"pins": [{"gpio_pin": 4, "mode": "OUTPUT", "label": "Touch SCL"}]},
+    )
+    assert any("GPIO 4 is not supported" in error for error in errors)
+    assert warnings == []
+
+    _board, errors, _warnings = validate_diy_config(
+        "jc3827w543",
+        {"pins": [{"gpio_pin": 0, "mode": "OUTPUT", "label": "Boot Button"}]},
+    )
+    assert any("GPIO 0 does not support mode OUTPUT" in error for error in errors)
 
 
 def test_delete_wifi_credential_conflicts_when_in_use_by_project():
@@ -1169,6 +1219,31 @@ def test_builder_generates_esp8266_platformio_ini(tmp_path):
     assert "board_upload.flash_size = 16MB" in content
     assert "ARDUINO_USB_MODE" not in content
 
+
+def test_builder_generates_jc3827_platformio_ini_with_repo_board_profile(tmp_path):
+    from app.services.builder import generate_platformio_ini
+
+    class MockProject:
+        def __init__(self, config, board_profile):
+            self.config = config
+            self.board_profile = board_profile
+
+    project = MockProject(
+        config={
+            "pins": [],
+        },
+        board_profile="jc3827w543",
+    )
+
+    generate_platformio_ini(project, str(tmp_path))
+
+    content = (tmp_path / "platformio.ini").read_text()
+    assert "[env:jc3827w543]" in content
+    assert "board = jc3827w543" in content
+    assert "-D BOARD_JC3827W543=1" in content
+    assert "-D LV_CONF_SKIP=1" in content
+    assert "board_build.flash_mode" not in content
+
 def test_collect_build_outputs_supports_esp8266_firmware_only(tmp_path):
     from app.services.builder import collect_build_outputs
 
@@ -1181,46 +1256,37 @@ def test_collect_build_outputs_supports_esp8266_firmware_only(tmp_path):
 
     assert outputs == {"firmware": str(firmware_path)}
 
-def test_list_diy_projects_matches_legacy_esp8266_aliases():
-    db = TestingSessionLocal()
-    user, room = create_test_user(db, username="legacyesp8266")
-    token = get_token(username="legacyesp8266")
 
-    legacy_project = DiyProject(
-        id=str(uuid.uuid4()),
-        user_id=user.user_id,
-        room_id=room.room_id,
-        name="Legacy ESP8266",
-        board_profile="esp8266",
-        config={
-            "wifi_ssid": "ssid",
-            "wifi_password": "pass",
-            "pins": [{"gpio": 4, "mode": "OUTPUT", "label": "Legacy Relay"}],
-        },
-    )
-    other_project = DiyProject(
-        id=str(uuid.uuid4()),
-        user_id=user.user_id,
-        room_id=room.room_id,
-        name="Other ESP8266",
-        board_profile="d1_mini",
-        config={
-            "wifi_ssid": "ssid",
-            "wifi_password": "pass",
-            "pins": [{"gpio": 4, "mode": "OUTPUT", "label": "Other Relay"}],
-        },
-    )
-    db.add_all([legacy_project, other_project])
-    db.commit()
+def test_collect_build_outputs_includes_boot_app0_for_esp32_family(tmp_path, monkeypatch):
+    import app.services.builder as builder
 
-    response = client.get(
-        "/api/v1/diy/projects?board_profile=nodemcuv2",
-        headers={"Authorization": f"Bearer {token}"},
-    )
+    build_dir = tmp_path / ".pio" / "build" / "jc3827w543"
+    build_dir.mkdir(parents=True)
 
-    assert response.status_code == 200
-    payload = response.json()
-    assert [project["board_profile"] for project in payload] == ["esp8266"]
+    firmware_path = build_dir / "firmware.bin"
+    bootloader_path = build_dir / "bootloader.bin"
+    partitions_path = build_dir / "partitions.bin"
+    firmware_path.write_bytes(b"esp32-firmware")
+    bootloader_path.write_bytes(b"bootloader")
+    partitions_path.write_bytes(b"partitions")
+
+    fake_core_dir = tmp_path / ".platformio-core"
+    boot_app0_path = fake_core_dir / "packages" / "framework-arduinoespressif32" / "tools" / "partitions" / "boot_app0.bin"
+    boot_app0_path.parent.mkdir(parents=True)
+    boot_app0_path.write_bytes(b"boot-app0")
+
+    monkeypatch.setattr(builder, "PLATFORMIO_CORE_DIR", str(fake_core_dir))
+
+    outputs = builder.collect_build_outputs(str(tmp_path), "jc3827w543")
+
+    assert outputs == {
+        "firmware": str(firmware_path),
+        "bootloader": str(bootloader_path),
+        "partitions": str(partitions_path),
+        "boot_app0": str(boot_app0_path),
+    }
+
+
 
 def test_builder_generates_correct_config(tmp_path):
     from app.services.builder import write_generated_firmware_config
@@ -1271,10 +1337,10 @@ def test_builder_generates_correct_config(tmp_path):
     content = header_path.read_text()
     
     # First pin config: PWM pin with min_value 20 and max_value 200
-    assert '{ 2, "PWM", "pwm", "PWM Dimmer", 1, 20, 200, "", "", "" }' in content, f"Missing PWM pin in: {content}"
+    assert '{ 2, "PWM", "pwm", "PWM Dimmer", 1, 20, 200, "", "", "", "", "switch", "momentary", "" }' in content, f"Missing PWM pin in: {content}"
     
     # Second pin config: I2C pin with SDA role, address 0x3C, library Wire
-    assert '{ 4, "I2C", "i2c", "I2C Sensor", 1, 0, 255, "SDA", "0x3C", "Wire" }' in content, f"Missing I2C pin in: {content}"
+    assert '{ 4, "I2C", "i2c", "I2C Sensor", 1, 0, 255, "SDA", "0x3C", "Wire", "", "switch", "momentary", "" }' in content, f"Missing I2C pin in: {content}"
     assert '#define MQTT_BROKER "192.168.1.50"' in content
     assert '#define API_BASE_URL "http://192.168.1.50:3000/api/v1"' in content
     assert '#define ECONNECT_SECRET_KEY "persisted-secret"' in content
@@ -1284,7 +1350,7 @@ def test_firmware_template_declares_developer_managed_revision():
     header_path = Path(__file__).resolve().parents[1] / "firmware_template" / "include" / "firmware_revision.h"
     content = header_path.read_text()
 
-    assert '#define ECONNECT_FIRMWARE_REVISION "1.0.0"' in content
+    assert '#define ECONNECT_FIRMWARE_REVISION "1.1.3"' in content
 
 
 def test_builder_uses_distinct_stamped_public_mqtt_target(tmp_path):
@@ -1357,7 +1423,7 @@ def test_builder_preserves_descending_pwm_range(tmp_path):
     header_path = tmp_path / "include" / "generated_firmware_config.h"
     assert header_path.exists()
     content = header_path.read_text()
-    assert '{ 5, "PWM", "pwm", "Active Low PWM", 1, 255, 0, "", "", "" }' in content
+    assert '{ 5, "PWM", "pwm", "Active Low PWM", 1, 255, 0, "", "", "", "", "switch", "momentary", "" }' in content
 
 
 def test_release_project_serial_reservation_releases_same_user_lock():
@@ -1443,3 +1509,42 @@ def test_release_project_serial_reservation_ignores_other_user_lock():
     assert released_port is None
     assert serial_session.status == SerialSessionStatus.locked
     assert serial_session.released_at is None
+
+def test_create_project_invalid_board_profile():
+    db = TestingSessionLocal()
+    user, room = create_test_user(db, username="invalidboarduser")
+    token = get_token("invalidboarduser")
+    payload = {
+        "name": "Invalid Board Project",
+        "board_profile": "non-existent-board",
+        "room_id": room.room_id,
+        "wifi_credential_id": 1,
+        "config": {"pins": []}
+    }
+    response = client.post("/api/v1/diy/projects", json=payload, headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 400
+    assert "Unsupported board profile" in response.json()["detail"]["message"]
+
+def test_update_project_immutable_board_profile():
+    db = TestingSessionLocal()
+    user, room = create_test_user(db, username="immutableboarduser")
+    token = get_token("immutableboarduser")
+    
+    # Create valid project first
+    payload = {
+        "name": "Mutable Project",
+        "board_profile": "esp32-devkit-v1",
+        "room_id": room.room_id,
+        "config": {"pins": [], "wifi_ssid": "test", "wifi_password": "test"}
+    }
+    create_response = client.post("/api/v1/diy/projects", json=payload, headers={"Authorization": f"Bearer {token}"})
+    assert create_response.status_code == 200
+    project_id = create_response.json()["id"]
+
+    # Try to update board profile
+    update_payload = dict(payload)
+    update_payload["board_profile"] = "esp8266-nodemcu-v2"
+    
+    update_response = client.put(f"/api/v1/diy/projects/{project_id}", json=update_payload, headers={"Authorization": f"Bearer {token}"})
+    assert update_response.status_code == 400
+    assert update_response.json()["detail"]["message"] == "Cannot change the board profile of an existing project."

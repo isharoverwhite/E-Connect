@@ -2,7 +2,7 @@ import importlib
 import json
 import sys
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 
 
 def _reload_database_module():
@@ -327,3 +327,23 @@ def test_initialize_database_skips_backfill_for_history_deleted_snapshots(monkey
         assert saved_configs == []
     finally:
         db.close()
+
+
+def test_initialize_database_creates_extension_registry_tables(monkeypatch, tmp_path):
+    explicit_db = tmp_path / "extensions.sqlite3"
+    explicit_url = f"sqlite:///{explicit_db}"
+
+    monkeypatch.setenv("DATABASE_URL", explicit_url)
+    monkeypatch.delenv("LOCAL_DATABASE_PATH", raising=False)
+
+    database_module = _reload_database_module()
+    importlib.import_module("app.sql_models")
+
+    ok, error = database_module.initialize_database(max_attempts=1, retry_delay=0)
+
+    assert ok is True
+    assert error is None
+
+    inspector = inspect(database_module.engine)
+    assert inspector.has_table("installed_extensions") is True
+    assert inspector.has_table("external_devices") is True

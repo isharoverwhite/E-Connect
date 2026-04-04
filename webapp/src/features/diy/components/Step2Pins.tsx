@@ -410,6 +410,49 @@ export function Step2Pins({
                                                 </select>
                                             </div>
                                         )}
+                                        {(assignment.extra_params?.input_type ?? "switch") === "switch" && (
+                                            <div className="flex flex-col gap-3">
+                                                <div className="flex flex-col gap-1">
+                                                    <label htmlFor={`pin-switch-type-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">Switch Type</label>
+                                                    <select
+                                                        id={`pin-switch-type-${pin.gpio}`}
+                                                        name={`pin-switch-type-${pin.gpio}`}
+                                                        value={assignment.extra_params?.switch_type ?? "momentary"}
+                                                        onChange={(e) => {
+                                                            handleExtraParamChange(pin, { switch_type: e.target.value as "momentary" | "momentary_toggle" | "toggle" });
+                                                        }}
+                                                        className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
+                                                    >
+                                                        <option value="momentary">Momentary (Push-to-make / release-to-break)</option>
+                                                        <option value="momentary_toggle">Momentary Toggle (Push-to-toggle logic)</option>
+                                                        <option value="toggle">Toggle (Classic on/off switch)</option>
+                                                    </select>
+                                                    <p className="text-[9px] text-slate-400 dark:text-slate-500 leading-tight">
+                                                        Momentary toggle acts as a push-button that flips the logical state each time it is pressed.
+                                                    </p>
+                                                </div>
+
+                                                <div className="flex items-center justify-between">
+                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
+                                                        Active Level
+                                                    </p>
+                                                    <label className="flex items-center cursor-pointer gap-2">
+                                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 select-none">Active High</span>
+                                                        <div className="relative">
+                                                            <input
+                                                                type="checkbox"
+                                                                className="sr-only peer"
+                                                                checked={assignment.extra_params?.active_level === 1 || assignment.extra_params?.active_level === undefined /* default to active high for UX */}
+                                                                onChange={(e) => {
+                                                                    handleExtraParamChange(pin, { active_level: e.target.checked ? 1 : 0 });
+                                                                }}
+                                                            />
+                                                            <div className="w-8 h-4 bg-slate-300 dark:bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 dark:after:border-slate-600 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-4 peer-checked:after:border-white"></div>
+                                                        </div>
+                                                    </label>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 )}
 

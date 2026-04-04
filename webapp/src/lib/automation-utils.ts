@@ -31,8 +31,8 @@ interface PortSelection {
 
 export const NODE_WIDTH = 260;
 export const NODE_HEIGHT = 100;
-export const CANVAS_BASE_X = 260;
-export const CANVAS_BASE_Y = 320;
+export const CANVAS_BASE_X = 1500;
+export const CANVAS_BASE_Y = 1000;
 export const CANVAS_HORIZONTAL_GAP = 400;
 export const CANVAS_VERTICAL_GAP = 220;
 export const CANVAS_FIT_PADDING = 120;
@@ -457,9 +457,7 @@ export function getAutomationGraphSaveIssues(graph: AutomationGraph): string[] {
     outgoing.set(edge.source_node_id, [...(outgoing.get(edge.source_node_id) ?? []), edge]);
     incomingCount.set(edge.target_node_id, (incomingCount.get(edge.target_node_id) ?? 0) + 1);
 
-    if (source.type === "action") {
-      issues.add("Action blocks cannot connect to downstream blocks.");
-    }
+
     if (target.type === "trigger") {
       issues.add("Trigger blocks cannot receive incoming connections.");
     }
@@ -631,9 +629,13 @@ export function getNodePorts(type: AutomationNodeType): PortDefinition[] {
     case "condition":
       return [
         { id: "event_in", label: "In", type: "in", offset: { x: NODE_WIDTH / 2, y: 0 } },
-        { id: "pass_out", label: "True", type: "out", offset: { x: NODE_WIDTH / 2, y: NODE_HEIGHT } }
+        { id: "fail_out", label: "False", type: "out", offset: { x: NODE_WIDTH / 4, y: NODE_HEIGHT } },
+        { id: "pass_out", label: "True", type: "out", offset: { x: (NODE_WIDTH / 4) * 3, y: NODE_HEIGHT } }
       ];
     case "action":
-      return [{ id: "event_in", label: "Execute", type: "in", offset: { x: NODE_WIDTH / 2, y: 0 } }];
+      return [
+        { id: "event_in", label: "Execute", type: "in", offset: { x: NODE_WIDTH / 2, y: 0 } },
+        { id: "event_out", label: "Next", type: "out", offset: { x: NODE_WIDTH / 2, y: NODE_HEIGHT } }
+      ];
   }
 }

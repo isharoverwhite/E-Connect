@@ -9,7 +9,7 @@ import { DeviceConfig } from "@/types/device";
 import { useToast } from "@/components/ToastContext";
 
 // --- Types ---
-import { AutomationNodeType, AutomationGraphNodeConfig, AutomationGraphNode, AutomationGraphEdge, TriggerResult, AutomationRecord, DraftAutomation, TIME_TRIGGER_KIND, TIME_TRIGGER_WEEKDAY_OPTIONS, DEVICE_VALUE_TRIGGER_KIND, DEVICE_ON_OFF_TRIGGER_KIND, LEGACY_DEVICE_TRIGGER_KIND, AutomationScheduleContext } from "@/types/automation";
+import { AutomationNodeType, AutomationGraphNodeConfig, AutomationGraphNode, AutomationGraphEdge, TriggerResult, AutomationRecord, DraftAutomation, TIME_TRIGGER_KIND, TIME_TRIGGER_WEEKDAY_OPTIONS, DEVICE_VALUE_TRIGGER_KIND, DEVICE_ON_OFF_TRIGGER_KIND, LEGACY_DEVICE_TRIGGER_KIND, AutomationScheduleContext, TELEGRAM_ACTION_KIND } from "@/types/automation";
 
 type PageState = "loading" | "empty" | "loaded" | "error";
 
@@ -471,21 +471,32 @@ export default function AutomationPage() {
 
 
   // --- Graph Edit Functions ---
-  const addNode = useCallback((type: AutomationNodeType, position?: { x: number; y: number }) => {
+  const addNode = useCallback((type: AutomationNodeType, position?: { x: number; y: number }, kind?: string) => {
     const id = `${type}_${Date.now()}`;
+    let defaultPosition = { x: 1500 + Math.random() * 50, y: 1000 + Math.random() * 50 };
+    
+    if (!position && canvasViewportRef.current) {
+       const viewport = canvasViewportRef.current;
+       const rect = viewport.getBoundingClientRect();
+       const center = resolveCanvasPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+       if (center) {
+           defaultPosition = {
+               x: Math.max(32, center.canvasX - NODE_WIDTH / 2 + Math.random() * 50),
+               y: Math.max(32, center.canvasY - NODE_HEIGHT / 2 + Math.random() * 50),
+           };
+       }
+    }
+
     const nextPosition = position
       ? {
           x: Math.max(32, Math.round(position.x - NODE_WIDTH / 2)),
           y: Math.max(32, Math.round(position.y - NODE_HEIGHT / 2)),
         }
-      : {
-          x: 500 + Math.random() * 50,
-          y: 300 + Math.random() * 50,
-        };
+      : defaultPosition;
     const newNode: AutomationGraphNode = {
       id,
       type,
-      kind: type === "trigger" ? "device_state" : type === "action" ? "set_output" : "state_equals",
+      kind: kind || (type === "trigger" ? "device_state" : type === "action" ? "set_output" : "state_equals"),
       label: `New ${type}`,
       config: { ui: nextPosition }
     };
@@ -494,7 +505,7 @@ export default function AutomationPage() {
     setConnectingFrom(null);
     setConnectionPreview(null);
     closeContextMenu();
-  }, [closeContextMenu]);
+  }, [closeContextMenu, resolveCanvasPoint]);
 
   const removeSelectedNode = useCallback((nodeId = selectedNodeId) => {
     if (!nodeId) return;
@@ -621,9 +632,9 @@ export default function AutomationPage() {
   };
 
 
-  const handleContextAddNode = (type: AutomationNodeType) => {
+  const handleContextAddNode = (type: AutomationNodeType, kind?: string) => {
     if (!contextMenu) return;
-    addNode(type, { x: contextMenu.canvasX, y: contextMenu.canvasY });
+    addNode(type, { x: contextMenu.canvasX, y: contextMenu.canvasY }, kind);
   };
 
   useEffect(() => {
@@ -673,17 +684,19 @@ export default function AutomationPage() {
 
     const isTrigger = startNode.type === "trigger";
     const isCondition = startNode.type === "condition";
+    const isAction = startNode.type === "action";
 
-    const baseColor = isTrigger ? "#3b82f6" : isCondition ? "#10b981" : "#475569";
+    const baseColor = isTrigger ? "#3b82f6" : isCondition ? "#10b981" : isAction ? "#06b6d4" : "#475569";
     const strokeColor = activeHover ? "#2563eb" : baseColor;
     
     const shadowColor = activeHover ? "rgba(59,130,246,0.16)" : 
-      isTrigger ? "rgba(59,130,246,0.18)" : isCondition ? "rgba(16,185,129,0.18)" : "rgba(71,85,105,0.18)";
+      isTrigger ? "rgba(59,130,246,0.18)" : isCondition ? "rgba(16,185,129,0.18)" : isAction ? "rgba(6,182,212,0.18)" : "rgba(71,85,105,0.18)";
 
     const markerId = activeHover 
       ? "url(#automation-edge-arrow-active)" 
       : isTrigger ? "url(#automation-edge-arrow-blue)" 
       : isCondition ? "url(#automation-edge-arrow-emerald)"
+      : isAction ? "url(#automation-edge-arrow-cyan)"
       : "url(#automation-edge-arrow)";
 
     return (
@@ -715,6 +728,26 @@ export default function AutomationPage() {
           strokeWidth={activeHover ? "4" : "3"} 
           className={activeHover ? "animate-pulse" : "transition-colors group-hover:stroke-rose-500"}
         />
+        {startPort.label && !activeHover && (
+           <>
+               <text x={sx} y={sy + 22} textAnchor="middle" fontSize="11" fill="none" stroke="white" strokeWidth="4" strokeLinejoin="round" className="pointer-events-none">
+                   {startPort.label}
+               </text>
+               <text x={sx} y={sy + 22} textAnchor="middle" fontSize="11" fill={strokeColor} fontWeight="800" className="pointer-events-none drop-shadow-sm">
+                   {startPort.label}
+               </text>
+           </>
+        )}
+        {endPort?.label && !activeHover && (
+           <>
+               <text x={ex} y={ey - 14} textAnchor="middle" fontSize="11" fill="none" stroke="white" strokeWidth="4" strokeLinejoin="round" className="pointer-events-none">
+                   {endPort.label}
+               </text>
+               <text x={ex} y={ey - 14} textAnchor="middle" fontSize="11" fill={strokeColor} fontWeight="800" className="pointer-events-none drop-shadow-sm">
+                   {endPort.label}
+               </text>
+           </>
+        )}
       </g>
     );
   };
@@ -870,6 +903,9 @@ export default function AutomationPage() {
                                 <marker id="automation-edge-arrow-active" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
                                   <path d="M 0 0 L 10 5 L 0 10 z" fill="#2563eb" />
                                 </marker>
+                                <marker id="automation-edge-arrow-cyan" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse">
+                                  <path d="M 0 0 L 10 5 L 0 10 z" fill="#06b6d4" />
+                                </marker>
                              </defs>
                             {edges.map(e => {
                                 const sNode = nodes.find(n => n.id === e.source_node_id);
@@ -899,19 +935,23 @@ export default function AutomationPage() {
                             const ports = getNodePorts(node.type);
                             
                             // Color themes per type
+                            const isTelegram = node.type === "action" && node.kind === TELEGRAM_ACTION_KIND;
                             const borderClasses = 
                               node.type === "trigger" ? "border-blue-200 dark:border-blue-500/30" : 
                               node.type === "condition" ? "border-amber-200 dark:border-amber-500/30" : 
+                              isTelegram ? "border-[#0088cc]/40 dark:border-[#24A1DE]/40" :
                               "border-emerald-200 dark:border-emerald-500/30";
                               
                             const headerClasses = 
                               node.type === "trigger" ? "bg-blue-50 dark:bg-blue-900/30 border-b border-blue-100 dark:border-blue-500/20 text-blue-700 dark:text-blue-400" : 
                               node.type === "condition" ? "bg-amber-50 dark:bg-amber-900/30 border-b border-amber-100 dark:border-amber-500/20 text-amber-700 dark:text-amber-400" : 
+                              isTelegram ? "bg-[#0088cc]/10 dark:bg-[#24A1DE]/20 border-b border-[#0088cc]/20 dark:border-[#24A1DE]/30 text-[#0088cc] dark:text-[#5bc0de]" :
                               "bg-emerald-50 dark:bg-emerald-900/30 border-b border-emerald-100 dark:border-emerald-500/20 text-emerald-700 dark:text-emerald-400";
                             
                             const iconStr =
                               node.type === "trigger" ? "flash_on" :
-                              node.type === "condition" ? "help_outline" : "play_arrow";
+                              node.type === "condition" ? "help_outline" : 
+                              isTelegram ? "send" : "play_arrow";
 
                             return (
                               <div 
@@ -931,7 +971,7 @@ export default function AutomationPage() {
                                  <div className={`px-4 py-2.5 rounded-t-[14px] ${headerClasses} flex justify-between items-center`}>
                                     <span className="text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
                                         <span className="material-icons-round text-[14px]">{iconStr}</span>
-                                        {node.type}
+                                        {isTelegram ? "notify" : node.type}
                                     </span>
                                     <span className="text-[10px] font-mono opacity-60">#{node.id.split('_')[1]}</span>
                                  </div>
@@ -948,14 +988,18 @@ export default function AutomationPage() {
                                     return (
                                        <div key={port.id} title={port.label}
                                             data-automation-port="true"
-                                            className={`nodrag absolute w-3.5 h-3.5 rounded-full cursor-crosshair hover:scale-150 transition-transform shadow-sm
+                                            className={`nodrag group/port absolute w-3.5 h-3.5 rounded-full cursor-crosshair hover:scale-150 transition-transform shadow-sm
                                                 bg-white border-2 border-slate-400 dark:bg-slate-900 dark:border-slate-500
                                                 ${port.type === "in" ? 'hover:border-blue-500' : 'hover:border-amber-500'}
                                                 ${isPortSelected ? 'scale-150 border-primary ring-4 ring-primary/20' : ''}`}
                                             style={{ left: px - 7, top: py }}
                                             onMouseDown={(e) => e.stopPropagation()}
                                             onClick={(e) => onPortClick(e, node.id, port.id, port.type)}
-                                       />
+                                       >
+                                           <div className={`absolute hidden group-hover/port:block bg-slate-800 dark:bg-slate-700 text-white text-[10px] whitespace-nowrap font-bold tracking-wider px-2 py-1 rounded shadow-lg pointer-events-none w-max z-[100] ${port.type === 'in' ? 'bottom-full mb-1.5 left-1/2 -translate-x-1/2' : 'top-full mt-1.5 left-1/2 -translate-x-1/2'}`}>
+                                              <span className="opacity-70 uppercase text-[9px] font-semibold">{port.type === "in" ? "Input" : "Output"}</span> <span className="text-blue-200 uppercase text-[9px]">●</span> {port.label}
+                                           </div>
+                                       </div>
                                     );
                                  })}
                               </div>
@@ -973,7 +1017,7 @@ export default function AutomationPage() {
                         >
                           <span className={`material-icons-round flex items-center justify-center text-slate-500 dark:text-slate-400 shrink-0 transition-all duration-700 ease-in-out ${isHintExpanded ? 'text-[16px] w-[16px]' : 'text-[18px] w-[18px]'}`}>mouse_right_click</span>
                           <span className={`text-[11px] font-medium text-slate-500 dark:text-slate-400 transition-all duration-700 ease-in-out ${isHintExpanded ? 'opacity-100 ml-2' : 'opacity-0 ml-2'}`}>
-                            Hint: Right-click for options
+                            Right-click for options. Draw lines between ports.
                           </span>
                         </div>
                         <div className="flex flex-col gap-0.5 rounded-2xl border border-slate-200 bg-white/90 p-1 flex items-center shadow-lg backdrop-blur dark:border-slate-700 dark:bg-slate-950/90 pointer-events-auto">
@@ -1033,11 +1077,19 @@ export default function AutomationPage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => handleContextAddNode("action")}
+                            onClick={() => handleContextAddNode("action", "set_output")}
                             className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-900"
                           >
                             <span className="material-icons-round text-base text-emerald-500">play_arrow</span>
-                            Add action here
+                            Add device action here
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleContextAddNode("action", "send_telegram_notification")}
+                            className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-900"
+                          >
+                            <span className="material-icons-round text-base text-sky-500">send</span>
+                            Add Telegram notify here
                           </button>
                         </div>
                       )}
@@ -1103,10 +1155,15 @@ export default function AutomationPage() {
                    const { trigger, condition, action } = linearRule;
                    const isTimeTrigger = trigger.kind === TIME_TRIGGER_KIND;
 
-                   const updateConfigMany = (updates: {id: string, config: Partial<AutomationGraphNodeConfig>}[]) => {
+                   const updateConfigMany = (updates: {id: string, kind?: string, config?: Partial<AutomationGraphNodeConfig>}[]) => {
                        setNodes(prev => prev.map(n => {
                            const up = updates.find(u => u.id === n.id);
-                           return up ? { ...n, config: { ...n.config, ...up.config } } : n;
+                           if (!up) return n;
+                           return { 
+                               ...n, 
+                               ...(up.kind ? { kind: up.kind } : {}), 
+                               config: { ...n.config, ...(up.config || {}) } 
+                           };
                        }));
                    };
 
@@ -1417,58 +1474,125 @@ export default function AutomationPage() {
                                        <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">3. THEN DO</span>
                                    </div>
 
-                                   <span className="text-xs font-bold text-slate-500 block">Target Device:</span>
-                                   <select name="rule-target-device" value={action.config.device_id || ""} onChange={(e) => handleSetTargetDevice(e.target.value)} className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary">
-                                      <option value="">Select target device...</option>
-                                      {devices.map(d => <option key={d.device_id} value={d.device_id}>{d.name}</option>)}
-                                   </select>
-
-                                   {targetDev && (
-                                       <div className="grid grid-cols-2 gap-2 mt-2">
-                                           {targetDev.pin_configurations.filter(p => p.mode === "OUTPUT" || p.mode === "PWM").map(pin => (
+                                   <div className="mb-4 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg">
+                                       {action.kind !== TELEGRAM_ACTION_KIND ? (
+                                           <div className="grid grid-cols-2 gap-2">
                                                <button
-                                                   key={pin.gpio_pin}
-                                                   onClick={() => handleSetTargetPin(pin.gpio_pin, pin.mode)}
-                                                   className={`flex flex-col text-left p-2 border rounded-lg transition-colors ${action.config.pin === pin.gpio_pin ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-slate-900'}`}
+                                                   onClick={() => updateConfigMany([{id: action.id, kind: "set_output", config: { device_id: "", pin: undefined, value: 0 } }])}
+                                                   className={`py-1.5 text-xs font-bold rounded-md transition-colors ${action.kind === "set_output" ? 'bg-white dark:bg-slate-800 shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
                                                >
-                                                   <div className="flex items-center justify-between mb-1 w-full gap-2">
-                                                       <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">GPIO {pin.gpio_pin}</span>
-                                                       <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0">{pin.mode}</span>
-                                                   </div>
-                                                   <span className="text-[10px] text-slate-500 truncate w-full">{pin.label || pin.function || "Unnamed"}</span>
+                                                   Turn On/Off
                                                </button>
-                                           ))}
-                                           {targetDev.pin_configurations.filter(p => p.mode === "OUTPUT" || p.mode === "PWM").length === 0 && (
-                                                <div className="col-span-2 p-3 text-xs text-amber-600 bg-amber-50 rounded-lg border border-amber-200">No output pins available on this device.</div>
-                                           )}
+                                               <button
+                                                   onClick={() => updateConfigMany([{id: action.id, kind: "set_value", config: { device_id: "", pin: undefined, value: 0 } }])}
+                                                   className={`py-1.5 text-xs font-bold rounded-md transition-colors ${action.kind === "set_value" ? 'bg-white dark:bg-slate-800 shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
+                                               >
+                                                   Set Value
+                                               </button>
+                                           </div>
+                                       ) : (
+                                           <div className="grid grid-cols-1 gap-2">
+                                               <button
+                                                   onClick={() => updateConfigMany([{id: action.id, kind: TELEGRAM_ACTION_KIND, config: { chat_id: "", message: "" } }])}
+                                                   className={`py-1.5 text-xs font-bold rounded-md transition-colors ${action.kind === TELEGRAM_ACTION_KIND ? 'bg-white dark:bg-slate-800 shadow-sm text-primary' : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'}`}
+                                               >
+                                                   Telegram
+                                               </button>
+                                           </div>
+                                       )}
+                                   </div>
+
+                                   {action.kind === TELEGRAM_ACTION_KIND && (
+                                       <div className="space-y-3">
+                                           <div>
+                                               <span className="text-xs font-bold text-slate-500 block mb-1">Bot API Key</span>
+                                               <input 
+                                                   type="password" 
+                                                   value={action.config.bot_api_key || ""} 
+                                                   onChange={(e) => updateConfigMany([{id: action.id, config: { bot_api_key: e.target.value } }])} 
+                                                   placeholder="e.g. 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" 
+                                                   className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary font-mono shadow-sm"
+                                               />
+                                           </div>
+                                           <div>
+                                               <span className="text-xs font-bold text-slate-500 block mb-1">Target Chat ID</span>
+                                               <input 
+                                                   type="text" 
+                                                   value={action.config.chat_id || ""} 
+                                                   onChange={(e) => updateConfigMany([{id: action.id, config: { chat_id: e.target.value } }])} 
+                                                   placeholder="e.g. -100123456789" 
+                                                   className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary font-mono shadow-sm"
+                                               />
+                                           </div>
+                                           <div>
+                                               <span className="text-xs font-bold text-slate-500 block mb-1">Message Template <span className="font-normal text-slate-400">(Optional)</span></span>
+                                               <textarea 
+                                                   value={action.config.message || ""} 
+                                                   onChange={(e) => updateConfigMany([{id: action.id, config: { message: e.target.value } }])} 
+                                                   placeholder="Supports {{device.name}}, {{trigger.value}}" 
+                                                   rows={3} 
+                                                   className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary shadow-sm resize-none"
+                                               />
+                                           </div>
                                        </div>
                                    )}
 
-                                   {action.config.pin !== undefined && (
-                                    <div className="mt-4 p-3 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800">
-                                       {action.kind === "set_output" && (
-                                           <div>
-                                               <span className="text-xs font-bold text-slate-500 block mb-2">Set Pin State To</span>
-                                               <div className="flex gap-2">
-                                                   <button onClick={() => updateConfigMany([{id: action.id, config: {value: 0}}])} className={`flex-1 py-2 rounded-lg font-bold text-sm border transition shadow-sm ${action.config.value === 0 ? 'bg-slate-800 border-slate-900 text-white dark:bg-slate-700 dark:border-slate-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300'}`}>OFF</button>
-                                                   <button onClick={() => updateConfigMany([{id: action.id, config: {value: 1}}])} className={`flex-1 py-2 rounded-lg font-bold text-sm border transition shadow-sm ${action.config.value === 1 ? 'bg-emerald-500 border-emerald-600 text-white dark:bg-emerald-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300'}`}>ON</button>
-                                               </div>
+                                   {action.kind !== TELEGRAM_ACTION_KIND && (
+                                     <>
+                                       <span className="text-xs font-bold text-slate-500 block">Target Device:</span>
+                                       <select name="rule-target-device" value={action.config.device_id || ""} onChange={(e) => handleSetTargetDevice(e.target.value)} className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary">
+                                          <option value="">Select target device...</option>
+                                          {devices.map(d => <option key={d.device_id} value={d.device_id}>{d.name}</option>)}
+                                       </select>
+   
+                                       {targetDev && (
+                                           <div className="grid grid-cols-2 gap-2 mt-2">
+                                               {targetDev.pin_configurations.filter(p => p.mode === "OUTPUT" || p.mode === "PWM").map(pin => (
+                                                   <button
+                                                       key={pin.gpio_pin}
+                                                       onClick={() => handleSetTargetPin(pin.gpio_pin, pin.mode)}
+                                                       className={`flex flex-col text-left p-2 border rounded-lg transition-colors ${action.config.pin === pin.gpio_pin ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-slate-900'}`}
+                                                   >
+                                                       <div className="flex items-center justify-between mb-1 w-full gap-2">
+                                                           <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200 truncate">GPIO {pin.gpio_pin}</span>
+                                                           <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 shrink-0">{pin.mode}</span>
+                                                       </div>
+                                                       <span className="text-[10px] text-slate-500 truncate w-full">{pin.label || pin.function || "Unnamed"}</span>
+                                                   </button>
+                                               ))}
+                                               {targetDev.pin_configurations.filter(p => p.mode === "OUTPUT" || p.mode === "PWM").length === 0 && (
+                                                    <div className="col-span-2 p-3 text-xs text-amber-600 bg-amber-50 rounded-lg border border-amber-200">No output pins available on this device.</div>
+                                               )}
                                            </div>
                                        )}
-
-                                       {action.kind === "set_value" && (
-                                           <div>
-                                               <span className="text-xs font-bold text-slate-500 block mb-2">Set PWM Value</span>
-                                               <div className="flex gap-3 items-center">
-                                                   <input name="rule-target-pwm-range" type="range" min="0" max="255" value={String(action.config.value ?? 0)} onChange={(e) => updateConfigMany([{id: action.id, config: {value: Number.parseFloat(e.target.value)}}])} className="flex-1 accent-primary" />
-                                                   <input name="rule-target-pwm-value" type="number" min="0" max="255" value={String(action.config.value ?? 0)} onChange={(e) => updateConfigMany([{id: action.id, config: {value: Number.parseFloat(e.target.value)}}])} className="w-16 text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 outline-none font-mono text-center" />
+   
+                                       {action.config.pin !== undefined && (
+                                        <div className="mt-4 p-3 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-slate-200 dark:border-slate-800">
+                                           {action.kind === "set_output" && (
+                                               <div>
+                                                   <span className="text-xs font-bold text-slate-500 block mb-2">Set Pin State To</span>
+                                                   <div className="flex gap-2">
+                                                       <button onClick={() => updateConfigMany([{id: action.id, config: {value: 0}}])} className={`flex-1 py-2 rounded-lg font-bold text-sm border transition shadow-sm ${action.config.value === 0 ? 'bg-slate-800 border-slate-900 text-white dark:bg-slate-700 dark:border-slate-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300'}`}>OFF</button>
+                                                       <button onClick={() => updateConfigMany([{id: action.id, config: {value: 1}}])} className={`flex-1 py-2 rounded-lg font-bold text-sm border transition shadow-sm ${action.config.value === 1 ? 'bg-emerald-500 border-emerald-600 text-white dark:bg-emerald-600' : 'bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300'}`}>ON</button>
+                                                   </div>
                                                </div>
-                                           </div>
+                                           )}
+   
+                                           {action.kind === "set_value" && (
+                                               <div>
+                                                   <span className="text-xs font-bold text-slate-500 block mb-2">Set PWM Value</span>
+                                                   <div className="flex gap-3 items-center">
+                                                       <input name="rule-target-pwm-range" type="range" min="0" max="255" value={String(action.config.value ?? 0)} onChange={(e) => updateConfigMany([{id: action.id, config: {value: Number.parseFloat(e.target.value)}}])} className="flex-1 accent-primary" />
+                                                       <input name="rule-target-pwm-value" type="number" min="0" max="255" value={String(action.config.value ?? 0)} onChange={(e) => updateConfigMany([{id: action.id, config: {value: Number.parseFloat(e.target.value)}}])} className="w-16 text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-md px-2 py-1 outline-none font-mono text-center" />
+                                                   </div>
+                                               </div>
+                                           )}
+                                         </div>
                                        )}
-                                     </div>
+                                     </>
                                    )}
-                               </div>
-                           )}
+                                </div>
+                            )}
 
                            {conditionConfigured && action.config.pin !== undefined && (
                                <div className="mt-4 pt-4 border-t border-slate-200 dark:border-slate-800">
@@ -1536,6 +1660,7 @@ export default function AutomationPage() {
                    };
 
                    const isTimeTriggerNode = node.type === "trigger" && node.kind === TIME_TRIGGER_KIND;
+                   const isVirtualNode = isTimeTriggerNode || (node.type === "action" && node.kind === TELEGRAM_ACTION_KIND);
                    const selectedDevice = devices.find(d => d.device_id === node.config.device_id);
                    const selectedPinObj = selectedDevice?.pin_configurations.find(p => p.gpio_pin === node.config.pin);
                    const compatiblePins = selectedDevice?.pin_configurations.filter(p => {
@@ -1575,9 +1700,16 @@ export default function AutomationPage() {
                                             {opt.l}
                                          </button>
                                      ))}
-                                     {node.type === "action" && [
+                                     {node.type === "action" && node.kind !== TELEGRAM_ACTION_KIND && [
                                          { k: "set_output", l: "Turn On/Off" },
                                          { k: "set_value", l: "Set Value" }
+                                     ].map(opt => (
+                                         <button key={opt.k} onClick={() => handleKindChange(opt.k)} className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition ${node.kind === opt.k ? 'bg-white dark:bg-slate-700 shadow-sm text-slate-800 dark:text-slate-200' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
+                                            {opt.l}
+                                         </button>
+                                     ))}
+                                     {node.type === "action" && node.kind === TELEGRAM_ACTION_KIND && [
+                                         { k: TELEGRAM_ACTION_KIND, l: "Telegram" }
                                      ].map(opt => (
                                          <button key={opt.k} onClick={() => handleKindChange(opt.k)} className={`flex-1 py-1.5 px-3 rounded-lg text-xs font-semibold transition ${node.kind === opt.k ? 'bg-white dark:bg-slate-700 shadow-sm text-slate-800 dark:text-slate-200' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}>
                                             {opt.l}
@@ -1593,7 +1725,7 @@ export default function AutomationPage() {
                          </div>
 
                          {/* 2. Device Selection */}
-                         {!isTimeTriggerNode && (
+                         {!isVirtualNode && (
                              <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
                                  <span className="text-xs font-bold text-slate-500 block">Target Device</span>
                                  <select name="node-target-device" value={node.config.device_id || ""} onChange={(e) => handleSetDevice(e.target.value)} className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary cursor-pointer">
@@ -1604,7 +1736,7 @@ export default function AutomationPage() {
                          )}
 
                          {/* 3. Pin Selection */}
-                         {!isTimeTriggerNode && node.config.device_id && (
+                         {!isVirtualNode && node.config.device_id && (
                              <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
                                  <span className="text-xs font-bold text-slate-500 block">Target Pin / Function</span>
                                  {compatiblePins.length === 0 ? (
@@ -1635,6 +1767,41 @@ export default function AutomationPage() {
                          )}
 
                          {/* 4. Logic/Action Configuration */}
+                         {node.kind === TELEGRAM_ACTION_KIND && (
+                             <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-800">
+                                 <div>
+                                     <span className="text-xs font-bold text-slate-500 block mb-1">Bot API Key</span>
+                                     <input 
+                                         type="password" 
+                                         value={node.config.bot_api_key || ""} 
+                                         onChange={(e) => updateConfig("bot_api_key", e.target.value)} 
+                                         placeholder="e.g. 123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" 
+                                         className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary font-mono shadow-sm"
+                                     />
+                                 </div>
+                                 <div>
+                                     <span className="text-xs font-bold text-slate-500 block mb-1">Target Chat ID</span>
+                                     <input 
+                                         type="text" 
+                                         value={node.config.chat_id || ""} 
+                                         onChange={(e) => updateConfig("chat_id", e.target.value)} 
+                                         placeholder="e.g. 987654321" 
+                                         className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary font-mono shadow-sm"
+                                     />
+                                 </div>
+                                 <div>
+                                     <div className="flex items-center justify-between mb-1">
+                                         <span className="text-xs font-bold text-slate-500 block">Message Template <span className="font-normal text-slate-400">(Optional)</span></span>
+                                     </div>
+                                     <textarea 
+                                         value={node.config.message || ""} 
+                                         onChange={(e) => updateConfig("message", e.target.value)} 
+                                         placeholder="If left empty, system will auto-generate message." 
+                                         className="w-full text-sm bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg px-3 py-2 outline-none focus:border-primary min-h-20 shadow-sm resize-y"
+                                     />
+                                 </div>
+                             </div>
+                         )}
                          {isTimeTriggerNode && (
                              <div className="space-y-4 pt-4 border-t border-slate-200 dark:border-slate-800">
                                  <div>

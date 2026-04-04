@@ -9,6 +9,10 @@ export interface AutomationGraphNodeConfig {
   value?: number | string | boolean;
   secondary_value?: number | string | boolean;
   expected?: string | number | boolean;
+  bot_api_key?: string;
+  chat_id?: string;
+  message?: string;
+  severity?: string;
   [key: string]: unknown;
 }
 
@@ -36,6 +40,7 @@ export const LEGACY_DEVICE_TRIGGER_KIND = "device_state";
 export const DEVICE_VALUE_TRIGGER_KIND = "device_value";
 export const DEVICE_ON_OFF_TRIGGER_KIND = "device_on_off_event";
 export const TIME_TRIGGER_KIND = "time_schedule";
+export const TELEGRAM_ACTION_KIND = "send_telegram_notification";
 export const TIME_TRIGGER_WEEKDAY_OPTIONS = [
   { value: "mon", label: "Mon" },
   { value: "tue", label: "Tue" },
