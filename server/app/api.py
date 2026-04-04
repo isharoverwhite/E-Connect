@@ -253,6 +253,10 @@ def _coerce_utc_api_datetime(value: datetime | None) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def _utcnow_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def _serialize_system_log_entry(entry: SystemLog) -> SystemLogResponse:
     return SystemLogResponse(
         id=entry.id,
@@ -449,7 +453,7 @@ def _expire_device_if_stale(db: Session, device: Device, *, reference_time: date
 
 
 def _expire_stale_devices(db: Session, devices: list[Device]) -> None:
-    reference_time = datetime.now(timezone.utc)
+    reference_time = datetime.utcnow()
     status_changed = False
 
     for device in devices:
@@ -473,7 +477,7 @@ def expire_stale_online_devices_once(
         if not devices:
             return 0
 
-        reference_time = datetime.now(timezone.utc)
+        reference_time = datetime.utcnow()
         expired_count = 0
 
         for device in devices:
@@ -1585,7 +1589,7 @@ def _coerce_runtime_reported_at(value: Any) -> datetime:
                     return parsed.astimezone(timezone.utc).replace(tzinfo=None)
                 return parsed
 
-    return datetime.now(timezone.utc)
+    return datetime.utcnow()
 
 
 def _persist_external_runtime_state(
@@ -3741,7 +3745,7 @@ async def send_command(
             "pin": command.get("pin"),
             "value": command.get("value"),
             "brightness": command.get("brightness"),
-            "timestamp": datetime.now(timezone.utc).timestamp(),
+            "timestamp": datetime.utcnow().timestamp(),
             "command_id": command_id
         }
 
@@ -4726,7 +4730,7 @@ async def release_serial_lock(
         raise HTTPException(status_code=403, detail="Not authorized to unlock this port")
 
     active_lock.status = SerialSessionStatus.released
-    active_lock.released_at = datetime.now(timezone.utc)
+    active_lock.released_at = datetime.utcnow()
     db.commit()
     return {"status": "unlocked", "port": port}
 
@@ -4757,7 +4761,8 @@ async def get_system_status(
     metrics = collect_system_metrics()
     timezone_context = _resolve_effective_timezone_payload(db, admin)
     effective_timezone = str(timezone_context["effective_timezone"])
-    retention_cutoff = datetime.now(timezone.utc) - timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
+    current_utc = datetime.now(timezone.utc)
+    retention_cutoff = current_utc.replace(tzinfo=None) - timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
     alert_query = db.query(SystemLog).filter(
         SystemLog.occurred_at >= retention_cutoff,
         SystemLog.severity.in_(SYSTEM_LOG_ALERT_SEVERITIES),
@@ -4777,8 +4782,9 @@ async def get_system_status(
 
     started_at = getattr(request.app.state, "server_started_at", None)
     uptime_seconds = 0
-    if isinstance(started_at, datetime):
-        uptime_seconds = max(0, int((datetime.now(timezone.utc) - started_at).total_seconds()))
+    started_at_utc = _coerce_utc_api_datetime(started_at) if isinstance(started_at, datetime) else None
+    if started_at_utc is not None:
+        uptime_seconds = max(0, int((current_utc - started_at_utc).total_seconds()))
 
     database_ready = getattr(request.app.state, "database_ready", True)
     database_status = "ok" if database_ready else "unavailable"
@@ -4790,7 +4796,7 @@ async def get_system_status(
         ),
         database_status=database_status,
         mqtt_status=mqtt_status,
-        started_at=_coerce_utc_api_datetime(started_at) if isinstance(started_at, datetime) else None,
+        started_at=started_at_utc,
         uptime_seconds=uptime_seconds,
         advertised_host=_resolve_system_advertised_host(request),
         cpu_percent=float(metrics["cpu_percent"]),
@@ -4826,7 +4832,7 @@ async def list_system_logs(
 ):
     timezone_context = _resolve_effective_timezone_payload(db, admin)
     effective_timezone = str(timezone_context["effective_timezone"])
-    retention_cutoff = datetime.now(timezone.utc) - timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
+    retention_cutoff = _utcnow_naive() - timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
     base_query = db.query(SystemLog).filter(SystemLog.occurred_at >= retention_cutoff)
     raw_entries = (
         base_query
@@ -4862,7 +4868,7 @@ async def mark_system_log_read(
     updated_count = 0
     if not entry.is_read:
         entry.is_read = True
-        entry.read_at = datetime.now(timezone.utc)
+        entry.read_at = _utcnow_naive()
         entry.read_by_user_id = admin.user_id
         db.commit()
         updated_count = 1
@@ -4875,7 +4881,7 @@ async def mark_all_system_logs_read(
     db: Session = Depends(get_db),
     admin: User = Depends(get_admin_user),
 ):
-    retention_cutoff = datetime.now(timezone.utc) - timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
+    retention_cutoff = _utcnow_naive() - timedelta(days=SYSTEM_LOG_RETENTION_DAYS)
     unread_alert_entries = (
         db.query(SystemLog)
         .filter(
@@ -4886,7 +4892,7 @@ async def mark_all_system_logs_read(
         .all()
     )
 
-    read_at = datetime.now(timezone.utc)
+    read_at = _utcnow_naive()
     for entry in unread_alert_entries:
         entry.is_read = True
         entry.read_at = read_at
@@ -4914,7 +4920,7 @@ async def push_history(device_id: str, entry: DeviceHistoryCreate, db: Session =
         )
 
     # Update last seen
-    device.last_seen = datetime.now(timezone.utc)
+    device.last_seen = datetime.utcnow()
 
     history = DeviceHistory(
         device_id=device_id,
@@ -5114,7 +5120,7 @@ async def system_backup_endpoint(db: Session = Depends(get_db), admin: User = De
     automations = db.query(Automation).all()
 
     backup_data = {
-        "timestamp": str(datetime.now(timezone.utc)),
+        "timestamp": str(datetime.utcnow()),
         "users": [{"username": u.username, "layout": u.ui_layout} for u in users],
         "devices": [{"id": d.device_id, "name": d.name, "mac": d.mac_address} for d in devices],
         "automations": [{"name": a.name, "graph": serialize_automation(a)["graph"]} for a in automations]

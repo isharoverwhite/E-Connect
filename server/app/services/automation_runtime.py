@@ -599,7 +599,7 @@ def compute_next_time_trigger_run(
         )
         if candidate_local < current_local_minute:
             continue
-        return candidate_local.astimezone(timezone.utc)
+        return candidate_local.astimezone(timezone.utc).replace(tzinfo=None)
 
     return None
 
@@ -1025,7 +1025,7 @@ def _evaluate_graph_execution(
     else:
         error_message = None
 
-    automation.last_triggered = triggered_at or datetime.now(timezone.utc)
+    automation.last_triggered = triggered_at or datetime.now(timezone.utc).replace(tzinfo=None)
     log_payload = {
         "evaluations": evaluation_summaries,
         "actions": action_summaries,
@@ -1211,6 +1211,7 @@ def process_time_trigger_automations(
     execution_logs: list[AutomationExecutionLog] = []
     current_utc = _coerce_utc_datetime(reference_time)
     current_minute_utc = current_utc.replace(second=0, microsecond=0)
+    current_minute_naive = current_minute_utc.replace(tzinfo=None)
 
     enabled_automations = (
         db.query(Automation)
@@ -1218,7 +1219,7 @@ def process_time_trigger_automations(
             Automation.is_enabled.is_(True),
             Automation.schedule_type == TIME_TRIGGER_SCHEDULE_TYPE,
             Automation.next_run_at.isnot(None),
-            Automation.next_run_at <= current_minute_utc,
+            Automation.next_run_at <= current_minute_naive,
         )
         .order_by(Automation.next_run_at.asc(), Automation.id.asc())
         .all()
@@ -1254,7 +1255,7 @@ def process_time_trigger_automations(
             db.add(automation)
             continue
 
-        if scheduled_for < current_minute_utc:
+        if scheduled_for < current_minute_naive:
             automation.next_run_at = compute_next_time_trigger_run(
                 trigger_config,
                 timezone_name=timezone_name,
@@ -1279,7 +1280,7 @@ def process_time_trigger_automations(
                 state_payloads=state_payloads,
                 device_lookup=device_lookup,
                 publish_command=publish_command,
-                triggered_at=current_utc,
+                triggered_at=current_utc.replace(tzinfo=None),
                 scheduled_for=scheduled_for,
             )
         )
