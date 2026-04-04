@@ -58,7 +58,7 @@ export default function Sidebar() {
     const navItems = [
         { href: '/', icon: 'dashboard', label: 'Dashboard' },
         { href: '/devices', icon: 'devices_other', label: 'Devices' },
-        { href: '/automation', icon: 'precision_manufacturing', label: 'Automation' },
+        { href: '/automation', icon: 'account_tree', label: 'Automation' },
         { href: '/logs', icon: 'analytics', label: 'Logs & Stats' },
         { href: '/extensions', icon: 'extension', label: 'Extensions' },
     ];

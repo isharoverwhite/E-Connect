@@ -21,6 +21,7 @@ env/
 *.log
 *.out
 *.bak
+server/firmware_template/.cache/
 
 # Scratch tests and debug helpers kept outside the real test suites
 /test_*.py

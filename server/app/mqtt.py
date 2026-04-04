@@ -539,17 +539,6 @@ class MQTTClientManager:
                     payload=payload_str,
                 )
             )
-            if isinstance(payload_json, dict):
-                try:
-                    process_state_event_for_automations(
-                        db,
-                        device_id=device_id,
-                        state_payload=payload_json,
-                        publish_command=self.enqueue_command,
-                        triggered_at=observed_at,
-                    )
-                except Exception:
-                    logger.exception("Automation graph evaluation failed for MQTT state %s", device_id)
 
             try:
                 ws_manager.broadcast_device_event_sync(
@@ -563,6 +552,22 @@ class MQTTClientManager:
                 )
             except Exception:
                 pass
+
+            if isinstance(payload_json, dict):
+                try:
+                    import time
+                    start_time = time.perf_counter()
+                    process_state_event_for_automations(
+                        db,
+                        device_id=device_id,
+                        state_payload=payload_json,
+                        publish_command=self.enqueue_command,
+                        triggered_at=observed_at,
+                    )
+                    end_time = time.perf_counter()
+                    logger.debug(f"Automation execution took {(end_time - start_time) * 1000:.2f}ms for device {device_id}")
+                except Exception:
+                    logger.exception("Automation graph evaluation failed for MQTT state %s", device_id)
 
             # Check if this is an OTA status report from the device
             if isinstance(payload_json, dict) and payload_json.get("event") == "ota_status":

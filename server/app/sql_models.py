@@ -27,6 +27,7 @@ class ConnStatus(str, enum.Enum):
 class DeviceMode(str, enum.Enum):
     no_code = "no-code"
     library = "library"
+    portableDashboard = "portableDashboard"
 
 class PinMode(str, enum.Enum):
     INPUT = "INPUT"
@@ -56,6 +57,7 @@ class SystemLogCategory(str, enum.Enum):
     connectivity = "connectivity"
     firmware = "firmware"
     health = "health"
+    automation = "automation"
 
 class JobStatus(str, enum.Enum):
     draft_config = "draft_config"
@@ -244,6 +246,60 @@ class WifiCredential(Base):
 
     household = relationship("Household", back_populates="wifi_credentials")
     projects = relationship("DiyProject", back_populates="wifi_credential")
+
+
+class InstalledExtension(Base):
+    __tablename__ = "installed_extensions"
+
+    extension_id = Column(String(120), primary_key=True)
+    manifest_version = Column(String(16), nullable=False)
+    name = Column(String(255), nullable=False)
+    version = Column(String(64), nullable=False)
+    author = Column(String(255), nullable=True)
+    description = Column(Text, nullable=False)
+    provider_key = Column(String(120), nullable=False)
+    provider_name = Column(String(255), nullable=False)
+    package_runtime = Column(String(32), nullable=False, default="python")
+    package_entrypoint = Column(String(255), nullable=False)
+    package_root = Column(String(255), nullable=True)
+    archive_path = Column(String(512), nullable=False)
+    archive_sha256 = Column(String(64), nullable=False)
+    manifest = Column(JSON, nullable=False)
+    installed_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    external_devices = relationship("ExternalDevice", back_populates="installed_extension")
+
+
+class ExternalDevice(Base):
+    __tablename__ = "external_devices"
+
+    device_id = Column(String(36), primary_key=True, comment="UUID v4 for one external device instance")
+    installed_extension_id = Column(
+        String(120),
+        ForeignKey("installed_extensions.extension_id"),
+        nullable=False,
+        index=True,
+    )
+    device_schema_id = Column(String(120), nullable=False)
+    household_id = Column(Integer, ForeignKey("households.household_id"), nullable=False, index=True)
+    room_id = Column(Integer, ForeignKey("rooms.room_id"), nullable=True, index=True)
+    owner_id = Column(Integer, ForeignKey("users.user_id"), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    provider = Column(String(255), nullable=False)
+    config = Column(JSON, nullable=True)
+    schema_snapshot = Column(JSON, nullable=False)
+    auth_status = Column(Enum(AuthStatus), nullable=False, default=AuthStatus.approved, index=True)
+    conn_status = Column(Enum(ConnStatus), nullable=False, default=ConnStatus.offline, index=True)
+    last_state = Column(JSON, nullable=True)
+    last_seen = Column(DateTime, nullable=True)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    installed_extension = relationship("InstalledExtension", back_populates="external_devices")
+    household = relationship("Household")
+    room = relationship("Room")
+    owner = relationship("User")
 
 class DeviceHistory(Base):
     __tablename__ = "device_history"

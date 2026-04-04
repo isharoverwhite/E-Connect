@@ -432,7 +432,7 @@ def test_put_device_config_creates_named_saved_config_without_pruning_build_hist
         log_path = tmp_path / f"{job_id}.log"
         artifact_path.write_bytes(b"old-firmware")
         log_path.write_text("old build log", encoding="utf-8")
-        for artifact_name in ("bootloader", "partitions"):
+        for artifact_name in ("bootloader", "partitions", "boot_app0"):
             durable_path = get_durable_artifact_path(job_id, artifact_name)
             with open(durable_path, "wb") as handle:
                 handle.write(b"legacy")
@@ -517,6 +517,7 @@ def test_put_device_config_creates_named_saved_config_without_pruning_build_hist
     assert oldest_log_path.exists()
     assert os.path.exists(get_durable_artifact_path(old_job_ids[2], "bootloader"))
     assert os.path.exists(get_durable_artifact_path(old_job_ids[2], "partitions"))
+    assert os.path.exists(get_durable_artifact_path(old_job_ids[2], "boot_app0"))
 
 
 def test_list_device_config_history_returns_all_saved_configs_with_board_assignment():

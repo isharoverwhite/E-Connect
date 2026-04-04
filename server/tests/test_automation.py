@@ -526,24 +526,40 @@ def test_create_automation_rejects_invalid_graph(seeded_context):
     assert response.status_code == 400
     payload = response.json()
     assert payload["detail"]["error"] == "validation"
-    assert "Action nodes cannot have outgoing edges." in payload["detail"]["message"]
+    assert "Edges must connect into a condition/action 'event_in' port" in payload["detail"]["message"]
 
 
 def test_create_automation_rejects_invalid_trigger_mode_for_pin(seeded_context):
     user = seeded_context["user"]
+    db = TestingSessionLocal()
+    try:
+        from app.sql_models import PinConfiguration, PinMode
+        db.add(
+            PinConfiguration(
+                device_id="sensor-device",
+                gpio_pin=15,
+                mode=PinMode.I2C,
+                function="i2c",
+                label="I2C SCL",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
     invalid_graph = {
         "nodes": [
             {
                 "id": "trigger-1",
                 "type": "trigger",
                 "kind": "device_on_off_event",
-                "config": {"device_id": "sensor-device", "pin": 34},
+                "config": {"device_id": "sensor-device", "pin": 15},
             },
             {
                 "id": "condition-1",
                 "type": "condition",
                 "kind": "numeric_compare",
-                "config": {"device_id": "sensor-device", "pin": 34, "operator": "gt", "value": 30},
+                "config": {"device_id": "sensor-device", "pin": 15, "operator": "gt", "value": 30},
             },
             {
                 "id": "action-1",
@@ -565,7 +581,7 @@ def test_create_automation_rejects_invalid_trigger_mode_for_pin(seeded_context):
         },
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 400, f"Expected 400 but got {response.status_code}. Response: {response.json()}"
     payload = response.json()
     assert payload["detail"]["error"] == "validation"
     assert "device_on_off_event triggers require a boolean-like pin" in payload["detail"]["message"]
