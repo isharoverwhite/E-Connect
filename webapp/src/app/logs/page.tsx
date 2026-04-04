@@ -16,6 +16,7 @@ import {
     markAllSystemLogsRead,
     markSystemLogRead,
 } from "@/lib/api";
+import { isSystemLogAlertEntry } from "@/lib/system-log";
 
 type SeverityFilter = "all" | "alerts" | SystemLogSeverity;
 type CategoryFilter = "all" | SystemLogCategory;
@@ -39,10 +40,6 @@ const statusToneMap: Record<SystemStatusResponse["overall_status"], string> = {
     warning: "border-amber-200 bg-amber-50 text-amber-800 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300",
     critical: "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-300",
 };
-
-function isAlertEntry(entry: SystemLogEntry): boolean {
-    return entry.severity !== "info";
-}
 
 function parseApiDate(value?: string | null): Date | null {
     if (!value) {
@@ -692,7 +689,7 @@ export default function LogsPage() {
                                                         </thead>
                                                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                                                             {group.entries.map((entry) => {
-                                                                const isAlert = isAlertEntry(entry);
+                                                                const isAlert = isSystemLogAlertEntry(entry);
                                                                 const isMarking = markingIds.has(entry.id);
 
                                                                 return (

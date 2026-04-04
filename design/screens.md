@@ -243,6 +243,7 @@
   - The pairing notification card only appears when the server has at least one active board-initiated pairing request.
   - A device that was merely unpaired from the dashboard must not create a pairing notification by itself.
   - Notification badge counts must include both offline alerts and active pairing requests.
+  - The dashboard notification drawer must treat operational notifications as unread alert entries only; opening an item or using `Mark all read` must reuse the same backend acknowledgement semantics as `/logs` so both surfaces stay in sync.
   - The dashboard header `Scan Device` action must reuse that same WebSocket-backed live scanner so admins can keep waiting for pair requests without leaving `/`.
 - **Dashboard summary routing**:
   - The `System Alerts` summary card on `/` must route directly into `/logs` and pre-focus alert-worthy entries rather than behaving like a dead KPI tile.
