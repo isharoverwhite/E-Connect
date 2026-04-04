@@ -1,23 +1,8 @@
-from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime as _DateTime, Text, ForeignKey, Enum, TIMESTAMP as _TIMESTAMP, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime, Text, ForeignKey, Enum, TIMESTAMP, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
 import enum
-import datetime as _dt
-from sqlalchemy.types import TypeDecorator
-
-class AwareDateTime(TypeDecorator):
-    """Ensure all datetimes returned from the DB are timezone-aware UTC."""
-    impl = _DateTime
-    cache_ok = True
-
-    def process_result_value(self, value, dialect):
-        if value is not None and getattr(value, "tzinfo", None) is None:
-            return value.replace(tzinfo=_dt.timezone.utc)
-        return value
-
-DateTime = AwareDateTime
-TIMESTAMP = AwareDateTime
 
 class AccountType(str, enum.Enum):
     admin = "admin"
@@ -358,7 +343,7 @@ class Firmware(Base):
     version = Column(String(50))
     board = Column(String(100))
     filename = Column(String(255))
-    uploaded_at = Column(_DateTime(timezone=True), server_default=func.now())
+    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
 
 class DiyProject(Base):
     __tablename__ = "diy_projects"

@@ -223,7 +223,7 @@ def test_update_general_settings_reschedules_time_trigger_automations(monkeypatc
                 schedule_hour=7,
                 schedule_minute=30,
                 schedule_weekdays=[],
-                next_run_at=datetime(2026, 4, 2, 0, 30, tzinfo=timezone.utc),
+                next_run_at=datetime(2026, 4, 2, 0, 30),
             )
         )
         db.commit()
@@ -260,7 +260,7 @@ def test_update_general_settings_reschedules_time_trigger_automations(monkeypatc
 
         automation = db.query(Automation).filter(Automation.creator_id == user_id).one()
         assert automation.timezone == "Asia/Tokyo"
-        assert automation.next_run_at == datetime(2026, 4, 2, 22, 30, tzinfo=timezone.utc)
+        assert automation.next_run_at == datetime(2026, 4, 2, 22, 30)
     finally:
         db.close()
 

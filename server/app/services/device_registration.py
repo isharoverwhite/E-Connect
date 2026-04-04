@@ -346,8 +346,7 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
                     else:
                         _raise_secure_pairing_error("MAC address is already bound to another device.")
                 else:
-                    # Allow MAC update since the secret is correct (typical for board replacement)
-                    pass
+                    _raise_secure_pairing_error("Trusted MAC address mismatch for provisioned device.")
         else:
             mac_bound_device = db.query(Device).filter(Device.mac_address == normalized_payload_mac).first()
             if mac_bound_device and mac_bound_device.device_id != payload.device_id:
