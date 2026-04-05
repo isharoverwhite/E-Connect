@@ -3,11 +3,7 @@
 # How to use:
 #   1. Edit the values in `x-user-config` if needed.
 #   2. Start with:
-#        docker compose -f docker-compose.user.yml up -d
-#
-# Tip:
-#   If you want the shortest command `docker compose up -d`, save this file as
-#   `compose.yml` in an empty folder, then run `docker compose up -d`.
+#        docker compose up -d
 #
 # Main WebUI:
 #   https://localhost:3443
@@ -166,23 +162,6 @@ services:
       timeout: 5s
       retries: 24
       start_period: 5s
-
-  discovery_mdns:
-    image: *server_image
-    pull_policy: always
-    command: ["python", "-m", "scripts.publish_mdns_alias"]
-    profiles: ["discovery-mdns"]
-    restart: always
-    network_mode: host
-    environment:
-      TZ: *timezone
-      MDNS_HOSTNAME: econnect.local
-      MDNS_ADVERTISED_IPS: ""
-      MDNS_DISCOVERY_PORT: "8000"
-      MDNS_WEBAPP_PORT: "3443"
-    depends_on:
-      server:
-        condition: service_healthy
 
 volumes:
   db_data:

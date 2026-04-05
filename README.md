@@ -91,18 +91,19 @@ English: `Settings` centralizes instance administration, including timezone, use
 
 ### Chạy Nhanh Theo Kiểu Copy & Run
 
-Không cần tạo `.env` cho cấu hình mặc định. Chỉ cần copy file `docker-compose.user.yml` của repo này vào một thư mục trống rồi chạy:
+Không cần tạo `.env`. Bản dành cho người dùng cuối nằm tại `deploy/user/compose.yml`, và các giá trị người dùng thường phải sửa đã được đưa thẳng vào phần `x-user-config` ở đầu file đó.
+
+Tải đúng file đó về với đúng tên `compose.yml`, sửa vài dòng cần thiết, rồi lệnh chạy duy nhất là:
 
 ```bash
 mkdir econnect && cd econnect
-docker compose -f docker-compose.user.yml up -d
+curl -fsSL https://raw.githubusercontent.com/isharoverwhite/Final-Project/main/deploy/user/compose.yml -o compose.yml
+docker compose up -d
 ```
 
-Nếu bạn muốn tải file trực tiếp thay vì copy tay:
+Nếu bạn đang đứng trong repo này và muốn dùng bản tương thích cũ ở root, cú pháp vẫn là:
 
 ```bash
-mkdir econnect && cd econnect
-curl -fsSLO https://raw.githubusercontent.com/isharoverwhite/Final-Project/main/docker-compose.user.yml
 docker compose -f docker-compose.user.yml up -d
 ```
 
@@ -119,15 +120,16 @@ Sau khi stack lên xong:
 Đây là phần quan trọng nhất để mở đúng WebUI qua HTTPS:
 
 1. Nếu bạn chỉ dùng trên chính máy chạy Docker, giữ mặc định và mở `https://localhost:3443`
-2. Nếu bạn muốn mở từ điện thoại hoặc máy khác trong LAN, nên tạo file `.env` trước khi `docker compose up -d` và khai báo host mà certificate HTTPS phải bao phủ
-3. Cách ổn nhất khi truy cập bằng IP là thêm `HTTPS_IPS=<LAN_IP_CUA_SERVER>`
-4. Nếu bạn có hostname nội bộ như `econnect.local`, thêm nó vào `HTTPS_HOSTS`
+2. Nếu bạn muốn mở từ điện thoại hoặc máy khác trong LAN, mở `compose.yml` và sửa ngay phần `x-user-config`
+3. Cách ổn nhất khi truy cập bằng IP là điền `https_ips: &https_ips "LAN_IP_CUA_SERVER"`
+4. Nếu bạn có hostname nội bộ như `econnect.local`, điền vào `https_hosts`
 
 Ví dụ:
 
-```env
-HTTPS_HOSTS=localhost,econnect.local,e-connect.local
-HTTPS_IPS=192.168.1.25
+```yaml
+x-user-config:
+  https_hosts: &https_hosts localhost,econnect.local,e-connect.local
+  https_ips: &https_ips "192.168.1.25"
 ```
 
 Sau đó mở WebUI bằng đúng host đã khai báo trong cert:
@@ -138,10 +140,10 @@ Sau đó mở WebUI bằng đúng host đã khai báo trong cert:
 Nếu bạn đổi IP hoặc hostname sau lần chạy đầu tiên, hãy dừng stack, xóa volume kết thúc bằng `_webapp_tls`, rồi chạy lại để certificate được tạo mới:
 
 ```bash
-docker compose -f docker-compose.user.yml down
+docker compose down
 docker volume ls | grep webapp_tls
 docker volume rm <your_project>_webapp_tls
-docker compose -f docker-compose.user.yml up -d
+docker compose up -d
 ```
 
 ### Luồng sử dụng đề xuất
@@ -164,21 +166,23 @@ docker compose -f docker-compose.user.yml up -d
 6. **Tạo automation**
    Vào `Automation`, dựng rule theo sơ đồ `Trigger -> Condition -> Action`.
 
-### Biến tùy chỉnh tùy chọn
+### Các giá trị nên sửa ngay trong file compose
 
-Mặc định đã chạy được ngay. Chỉ tạo `.env` nếu bạn muốn override:
+Mặc định vẫn chạy được ngay, nhưng với môi trường dùng thật bạn nên mở `compose.yml` và sửa ít nhất các giá trị này trong `x-user-config`:
 
-```env
-TZ=Asia/Ho_Chi_Minh
-DB_ROOT_PASSWORD=your_root_password
-DB_PASSWORD=your_app_password
-SECRET_KEY=your_secret_key
-HTTPS_HOSTS=localhost,econnect.local,e-connect.local
-HTTPS_IPS=192.168.1.25
-ECONNECT_SERVER_IMAGE=docker.io/ryzen30xx/econnect-server:latest
-ECONNECT_WEBAPP_IMAGE=docker.io/ryzen30xx/econnect-webapp:latest
-ECONNECT_MQTT_IMAGE=docker.io/ryzen30xx/econnect-mqtt:latest
+```yaml
+x-user-config:
+  db_root_password: &db_root_password "your_root_password"
+  db_password: &db_password "your_app_password"
+  secret_key: &secret_key "your_long_random_secret_key"
+  https_hosts: &https_hosts localhost,econnect.local,e-connect.local
+  https_ips: &https_ips "192.168.1.25"
+  mqtt_image: &mqtt_image docker.io/ryzen30xx/econnect-mqtt:latest
+  server_image: &server_image docker.io/ryzen30xx/econnect-server:latest
+  webapp_image: &webapp_image docker.io/ryzen30xx/econnect-webapp:latest
 ```
+
+`server` sẽ tự lấy `db_name`, `db_user`, và `db_password` trong cùng file để dựng kết nối MariaDB, nên người dùng không cần map chuỗi kết nối DB thủ công nữa.
 
 ### Build từ source
 
@@ -236,18 +240,19 @@ Mã nguồn và tài sản của repository hiện được phân phối dưới
 
 ### Copy And Run Quick Start
 
-No `.env` file is required for the default setup. Copy `docker-compose.user.yml` from this repository into an empty folder, then run:
+No `.env` file is required. The end-user artifact now lives at `deploy/user/compose.yml`, and the values an end user usually needs to edit are embedded in the `x-user-config` block at the top of that file.
+
+Download that file with its final name `compose.yml`, edit the required fields, and the one run command is:
 
 ```bash
 mkdir econnect && cd econnect
-docker compose -f docker-compose.user.yml up -d
+curl -fsSL https://raw.githubusercontent.com/isharoverwhite/Final-Project/main/deploy/user/compose.yml -o compose.yml
+docker compose up -d
 ```
 
-If you prefer fetching the file directly instead of copying it manually:
+If you are already inside this repository and want the backward-compatible root file, the correct syntax is:
 
 ```bash
-mkdir econnect && cd econnect
-curl -fsSLO https://raw.githubusercontent.com/isharoverwhite/Final-Project/main/docker-compose.user.yml
 docker compose -f docker-compose.user.yml up -d
 ```
 
@@ -264,15 +269,16 @@ When the stack is ready:
 This is the important part if you want HTTPS to work correctly beyond the Docker host:
 
 1. If you only use the WebUI on the Docker host itself, keep the defaults and open `https://localhost:3443`
-2. If you want to open the WebUI from another phone or computer on the LAN, create a local `.env` before `docker compose up -d` and declare the hostnames or IPs that the HTTPS certificate must cover
-3. The most reliable IP-based setup is `HTTPS_IPS=<YOUR_SERVER_LAN_IP>`
-4. If you use an internal hostname such as `econnect.local`, add it to `HTTPS_HOSTS`
+2. If you want to open the WebUI from another phone or computer on the LAN, edit `compose.yml` directly in the `x-user-config` block
+3. The most reliable IP-based setup is `https_ips: &https_ips "YOUR_SERVER_LAN_IP"`
+4. If you use an internal hostname such as `econnect.local`, add it to `https_hosts`
 
 Example:
 
-```env
-HTTPS_HOSTS=localhost,econnect.local,e-connect.local
-HTTPS_IPS=192.168.1.25
+```yaml
+x-user-config:
+  https_hosts: &https_hosts localhost,econnect.local,e-connect.local
+  https_ips: &https_ips "192.168.1.25"
 ```
 
 Then open the WebUI with the same host covered by the certificate:
@@ -283,10 +289,10 @@ Then open the WebUI with the same host covered by the certificate:
 If you change the IP or hostname after the first run, stop the stack, remove the volume ending in `_webapp_tls`, and start again so the certificate can be regenerated:
 
 ```bash
-docker compose -f docker-compose.user.yml down
+docker compose down
 docker volume ls | grep webapp_tls
 docker volume rm <your_project>_webapp_tls
-docker compose -f docker-compose.user.yml up -d
+docker compose up -d
 ```
 
 ### Recommended Usage Flow
@@ -309,21 +315,23 @@ docker compose -f docker-compose.user.yml up -d
 6. **Build automations**
    Open `Automation` and compose rules through the visual `Trigger -> Condition -> Action` graph builder.
 
-### Optional Overrides
+### Values To Edit Directly In The Compose File
 
-The default file already works. Create a local `.env` only if you want custom values:
+The defaults still work out of the box, but for a real deployment you should open `compose.yml` and update at least these values in `x-user-config`:
 
-```env
-TZ=Asia/Ho_Chi_Minh
-DB_ROOT_PASSWORD=your_root_password
-DB_PASSWORD=your_app_password
-SECRET_KEY=your_secret_key
-HTTPS_HOSTS=localhost,econnect.local,e-connect.local
-HTTPS_IPS=192.168.1.25
-ECONNECT_SERVER_IMAGE=docker.io/ryzen30xx/econnect-server:latest
-ECONNECT_WEBAPP_IMAGE=docker.io/ryzen30xx/econnect-webapp:latest
-ECONNECT_MQTT_IMAGE=docker.io/ryzen30xx/econnect-mqtt:latest
+```yaml
+x-user-config:
+  db_root_password: &db_root_password "your_root_password"
+  db_password: &db_password "your_app_password"
+  secret_key: &secret_key "your_long_random_secret_key"
+  https_hosts: &https_hosts localhost,econnect.local,e-connect.local
+  https_ips: &https_ips "192.168.1.25"
+  mqtt_image: &mqtt_image docker.io/ryzen30xx/econnect-mqtt:latest
+  server_image: &server_image docker.io/ryzen30xx/econnect-server:latest
+  webapp_image: &webapp_image docker.io/ryzen30xx/econnect-webapp:latest
 ```
+
+The `server` container now derives its MariaDB connection from the same `db_name`, `db_user`, and `db_password` values in the same file, so end users do not need to maintain a separate DB connection string anymore.
 
 ### Run From Source
 
