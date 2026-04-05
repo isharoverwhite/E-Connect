@@ -80,7 +80,40 @@ Use a valid IANA timezone for `TZ`, for example `Asia/Ho_Chi_Minh`.
 
 DIY firmware builds should keep Wi-Fi, MQTT, project IDs, and device secrets in private runtime config only. Do not commit local overrides into `server/firmware_template/platformio.ini`; the server-side builder stamps those values into generated artifacts when you launch a real build job.
 
-#### 3. Run the Self-hosted Stack
+If you want the public `find_website` to resolve a stable LAN alias such as `econnect.local`, add these optional values to `.env` and start the stack with the `discovery-mdns` profile shown below:
+```env
+DISCOVERY_MDNS_HOSTNAME=econnect.local
+DISCOVERY_MDNS_ADVERTISED_IPS=192.168.1.25
+```
+Replace `192.168.1.25` with the real LAN IP of the machine running the self-hosted stack.
+
+#### 4. End-user Prebuilt Stack (Docker Hub Images)
+Use `docker-compose.user.yml` when the project owner has already published the self-hosted runtime images to Docker Hub. This file intentionally excludes `find_website`; end users must not deploy that public discovery portal on their home server.
+
+Add the Docker Hub image references to `.env`:
+```env
+ECONNECT_SERVER_IMAGE=docker.io/<project-owner>/econnect-server:latest
+ECONNECT_WEBAPP_IMAGE=docker.io/<project-owner>/econnect-webapp:latest
+ECONNECT_MQTT_IMAGE=docker.io/<project-owner>/econnect-mqtt:latest
+```
+
+Pull and start the end-user stack:
+```bash
+docker compose -f docker-compose.user.yml pull
+docker compose -f docker-compose.user.yml up -d
+```
+
+Optional extras for that image-based stack:
+- MQTT host networking: `docker compose -f docker-compose.user.yml -f docker-compose.mqtt-host.yml up -d`
+- mDNS alias publisher: `docker compose --profile discovery-mdns -f docker-compose.user.yml up -d discovery_mdns`
+
+After the stack is ready:
+- Open `https://localhost:3443` for the self-hosted Web UI.
+- From another device on the same LAN, open [find.isharoverwhite.com](https://find.isharoverwhite.com) to discover the local instance.
+
+If the project owner has not published those three runtime images yet, use the source-build workflow below instead.
+
+#### 5. Source-build Self-hosted Stack (Developer / local source checkout)
 This command launches the official approved topology for self-hosted environments:
 ```bash
 docker compose up -d --build db mqtt server webapp
@@ -88,7 +121,8 @@ docker compose up -d --build db mqtt server webapp
 
 Once the stack is up:
 - **Bare LAN shortcut**: `http://econnect.local` redirects to the current Web UI port when your LAN resolves that alias to the self-hosted machine and host port `80` is available. In the standard compose runtime this lands on `http://econnect.local:3000`.
-- **Web UI & Setup**: `http://localhost:3000`
+- **Web UI & Setup**: `https://localhost:3443`
+- **Fallback local HTTP dashboard**: `http://localhost:3000`
 - **Secure companion origin for Web Serial / browser APIs**: `https://localhost:3443` *(Note: this HTTPS endpoint uses a local self-signed certificate by default, so you may need to accept the warning on first use).*
 - **Backend Health**: `http://localhost:8000/health`
 - **MQTT Broker**: `localhost:1883`
@@ -101,7 +135,13 @@ Optional MQTT host networking:
 - The override keeps the `server` container pointed at the host-bound broker through a `host-gateway` mapping for the `mqtt` hostname.
 - On Docker Desktop with the default published-port path, Mosquitto connection logs may show the Docker forwarding proxy address instead of the real LAN client IP. Treat the device's provisioned broker target and server-side `last_seen` updates as the authoritative LAN-path signals.
 
-#### 4. Developer Validation
+Optional discovery mDNS alias:
+- To let the public `find_website` try `econnect.local` before wider subnet scans, start the stack with: `docker compose --profile discovery-mdns up -d --build db mqtt server webapp discovery_mdns`
+- This helper is defined in the main `docker-compose.yml`, reuses the backend runtime, and publishes the alias from host networking so the LAN can resolve `econnect.local` consistently.
+- Set `DISCOVERY_MDNS_HOSTNAME` and `DISCOVERY_MDNS_ADVERTISED_IPS` in `.env` before using the profile.
+- Prefer this on Linux hosts. On Docker Desktop, host networking and LAN multicast behavior depend on your Docker/Desktop network setup.
+
+#### 6. Developer Validation
 To run the full repository including the public discovery portal (for local testing/pipelines):
 ```bash
 docker compose up -d --build
@@ -199,7 +239,40 @@ Hãy dùng timezone IANA hợp lệ cho `TZ`, ví dụ `Asia/Ho_Chi_Minh`.
 
 Các bản build DIY chỉ nên nhận Wi-Fi, MQTT, project ID và device secret từ cấu hình runtime riêng tư. Không commit local override vào `server/firmware_template/platformio.ini`; luồng build server-side sẽ tự đóng dấu các giá trị thật vào artifact khi bạn chạy build job.
 
-#### 3. Khởi chạy hệ thống Self-Hosted tiêu chuẩn
+Nếu muốn public `find_website` resolve một alias LAN ổn định như `econnect.local`, hãy thêm các giá trị tùy chọn này vào `.env` rồi khởi chạy bằng profile `discovery-mdns` ở bên dưới:
+```env
+DISCOVERY_MDNS_HOSTNAME=econnect.local
+DISCOVERY_MDNS_ADVERTISED_IPS=192.168.1.25
+```
+Hãy thay `192.168.1.25` bằng IP LAN thật của máy đang chạy stack self-hosted.
+
+#### 4. Stack dựng sẵn cho end user (Docker Hub Images)
+Dùng `docker-compose.user.yml` khi chủ dự án đã publish sẵn các image runtime self-hosted lên Docker Hub. File này cố ý không chứa `find_website`; người dùng cuối không được triển khai portal discovery public đó trên home server của mình.
+
+Hãy thêm các image Docker Hub vào `.env`:
+```env
+ECONNECT_SERVER_IMAGE=docker.io/<chu-du-an>/econnect-server:latest
+ECONNECT_WEBAPP_IMAGE=docker.io/<chu-du-an>/econnect-webapp:latest
+ECONNECT_MQTT_IMAGE=docker.io/<chu-du-an>/econnect-mqtt:latest
+```
+
+Pull image rồi khởi chạy stack cho end user:
+```bash
+docker compose -f docker-compose.user.yml pull
+docker compose -f docker-compose.user.yml up -d
+```
+
+Tùy chọn thêm cho stack image-based này:
+- MQTT host networking: `docker compose -f docker-compose.user.yml -f docker-compose.mqtt-host.yml up -d`
+- Publisher alias mDNS: `docker compose --profile discovery-mdns -f docker-compose.user.yml up -d discovery_mdns`
+
+Sau khi stack sẵn sàng:
+- Mở `https://localhost:3443` để vào Web UI self-hosted.
+- Trên một thiết bị khác cùng LAN, mở [find.isharoverwhite.com](https://find.isharoverwhite.com) để dò instance cục bộ.
+
+Nếu chủ dự án chưa publish đủ ba image runtime này, hãy dùng luồng build từ source ở phần bên dưới.
+
+#### 5. Khởi chạy hệ thống Self-Hosted từ source (developer / local source checkout)
 Câu lệnh được dùng để chuẩn bị cấu hình kiến trúc self-hosted nguyên bản:
 ```bash
 docker compose up -d --build db mqtt server webapp
@@ -207,7 +280,8 @@ docker compose up -d --build db mqtt server webapp
 
 Khi chạy xong:
 - **Lối tắt LAN**: `http://econnect.local` sẽ tự redirect sang cổng Web UI hiện tại nếu alias đó trỏ đúng về máy self-host và host port `80` còn trống. Với runtime compose tiêu chuẩn, đích sẽ là `http://econnect.local:3000`.
-- **Giao diện Web & Setup**: Vào trang `http://localhost:3000`
+- **Giao diện Web & Setup**: Vào trang `https://localhost:3443`
+- **Dashboard HTTP cục bộ dự phòng**: `http://localhost:3000`
 - **Origin HTTPS cho Web Serial / browser APIs**: `https://localhost:3443` *(Lưu ý: endpoint HTTPS này dùng chứng chỉ tự ký cục bộ theo mặc định nên trình duyệt có thể hiện cảnh báo ở lần mở đầu tiên).*
 - **Kiểm tra Backend**: `http://localhost:8000/health`
 - **MQTT Broker Address**: Cùng trên IP cổng `1883`
@@ -220,7 +294,13 @@ Tùy chọn MQTT host networking:
 - Override vẫn giữ cho container `server` kết nối tới broker host-bound thông qua mapping `host-gateway` cho hostname `mqtt`.
 - Trên Docker Desktop với đường publish port mặc định, log kết nối của Mosquitto có thể hiện địa chỉ proxy/forwarder của Docker thay vì IP LAN thật của client. Khi cần xác nhận đường LAN, hãy ưu tiên target broker đã provision cho thiết bị và các lần cập nhật `last_seen` phía server.
 
-#### 4. Khởi chạy toàn bộ hệ thống (Cho Developer Testing)
+Tùy chọn alias mDNS cho discovery:
+- Để public `find_website` thử `econnect.local` trước khi quét các subnet rộng hơn, hãy khởi chạy stack bằng lệnh: `docker compose --profile discovery-mdns up -d --build db mqtt server webapp discovery_mdns`
+- Helper này đã được khai báo ngay trong `docker-compose.yml`, dùng lại runtime của backend và publish alias từ host networking để các máy trong LAN resolve `econnect.local` ổn định hơn.
+- Hãy đặt `DISCOVERY_MDNS_HOSTNAME` và `DISCOVERY_MDNS_ADVERTISED_IPS` trong `.env` trước khi dùng profile này.
+- Nên ưu tiên trên máy Linux. Với Docker Desktop, host networking và multicast LAN còn phụ thuộc cấu hình network của Docker/Desktop.
+
+#### 6. Khởi chạy toàn bộ hệ thống (Cho Developer Testing)
 Với nhóm lập trình kiểm tra toàn bộ pipeline, câu chạy có thể bao quát luôn công đoạn build discovery:
 ```bash
 docker compose up -d --build
