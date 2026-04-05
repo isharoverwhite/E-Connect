@@ -1,9 +1,11 @@
 # End-user self-hosted stack for E-Connect.
 #
-# How to use:
-#   1. Edit the values in `x-user-config` if needed.
-#   2. Start with:
+# Quick start:
+#   1. Edit the few values in `x-user-config` below.
+#   2. Run:
 #        docker compose -f docker-compose.user.yml up -d
+#   3. Open:
+#        https://localhost:3443
 #
 # Tip:
 #   If you want the shortest command `docker compose up -d`, save this file as
@@ -13,12 +15,23 @@
 #   https://localhost:3443
 
 x-user-config:
-  # Change these before real use:
+  # Most users only need to change these:
   # - db_root_password
   # - db_password
   # - secret_key
-  # - https_ips if you open the WebUI by LAN IP
+  # - https_ips if you open the WebUI from another phone/computer by LAN IP
   # - https_hosts if you use a LAN hostname such as econnect.local
+  #
+  # Real example for a home LAN server at 192.168.1.25:
+  # - db_root_password: &db_root_password "HomeRoot!2026"
+  # - db_password: &db_password "HomeApp!2026"
+  # - secret_key: &secret_key "change-this-to-a-long-random-secret-key"
+  # - https_hosts: &https_hosts localhost,econnect.local
+  # - https_ips: &https_ips "192.168.1.25"
+  #
+  # Then run `docker compose -f docker-compose.user.yml up -d` and open:
+  # - https://localhost:3443 on the Docker host itself
+  # - https://192.168.1.25:3443 from another device on the same LAN
   #
   # Time zone used by all containers.
   timezone: &timezone Asia/Ho_Chi_Minh
