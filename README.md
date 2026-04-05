@@ -1,337 +1,295 @@
-<div align="center">
-  <h1>E-Connect</h1>
-  <p>A self-hosted, local-first smart home platform focusing on LAN control and DIY IoT devices.</p>
-</div>
+# E-Connect
 
-<p align="center">
-  <a href="#english">English</a> • <a href="#tiếng-việt">Tiếng Việt</a>
-</p>
+> Self-hosted, local-first smart home control for LAN devices, MQTT workflows, and DIY ESP32/ESP8266 provisioning.
+
+[Tiếng Việt](#tiếng-việt) • [English](#english)
 
 ---
 
-<h2 id="english">🇬🇧 English</h2>
+## Tour Giao Diện / Visual Tour
 
-**E-Connect** is a `self-hosted` and `local-first` smart home platform designed to focus on LAN-based device control, DIY onboarding for ESP32/ESP8266 microcontrollers, MQTT-first communication, and durable state storage on the user's infrastructure.
+### 1. Web Assistant
+![E-Connect Web Assistant](./docs/screenshots/readme/find-website.png)
 
-### 🌟 Core Values
-- **Local-first**: You retain core LAN control even when internet connectivity drops.
-- **Self-hosted**: The main stack runs entirely on your own hardware.
-- **MQTT-first**: Device communications are strongly prioritized over MQTT.
-- **DIY-friendly**: Streamlined tools for pin mapping, server-side firmware building, and web-serial flashing.
-- **Durable State**: Crucial data is reliably persisted in the database rather than just residing in UI memory.
+Tiếng Việt: `E-Connect Web Assistant` là cổng discovery giúp người dùng dò instance E-Connect trong cùng mạng LAN và kiểm tra nhanh trạng thái `Database`, `MQTT`, `Initialized`, `Web App`.
 
-### 🏗 Architecture
-E-Connect emphasizes a self-hosted smart home model where the main operational core resides on the user's local network:
-- `server`: FastAPI backend managing authentication, device lifecycle, automation, firmware building, WebSockets, and APIs.
-- `webapp`: A modern Next.js 16 + React 19 frontend providing the dashboard, setup flow, settings, and DIY builder UI.
-- `mqtt`: A Mosquitto broker serving as the transport layer for command and state loops.
-- `db`: A MariaDB instance for persisting users, households, devices, dashboards, automations, and operational history.
-- `find_website`: A developer-hosted public discovery portal used to locate your local E-Connect instance on the same LAN easily from your browser.
+English: `E-Connect Web Assistant` is the discovery entrypoint that scans the local LAN, then shows `Database`, `MQTT`, `Initialized`, and `Web App` status for each detected server.
 
-### 📂 Key Repository Structure
-- `PRD.md`: Product Requirement Document, defining baselines and execution scope.
-- `AGENTS.md`: Workflows, gates, roles, and commit/push policies for AI agents.
-- `design/`: Database schemas, user flows, change requests, and UI design references.
-- `server/`: FastAPI backend, SQLAlchemy, MQTT handlers, and firmware build pipeline.
-- `webapp/`: Next.js frontend application.
-- `mqtt/`: Docker integration for Mosquitto broker.
-- `find_website/`: Source code for the public discovery portal.
+### 2. First-Time Setup
+![E-Connect Setup](./docs/screenshots/readme/setup.png)
 
-### 🚀 Getting Started (Docker Compose)
+Tiếng Việt: Màn hình khởi tạo lần đầu dùng để tạo `Master Administrator`, khóa instance, và hoàn tất bootstrap an toàn cho hệ thống self-hosted.
 
-#### Prerequisites
-- Docker Engine & Docker Compose plugin.
-- Available host ports: `80`, `3000`, `3443`, `3306`, `8000`, `1883`, (and `9123` if you wish to run the discovery website locally).
-- Keep these host ports free before running the default Compose stack:
-  `80` -> bare `econnect.local` redirect entrypoint
-  `3000` -> HTTP Web UI
-  `3443` -> HTTPS companion origin for secure browser APIs
-  `8000` -> backend API/health endpoint
-  `1883` -> MQTT broker
-  `3306` -> MariaDB
-  `9123` -> optional local `find_website`
-  If any of these ports is already occupied, `docker compose up` and the Jenkins CD deploy stage can fail immediately when Docker tries to bind the host port.
+English: The first-time setup screen creates the `Master Administrator`, locks the instance bootstrap flow, and secures the self-hosted installation.
 
-#### 1. Clone the Repository
-```bash
-git clone <your-repository-url>
-cd Final-Project
-```
+### 3. Login
+![E-Connect Login](./docs/screenshots/readme/login.png)
 
-#### 2. Host Storage Monitoring (Optional)
-To display the correct system storage limit used by the host hardware instead of the Docker virtual disk, uncomment the line `#- /:/hostfs:ro` inside your `docker-compose.yml` under `server:` -> `volumes:` before starting the stack.
+Tiếng Việt: Sau khi khởi tạo, người dùng đăng nhập qua form xác thực thật với tùy chọn `Keep me logged in`.
 
-#### 3. Configuration (Optional)
-Create a `.env` file at the root to override default credentials safely:
-```env
-DB_ROOT_PASSWORD=secure_root_password
-DB_NAME=e_connect_db
-DB_USER=econnect
-DB_PASSWORD=secure_password
-SECRET_KEY=change-me-in-production
-TZ=Asia/Ho_Chi_Minh
-NEXT_PUBLIC_API_URL=/api/v1
-BACKEND_INTERNAL_URL=http://server:8000
-```
+English: After bootstrap, users sign in through the real authentication flow with an optional `Keep me logged in` session mode.
 
-Use a valid IANA timezone for `TZ`, for example `Asia/Ho_Chi_Minh`.
+### 4. Dashboard
+![E-Connect Dashboard](./docs/screenshots/readme/dashboard.png)
 
-`TZ` still defines the deployment runtime timezone when no admin override is saved in `Settings -> General`. The Settings UI only shows the currently active timezone and current server time; it does not expose `TZ` as a separate field.
+Tiếng Việt: Dashboard là trung tâm quan sát thiết bị, cảnh báo hệ thống, trạng thái online/offline và điểm bắt đầu cho các thao tác scan hoặc tùy biến bố cục.
 
-DIY firmware builds should keep Wi-Fi, MQTT, project IDs, and device secrets in private runtime config only. Do not commit local overrides into `server/firmware_template/platformio.ini`; the server-side builder stamps those values into generated artifacts when you launch a real build job.
+English: The dashboard is the command surface for device status, system alerts, online/offline visibility, and quick access to scanning or layout customization.
 
-If you want the public `find_website` to resolve a stable LAN alias such as `econnect.local`, add these optional values to `.env` and start the stack with the `discovery-mdns` profile shown below:
-```env
-DISCOVERY_MDNS_HOSTNAME=econnect.local
-DISCOVERY_MDNS_ADVERTISED_IPS=192.168.1.25
-```
-Replace `192.168.1.25` with the real LAN IP of the machine running the self-hosted stack.
+### 5. Device Management
+![E-Connect Device Management](./docs/screenshots/readme/devices-empty.png)
 
-#### 4. End-user Prebuilt Stack (Docker Hub Images)
-Use `docker-compose.user.yml` when the project owner has already published the self-hosted runtime images to Docker Hub. This file intentionally excludes `find_website`; end users must not deploy that public discovery portal on their home server.
+Tiếng Việt: Khu vực `Devices` quản lý vòng đời thiết bị, scan node mới, và đi vào luồng cấu hình DIY qua SVG builder.
 
-Add the Docker Hub image references to `.env`:
-```env
-ECONNECT_SERVER_IMAGE=docker.io/<project-owner>/econnect-server:latest
-ECONNECT_WEBAPP_IMAGE=docker.io/<project-owner>/econnect-webapp:latest
-ECONNECT_MQTT_IMAGE=docker.io/<project-owner>/econnect-mqtt:latest
-```
+English: The `Devices` area manages the device lifecycle, scans for new nodes, and launches the DIY SVG-based provisioning flow.
 
-Pull and start the end-user stack:
-```bash
-docker compose -f docker-compose.user.yml pull
-docker compose -f docker-compose.user.yml up -d
-```
+### 6. DIY Builder
+![E-Connect DIY Builder](./docs/screenshots/readme/diy-builder.png)
 
-Optional extras for that image-based stack:
-- MQTT host networking: `docker compose -f docker-compose.user.yml -f docker-compose.mqtt-host.yml up -d`
-- mDNS alias publisher: `docker compose --profile discovery-mdns -f docker-compose.user.yml up -d discovery_mdns`
+Tiếng Việt: `IoT Configurator` hỗ trợ chọn board ESP32/ESP8266, gắn Wi-Fi đã lưu, chọn profile phần cứng, map GPIO và chuẩn bị build firmware phía server.
 
-After the stack is ready:
-- Open `https://localhost:3443` for the self-hosted Web UI.
-- From another device on the same LAN, open [find.isharoverwhite.com](https://find.isharoverwhite.com) to discover the local instance.
+English: The `IoT Configurator` lets you choose ESP32/ESP8266 boards, attach saved Wi-Fi credentials, pick hardware profiles, map GPIO, and prepare server-side firmware builds.
 
-If the project owner has not published those three runtime images yet, use the source-build workflow below instead.
+### 7. Automation Builder
+![E-Connect Automation Builder](./docs/screenshots/readme/automation-builder.png)
 
-#### 5. Source-build Self-hosted Stack (Developer / local source checkout)
-This command launches the official approved topology for self-hosted environments:
-```bash
-docker compose up -d --build db mqtt server webapp
-```
+Tiếng Việt: Trình tạo automation dùng graph builder trực quan theo mô hình `Trigger -> Condition -> Action`, có workspace riêng để lưu, chạy thử và kiểm tra rule.
 
-Once the stack is up:
-- **Bare LAN shortcut**: `http://econnect.local` redirects to the current Web UI port when your LAN resolves that alias to the self-hosted machine and host port `80` is available. In the standard compose runtime this lands on `http://econnect.local:3000`.
-- **Web UI & Setup**: `https://localhost:3443`
-- **Fallback local HTTP dashboard**: `http://localhost:3000`
-- **Secure companion origin for Web Serial / browser APIs**: `https://localhost:3443` *(Note: this HTTPS endpoint uses a local self-signed certificate by default, so you may need to accept the warning on first use).*
-- **Backend Health**: `http://localhost:8000/health`
-- **MQTT Broker**: `localhost:1883`
-- **Database**: `localhost:3306`
+English: The automation builder uses a visual `Trigger -> Condition -> Action` graph workspace for saving, testing, and iterating automation rules.
 
-Optional MQTT host networking:
-- The default Compose stack publishes `1883:1883`, which is the safest cross-platform choice and keeps local development working on Docker Desktop.
-- If you need Mosquitto to bind with `network_mode: host`, start the stack with the override file: `docker compose -f docker-compose.yml -f docker-compose.mqtt-host.yml up -d --build db mqtt server webapp`
-- Use that override on Linux hosts, or on Docker Desktop only after enabling `Settings -> Resources -> Network -> Enable host networking`.
-- The override keeps the `server` container pointed at the host-bound broker through a `host-gateway` mapping for the `mqtt` hostname.
-- On Docker Desktop with the default published-port path, Mosquitto connection logs may show the Docker forwarding proxy address instead of the real LAN client IP. Treat the device's provisioned broker target and server-side `last_seen` updates as the authoritative LAN-path signals.
+### 8. Settings And Wi-Fi Credentials
+![E-Connect Settings Wi-Fi](./docs/screenshots/readme/settings-wifi.png)
 
-Optional discovery mDNS alias:
-- To let the public `find_website` try `econnect.local` before wider subnet scans, start the stack with: `docker compose --profile discovery-mdns up -d --build db mqtt server webapp discovery_mdns`
-- This helper is defined in the main `docker-compose.yml`, reuses the backend runtime, and publishes the alias from host networking so the LAN can resolve `econnect.local` consistently.
-- Set `DISCOVERY_MDNS_HOSTNAME` and `DISCOVERY_MDNS_ADVERTISED_IPS` in `.env` before using the profile.
-- Prefer this on Linux hosts. On Docker Desktop, host networking and LAN multicast behavior depend on your Docker/Desktop network setup.
+Tiếng Việt: `Settings` tập trung phần quản trị instance như timezone, user management, rooms, DIY configs, và danh sách Wi-Fi dùng lại cho provisioning.
 
-#### 6. Developer Validation
-To run the full repository including the public discovery portal (for local testing/pipelines):
-```bash
-docker compose up -d --build
-```
-The `find_website` will then be available at `http://localhost:9123`.
-
-If your Jenkins pipeline should also probe a deployed public discovery origin, set the `PUBLIC_DISCOVERY_URL` job parameter to that deployment URL. Leaving it empty skips the public-origin smoke without affecting the LAN-hosted discovery check.
-
-*To stop the stack:* `docker compose down` (use `-v` to wipe data volumes).
-
-### 🛠 Development Workflow
-This repository follows a strict waterfall baseline with 4 clear phases:
-- **Requirement**: Review PRD, lock scope, map requirements, and plan verification.
-- **Design**: Update design docs or declare `Design unchanged` for narrow fixes.
-- **Implementation**: Make the minimal logical changes preserving topology and domain rules.
-- **Test**: Independent verification via lint, build, Pytest, browser tracing, or DB queries.
-
-Standard CI validations:
-- `webapp`: `npm run lint && npm run build`
-- `server`: `pytest tests/`
-
-### 📄 License
-This repository now includes a proprietary [`LICENSE`](./LICENSE) file. Unless
-the copyright owner grants written permission, all source code, documents,
-designs, and repository assets remain `All Rights Reserved`.
-
-Repository protection notes, GitHub hardening guidance, and DMCA references are
-documented in [`REPOSITORY_PROTECTION.md`](./REPOSITORY_PROTECTION.md).
+English: `Settings` centralizes instance administration, including timezone, user management, rooms, DIY configs, and reusable Wi-Fi credentials for provisioning.
 
 ---
 
-<h2 id="tiếng-việt">🇻🇳 Tiếng Việt</h2>
+## Tiếng Việt
 
-**E-Connect** là nền tảng nhà thông minh `self-hosted` và `local-first`, tập trung vào việc quản lý thiết bị trong mạng LAN, cung cấp quy trình (onboarding) dễ dàng cho các vi điều khiển DIY ESP32/ESP8266, giao tiếp ưu tiên qua MQTT, và lưu trữ trạng thái bền vững trên chính hạ tầng của người dùng.
+### Giới thiệu
 
-### 🌟 Giá trị cốt lõi
-- **Local-first**: Vẫn điều khiển được thiết bị trong vùng mạng LAN nội bộ ngay cả khi mất kết nối Internet.
-- **Self-hosted**: Toàn bộ hệ thống lõi được triển khai trên phần cứng do bạn tự quản lý.
-- **MQTT-first**: Việc giao tiếp sự kiện với thiết bị được ưu tiên sử dụng giao thức MQTT.
-- **DIY-friendly**: Hỗ trợ toàn diện việc gán chân tín hiệu (pin mapping), build firmware trực tiếp từ server và nạp (flash) firmware qua giao thức Web Serial.
-- **Durable State**: Các dữ liệu quan trọng luôn được đảm bảo ghi vào cơ sở dữ liệu thay vì chỉ nằm tạm trên bộ nhớ của giao diện đăng nhập web (UI Memory).
+**E-Connect** là nền tảng smart home `self-hosted`, `local-first`, tập trung vào:
 
-### 🏗 Архіtek & Kiến trúc
-E-Connect hướng tới sự tinh gọn theo mô hình tự host, trong đó đa phần nền tảng vận hành nằm trên mạng nội bộ nhà bạn:
-- `server`: FastAPI backend quản lý luồng xác thực (auth), vòng đời thiết bị, tự động hóa, quy trình build firmware, WebSocket và REST APIs.
-- `webapp`: Ứng dụng Frontend Next.js 16 + React 19 cho bảng điều khiển, thiết lập, cấu hình cài đặt và công cụ thiết kế (DIY builder).
-- `mqtt`: Mosquitto Broker đóng vai trò vận chuyển giao thức chính (transport layer).
-- `db`: MariaDB làm cơ sở dữ liệu chuyên biệt để lưu thông tin về người dùng, nhà ở (households), thiết bị, lịch sử sự kiện.
-- `find_website`: Cổng dò tìm khám phá (public discovery portal) do nhà phát triển vận hành, có nhiệm vụ báo hiệu và tìm vị trí instance E-Connect nội bộ từ xa thông qua trình duyệt của người dùng.
+- điều khiển thiết bị trong mạng LAN
+- quản lý vòng đời thiết bị DIY dùng `ESP32` và `ESP8266`
+- giao tiếp ưu tiên `MQTT`
+- dashboard điều khiển và giám sát trạng thái
+- build firmware phía server, flash qua trình duyệt và mapping GPIO bằng giao diện trực quan
+- automation dạng graph builder
+- lưu trạng thái bền vững trên hạ tầng của chính người dùng
 
-### 📂 Cấu trúc dự án
-- `PRD.md`: Tài liệu đặc tả sản phẩm cung cấp ranh giới và giới hạn phát triển.
-- `AGENTS.md`: Các quy trình hướng dẫn về cách vận hành kiểm soát phiên bản (commit/push/gate rules) và AI Agents workflow.
-- `design/`: Khối tài liệu mô tả biểu đồ logic, yêu cầu flow UI và thay đổi tính năng.
-- `server/`: Mã nguồn backend FastAPI và engine biên dịch Firmware tự động.
-- `webapp/`: Mã nguồn thiết kế giao diện từ Next.js.
-- `mqtt/`: Tập lệnh cấu hình môi trường Mosquitto qua Docker.
-- `find_website/`: Tập hợp mã nguồn cho discovery public portal.
+### Điểm nổi bật
 
-### 🚀 Hướng dẫn cài đặt (Docker Compose)
+- **Local-first thật sự**: phần điều khiển cốt lõi vẫn hoạt động trong LAN ngay cả khi Internet không ổn định.
+- **Self-hosted gọn**: stack người dùng chỉ gồm `db`, `mqtt`, `server`, `webapp`.
+- **Discovery tách biệt rõ**: `find_website` là cổng public do chủ dự án vận hành, không chạy trên home server của người dùng.
+- **DIY-friendly**: có board picker, lưu Wi-Fi tập trung, pin mapping, build firmware, và đường dẫn flash.
+- **Quản trị tập trung**: dashboard, logs, settings, automation, extensions đều nằm trong cùng giao diện.
 
-#### Yêu cầu môi trường
-- Máy tính đã trỏ sẵn Docker Engine và Docker Compose plugin.
-- Port còn khả dụng: `80`, `3000`, `3443`, `3306`, `8000`, `1883`, (và tùy chọn `9123` nếu muốn dựng portal khám phá cục bộ).
-- Cần để trống các cổng host này trước khi chạy Compose mặc định:
-  `80` -> entrypoint redirect cho bare `econnect.local`
-  `3000` -> Web UI HTTP
-  `3443` -> origin HTTPS đi kèm cho các browser API cần secure context
-  `8000` -> backend API/health endpoint
-  `1883` -> MQTT broker
-  `3306` -> MariaDB
-  `9123` -> `find_website` cục bộ (tùy chọn)
-  Nếu một trong các cổng trên đã bị dịch vụ khác chiếm, `docker compose up` và stage deploy của Jenkins CD có thể fail ngay khi Docker bind cổng host.
+### Kiến trúc
 
-#### 1. Clone dự án
+| Thành phần | Vai trò |
+|---|---|
+| `server` | FastAPI backend cho auth, API, build firmware, WebSocket, automation, device lifecycle |
+| `webapp` | Next.js 16 + React 19 frontend cho setup, dashboard, devices, automation, settings |
+| `mqtt` | Mosquitto broker cho command/state loop |
+| `db` | MariaDB lưu user, household, device, config, automation, log |
+| `find_website` | Public discovery portal giúp trình duyệt người dùng dò server trong LAN |
+
+### Chạy Nhanh Theo Kiểu Copy & Run
+
+Không cần tạo `.env` cho cấu hình mặc định. Chỉ cần copy file `docker-compose.user.yml` của repo này vào một thư mục trống rồi chạy:
+
 ```bash
-git clone <your-repository-url>
-cd Final-Project
-```
-
-#### 2. Giám sát Bộ nhớ Host (Tùy chọn)
-Để bảng thông số "System Health" hiển thị chính xác dung lượng ổ cứng rỗng mặt vật lý của thiết bị Server thay vì bộ nhớ ảo của Docker sinh ra, bạn hãy mở tệp `docker-compose.yml`, tìm cài đặt volume của phần service `server` và bỏ dấu `#` trước dòng `#- /:/hostfs:ro` trước khi khởi chạy hệ thống.
-
-#### 3. Cấu hình biến môi trường
-Nếu muốn điều chỉnh/nâng cao mức độ bảo mật mặc định, sử dụng cấu hình tập tin `.env` riêng biệt đặt ở mục ngoài cùng thư mục dự án:
-```env
-DB_ROOT_PASSWORD=mat_khau_root
-DB_NAME=e_connect_db
-DB_USER=econnect
-DB_PASSWORD=mat_khau_db
-SECRET_KEY=khoa-bi-mat-cua-ban
-TZ=Asia/Ho_Chi_Minh
-NEXT_PUBLIC_API_URL=/api/v1
-BACKEND_INTERNAL_URL=http://server:8000
-```
-
-Hãy dùng timezone IANA hợp lệ cho `TZ`, ví dụ `Asia/Ho_Chi_Minh`.
-
-`TZ` vẫn là timezone runtime của môi trường triển khai khi chưa có override do admin lưu trong `Settings -> General`. Giao diện Settings chỉ hiển thị timezone đang hoạt động thực tế và giờ server hiện tại, không tách riêng `TZ` thành một trường riêng.
-
-Các bản build DIY chỉ nên nhận Wi-Fi, MQTT, project ID và device secret từ cấu hình runtime riêng tư. Không commit local override vào `server/firmware_template/platformio.ini`; luồng build server-side sẽ tự đóng dấu các giá trị thật vào artifact khi bạn chạy build job.
-
-Nếu muốn public `find_website` resolve một alias LAN ổn định như `econnect.local`, hãy thêm các giá trị tùy chọn này vào `.env` rồi khởi chạy bằng profile `discovery-mdns` ở bên dưới:
-```env
-DISCOVERY_MDNS_HOSTNAME=econnect.local
-DISCOVERY_MDNS_ADVERTISED_IPS=192.168.1.25
-```
-Hãy thay `192.168.1.25` bằng IP LAN thật của máy đang chạy stack self-hosted.
-
-#### 4. Stack dựng sẵn cho end user (Docker Hub Images)
-Dùng `docker-compose.user.yml` khi chủ dự án đã publish sẵn các image runtime self-hosted lên Docker Hub. File này cố ý không chứa `find_website`; người dùng cuối không được triển khai portal discovery public đó trên home server của mình.
-
-Hãy thêm các image Docker Hub vào `.env`:
-```env
-ECONNECT_SERVER_IMAGE=docker.io/<chu-du-an>/econnect-server:latest
-ECONNECT_WEBAPP_IMAGE=docker.io/<chu-du-an>/econnect-webapp:latest
-ECONNECT_MQTT_IMAGE=docker.io/<chu-du-an>/econnect-mqtt:latest
-```
-
-Pull image rồi khởi chạy stack cho end user:
-```bash
-docker compose -f docker-compose.user.yml pull
+mkdir econnect && cd econnect
 docker compose -f docker-compose.user.yml up -d
 ```
 
-Tùy chọn thêm cho stack image-based này:
-- MQTT host networking: `docker compose -f docker-compose.user.yml -f docker-compose.mqtt-host.yml up -d`
-- Publisher alias mDNS: `docker compose --profile discovery-mdns -f docker-compose.user.yml up -d discovery_mdns`
+Nếu bạn muốn tải file trực tiếp thay vì copy tay:
 
-Sau khi stack sẵn sàng:
-- Mở `https://localhost:3443` để vào Web UI self-hosted.
-- Trên một thiết bị khác cùng LAN, mở [find.isharoverwhite.com](https://find.isharoverwhite.com) để dò instance cục bộ.
-
-Nếu chủ dự án chưa publish đủ ba image runtime này, hãy dùng luồng build từ source ở phần bên dưới.
-
-#### 5. Khởi chạy hệ thống Self-Hosted từ source (developer / local source checkout)
-Câu lệnh được dùng để chuẩn bị cấu hình kiến trúc self-hosted nguyên bản:
 ```bash
+mkdir econnect && cd econnect
+curl -fsSLO https://raw.githubusercontent.com/isharoverwhite/Final-Project/main/docker-compose.user.yml
+docker compose -f docker-compose.user.yml up -d
+```
+
+Sau khi stack lên xong:
+
+1. Mở `https://localhost:3443`
+2. Tạo tài khoản `Master Administrator`
+3. Vào `Settings -> Wi-Fi` để lưu mạng Wi-Fi dùng cho provisioning
+4. Vào `Devices -> Create New Device` để tạo project DIY đầu tiên
+5. Từ một thiết bị khác cùng LAN, mở [find.isharoverwhite.com](https://find.isharoverwhite.com) để dò instance E-Connect
+
+### Luồng Sử Dụng Đề Xuất
+
+1. **Bootstrap hệ thống**
+   Mở `https://localhost:3443`, hoàn tất `First Time Setup`, rồi đăng nhập bằng tài khoản admin vừa tạo.
+
+2. **Lưu mạng Wi-Fi dùng chung**
+   Vào `Settings -> Wi-Fi`, thêm SSID và mật khẩu mà thiết bị DIY sẽ dùng khi khởi động lần đầu.
+
+3. **Tạo cấu hình phần cứng**
+   Vào `Devices -> Create New Device`, chọn board, profile phần cứng, room, và network đã lưu.
+
+4. **Map GPIO và build firmware**
+   Đi tiếp qua các bước `Configs -> Pins -> Review -> Flash` để tạo build phía server.
+
+5. **Onboard và quản lý thiết bị**
+   Dùng `Scan Device` hoặc public finder để dò node mới, approve thiết bị và đưa vào dashboard.
+
+6. **Tạo automation**
+   Vào `Automation`, dựng rule theo sơ đồ `Trigger -> Condition -> Action`.
+
+### Biến Tùy Chỉnh Tùy Chọn
+
+Mặc định đã chạy được ngay. Chỉ tạo `.env` nếu bạn muốn override:
+
+```env
+TZ=Asia/Ho_Chi_Minh
+DB_ROOT_PASSWORD=your_root_password
+DB_PASSWORD=your_app_password
+SECRET_KEY=your_secret_key
+ECONNECT_SERVER_IMAGE=docker.io/ryzen30xx/econnect-server:latest
+ECONNECT_WEBAPP_IMAGE=docker.io/ryzen30xx/econnect-webapp:latest
+ECONNECT_MQTT_IMAGE=docker.io/ryzen30xx/econnect-mqtt:latest
+```
+
+### Build Từ Source
+
+Nếu bạn muốn chạy trực tiếp từ mã nguồn thay vì image public:
+
+```bash
+git clone https://github.com/isharoverwhite/Final-Project.git
+cd Final-Project
 docker compose up -d --build db mqtt server webapp
 ```
 
-Khi chạy xong:
-- **Lối tắt LAN**: `http://econnect.local` sẽ tự redirect sang cổng Web UI hiện tại nếu alias đó trỏ đúng về máy self-host và host port `80` còn trống. Với runtime compose tiêu chuẩn, đích sẽ là `http://econnect.local:3000`.
-- **Giao diện Web & Setup**: Vào trang `https://localhost:3443`
-- **Dashboard HTTP cục bộ dự phòng**: `http://localhost:3000`
-- **Origin HTTPS cho Web Serial / browser APIs**: `https://localhost:3443` *(Lưu ý: endpoint HTTPS này dùng chứng chỉ tự ký cục bộ theo mặc định nên trình duyệt có thể hiện cảnh báo ở lần mở đầu tiên).*
-- **Kiểm tra Backend**: `http://localhost:8000/health`
-- **MQTT Broker Address**: Cùng trên IP cổng `1883`
-- **Database MariaDB**: Truy cập ở `localhost:3306`
+Sau đó truy cập `https://localhost:3443`.
 
-Tùy chọn MQTT host networking:
-- Stack Compose mặc định publish `1883:1883`, đây là lựa chọn an toàn hơn cho môi trường đa nền tảng và không làm hỏng local development trên Docker Desktop.
-- Nếu cần để Mosquitto bind bằng `network_mode: host`, hãy chạy thêm file override: `docker compose -f docker-compose.yml -f docker-compose.mqtt-host.yml up -d --build db mqtt server webapp`
-- Chỉ nên dùng override này trên Linux, hoặc trên Docker Desktop khi đã bật `Settings -> Resources -> Network -> Enable host networking`.
-- Override vẫn giữ cho container `server` kết nối tới broker host-bound thông qua mapping `host-gateway` cho hostname `mqtt`.
-- Trên Docker Desktop với đường publish port mặc định, log kết nối của Mosquitto có thể hiện địa chỉ proxy/forwarder của Docker thay vì IP LAN thật của client. Khi cần xác nhận đường LAN, hãy ưu tiên target broker đã provision cho thiết bị và các lần cập nhật `last_seen` phía server.
+### Ghi Chú Triển Khai
 
-Tùy chọn alias mDNS cho discovery:
-- Để public `find_website` thử `econnect.local` trước khi quét các subnet rộng hơn, hãy khởi chạy stack bằng lệnh: `docker compose --profile discovery-mdns up -d --build db mqtt server webapp discovery_mdns`
-- Helper này đã được khai báo ngay trong `docker-compose.yml`, dùng lại runtime của backend và publish alias từ host networking để các máy trong LAN resolve `econnect.local` ổn định hơn.
-- Hãy đặt `DISCOVERY_MDNS_HOSTNAME` và `DISCOVERY_MDNS_ADVERTISED_IPS` trong `.env` trước khi dùng profile này.
-- Nên ưu tiên trên máy Linux. Với Docker Desktop, host networking và multicast LAN còn phụ thuộc cấu hình network của Docker/Desktop.
+- `docker-compose.user.yml` đã được cấu hình sẵn image mặc định từ Docker Hub và không yêu cầu khai báo image bằng tay.
+- `find_website` không nằm trong stack self-hosted mặc định.
+- Cổng HTTPS chính cho Web UI là `3443`, vì vậy tài liệu và luồng người dùng nên bắt đầu từ `https://localhost:3443`.
 
-#### 6. Khởi chạy toàn bộ hệ thống (Cho Developer Testing)
-Với nhóm lập trình kiểm tra toàn bộ pipeline, câu chạy có thể bao quát luôn công đoạn build discovery:
+### License
+
+Mã nguồn và tài sản của repository hiện được phân phối dưới giấy phép proprietary trong [`LICENSE`](./LICENSE). Tham khảo thêm [`REPOSITORY_PROTECTION.md`](./REPOSITORY_PROTECTION.md) cho ghi chú bảo vệ repository và nội dung pháp lý liên quan.
+
+---
+
+## English
+
+### Overview
+
+**E-Connect** is a `self-hosted`, `local-first` smart home platform focused on:
+
+- LAN-native device control
+- DIY ESP32 / ESP8266 onboarding
+- MQTT-first messaging
+- dashboard-driven operations
+- server-side firmware builds, browser flashing, and visual GPIO mapping
+- visual automations
+- durable state stored on user-owned infrastructure
+
+### Highlights
+
+- **Real local-first behavior**: core control stays on the LAN.
+- **Compact self-hosted stack**: end users run only `db`, `mqtt`, `server`, and `webapp`.
+- **Separated discovery topology**: `find_website` remains a developer-hosted public entrypoint and is not deployed on the user's home server.
+- **DIY provisioning flow**: board selection, saved Wi-Fi credentials, pin mapping, server builds, and flash-ready workflows.
+- **Single admin surface**: dashboard, logs, settings, devices, automation, and extensions live in one product.
+
+### Architecture
+
+| Component | Responsibility |
+|---|---|
+| `server` | FastAPI backend for auth, APIs, firmware builds, WebSockets, automation, and device lifecycle |
+| `webapp` | Next.js 16 + React 19 frontend for setup, dashboard, devices, automation, and settings |
+| `mqtt` | Mosquitto broker for command/state transport |
+| `db` | MariaDB for users, households, devices, configs, automations, and logs |
+| `find_website` | Public discovery portal that helps browsers locate a local E-Connect server on the LAN |
+
+### Copy And Run Quick Start
+
+No `.env` file is required for the default setup. Copy `docker-compose.user.yml` from this repository into an empty folder, then run:
+
 ```bash
-docker compose up -d --build
+mkdir econnect && cd econnect
+docker compose -f docker-compose.user.yml up -d
 ```
-Dịch vụ khám phá `find_website` sẽ được kết xuất tại địa chỉ: `http://localhost:9123`.
 
-Nếu Jenkins cần probe thêm public discovery origin đã deploy, hãy cấu hình job parameter `PUBLIC_DISCOVERY_URL` bằng URL đó. Để trống thì pipeline chỉ skip bước smoke của public origin, còn kiểm tra discovery chạy trên LAN-hosted service vẫn giữ nguyên.
+If you prefer fetching the file directly instead of copying it manually:
 
-*Cách ngắt các hệ thống:* Chạy `docker compose down` (và bổ sung `-v` để hủy và làm mới lại các cơ sở dữ liệu từ container đã tải).
+```bash
+mkdir econnect && cd econnect
+curl -fsSLO https://raw.githubusercontent.com/isharoverwhite/Final-Project/main/docker-compose.user.yml
+docker compose -f docker-compose.user.yml up -d
+```
 
-### 🛠 Quy trình phát triển
-Dự án được bảo trì theo quy trình chuỗi thác nước (waterfall baseline) nghiêm ngặt với 4 giai đoạn minh bạch:
-- **Requirement**: Đọc lại quy trình, xem file PRD và hiểu rõ Verification Plan.
-- **Design**: Trình bày tài liệu đặc tả/sửa đổi hoặc tự bảo lưu hệ thống (không design).
-- **Implementation**: Bám sát sơ đồ, giảm thao tác vi phạm domain limits.
-- **Test**: Hoàn toàn chịu test độc lập bằng API requests, Web/db Querying.
+When the stack is ready:
 
-Kiểm duyệt tự động:
-- `webapp`: Lệnh thông dụng `npm run lint && npm run build`
-- `server`: Cú pháp kiểm tra dữ liệu `pytest tests/`
+1. Open `https://localhost:3443`
+2. Create the `Master Administrator`
+3. Save at least one Wi-Fi credential in `Settings -> Wi-Fi`
+4. Open `Devices -> Create New Device` and start your first DIY project
+5. From another device on the same LAN, open [find.isharoverwhite.com](https://find.isharoverwhite.com) to discover the local instance
 
-### 📄 Bản quyền dự án
-Kho lưu trữ này hiện có file bản quyền riêng [`LICENSE`](./LICENSE). Nếu chưa có
-văn bản cho phép từ chủ sở hữu bản quyền, toàn bộ mã nguồn, tài liệu, thiết kế
-và tài nguyên của repository đều thuộc diện `All Rights Reserved`.
+### Recommended Usage Flow
 
-Các ghi chú về hardening GitHub, automation kiểm tra header bản quyền và quy
-trình DMCA được ghi tại
-[`REPOSITORY_PROTECTION.md`](./REPOSITORY_PROTECTION.md).
+1. **Bootstrap the instance**
+   Open `https://localhost:3443`, complete the first-time setup flow, and sign in with the new admin account.
+
+2. **Store reusable Wi-Fi credentials**
+   Go to `Settings -> Wi-Fi` and save the network your DIY nodes should use during initial boot.
+
+3. **Create a hardware project**
+   Open `Devices -> Create New Device`, then choose the board family, exact profile, room, and saved network.
+
+4. **Map GPIO and build firmware**
+   Continue through `Configs -> Pins -> Review -> Flash` to prepare a server-generated firmware build.
+
+5. **Onboard and manage devices**
+   Use `Scan Device` or the public finder to discover new nodes, approve them, and move them into the dashboard.
+
+6. **Build automations**
+   Open `Automation` and compose rules through the visual `Trigger -> Condition -> Action` graph builder.
+
+### Optional Overrides
+
+The default file already works. Create a local `.env` only if you want custom values:
+
+```env
+TZ=Asia/Ho_Chi_Minh
+DB_ROOT_PASSWORD=your_root_password
+DB_PASSWORD=your_app_password
+SECRET_KEY=your_secret_key
+ECONNECT_SERVER_IMAGE=docker.io/ryzen30xx/econnect-server:latest
+ECONNECT_WEBAPP_IMAGE=docker.io/ryzen30xx/econnect-webapp:latest
+ECONNECT_MQTT_IMAGE=docker.io/ryzen30xx/econnect-mqtt:latest
+```
+
+### Run From Source
+
+If you want to build directly from the repository instead of the published Docker Hub images:
+
+```bash
+git clone https://github.com/isharoverwhite/Final-Project.git
+cd Final-Project
+docker compose up -d --build db mqtt server webapp
+```
+
+Then open `https://localhost:3443`.
+
+### Deployment Notes
+
+- `docker-compose.user.yml` now ships with working Docker Hub defaults and does not require manual image configuration.
+- `find_website` is intentionally excluded from the default self-hosted stack.
+- The primary user-facing Web UI entrypoint is `https://localhost:3443`.
+
+### License
+
+This repository is distributed under the proprietary terms in [`LICENSE`](./LICENSE). See [`REPOSITORY_PROTECTION.md`](./REPOSITORY_PROTECTION.md) for repository-protection and legal notes.
