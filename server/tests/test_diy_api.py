@@ -703,8 +703,8 @@ def test_get_diy_network_targets_uses_browser_origin_header():
     assert payload["advertised_host"] == "192.168.8.4"
     assert payload["mqtt_broker"] == "192.168.8.4"
     assert payload["api_base_url"] == "http://192.168.8.4:3000/api/v1"
-    assert payload["webapp_protocol"] == "http"
-    assert payload["webapp_port"] == 3000
+    assert payload["webapp_protocol"] == "https"
+    assert payload["webapp_port"] == 3443
     assert payload["target_key"] == "192.168.8.4|http://192.168.8.4:3000/api/v1|192.168.8.4|1883"
 
 
@@ -760,7 +760,7 @@ def test_get_diy_network_targets_prefers_runtime_startup_target_over_localhost_r
     assert payload["mqtt_broker"] == "192.168.8.44"
     assert payload["api_base_url"] == "https://192.168.8.44:3000/api/v1"
     assert payload["webapp_protocol"] == "https"
-    assert payload["webapp_port"] == 3000
+    assert payload["webapp_port"] == 3443
     assert payload["target_key"] == "192.168.8.44|https://192.168.8.44:3000/api/v1|192.168.8.44|1883"
 
 
@@ -805,7 +805,7 @@ def test_get_diy_network_targets_includes_startup_audit_warning():
     assert payload["mqtt_broker"] == "mqtt-lan.local"
     assert payload["mqtt_port"] == 2883
     assert payload["webapp_protocol"] == "https"
-    assert payload["webapp_port"] == 3000
+    assert payload["webapp_port"] == 3443
     assert payload["target_key"] == "192.168.8.44|https://192.168.8.44:3000/api/v1|mqtt-lan.local|2883"
 
 

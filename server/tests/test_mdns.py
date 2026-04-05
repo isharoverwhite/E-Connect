@@ -25,7 +25,7 @@ def test_resolve_mdns_registration_config_uses_runtime_ip_targets(monkeypatch):
     assert config.hostname == "econnect.local"
     assert config.addresses == ("192.168.2.65",)
     assert config.discovery_port == 8000
-    assert config.webapp_port == 3000
+    assert config.webapp_port == 3443
 
 
 def test_resolve_mdns_registration_config_uses_explicit_ips_without_runtime_state(monkeypatch):
@@ -40,7 +40,7 @@ def test_resolve_mdns_registration_config_uses_explicit_ips_without_runtime_stat
     assert config.hostname == "econnect.local"
     assert config.addresses == ("192.168.2.65",)
     assert config.discovery_port == 8000
-    assert config.webapp_port == 3000
+    assert config.webapp_port == 3443
 
 
 def test_resolve_mdns_registration_config_prefers_explicit_ips(monkeypatch):
@@ -123,7 +123,7 @@ def test_mdns_publisher_registers_and_stops_services():
         hostname="econnect.local",
         addresses=("192.168.2.65",),
         discovery_port=8000,
-        webapp_port=3000,
+        webapp_port=3443,
         discovery_service_name="E-Connect Discovery",
         webapp_service_name="E-Connect WebUI",
     )
@@ -136,7 +136,7 @@ def test_mdns_publisher_registers_and_stops_services():
     assert services[0].server == "econnect.local."
     assert services[0].port == 8000
     assert services[1].server == "econnect.local."
-    assert services[1].port == 3000
+    assert services[1].port == 3443
 
     zeroconf = publisher._zeroconf
     assert zeroconf is not None
@@ -145,7 +145,7 @@ def test_mdns_publisher_registers_and_stops_services():
     assert zeroconf.registered[0]["service"].server == "econnect.local."
     assert zeroconf.registered[0]["service"].port == 8000
     assert zeroconf.registered[1]["service"].server == "econnect.local."
-    assert zeroconf.registered[1]["service"].port == 3000
+    assert zeroconf.registered[1]["service"].port == 3443
 
     asyncio.run(publisher.stop())
 
@@ -172,7 +172,7 @@ def test_mdns_publisher_allows_service_name_change_when_name_exists():
         hostname="econnect.local",
         addresses=("192.168.2.65",),
         discovery_port=8000,
-        webapp_port=3000,
+        webapp_port=3443,
         discovery_service_name="E-Connect Discovery",
         webapp_service_name="E-Connect WebUI",
     )

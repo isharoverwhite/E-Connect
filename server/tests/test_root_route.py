@@ -39,7 +39,7 @@ def teardown_function():
     Base.metadata.drop_all(bind=engine)
 
 
-def test_root_route_redirects_to_default_http_webapp_port(monkeypatch):
+def test_root_route_redirects_to_default_https_companion_port(monkeypatch):
     monkeypatch.delenv("FIRMWARE_PUBLIC_BASE_URL", raising=False)
     monkeypatch.setenv("FIRMWARE_PUBLIC_SCHEME", "http")
     monkeypatch.setenv("FIRMWARE_PUBLIC_PORT", "3000")
@@ -48,7 +48,7 @@ def test_root_route_redirects_to_default_http_webapp_port(monkeypatch):
         response = client.get("/", follow_redirects=False, headers={"host": "econnect.local"})
 
     assert response.status_code == 307
-    assert response.headers["location"] == "http://econnect.local:3000/"
+    assert response.headers["location"] == "https://econnect.local:3443/"
 
 
 def test_root_route_uses_runtime_webapp_transport_when_available(monkeypatch):
@@ -129,7 +129,7 @@ def test_health_route_exposes_webapp_transport_from_runtime_network_targets(monk
     payload = response.json()
     assert payload["server_ip"] == "192.168.8.44"
     assert payload["webapp"]["protocol"] == "https"
-    assert payload["webapp"]["port"] == "3000"
+    assert payload["webapp"]["port"] == "3443"
     assert "firmware_network" not in payload
     assert "error" not in payload
     assert "warning" not in payload
