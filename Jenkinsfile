@@ -199,8 +199,21 @@ pipeline {
                         exit 1
                     fi
 
+                    host_probe_image="$(docker image inspect econnect-find-website --format '{{.Id}}' 2>/dev/null || true)"
+                    if [ -z "$host_probe_image" ]; then
+                        echo "Could not resolve the built image ID for find_website." >&2
+                        exit 1
+                    fi
+
                     retry 30 2 docker compose exec -T find_website wget -q --spider http://127.0.0.1:9123/
-                    retry 30 2 sh -c "curl -fsSI http://127.0.0.1:${published_port}/ >/dev/null"
+
+                    # Jenkins runs inside a container on Zotac, so probe the published port from the host network namespace.
+                    docker_server_os="$(docker version --format '{{.Server.Os}}' 2>/dev/null || true)"
+                    if [ "$docker_server_os" = "linux" ]; then
+                        retry 30 2 sh -c "docker run --rm --network host --entrypoint wget \"$host_probe_image\" -q --spider \"http://127.0.0.1:${published_port}/\""
+                    else
+                        echo "Skipping published-port smoke: Docker server OS '${docker_server_os:-unknown}' does not support the host-network probe."
+                    fi
 
                     public_discovery_url="${PUBLIC_DISCOVERY_URL:-}"
                     if [ -n "$public_discovery_url" ]; then
