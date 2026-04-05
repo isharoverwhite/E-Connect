@@ -209,11 +209,19 @@ def _serialize_firmware_network_state(app: FastAPI) -> dict[str, str] | None:
 def _serialize_discovery_webapp_transport(app: FastAPI) -> dict[str, str] | None:
     runtime_state = getattr(app.state, "firmware_network_state", None)
     if not isinstance(runtime_state, dict):
-        return None
+        default_transport = resolve_webapp_transport(None)
+        return {
+            "protocol": str(default_transport["webapp_protocol"]),
+            "port": str(default_transport["webapp_port"]),
+        }
 
     targets = extract_runtime_firmware_network_targets(runtime_state)
     if not isinstance(targets, dict):
-        return None
+        default_transport = resolve_webapp_transport(None)
+        return {
+            "protocol": str(default_transport["webapp_protocol"]),
+            "port": str(default_transport["webapp_port"]),
+        }
 
     webapp_transport = resolve_webapp_transport(targets.get("api_base_url"))
     return {
@@ -343,9 +351,10 @@ def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
 
 
 def _resolve_root_redirect_transport(app: FastAPI) -> tuple[str, int]:
+    default_transport = resolve_webapp_transport(None)
     runtime_state = _serialize_firmware_network_state(app)
-    protocol = "http"
-    port = 3000
+    protocol = str(default_transport["webapp_protocol"])
+    port = int(default_transport["webapp_port"])
 
     if isinstance(runtime_state, dict):
         raw_protocol = str(runtime_state.get("webapp_protocol", "")).strip().lower()

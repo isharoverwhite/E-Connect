@@ -22,7 +22,7 @@ MDNS_DISCOVERY_SERVICE_NAME_ENV = "MDNS_DISCOVERY_SERVICE_NAME"
 MDNS_WEBAPP_SERVICE_NAME_ENV = "MDNS_WEBAPP_SERVICE_NAME"
 
 DEFAULT_DISCOVERY_PORT = 8000
-DEFAULT_WEBAPP_PORT = 3000
+DEFAULT_WEBAPP_PORT = 3443
 DEFAULT_DISCOVERY_SERVICE_NAME = "E-Connect Discovery"
 DEFAULT_WEBAPP_SERVICE_NAME = "E-Connect WebUI"
 DISCOVERY_PATH = "/web-assistant.js"
@@ -174,8 +174,13 @@ def resolve_mdns_registration_config(runtime_state: Mapping[str, object] | None)
                 parsed = urlparse(api_base_url.strip())
             except ValueError:
                 parsed = None
-            if parsed is not None and parsed.port is not None:
-                default_webapp_port = parsed.port
+            if parsed is not None and parsed.scheme == "https":
+                if parsed.port == 3000:
+                    default_webapp_port = DEFAULT_WEBAPP_PORT
+                elif parsed.port is None:
+                    default_webapp_port = 443
+                elif parsed.port > 0:
+                    default_webapp_port = parsed.port
 
     discovery_service_name = os.getenv(MDNS_DISCOVERY_SERVICE_NAME_ENV, DEFAULT_DISCOVERY_SERVICE_NAME).strip()
     webapp_service_name = os.getenv(MDNS_WEBAPP_SERVICE_NAME_ENV, DEFAULT_WEBAPP_SERVICE_NAME).strip()
