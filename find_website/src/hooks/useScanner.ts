@@ -7,8 +7,6 @@ import {
   buildDiscoveryScriptUrl,
   buildWebappBaseUrl,
   COMMON_HOST_ALIASES,
-  DEFAULT_WEBAPP_PORT,
-  DEFAULT_WEBAPP_PROTOCOL,
   DISCOVERY_BRIDGE_TIMEOUT_MS,
   DISCOVERY_BRIDGE_STORAGE_KEY,
   DISCOVERY_HEALTH_PATH,
@@ -261,36 +259,9 @@ async function buildDeviceFromPayload(
   appendLaunchHostCandidate(resolveDiscoveryHost(host, payload.firmware_network));
   appendLaunchHostCandidate(host);
 
-  const composeHttpFallbackTransport = transportCandidates.find(
-    (transport) => transport.protocol === DEFAULT_WEBAPP_PROTOCOL && transport.port === DEFAULT_WEBAPP_PORT,
-  );
-  const canAssumeComposeHttpWebsite =
-    isSecureScannerPage() &&
-    advertisedTransport.protocol === "https" &&
-    advertisedTransport.port === DEFAULT_WEBAPP_PORT &&
-    composeHttpFallbackTransport !== undefined;
   let selectedTransport: WebappTransport = primaryTransport;
   let launchHost = launchHostCandidates[0] ?? displayHost;
   let websiteStatus: DeviceInfo["websiteStatus"] = "offline";
-
-  if (canAssumeComposeHttpWebsite && composeHttpFallbackTransport) {
-    selectedTransport = composeHttpFallbackTransport;
-    launchHost = launchHostCandidates[0] ?? displayHost;
-    websiteStatus = "online";
-
-    return {
-      displayHost,
-      launchHost,
-      probeHost,
-      advertisedHost,
-      database: payload.database?.trim() || "unknown",
-      mqtt: payload.mqtt?.trim() || "unknown",
-      initialized: typeof payload.initialized === "boolean" ? payload.initialized : null,
-      protocol: selectedTransport.protocol,
-      port: selectedTransport.port,
-      websiteStatus,
-    };
-  }
 
   for (const transport of transportCandidates) {
     selectedTransport = transport;
@@ -308,12 +279,6 @@ async function buildDeviceFromPayload(
     if (websiteStatus === "online") {
       break;
     }
-  }
-
-  if (websiteStatus !== "online" && canAssumeComposeHttpWebsite && composeHttpFallbackTransport) {
-    selectedTransport = composeHttpFallbackTransport;
-    launchHost = launchHostCandidates[0] ?? displayHost;
-    websiteStatus = "online";
   }
 
   return {

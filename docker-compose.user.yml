@@ -4,10 +4,7 @@
 #
 # Optional overrides may still be supplied through a local `.env`, but the
 # default experience does not require any configuration changes.
-#
-# This file intentionally excludes `find_website`. The public discovery page is
-# developer-hosted and should be opened at https://find.isharoverwhite.com from
-# a device on the same LAN after the self-hosted stack is ready.
+# The primary user-facing WebUI entrypoint is https://localhost:3443.
 
 services:
   db:
