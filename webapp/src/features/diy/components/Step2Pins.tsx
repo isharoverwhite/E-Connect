@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import { useState, useEffect } from "react";
 import { useTheme } from "next-themes";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";

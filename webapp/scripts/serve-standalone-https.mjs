@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import { readFileSync } from "node:fs";
 import http from "node:http";
 import https from "node:https";

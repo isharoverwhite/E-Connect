@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import { useEffect, useMemo, useState } from "react";
 import { Rnd } from "react-rnd";
 

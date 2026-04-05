@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import React, { useState, useEffect } from "react";
 import { sendDeviceCommand } from "@/lib/api";
 import { getActivePinConfigurations, getStatePins as readStatePins } from "@/lib/device-config";

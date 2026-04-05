@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 export type PinMode = "INPUT" | "OUTPUT" | "PWM" | "ADC" | "I2C";
 export type AuthStatus = "pending" | "approved" | "rejected";
 export type ConnStatus = "online" | "offline";

@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 // @ts-check
 import { test, expect } from '@playwright/test';
 

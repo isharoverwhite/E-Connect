@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import type { BoardPin, BoardProfile } from "./board-profiles";
 import type { PinMapping, ValidationResult } from "./types";
 

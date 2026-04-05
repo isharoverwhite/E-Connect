@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { chromium } = require("playwright");
 

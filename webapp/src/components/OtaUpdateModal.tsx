@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import React from "react";
 import type { DeviceConfig } from "@/types/device";
 import type { useOtaUpdate } from "@/hooks/useOtaUpdate";

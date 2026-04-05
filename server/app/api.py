@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, BackgroundTasks, Form, Query, Request, WebSocket, WebSocketDisconnect, Body
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm

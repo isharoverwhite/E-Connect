@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 const warnedMessages = new Set<string>();
 
 function warnOnce(message: string) {

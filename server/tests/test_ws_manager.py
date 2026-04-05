@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 from __future__ import annotations
 
 import asyncio

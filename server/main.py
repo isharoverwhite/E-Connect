@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi import HTTPException

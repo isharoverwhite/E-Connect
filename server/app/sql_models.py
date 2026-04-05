@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime, Text, ForeignKey, Enum, TIMESTAMP, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func

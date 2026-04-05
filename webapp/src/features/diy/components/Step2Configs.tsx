@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import type { BoardProfile } from "../board-profiles";
 import type { ProjectSyncState } from "../types";
 import { formatServerTimestamp } from "@/lib/server-time";
