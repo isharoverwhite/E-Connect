@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 from typing import List, Optional, Dict, Any
 from pydantic import BaseModel
 

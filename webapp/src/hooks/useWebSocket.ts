@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { getToken } from "@/lib/auth";
 import {

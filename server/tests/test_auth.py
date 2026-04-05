@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 import pytest
 from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient

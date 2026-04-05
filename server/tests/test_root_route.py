@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 import main
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine

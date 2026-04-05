@@ -164,7 +164,12 @@ Standard CI validations:
 - `server`: `pytest tests/`
 
 ### 📄 License
-This repository currently does not have a separate `LICENSE` file. All code, documents, and resources within are copyrighted property and may only be used, copied, or distributed with proper authorization until a formal open-source license is provided.
+This repository now includes a proprietary [`LICENSE`](./LICENSE) file. Unless
+the copyright owner grants written permission, all source code, documents,
+designs, and repository assets remain `All Rights Reserved`.
+
+Repository protection notes, GitHub hardening guidance, and DMCA references are
+documented in [`REPOSITORY_PROTECTION.md`](./REPOSITORY_PROTECTION.md).
 
 ---
 
@@ -323,4 +328,10 @@ Kiểm duyệt tự động:
 - `server`: Cú pháp kiểm tra dữ liệu `pytest tests/`
 
 ### 📄 Bản quyền dự án
-Kho lưu trữ này không có định dạng `LICENSE` chia sẻ nội dung công cộng cụ thể. Tất cả những tài nguyên, thiết kế từ repository này đều thuộc chủ quyền riêng biệt về tài sản. Hãy gửi yêu cầu chia sẻ cụ thể trước khi có sự đồng ý sao chép.
+Kho lưu trữ này hiện có file bản quyền riêng [`LICENSE`](./LICENSE). Nếu chưa có
+văn bản cho phép từ chủ sở hữu bản quyền, toàn bộ mã nguồn, tài liệu, thiết kế
+và tài nguyên của repository đều thuộc diện `All Rights Reserved`.
+
+Các ghi chú về hardening GitHub, automation kiểm tra header bản quyền và quy
+trình DMCA được ghi tại
+[`REPOSITORY_PROTECTION.md`](./REPOSITORY_PROTECTION.md).

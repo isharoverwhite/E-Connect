@@ -7,6 +7,17 @@ on:
     branches: [ "main", "master" ]
 
 jobs:
+  repo-protection-check:
+    name: Repository Protection Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Audit license and source notices
+        run: python3 scripts/repo_protection.py audit
+
   webapp-check:
     name: Webapp Lint & Build
     runs-on: ubuntu-latest

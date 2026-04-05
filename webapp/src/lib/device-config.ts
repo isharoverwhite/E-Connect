@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import type { DeviceConfig, DeviceStatePin, DeviceStateSnapshot, PinConfig, PinMode } from "@/types/device";
 
 const VALID_PIN_MODES: ReadonlySet<PinMode> = new Set(["INPUT", "OUTPUT", "PWM", "ADC", "I2C"]);

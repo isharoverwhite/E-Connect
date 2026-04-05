@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 from datetime import datetime, timezone
 import uuid
 from unittest.mock import Mock

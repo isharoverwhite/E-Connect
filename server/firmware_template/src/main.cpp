@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <MD5Builder.h>

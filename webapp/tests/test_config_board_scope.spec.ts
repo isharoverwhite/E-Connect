@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import { test, expect } from "@playwright/test";
 
 const DRAFT_STORAGE_KEY = "econnect:diy-svg-builder:v2";

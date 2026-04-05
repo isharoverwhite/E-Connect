@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 from datetime import datetime, timedelta, timezone
 
 import app.api as api_module

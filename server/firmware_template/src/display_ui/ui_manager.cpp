@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 #ifdef BOARD_JC3827W543
 
 #include <Arduino.h>
