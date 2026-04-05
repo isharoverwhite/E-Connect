@@ -148,14 +148,14 @@ def test_infer_firmware_network_targets_normalizes_https_companion_origin_to_htt
 def test_resolve_webapp_transport_reads_protocol_and_port_from_api_base_url():
     assert builder.resolve_webapp_transport("https://192.168.1.45:3000/api/v1") == {
         "webapp_protocol": "https",
-        "webapp_port": 3000,
+        "webapp_port": 3443,
     }
 
 
-def test_resolve_webapp_transport_defaults_to_http_3000_when_backend_has_no_value():
+def test_resolve_webapp_transport_defaults_to_https_3443_when_backend_has_no_value():
     assert builder.resolve_webapp_transport(None) == {
-        "webapp_protocol": "http",
-        "webapp_port": 3000,
+        "webapp_protocol": "https",
+        "webapp_port": 3443,
     }
 
 

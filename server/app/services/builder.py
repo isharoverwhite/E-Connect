@@ -71,6 +71,8 @@ _FIRMWARE_MQTT_PORT_ENV = "FIRMWARE_MQTT_PORT"
 _DEFAULT_WEBAPP_PROTOCOL = "http"
 _DEFAULT_WEBAPP_PORT = 3000
 _HTTPS_COMPANION_PORT = 3443
+_DEFAULT_USER_FACING_WEBAPP_PROTOCOL = "https"
+_DEFAULT_USER_FACING_WEBAPP_PORT = _HTTPS_COMPANION_PORT
 _DEFAULT_FIRMWARE_PUBLIC_PORT = "3000"
 _DEFAULT_FIRMWARE_PUBLIC_SCHEME = "http"
 _DEFAULT_MQTT_PORT = "1883"
@@ -333,8 +335,8 @@ def build_firmware_network_targets(
 
 
 def resolve_webapp_transport(api_base_url: str | None) -> dict[str, object]:
-    protocol = _DEFAULT_WEBAPP_PROTOCOL
-    port = _DEFAULT_WEBAPP_PORT
+    protocol = _DEFAULT_USER_FACING_WEBAPP_PROTOCOL
+    port = _DEFAULT_USER_FACING_WEBAPP_PORT
 
     if not isinstance(api_base_url, str) or not api_base_url.strip():
         return {
@@ -345,16 +347,23 @@ def resolve_webapp_transport(api_base_url: str | None) -> dict[str, object]:
     candidate = api_base_url.strip()
     parsed = urlsplit(candidate if "://" in candidate else f"//{candidate}", scheme=protocol)
 
-    if parsed.scheme in {"http", "https"}:
-        protocol = parsed.scheme
+    if parsed.scheme == "https":
+        protocol = _DEFAULT_USER_FACING_WEBAPP_PROTOCOL
 
     try:
         parsed_port = parsed.port
     except ValueError:
         parsed_port = None
 
-    if parsed_port is not None:
-        port = parsed_port
+    # The board-facing API target can remain on the LAN HTTP origin while the
+    # browser-facing Web UI must stay on the HTTPS companion origin.
+    if protocol == "https":
+        if parsed_port == _DEFAULT_WEBAPP_PORT:
+            port = _DEFAULT_USER_FACING_WEBAPP_PORT
+        elif parsed_port is None:
+            port = 443
+        elif 1 <= parsed_port <= 65535:
+            port = parsed_port
 
     return {
         "webapp_protocol": protocol,

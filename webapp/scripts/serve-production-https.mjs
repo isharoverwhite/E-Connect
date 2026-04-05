@@ -5,6 +5,7 @@ import http from "node:http";
 import https from "node:https";
 import net from "node:net";
 import path from "node:path";
+import tls from "node:tls";
 import { spawn } from "node:child_process";
 import { ensureLocalTlsAssets, formatTlsHostSummary } from "./local-https.mjs";
 
@@ -20,6 +21,7 @@ const publicHttpPort = parsePort(process.env.PORT ?? "3000", "PORT");
 const publicHttpsPort = parsePort(process.env.HTTPS_PORT ?? "3443", "HTTPS_PORT");
 const publicHost = process.env.HOSTNAME ?? "0.0.0.0";
 const internalPort = parsePort(process.env.INTERNAL_HTTP_PORT ?? "3001", "INTERNAL_HTTP_PORT");
+const backendInternalUrl = new URL(process.env.BACKEND_INTERNAL_URL ?? "http://server:8000");
 
 if (publicHttpPort === publicHttpsPort) {
   throw new Error(`PORT=${publicHttpPort} and HTTPS_PORT=${publicHttpsPort} must not be the same.`);
@@ -110,13 +112,43 @@ function forwardedHeaders(request, { externalPort, isSecure }) {
   return headers;
 }
 
-function proxyHttpRequest(request, response, options) {
-  const upstream = http.request(
-    {
+function isBackendRuntimePath(requestUrl = "/") {
+  try {
+    const parsedUrl = new URL(requestUrl, "http://127.0.0.1");
+    return parsedUrl.pathname === "/health" || parsedUrl.pathname === "/api/v1" || parsedUrl.pathname.startsWith("/api/v1/");
+  } catch {
+    return false;
+  }
+}
+
+function resolveUpstreamRequest(request) {
+  if (!isBackendRuntimePath(request.url)) {
+    return {
+      protocol: "http:",
       host: "127.0.0.1",
       port: internalPort,
-      method: request.method,
       path: request.url,
+    };
+  }
+
+  const upstreamUrl = new URL(request.url ?? "/", backendInternalUrl);
+  return {
+    protocol: upstreamUrl.protocol,
+    host: upstreamUrl.hostname,
+    port: Number(upstreamUrl.port || (upstreamUrl.protocol === "https:" ? "443" : "80")),
+    path: `${upstreamUrl.pathname}${upstreamUrl.search}`,
+  };
+}
+
+function proxyHttpRequest(request, response, options) {
+  const upstreamRequest = resolveUpstreamRequest(request);
+  const upstreamClient = upstreamRequest.protocol === "https:" ? https : http;
+  const upstream = upstreamClient.request(
+    {
+      host: upstreamRequest.host,
+      port: upstreamRequest.port,
+      method: request.method,
+      path: upstreamRequest.path,
       headers: forwardedHeaders(request, options),
     },
     (upstreamResponse) => {
@@ -163,7 +195,11 @@ function serializeUpgradeHeaders(request, options) {
 
 function attachUpgradeProxy(server, options) {
   server.on("upgrade", (request, socket, head) => {
-    const upstreamSocket = net.connect(internalPort, "127.0.0.1");
+    const upstreamRequest = resolveUpstreamRequest(request);
+    const upstreamSocket =
+      upstreamRequest.protocol === "https:"
+        ? tls.connect(upstreamRequest.port, upstreamRequest.host, { servername: upstreamRequest.host })
+        : net.connect(upstreamRequest.port, upstreamRequest.host);
 
     upstreamSocket.on("connect", () => {
       upstreamSocket.write(serializeUpgradeHeaders(request, options));
