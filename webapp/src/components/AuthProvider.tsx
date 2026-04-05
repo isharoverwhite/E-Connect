@@ -32,6 +32,7 @@ interface AuthContextType {
 
 const NON_PERSISTENT_SESSION_TIMEOUT_MS = 4 * 60 * 60 * 1000;
 const SESSION_REFRESH_COOLDOWN_MS = 60 * 1000;
+const MAX_BROWSER_TIMEOUT_MS = 2_147_483_647;
 
 const AuthContext = createContext<AuthContextType>({
     user: null,
@@ -64,6 +65,12 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     const sessionTimeoutRef = useRef<number | null>(null);
     const refreshPromiseRef = useRef<Promise<boolean> | null>(null);
     const lastRefreshAtRef = useRef(0);
+    const fetchUserRunIdRef = useRef(0);
+    const pathnameRef = useRef(pathname);
+
+    useEffect(() => {
+        pathnameRef.current = pathname;
+    }, [pathname]);
 
     const clearSessionTimeout = useCallback(() => {
         if (sessionTimeoutRef.current !== null) {
@@ -73,6 +80,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     }, []);
 
     const logout = useCallback(() => {
+        fetchUserRunIdRef.current += 1;
         clearSessionTimeout();
         removeToken();
         setUser(null);
@@ -97,9 +105,16 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
             return;
         }
 
+        const effectiveDelay = Math.min(delay, MAX_BROWSER_TIMEOUT_MS);
         sessionTimeoutRef.current = window.setTimeout(() => {
-            logout();
-        }, delay);
+            const latestSession = getSession();
+            if (!latestSession) {
+                logout();
+                return;
+            }
+
+            scheduleSessionTimeout(latestSession);
+        }, effectiveDelay);
     }, [clearSessionTimeout, logout]);
 
     const ensureActiveSession = useCallback(async () => {
@@ -144,21 +159,30 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     }, [clearSessionTimeout, scheduleSessionTimeout]);
 
     const fetchUser = useCallback(async () => {
+        const runId = ++fetchUserRunIdRef.current;
+        const isCurrentRun = () => fetchUserRunIdRef.current === runId;
+
         try {
             setServerOffline(false);
             try {
                 const sysStatus = await fetchSystemStatus();
                 if (!sysStatus.initialized) {
-                    if (pathname !== "/setup") {
+                    if (!isCurrentRun()) {
+                        return;
+                    }
+
+                    if (pathnameRef.current !== "/setup") {
                         router.push("/setup");
                     }
-                    setLoading(false);
                     return;
                 }
             } catch (err: unknown) {
+                if (!isCurrentRun()) {
+                    return;
+                }
+
                 if (err instanceof TypeError || err instanceof ServerOfflineError) {
                     setServerOffline(true);
-                    setLoading(false);
                     return;
                 }
                 console.warn("Failed to check system initialized state.");
@@ -171,21 +195,29 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
             }
 
             const profile = await fetchMyProfile();
+            if (!isCurrentRun()) {
+                return;
+            }
+
             setUser(profile);
-            scheduleSessionTimeout(getSession());
         } catch (err: unknown) {
+            if (!isCurrentRun()) {
+                return;
+            }
+
             if (err instanceof TypeError || err instanceof ServerOfflineError) {
                 setServerOffline(true);
-                setLoading(false);
                 return;
             }
             setUser(null);
             removeToken();
             clearSessionTimeout();
         } finally {
-            setLoading(false);
+            if (isCurrentRun()) {
+                setLoading(false);
+            }
         }
-    }, [clearSessionTimeout, ensureActiveSession, pathname, router, scheduleSessionTimeout]);
+    }, [clearSessionTimeout, ensureActiveSession, router]);
 
     useEffect(() => {
         void fetchUser();
