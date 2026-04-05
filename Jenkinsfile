@@ -13,7 +13,7 @@ pipeline {
         booleanParam(
             name: 'DEPLOY',
             defaultValue: true,
-            description: 'Deploy the active Docker Compose stack after validation.'
+            description: 'Deploy the public find_website container after validation.'
         )
         booleanParam(
             name: 'ALLOW_NON_MAIN_DEPLOY',
@@ -21,24 +21,14 @@ pipeline {
             description: 'Allow deployment from a branch other than main/master.'
         )
         string(
-            name: 'DISCOVERY_ALIAS_HOSTNAME',
-            defaultValue: 'econnect.local',
-            description: 'LAN hostname to publish for browser discovery during Docker deployment.'
-        )
-        string(
-            name: 'DISCOVERY_ALIAS_IP',
-            defaultValue: '',
-            description: 'Optional explicit LAN IP for the alias. Leave blank to auto-detect on the Jenkins node.'
-        )
-        string(
             name: 'PUBLIC_DISCOVERY_URL',
             defaultValue: '',
-            description: 'Optional public find_website URL for smoke tests. Leave blank to skip the public-origin probe.'
+            description: 'Optional public find_website URL to smoke after deploy. Leave blank to skip.'
         )
     }
 
     environment {
-        COMPOSE_FILE = 'docker-compose.yml:docker-compose.jenkins.yml'
+        COMPOSE_FILE = 'docker-compose.jenkins.yml'
         COMPOSE_PROJECT_NAME = 'econnect'
         DOCKER_BUILDKIT = '1'
         BUILDKIT_PROGRESS = 'plain'
@@ -55,67 +45,6 @@ pipeline {
         stage('Preflight') {
             steps {
                 script {
-                    def mergeCsv = { String currentValue, String addition ->
-                        def entries = []
-                        if (currentValue?.trim()) {
-                            entries.addAll(currentValue.split(',').collect { it.trim() }.findAll { it })
-                        }
-                        if (addition?.trim()) {
-                            entries.addAll(addition.split(',').collect { it.trim() }.findAll { it })
-                        }
-                        entries.unique().join(',')
-                    }
-                    def isPrivateIpv4 = { String candidate ->
-                        def normalized = candidate?.trim()
-                        if (!normalized || !(normalized ==~ /^(\d{1,3}\.){3}\d{1,3}$/)) {
-                            return false
-                        }
-
-                        def octets = normalized.tokenize('.').collect { it as Integer }
-                        if (octets.any { it < 0 || it > 255 }) {
-                            return false
-                        }
-
-                        return octets[0] == 10 ||
-                            octets[0] == 127 ||
-                            (octets[0] == 192 && octets[1] == 168) ||
-                            (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
-                    }
-                    def isCommonDockerBridgeIpv4 = { String candidate ->
-                        def normalized = candidate?.trim()
-                        if (!isPrivateIpv4(normalized)) {
-                            return false
-                        }
-
-                        def octets = normalized.tokenize('.').collect { it as Integer }
-                        return (octets[0] == 172 && octets[1] >= 17 && octets[1] <= 31) ||
-                            (octets[0] == 192 && octets[1] == 168 && octets[2] == 65)
-                    }
-                    def privateIpv4FromUrl = { String rawUrl ->
-                        def normalized = rawUrl?.trim()
-                        if (!normalized) {
-                            return null
-                        }
-
-                        def matcher = normalized =~ /^[A-Za-z][A-Za-z0-9+.-]*:\/\/([^\/?#]+)/
-                        if (!matcher.find()) {
-                            return null
-                        }
-
-                        def authority = matcher.group(1)?.trim()
-                        if (!authority) {
-                            return null
-                        }
-
-                        def host = authority.tokenize('@')[-1]
-                        if (host.startsWith('[')) {
-                            return null
-                        }
-
-                        def normalizedHost = host.tokenize(':')[0]?.trim()
-                        return isPrivateIpv4(normalizedHost) ? normalizedHost : null
-                    }
-
                     env.RESOLVED_BRANCH = sh(
                         returnStdout: true,
                         script: '''
@@ -140,81 +69,6 @@ pipeline {
                         '''
                     ).trim()
                     echo "Resolved branch: ${env.RESOLVED_BRANCH}"
-
-                    if (params.DEPLOY) {
-                        env.DISCOVERY_ALIAS_HOSTNAME = params.DISCOVERY_ALIAS_HOSTNAME?.trim()
-                            ? params.DISCOVERY_ALIAS_HOSTNAME.trim()
-                            : 'econnect.local'
-                        def explicitDiscoveryAliasIp = params.DISCOVERY_ALIAS_IP?.trim()
-                        def aliasIpProvidedByUser = explicitDiscoveryAliasIp ? true : false
-                        env.DISCOVERY_ALIAS_IP = explicitDiscoveryAliasIp
-                        def ciDiscoveryAliasIp = null
-
-                        if (!env.DISCOVERY_ALIAS_IP) {
-                            for (candidateUrl in [env.JENKINS_URL, env.BUILD_URL]) {
-                                ciDiscoveryAliasIp = privateIpv4FromUrl(candidateUrl)
-                                if (ciDiscoveryAliasIp) {
-                                    env.DISCOVERY_ALIAS_IP = ciDiscoveryAliasIp
-                                    echo "Using Jenkins URL host ${ciDiscoveryAliasIp} as the discovery alias IP."
-                                    break
-                                }
-                            }
-                        }
-
-                        if (!env.DISCOVERY_ALIAS_IP) {
-                            env.DISCOVERY_ALIAS_IP = sh(
-                                returnStdout: true,
-                                script: '''
-                                    set -eu
-
-                                    if command -v ip >/dev/null 2>&1; then
-                                        candidate="$(ip route get 1.1.1.1 2>/dev/null | awk '/src/ { for (i=1; i<=NF; i++) if ($i == "src") { print $(i+1); exit } }')"
-                                        if [ -n "$candidate" ]; then
-                                            printf '%s' "$candidate"
-                                            exit 0
-                                        fi
-                                    fi
-
-                                    if command -v hostname >/dev/null 2>&1; then
-                                        candidate="$(hostname -I 2>/dev/null | awk '{print $1}')"
-                                        if [ -n "$candidate" ]; then
-                                            printf '%s' "$candidate"
-                                            exit 0
-                                        fi
-                                    fi
-
-                                    exit 1
-                                '''
-                            ).trim()
-                        }
-
-                        if (!aliasIpProvidedByUser && ciDiscoveryAliasIp && isCommonDockerBridgeIpv4(env.DISCOVERY_ALIAS_IP)) {
-                            echo "Auto-detected ${env.DISCOVERY_ALIAS_IP} looks like a Docker bridge address. Overriding with Jenkins URL host ${ciDiscoveryAliasIp}."
-                            env.DISCOVERY_ALIAS_IP = ciDiscoveryAliasIp
-                        }
-
-                        if (!env.DISCOVERY_ALIAS_IP) {
-                            error("Could not determine a LAN IP for ${env.DISCOVERY_ALIAS_HOSTNAME}. Set DISCOVERY_ALIAS_IP explicitly.")
-                        }
-                        if (!aliasIpProvidedByUser && isCommonDockerBridgeIpv4(env.DISCOVERY_ALIAS_IP)) {
-                            error("Auto-detected ${env.DISCOVERY_ALIAS_IP} looks like a Docker bridge address, not a stable LAN IP. Set DISCOVERY_ALIAS_IP explicitly or configure JENKINS_URL to the Jenkins host LAN URL.")
-                        }
-
-                        env.DISCOVERY_MDNS_HOSTNAME = env.DISCOVERY_ALIAS_HOSTNAME
-                        env.DISCOVERY_MDNS_ADVERTISED_IPS = mergeCsv(env.DISCOVERY_MDNS_ADVERTISED_IPS, env.DISCOVERY_ALIAS_IP)
-                        env.COMPOSE_PROFILES = mergeCsv(env.COMPOSE_PROFILES, 'discovery-mdns')
-                        env.HTTPS_HOSTS = mergeCsv(env.HTTPS_HOSTS, env.DISCOVERY_ALIAS_HOSTNAME)
-
-                        if (!env.FIRMWARE_PUBLIC_BASE_URL?.trim()) {
-                            env.FIRMWARE_PUBLIC_BASE_URL = "https://${env.DISCOVERY_ALIAS_HOSTNAME}:3000"
-                        }
-                        if (!env.FIRMWARE_MQTT_BROKER?.trim()) {
-                            env.FIRMWARE_MQTT_BROKER = env.DISCOVERY_ALIAS_HOSTNAME
-                        }
-
-                        echo "Discovery alias: ${env.DISCOVERY_MDNS_HOSTNAME} -> ${env.DISCOVERY_MDNS_ADVERTISED_IPS}"
-                        echo "Runtime WebUI origin: ${env.FIRMWARE_PUBLIC_BASE_URL}"
-                    }
                 }
 
                 sh '''
@@ -227,37 +81,16 @@ pipeline {
                     buildx_activity_dir="${HOME:-/root}/.docker/buildx/activity"
                     mkdir -p "$buildx_activity_dir"
                     find "$buildx_activity_dir" -type f -delete || true
-
-                    docker builder prune -af || true
-                    docker image prune -af || true
-                    docker container prune -f || true
-                    docker system df || true
                 '''
             }
         }
 
         stage('Build Gate') {
             steps {
-                echo 'Running webapp build, server tests, and find_website Docker validation before CD.'
+                echo 'Building the public find_website image for Zotac.'
                 sh '''
                     set -eu
-
-                    docker build \
-                        --file webapp/Dockerfile \
-                        --target check \
-                        --tag econnect-webapp-check \
-                        ./webapp
-
-                    docker build \
-                        --file server/Dockerfile \
-                        --target test \
-                        --tag econnect-server-test \
-                        ./server
-
-                    docker build \
-                        --file find_website/Dockerfile \
-                        --tag econnect-find-website-check \
-                        ./find_website
+                    docker compose build find_website
                 '''
             }
         }
@@ -275,15 +108,47 @@ pipeline {
             }
         }
 
-        stage('Build Active Images') {
+        stage('Cleanup Legacy E-Connect Runtime') {
             when {
                 expression { return params.DEPLOY }
             }
             steps {
-                echo 'Building all live release services including find_website and discovery_mdns'
+                echo 'Removing legacy E-Connect runtime containers and images from Zotac before deploying only find_website.'
                 sh '''
                     set -eu
-                    docker compose build mqtt server webapp find_website discovery_mdns
+
+                    docker compose down --remove-orphans || true
+
+                    remove_container_if_present() {
+                        name="$1"
+                        if docker ps -a --format '{{.Names}}' | grep -Fxq "$name"; then
+                            docker rm -f "$name" >/dev/null || true
+                        fi
+                    }
+
+                    remove_repo_images() {
+                        repo="$1"
+                        image_ids="$(docker images --format '{{.Repository}} {{.ID}}' | awk -v repo="$repo" '$1 == repo { print $2 }' | sort -u)"
+                        if [ -n "$image_ids" ]; then
+                            printf '%s\n' "$image_ids" | xargs -r docker image rm -f >/dev/null || true
+                        fi
+                    }
+
+                    for container in e-connect-db e-connect-mqtt e-connect-server e-connect-webapp; do
+                        remove_container_if_present "$container"
+                    done
+
+                    project_container_ids="$(docker ps -aq --filter label=com.docker.compose.project=econnect || true)"
+                    if [ -n "$project_container_ids" ]; then
+                        printf '%s\n' "$project_container_ids" | xargs -r docker rm -f >/dev/null || true
+                    fi
+
+                    for repo in econnect-mqtt econnect-server econnect-webapp econnect-webapp-check econnect-server-test; do
+                        remove_repo_images "$repo"
+                    done
+
+                    docker image prune -f --filter dangling=true || true
+                    docker system df || true
                 '''
             }
         }
@@ -328,53 +193,20 @@ pipeline {
                         done
                     }
 
-                    docker compose port server 8000 >/dev/null
-                    docker compose port find_website 9123 >/dev/null
-                    retry 30 2 docker compose exec -T server python -c "import json, urllib.request; data = json.loads(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).read().decode()); assert data.get('status') == 'ok'"
-                    retry 30 2 docker compose exec -T webapp node -e "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'; const candidates = ['http://127.0.0.1:3000/login', 'https://127.0.0.1:3443/login']; const main = async () => { for (const url of candidates) { try { const res = await fetch(url); if (res.ok) return; } catch (error) {} } process.exit(1); }; main().catch(() => process.exit(1))"
+                    published_port="$(docker compose port find_website 9123 | awk -F: 'NF { print $NF }' | tail -n1)"
+                    if [ -z "$published_port" ]; then
+                        echo "Could not resolve the published port for find_website." >&2
+                        exit 1
+                    fi
+
                     retry 30 2 docker compose exec -T find_website wget -q --spider http://127.0.0.1:9123/
-                    retry 30 2 sh -c "docker compose logs discovery_mdns 2>&1 | grep -q 'Published mDNS alias'"
-                    retry 30 2 sh -c "docker compose logs discovery_mdns 2>&1 | grep -F \"Published mDNS alias ${DISCOVERY_MDNS_HOSTNAME} -> ${DISCOVERY_ALIAS_IP}\""
-
-                    run_browser_discovery_smoke() {
-                        label="$1"
-                        scan_url="$2"
-                        expected_any="$3"
-                        allow_scan_failed="${4:-false}"
-
-                        docker run --rm --network host \
-                            -i \
-                            -e DISCOVERY_SCAN_LABEL="$label" \
-                            -e DISCOVERY_SCAN_URL="$scan_url" \
-                            -e DISCOVERY_EXPECT_ANY="$expected_any" \
-                            -e DISCOVERY_ALLOW_SCAN_FAILED="$allow_scan_failed" \
-                            -e DISCOVERY_SCAN_TIMEOUT_MS="45000" \
-                            mcr.microsoft.com/playwright:v1.58.2-noble \
-                            bash -lc 'set -eu
-                                if ! npm install -g playwright@1.58.2 >/tmp/playwright-npm.log 2>&1; then
-                                    cat /tmp/playwright-npm.log >&2 || true
-                                    exit 1
-                                fi
-                                export NODE_PATH="$(npm root -g)"
-                                node -' \
-                            < webapp/scripts/discovery-smoke.cjs
-                    }
-
-                    retry 3 5 run_browser_discovery_smoke \
-                        "lan-hosted scanner" \
-                        "http://${DISCOVERY_ALIAS_IP}:9123/" \
-                        "${DISCOVERY_ALIAS_IP},${DISCOVERY_MDNS_HOSTNAME}" \
-                        "false"
+                    retry 30 2 sh -c "curl -fsSI http://127.0.0.1:${published_port}/ >/dev/null"
 
                     public_discovery_url="${PUBLIC_DISCOVERY_URL:-}"
                     if [ -n "$public_discovery_url" ]; then
-                        retry 3 5 run_browser_discovery_smoke \
-                            "public discovery page" \
-                            "$public_discovery_url" \
-                            "${DISCOVERY_MDNS_HOSTNAME},${DISCOVERY_ALIAS_IP}" \
-                            "true"
+                        retry 10 3 sh -c "curl -fsSI \"$public_discovery_url\" >/dev/null"
                     else
-                        echo "Skipping public discovery smoke: PUBLIC_DISCOVERY_URL is not configured."
+                        echo "Skipping public URL smoke: PUBLIC_DISCOVERY_URL is not configured."
                     fi
                 '''
             }
@@ -390,9 +222,9 @@ pipeline {
 
         failure {
             sh '''
-                docker compose logs --tail=200 server webapp find_website db mqtt discovery_mdns || true
+                docker compose logs --tail=200 find_website || true
             '''
-            echo 'Deployment failed. Review compose status and service logs above.'
+            echo 'Deployment failed. Review the public finder logs above.'
         }
 
         success {
