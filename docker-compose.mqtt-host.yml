@@ -1,7 +1,7 @@
 services:
   mqtt:
     network_mode: host
-    ports: []
+    ports: !reset []
 
   server:
     extra_hosts:

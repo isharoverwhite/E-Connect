@@ -11,6 +11,7 @@ import {
   DISCOVERY_BRIDGE_STORAGE_KEY,
   DISCOVERY_HEALTH_PATH,
   DISCOVERY_SCRIPT_PORT,
+  extractPrivateIpv4DiscoveryHost,
   generateSubnetIps,
   isDiscoveryPayloadCandidate,
   isLikelyPrivateDiscoveryHost,
@@ -56,6 +57,89 @@ function getDynamicWindow(): WindowWithDynamicCallbacks | null {
 function isSecureScannerPage(): boolean {
   const pageWindow = getDynamicWindow();
   return pageWindow?.location.protocol === "https:";
+}
+
+function buildDeviceMatchCandidates(device: Pick<DeviceInfo, "displayHost" | "launchHost" | "advertisedHost">): string[] {
+  return Array.from(
+    new Set(
+      [device.displayHost, device.launchHost, device.advertisedHost]
+        .map((candidate) => normalizeDiscoveryHost(candidate))
+        .filter((candidate): candidate is string => Boolean(candidate)),
+    ),
+  );
+}
+
+function buildDeviceIdentityKey(device: Pick<DeviceInfo, "displayHost" | "launchHost" | "advertisedHost" | "port">): string {
+  const primaryHost =
+    normalizeDiscoveryHost(device.displayHost) ??
+    normalizeDiscoveryHost(device.advertisedHost) ??
+    normalizeDiscoveryHost(device.launchHost) ??
+    device.displayHost.trim().toLowerCase();
+
+  return `${primaryHost}:${device.port ?? ""}`;
+}
+
+function choosePreferredDevice(existing: DeviceInfo, incoming: DeviceInfo): DeviceInfo {
+  const existingDisplayIp = extractPrivateIpv4DiscoveryHost(existing.displayHost);
+  const incomingDisplayIp = extractPrivateIpv4DiscoveryHost(incoming.displayHost);
+  if (incomingDisplayIp && !existingDisplayIp) {
+    return incoming;
+  }
+  if (existingDisplayIp && !incomingDisplayIp) {
+    return existing;
+  }
+
+  const existingLaunchIp = extractPrivateIpv4DiscoveryHost(existing.launchHost);
+  const incomingLaunchIp = extractPrivateIpv4DiscoveryHost(incoming.launchHost);
+  if (incomingLaunchIp && !existingLaunchIp) {
+    return incoming;
+  }
+  if (existingLaunchIp && !incomingLaunchIp) {
+    return existing;
+  }
+
+  if (incoming.websiteStatus === "online" && existing.websiteStatus !== "online") {
+    return incoming;
+  }
+  if (existing.websiteStatus === "online" && incoming.websiteStatus !== "online") {
+    return existing;
+  }
+
+  return incoming;
+}
+
+function upsertPendingDevice(devices: Map<string, DeviceInfo>, incoming: DeviceInfo): void {
+  const incomingCandidates = new Set(buildDeviceMatchCandidates(incoming));
+
+  for (const [existingKey, existing] of devices.entries()) {
+    const matchesExisting = buildDeviceMatchCandidates(existing).some((candidate) => incomingCandidates.has(candidate));
+    if (!matchesExisting) {
+      continue;
+    }
+
+    const preferred = choosePreferredDevice(existing, incoming);
+    const preferredKey = buildDeviceIdentityKey(preferred);
+    devices.delete(existingKey);
+    devices.set(preferredKey, preferred);
+    return;
+  }
+
+  devices.set(buildDeviceIdentityKey(incoming), incoming);
+}
+
+function sortDiscoveredDevices(devices: DeviceInfo[]): DeviceInfo[] {
+  return [...devices].sort((left, right) => {
+    const leftIp = extractPrivateIpv4DiscoveryHost(left.displayHost);
+    const rightIp = extractPrivateIpv4DiscoveryHost(right.displayHost);
+    if (leftIp && !rightIp) {
+      return -1;
+    }
+    if (!leftIp && rightIp) {
+      return 1;
+    }
+
+    return left.displayHost.localeCompare(right.displayHost);
+  });
 }
 
 function isDiscoveryBridgeMessage(value: unknown, requestId: string): value is DiscoveryBridgeMessage {
@@ -593,7 +677,7 @@ export const useScanner = () => {
   const finalizeScan = useCallback(() => {
     clearGlobalTimeout();
     scanStartedAtRef.current = null;
-    setFoundDevices(Array.from(pendingDevicesRef.current.values()));
+    setFoundDevices(sortDiscoveredDevices(Array.from(pendingDevicesRef.current.values())));
     setIsScanning(false);
   }, [clearGlobalTimeout]);
 
@@ -723,7 +807,7 @@ export const useScanner = () => {
           continue;
         }
 
-        pendingDevicesRef.current.set(`${device.launchHost}:${device.port ?? ""}`, device);
+        upsertPendingDevice(pendingDevicesRef.current, device);
         shortenScanAfterDetection();
       }
     };
@@ -733,7 +817,7 @@ export const useScanner = () => {
         setTotalCount(COMMON_HOST_ALIASES.length);
         const bridgedDevice = await probePreferredAliasesViaBridge(signal);
         if (bridgedDevice) {
-          pendingDevicesRef.current.set(`${bridgedDevice.launchHost}:${bridgedDevice.port ?? ""}`, bridgedDevice);
+          upsertPendingDevice(pendingDevicesRef.current, bridgedDevice);
           shortenScanAfterDetection();
           setScannedCount(COMMON_HOST_ALIASES.length);
           setProgress(100);
