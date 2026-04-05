@@ -1,18 +1,26 @@
-# End-user self-hosted stack that pulls prebuilt images from Docker Hub.
-# This file intentionally excludes find_website. The public discovery portal
-# must remain under project-owner control, and end users should open
-# https://find.isharoverwhite.com from a device on the same LAN after setup.
+# Zero-config end-user self-hosted stack for E-Connect.
+# Quick start:
+#   docker compose -f docker-compose.user.yml up -d
+#
+# Optional overrides may still be supplied through a local `.env`, but the
+# default experience does not require any configuration changes.
+#
+# This file intentionally excludes `find_website`. The public discovery page is
+# developer-hosted and should be opened at https://find.isharoverwhite.com from
+# a device on the same LAN after the self-hosted stack is ready.
+
 services:
   db:
     image: docker.io/library/mariadb:10.11
+    pull_policy: always
     container_name: e-connect-db
     restart: always
     environment:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root_password}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-econnect_root_password}
       MYSQL_DATABASE: ${DB_NAME:-e_connect_db}
       MYSQL_USER: ${DB_USER:-econnect}
-      MYSQL_PASSWORD: ${DB_PASSWORD:-root_password}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-econnect_password}
     ports:
       - "3306:3306"
     volumes:
@@ -24,7 +32,8 @@ services:
       retries: 5
 
   mqtt:
-    image: ${ECONNECT_MQTT_IMAGE:?missing_ECONNECT_MQTT_IMAGE}
+    image: ${ECONNECT_MQTT_IMAGE:-docker.io/ryzen30xx/econnect-mqtt:latest}
+    pull_policy: always
     container_name: e-connect-mqtt
     restart: always
     environment:
@@ -33,7 +42,8 @@ services:
       - "1883:1883"
 
   server:
-    image: ${ECONNECT_SERVER_IMAGE:?missing_ECONNECT_SERVER_IMAGE}
+    image: ${ECONNECT_SERVER_IMAGE:-docker.io/ryzen30xx/econnect-server:latest}
+    pull_policy: always
     container_name: e-connect-server
     restart: always
     ports:
@@ -41,8 +51,8 @@ services:
       - "8000:8000"
     environment:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
-      DATABASE_URL: mysql+pymysql://${DB_USER:-econnect}:${DB_PASSWORD:-root_password}@${DB_HOST:-db}:3306/${DB_NAME:-e_connect_db}
-      SECRET_KEY: ${SECRET_KEY:-supersecretkey}
+      DATABASE_URL: mysql+pymysql://${DB_USER:-econnect}:${DB_PASSWORD:-econnect_password}@${DB_HOST:-db}:3306/${DB_NAME:-e_connect_db}
+      SECRET_KEY: ${SECRET_KEY:-econnect_secret_key_change_me}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-43200}
       MQTT_BROKER: ${MQTT_BROKER:-mqtt}
       MQTT_PORT: ${MQTT_PORT:-1883}
@@ -58,8 +68,8 @@ services:
       HOST_OS_ROOT: /hostfs
     volumes:
       - server_data:/data
-      # To monitor the real host's storage limits from the System Health dashboard, uncomment the line below.
-      # Make sure to leave 'ro' to keep the container from modifying host files.
+      # Optional host storage visibility for the System Health screen.
+      # Uncomment only if you want the dashboard to show real host disk limits.
       # - /:/hostfs:ro
     depends_on:
       db:
@@ -78,7 +88,8 @@ services:
       start_period: 5s
 
   webapp:
-    image: ${ECONNECT_WEBAPP_IMAGE:?missing_ECONNECT_WEBAPP_IMAGE}
+    image: ${ECONNECT_WEBAPP_IMAGE:-docker.io/ryzen30xx/econnect-webapp:latest}
+    pull_policy: always
     container_name: e-connect-webapp
     restart: always
     ports:
@@ -91,7 +102,7 @@ services:
       ALLOW_INSECURE_HTTP: "1"
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
       BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://server:8000}
-      HTTPS_HOSTS: ${HTTPS_HOSTS:-}
+      HTTPS_HOSTS: ${HTTPS_HOSTS:-localhost,econnect.local,e-connect.local}
       HTTPS_IPS: ${HTTPS_IPS:-}
       HTTPS_PORT: 3443
     depends_on:
@@ -109,14 +120,15 @@ services:
       start_period: 5s
 
   discovery_mdns:
-    image: ${ECONNECT_SERVER_IMAGE:?missing_ECONNECT_SERVER_IMAGE}
+    image: ${ECONNECT_SERVER_IMAGE:-docker.io/ryzen30xx/econnect-server:latest}
+    pull_policy: always
     command: ["python", "-m", "scripts.publish_mdns_alias"]
     profiles: ["discovery-mdns"]
     restart: always
     network_mode: host
     environment:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
-      MDNS_HOSTNAME: ${DISCOVERY_MDNS_HOSTNAME:-}
+      MDNS_HOSTNAME: ${DISCOVERY_MDNS_HOSTNAME:-econnect.local}
       MDNS_ADVERTISED_IPS: ${DISCOVERY_MDNS_ADVERTISED_IPS:-}
       MDNS_DISCOVERY_PORT: ${DISCOVERY_MDNS_DISCOVERY_PORT:-8000}
       MDNS_WEBAPP_PORT: ${DISCOVERY_MDNS_WEBAPP_PORT:-3000}
