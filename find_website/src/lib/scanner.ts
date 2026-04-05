@@ -40,8 +40,9 @@ export type WebappTransport = {
   port: string;
 };
 
-export const DEFAULT_WEBAPP_PROTOCOL = "http";
-export const DEFAULT_WEBAPP_PORT = "3000";
+export const DEFAULT_WEBAPP_PROTOCOL = "https";
+export const DEFAULT_WEBAPP_PORT = "3443";
+export const LEGACY_API_PORT = "3000";
 export const DISCOVERY_SCRIPT_PORT = "8000";
 export const DISCOVERY_SCRIPT_PATH = "/web-assistant.js";
 export const DISCOVERY_BRIDGE_PATH = "/discovery-bridge";
@@ -194,10 +195,12 @@ export function resolveWebappTransport(
       const parsedUrl = new URL(
         rawApiBaseUrl.includes("://") ? rawApiBaseUrl : `${DEFAULT_WEBAPP_PROTOCOL}://${rawApiBaseUrl}`,
       );
+      const parsedPort = normalizePort(parsedUrl.port);
+      const mappedPort = parsedPort === LEGACY_API_PORT ? DEFAULT_WEBAPP_PORT : parsedPort;
 
       return {
-        protocol: backendProtocol ?? normalizeProtocol(parsedUrl.protocol.replace(":", "")) ?? DEFAULT_WEBAPP_PROTOCOL,
-        port: backendPort ?? normalizePort(parsedUrl.port) ?? DEFAULT_WEBAPP_PORT,
+        protocol: backendProtocol ?? DEFAULT_WEBAPP_PROTOCOL,
+        port: backendPort ?? mappedPort ?? DEFAULT_WEBAPP_PORT,
       };
     } catch {
       // Fall through to the safe scanner defaults below.
@@ -229,25 +232,7 @@ export function resolveWebappProbeTransports(
 ): WebappTransport[] {
   const primaryTransport = resolveWebappTransport(webapp, firmwareNetwork);
   const candidates: WebappTransport[] = [];
-  const securePage = options?.securePage === true;
-  const looksPrivateLanTarget =
-    isLikelyPrivateDiscoveryHost(options?.probeHost) ||
-    isLikelyPrivateDiscoveryHost(firmwareNetwork?.api_base_url) ||
-    isLikelyPrivateDiscoveryHost(firmwareNetwork?.advertised_host);
-
-  // Legacy deployments can still advertise https://<lan-host>:3000 even though the
-  // compose WebUI now serves plain HTTP on 3000 and keeps HTTPS on a companion port.
-  if (
-    securePage &&
-    looksPrivateLanTarget &&
-    primaryTransport.protocol === "https" &&
-    primaryTransport.port === DEFAULT_WEBAPP_PORT
-  ) {
-    appendWebappTransportCandidate(candidates, {
-      protocol: DEFAULT_WEBAPP_PROTOCOL,
-      port: DEFAULT_WEBAPP_PORT,
-    });
-  }
+  void options;
 
   appendWebappTransportCandidate(candidates, primaryTransport);
 
