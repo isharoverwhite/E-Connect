@@ -89,6 +89,8 @@ English: `Settings` centralizes instance administration, including timezone, use
 | `mqtt` | Mosquitto broker cho command/state loop |
 | `db` | MariaDB lưu user, household, device, config, automation, log |
 
+`find_website` không nằm trong stack self-hosted. Luồng chuẩn là người dùng chạy `db`, `mqtt`, `server`, `webapp` trong LAN của họ, rồi mở [find.isharoverwhite.com](https://find.isharoverwhite.com) từ một thiết bị cùng LAN để browser của chính họ scan ra server vừa cài.
+
 ### Chạy Nhanh Theo Kiểu Copy & Run
 
 Không cần tạo `.env`. Bản dành cho người dùng cuối nằm tại `deploy/user/compose.yml`.
@@ -118,6 +120,18 @@ Nếu bạn đang đứng trong repo này và muốn dùng bản tương thích 
 docker compose -f docker-compose.user.yml up -d
 ```
 
+Nếu bạn muốn `find.isharoverwhite.com` ưu tiên alias `econnect.local` trước khi quét subnet, hãy điền `https_ips` bằng LAN IP thật của server rồi bật profile mDNS tùy chọn:
+
+```bash
+docker compose --profile discovery-mdns up -d
+```
+
+Trong repo này, lệnh tương đương là:
+
+```bash
+docker compose -f docker-compose.user.yml --profile discovery-mdns up -d
+```
+
 Sau khi stack lên xong:
 
 1. Trên máy đang chạy Docker, mở `https://localhost:3443`
@@ -125,6 +139,7 @@ Sau khi stack lên xong:
 3. Đăng nhập bằng tài khoản admin vừa tạo
 4. Vào `Settings -> Wi-Fi` để lưu mạng Wi-Fi dùng cho provisioning
 5. Vào `Devices -> Create New Device` để tạo project DIY đầu tiên
+6. Trên laptop hoặc điện thoại nằm cùng LAN, mở [find.isharoverwhite.com](https://find.isharoverwhite.com) để kiểm tra browser scan có tìm thấy server self-hosted của bạn hay không
 
 ### User cần sửa những dòng nào
 
@@ -144,7 +159,7 @@ x-user-config:
 - `db_root_password`: mật khẩu root của MariaDB
 - `db_password`: mật khẩu ứng dụng E-Connect dùng để vào MariaDB
 - `secret_key`: khóa bí mật của backend, nên dùng chuỗi dài và khó đoán
-- `https_ips`: IP LAN của máy chạy Docker, dùng khi muốn mở từ điện thoại hoặc máy khác trong mạng nội bộ
+- `https_ips`: IP LAN của máy chạy Docker, dùng khi muốn mở từ điện thoại hoặc máy khác trong mạng nội bộ, đồng thời là IP được profile `discovery-mdns` dùng để publish `econnect.local`
 - `https_hosts`: hostname nội bộ nếu bạn có dùng tên như `econnect.local`
 
 `server` sẽ tự lấy `db_name`, `db_user`, và `db_password` trong cùng file để dựng kết nối MariaDB, nên người dùng không cần map chuỗi kết nối DB thủ công nữa.
@@ -201,6 +216,15 @@ docker volume ls | grep webapp_tls
 docker volume rm <your_project>_webapp_tls
 docker compose up -d
 ```
+
+### Dùng find website để tìm server trong LAN
+
+`find_website` là entrypoint public do nhà phát triển host, không phải container người dùng cần tự chạy ở nhà. Sau khi stack self-hosted đã hoạt động:
+
+1. Mở [find.isharoverwhite.com](https://find.isharoverwhite.com) từ thiết bị nằm cùng LAN với server E-Connect.
+2. Giữ tab mở để browser của chính thiết bị đó scan tới các endpoint discovery của `server`, chủ yếu là `http://<lan-host>:8000/web-assistant.js` và `http://<lan-host>:8000/discovery-bridge`.
+3. Khi scan thành công, bấm vào result card để mở WebUI cục bộ tại `https://<lan-host>:3443`.
+4. Nếu muốn alias-first fast path bằng `econnect.local`, hãy điền `https_ips` bằng LAN IP thật của server rồi chạy lại với profile `discovery-mdns`.
 
 ### Luồng sử dụng đề xuất
 
@@ -294,6 +318,8 @@ Mã nguồn và tài sản của repository hiện được phân phối dưới
 | `mqtt` | Mosquitto broker for command/state transport |
 | `db` | MariaDB for users, households, devices, configs, automations, and logs |
 
+`find_website` is not part of the self-hosted stack. The normal topology is that users run only `db`, `mqtt`, `server`, and `webapp` on their own LAN, then open [find.isharoverwhite.com](https://find.isharoverwhite.com) from a device on that same LAN so their own browser can discover the server they just installed.
+
 ### Copy And Run Quick Start
 
 No `.env` file is required. The end-user artifact lives at `deploy/user/compose.yml`.
@@ -323,6 +349,18 @@ If you are already inside this repository and want the backward-compatible root 
 docker compose -f docker-compose.user.yml up -d
 ```
 
+If you want [find.isharoverwhite.com](https://find.isharoverwhite.com) to prefer the `econnect.local` alias before subnet sweeping, fill `https_ips` with the real server LAN IP and enable the optional mDNS profile:
+
+```bash
+docker compose --profile discovery-mdns up -d
+```
+
+Inside this repository, the equivalent command is:
+
+```bash
+docker compose -f docker-compose.user.yml --profile discovery-mdns up -d
+```
+
 When the stack is ready:
 
 1. On the Docker host machine, open `https://localhost:3443`
@@ -330,6 +368,7 @@ When the stack is ready:
 3. Sign in with the new admin account
 4. Save at least one Wi-Fi credential in `Settings -> Wi-Fi`
 5. Open `Devices -> Create New Device` and start your first DIY project
+6. From a laptop or phone on the same LAN, open [find.isharoverwhite.com](https://find.isharoverwhite.com) and confirm that the browser scanner can discover your self-hosted server
 
 ### Which Lines Should A User Edit?
 
@@ -349,7 +388,7 @@ What each line means:
 - `db_root_password`: MariaDB root password
 - `db_password`: MariaDB application password used by E-Connect
 - `secret_key`: backend secret; use a long unpredictable string
-- `https_ips`: LAN IP of the Docker host when you want to open the UI from another device on the same network
+- `https_ips`: LAN IP of the Docker host when you want to open the UI from another device on the same network, and the address reused by the `discovery-mdns` profile to publish `econnect.local`
 - `https_hosts`: internal hostname if you use one, such as `econnect.local`
 
 The `server` container now derives its MariaDB connection from the same `db_name`, `db_user`, and `db_password` values in the same file, so end users do not need to maintain a separate DB connection string anymore.
@@ -408,6 +447,15 @@ docker volume rm <your_project>_webapp_tls
 docker compose up -d
 ```
 
+### Use The Find Website To Discover The LAN Server
+
+`find_website` stays developer-hosted. End users should not run it as part of their home stack. After the self-hosted runtime is healthy:
+
+1. Open [find.isharoverwhite.com](https://find.isharoverwhite.com) from a device on the same LAN as the E-Connect server.
+2. Keep the tab open so that browser session can probe the server discovery endpoints, primarily `http://<lan-host>:8000/web-assistant.js` and `http://<lan-host>:8000/discovery-bridge`.
+3. Click the result card to launch the local WebUI at `https://<lan-host>:3443`.
+4. If you want the alias-first fast path through `econnect.local`, set `https_ips` to the real LAN IP and rerun Compose with the `discovery-mdns` profile enabled.
+
 ### Recommended Usage Flow
 
 1. **Bootstrap the instance**
@@ -460,8 +508,10 @@ Then open `https://localhost:3443`.
 
 ### Deployment Notes
 
-- `docker-compose.user.yml` ships with working Docker Hub defaults and does not require manual image configuration.
+- `deploy/user/compose.yml` is the primary end-user artifact; `docker-compose.user.yml` remains the in-repo compatibility variant.
 - The primary HTTPS WebUI entrypoint is `:3443`.
+- Host `:8000` remains part of the self-hosted runtime because the public find website needs `/health`, `/web-assistant.js`, and `/discovery-bridge` on the user's LAN server.
+- The optional `discovery-mdns` profile publishes `econnect.local` from the same backend runtime image and expects `https_ips` to contain the real LAN IP.
 - On first access from a new device, the browser may warn about the self-signed certificate. Accept it for the exact internal host you chose for the WebUI.
 
 ### License
