@@ -7,6 +7,15 @@
 #   3. Open:
 #        https://localhost:3443
 #
+# Public LAN discovery entrypoint:
+#   https://find.isharoverwhite.com
+#   The public page scans from the user's browser on the same LAN. Do not add
+#   find_website to this self-hosted stack.
+#
+# Optional alias-first discovery:
+#   After setting `https_ips` to the server LAN IP, run:
+#        docker compose --profile discovery-mdns up -d
+#
 # Main WebUI:
 #   https://localhost:3443
 
@@ -17,6 +26,8 @@ x-user-config:
   # - secret_key
   # - https_ips if you open the WebUI from another phone/computer by LAN IP
   # - https_hosts if you use a LAN hostname such as econnect.local
+  # - https_ips also feeds the optional discovery-mdns profile for the public
+  #   find website alias-first scan
   #
   # Real example for a home LAN server at 192.168.1.25:
   # - db_root_password: &db_root_password "HomeRoot!2026"
@@ -44,6 +55,7 @@ x-user-config:
 
   # HTTPS certificate coverage for the WebUI on port 3443.
   # Keep localhost if you open the UI on the Docker host itself.
+  # `https_ips` is also reused by the optional discovery-mdns profile.
   https_hosts: &https_hosts localhost,econnect.local,e-connect.local
   https_ips: &https_ips ""
 
@@ -90,7 +102,9 @@ services:
     container_name: e-connect-server
     restart: always
     ports:
-      - "80:8000"
+      # Host port 8000 serves the redirect root, /health, /web-assistant.js,
+      # and /discovery-bridge for the public find website running in the user's
+      # browser, without claiming host port 80.
       - "8000:8000"
     command:
       - python
@@ -175,6 +189,23 @@ services:
       timeout: 5s
       retries: 24
       start_period: 5s
+
+  discovery_mdns:
+    image: *server_image
+    pull_policy: always
+    command: ["python", "-m", "scripts.publish_mdns_alias"]
+    profiles: ["discovery-mdns"]
+    restart: always
+    network_mode: host
+    environment:
+      TZ: *timezone
+      MDNS_HOSTNAME: econnect.local
+      MDNS_ADVERTISED_IPS: *https_ips
+      MDNS_DISCOVERY_PORT: "8000"
+      MDNS_WEBAPP_PORT: "3443"
+    depends_on:
+      server:
+        condition: service_healthy
 
 volumes:
   db_data:
