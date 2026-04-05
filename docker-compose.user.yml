@@ -1,6 +1,10 @@
+# End-user self-hosted stack that pulls prebuilt images from Docker Hub.
+# This file intentionally excludes find_website. The public discovery portal
+# must remain under project-owner control, and end users should open
+# https://find.isharoverwhite.com from a device on the same LAN after setup.
 services:
   db:
-    image: mariadb:10.11
+    image: docker.io/library/mariadb:10.11
     container_name: e-connect-db
     restart: always
     environment:
@@ -14,16 +18,13 @@ services:
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:
-      test: [ "CMD", "healthcheck.sh", "--connect", "--innodb_initialized" ]
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   mqtt:
-    build:
-      context: ./mqtt
-      dockerfile: Dockerfile
-    image: econnect-mqtt
+    image: ${ECONNECT_MQTT_IMAGE:?missing_ECONNECT_MQTT_IMAGE}
     container_name: e-connect-mqtt
     restart: always
     environment:
@@ -32,9 +33,7 @@ services:
       - "1883:1883"
 
   server:
-    build:
-      context: ./server
-      dockerfile: Dockerfile
+    image: ${ECONNECT_SERVER_IMAGE:?missing_ECONNECT_SERVER_IMAGE}
     container_name: e-connect-server
     restart: always
     ports:
@@ -45,9 +44,6 @@ services:
       DATABASE_URL: mysql+pymysql://${DB_USER:-econnect}:${DB_PASSWORD:-root_password}@${DB_HOST:-db}:3306/${DB_NAME:-e_connect_db}
       SECRET_KEY: ${SECRET_KEY:-supersecretkey}
       ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-43200}
-      # Keep the runtime client pointed at a stable alias even though the broker
-      # defaults to the in-stack broker alias. Use the host-network override when
-      # Mosquitto must bind directly on the Docker host.
       MQTT_BROKER: ${MQTT_BROKER:-mqtt}
       MQTT_PORT: ${MQTT_PORT:-1883}
       MQTT_NAMESPACE: ${MQTT_NAMESPACE:-local}
@@ -82,12 +78,7 @@ services:
       start_period: 5s
 
   webapp:
-    build:
-      context: ./webapp
-      dockerfile: Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
-        BACKEND_INTERNAL_URL: ${BACKEND_INTERNAL_URL:-http://server:8000}
+    image: ${ECONNECT_WEBAPP_IMAGE:?missing_ECONNECT_WEBAPP_IMAGE}
     container_name: e-connect-webapp
     restart: always
     ports:
@@ -118,10 +109,7 @@ services:
       start_period: 5s
 
   discovery_mdns:
-    build:
-      context: ./server
-      dockerfile: Dockerfile
-      target: runtime
+    image: ${ECONNECT_SERVER_IMAGE:?missing_ECONNECT_SERVER_IMAGE}
     command: ["python", "-m", "scripts.publish_mdns_alias"]
     profiles: ["discovery-mdns"]
     restart: always
@@ -132,21 +120,6 @@ services:
       MDNS_ADVERTISED_IPS: ${DISCOVERY_MDNS_ADVERTISED_IPS:-}
       MDNS_DISCOVERY_PORT: ${DISCOVERY_MDNS_DISCOVERY_PORT:-8000}
       MDNS_WEBAPP_PORT: ${DISCOVERY_MDNS_WEBAPP_PORT:-3000}
-    depends_on:
-      server:
-        condition: service_healthy
-
-  find_website:
-    build:
-      context: ./find_website
-      dockerfile: Dockerfile
-    image: econnect-find-website
-    container_name: e-connect-find-website
-    restart: always
-    environment:
-      TZ: ${TZ:-Asia/Ho_Chi_Minh}
-    ports:
-      - "${FIND_WEBSITE_PORT:-9123}:9123"
     depends_on:
       server:
         condition: service_healthy

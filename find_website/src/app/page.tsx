@@ -291,7 +291,7 @@ export default function Home() {
                   if (isWebsiteOnline) {
                     return (
                       <a
-                        key={`${device.launchHost}:${device.port ?? ""}`}
+                        key={`${device.displayHost}:${device.port ?? ""}`}
                         href={href}
                         target="_blank"
                         rel="noreferrer"
@@ -303,7 +303,7 @@ export default function Home() {
                   }
 
                   return (
-                    <div key={`${device.launchHost}:${device.port ?? ""}`} className={cardClassName}>
+                    <div key={`${device.displayHost}:${device.port ?? ""}`} className={cardClassName}>
                       {cardContent}
                     </div>
                   );

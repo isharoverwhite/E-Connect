@@ -95,7 +95,7 @@ TASK_REPORT.md
 /design
 
 # Branch cleanup overrides: ignore product-planning docs entirely
-/PRD.md
+./PRD.md
 /design/
 /workflow.md
 /*workflow*.md
