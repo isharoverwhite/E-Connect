@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import { NextRequest, NextResponse } from "next/server";
 
 const HSTS_HEADER_VALUE = "max-age=31536000; includeSubDomains";

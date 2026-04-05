@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 "use client";
 
 import { use, useEffect, useEffectEvent, useRef, useState, type FormEvent } from "react";

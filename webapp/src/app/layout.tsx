@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import type { Metadata } from "next";
 import { Inter, Fira_Code, JetBrains_Mono } from "next/font/google";
 import "./globals.css";

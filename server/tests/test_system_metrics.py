@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 from types import SimpleNamespace
 
 from app.services import system_metrics

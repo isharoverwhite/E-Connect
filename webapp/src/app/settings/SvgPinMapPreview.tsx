@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import { BOARD_PROFILES, getBoardProfile, resolveBoardProfileId, type BoardPin } from "@/features/diy/board-profiles";
 import { type PinMapping, PIN_FILL } from "@/features/diy/types";
 

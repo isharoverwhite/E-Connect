@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 from app.services import mdns
 from zeroconf._exceptions import NonUniqueNameException
 

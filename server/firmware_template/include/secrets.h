@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 #ifndef SECRETS_H
 #define SECRETS_H
 

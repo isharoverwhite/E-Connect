@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 "use client";
 
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";

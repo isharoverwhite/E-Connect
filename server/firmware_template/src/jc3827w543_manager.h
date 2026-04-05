@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 #ifndef JC3827W543_MANAGER_H
 #define JC3827W543_MANAGER_H
 

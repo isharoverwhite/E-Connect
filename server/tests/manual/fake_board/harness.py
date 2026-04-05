@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 """Standalone fake board simulator for MQTT pairing and remote command testing.
 
 The script exposes a small local dashboard so you can:

@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import { useState, useEffect } from "react";
 import { API_URL, sendDeviceCommand } from "@/lib/api";
 import { getToken } from "@/lib/auth";

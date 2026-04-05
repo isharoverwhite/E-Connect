@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import { expect, test } from "@playwright/test";
 
 import { getBoardProfile } from "../src/features/diy/board-profiles";

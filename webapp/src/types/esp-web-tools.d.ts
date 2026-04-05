@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import type * as React from "react";
 
 type EspWebInstallButtonProps = React.DetailedHTMLProps<

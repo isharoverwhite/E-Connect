@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   buildCandidateHosts,

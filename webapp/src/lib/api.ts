@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 import { AuthStatus, DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
 import { getToken } from "./auth";
 import { buildProvisioningHeaders, resolvePublicApiBaseUrl } from "./secure-origin";

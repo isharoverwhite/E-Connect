@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 "use client";
 
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from "react";
