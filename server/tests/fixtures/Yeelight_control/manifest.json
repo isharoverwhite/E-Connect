@@ -2,7 +2,7 @@
   "manifest_version": "1.0",
   "extension_id": "yeelight_control",
   "name": "Yeelight LAN Lights",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "author": "Experience",
   "description": "An extensions for controlling Yeelight devices. For E-Connect Ecosystem!",
   "provider": {
