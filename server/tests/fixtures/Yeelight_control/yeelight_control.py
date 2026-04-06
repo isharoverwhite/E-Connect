@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import socket
+import threading
 import time
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -38,8 +42,16 @@ except Exception:
 
 DEFAULT_PORT = 55443
 DEFAULT_TIMEOUT_SECONDS = 0.5
+DEFAULT_READ_TIMEOUT_WINDOWS = 3
+DEFAULT_SESSION_IDLE_SECONDS = 15.0
 DISCOVERY_HOST = "239.255.255.250"
 DISCOVERY_PORT = 1982
+DISCOVERY_TIMEOUT_SECONDS = 1.0
+DISCOVERY_ATTEMPTS = 2
+DISCOVERY_HELPER_PORT = 8915
+DISCOVERY_HELPER_URL_ENV = "ECONNECT_YEELIGHT_DISCOVERY_HELPER_URL"
+DISCOVERY_HELPER_PATH = "/yeelight/discover"
+DISCOVERY_HELPER_TIMEOUT_SECONDS = 1.5
 TRANSITION_MS = 150
 RECONCILE_DELAY_SECONDS = 0.15
 DEFAULT_LIGHT_CAPABILITIES = ("power", "brightness")
@@ -61,47 +73,77 @@ class _PreparedYeelightCommand:
     color_temperature: int | None = None
 
 
+class _YeelightSessionState:
+    def __init__(self, host: str, *, port: int, timeout: float):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self.request_id = 1
+        self.socket: socket.socket | None = None
+        self.recv_buffer = b""
+        self.last_used_at = 0.0
+        self.lock = threading.Lock()
+
+
+_SESSION_POOL_LOCK = threading.Lock()
+_SESSION_POOL: dict[tuple[str, int], _YeelightSessionState] = {}
+
+
 class _YeelightLanSession:
     def __init__(self, host: str, *, port: int = DEFAULT_PORT, timeout: int = DEFAULT_TIMEOUT_SECONDS):
         self.host = host
         self.port = port
         self.timeout = timeout
-        self._request_id = 1
-        self._socket: socket.socket | None = None
-        self._recv_buffer = b""
+        self._state: _YeelightSessionState | None = None
 
     def __enter__(self) -> "_YeelightLanSession":
+        state = _get_session_state(self.host, port=self.port, timeout=self.timeout)
+        state.lock.acquire()
+        self._state = state
         try:
-            self._socket = socket.create_connection((self.host, self.port), timeout=self.timeout)
+            if self._session_is_expired():
+                self._close_socket()
+            if state.socket is None:
+                state.socket = socket.create_connection((self.host, self.port), timeout=self.timeout)
+            state.socket.settimeout(self.timeout)
         except OSError as exc:
+            self._close_socket()
+            state.lock.release()
+            self._state = None
             raise ExtensionRuntimeError(
                 f"Yeelight connection failed: {exc}",
                 mark_offline=True,
                 connection_failed=True,
             ) from exc
-        self._socket.settimeout(self.timeout)
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        if self._socket is not None:
-            try:
-                self._socket.close()
-            except OSError:
-                pass
-            self._socket = None
+        state = self._state
+        if state is None:
+            return
+        state.last_used_at = time.monotonic()
+        state.lock.release()
+        self._state = None
 
     def send(self, method_name: str, params: list[Any]) -> dict[str, Any]:
-        if self._socket is None:
+        state = self._require_state()
+        if state.socket is None:
             raise ExtensionRuntimeError("Yeelight session is not connected.", mark_offline=True)
 
-        request_id = self._request_id
-        self._request_id += 1
+        request_id = state.request_id
+        state.request_id += 1
         payload = {"id": request_id, "method": method_name, "params": params}
         encoded_payload = (json.dumps(payload) + "\r\n").encode("utf-8")
         try:
-            self._socket.sendall(encoded_payload)
+            state.socket.sendall(encoded_payload)
             return self._read_matching_reply(request_id)
-        except (TimeoutError, OSError, json.JSONDecodeError) as exc:
+        except TimeoutError as exc:
+            raise ExtensionRuntimeError(
+                f"Yeelight LAN command '{method_name}' failed: {exc}",
+                mark_offline=True,
+            ) from exc
+        except (OSError, json.JSONDecodeError) as exc:
+            self._close_socket()
             raise ExtensionRuntimeError(
                 f"Yeelight LAN command '{method_name}' failed: {exc}",
                 mark_offline=True,
@@ -118,24 +160,28 @@ class _YeelightLanSession:
             return message
 
     def _read_message(self) -> dict[str, Any]:
-        while b"\r\n" not in self._recv_buffer:
-            if self._socket is None:
+        state = self._require_state()
+        timeout_windows = 0
+        while b"\r\n" not in state.recv_buffer:
+            if state.socket is None:
                 raise ExtensionRuntimeError("Yeelight session is not connected.", mark_offline=True)
             try:
-                packet = self._socket.recv(4096)
+                packet = state.socket.recv(4096)
             except TimeoutError as exc:
-                raise ExtensionRuntimeError(
-                    f"Yeelight LAN command timed out: {exc}",
-                    mark_offline=True,
-                ) from exc
+                timeout_windows += 1
+                if timeout_windows < DEFAULT_READ_TIMEOUT_WINDOWS:
+                    continue
+                raise
             if not packet:
+                self._close_socket()
                 break
-            self._recv_buffer += packet
+            timeout_windows = 0
+            state.recv_buffer += packet
 
-        if b"\r\n" in self._recv_buffer:
-            raw_line, _, self._recv_buffer = self._recv_buffer.partition(b"\r\n")
+        if b"\r\n" in state.recv_buffer:
+            raw_line, _, state.recv_buffer = state.recv_buffer.partition(b"\r\n")
         else:
-            raw_line, self._recv_buffer = self._recv_buffer, b""
+            raw_line, state.recv_buffer = state.recv_buffer, b""
 
         text = raw_line.decode("utf-8").strip()
         if not text:
@@ -144,6 +190,42 @@ class _YeelightLanSession:
         if not isinstance(payload, dict):
             raise ExtensionRuntimeError("Yeelight returned malformed JSON.", mark_offline=True)
         return payload
+
+    def _require_state(self) -> _YeelightSessionState:
+        if self._state is None:
+            raise ExtensionRuntimeError("Yeelight session is not connected.", mark_offline=True)
+        return self._state
+
+    def _session_is_expired(self) -> bool:
+        state = self._require_state()
+        return (
+            state.socket is not None
+            and state.last_used_at > 0
+            and (time.monotonic() - state.last_used_at) > DEFAULT_SESSION_IDLE_SECONDS
+        )
+
+    def _close_socket(self) -> None:
+        state = self._state
+        if state is None or state.socket is None:
+            return
+        try:
+            state.socket.close()
+        except OSError:
+            pass
+        state.socket = None
+        state.recv_buffer = b""
+
+
+def _get_session_state(host: str, *, port: int, timeout: float) -> _YeelightSessionState:
+    key = (host, port)
+    with _SESSION_POOL_LOCK:
+        state = _SESSION_POOL.get(key)
+        if state is None:
+            state = _YeelightSessionState(host, port=port, timeout=timeout)
+            _SESSION_POOL[key] = state
+        else:
+            state.timeout = timeout
+        return state
 
 
 def validate_command(device: dict[str, Any], command: dict[str, Any]) -> None:
@@ -669,6 +751,13 @@ def _build_yeelight_predicted_state(
 
 
 def _discover_yeelight_metadata(host: str) -> dict[str, Any] | None:
+    discovery = _discover_yeelight_metadata_via_udp(host)
+    if discovery is not None:
+        return discovery
+    return _discover_yeelight_metadata_via_helper(host)
+
+
+def _discover_yeelight_metadata_via_udp(host: str) -> dict[str, Any] | None:
     message = "\r\n".join(
         [
             "M-SEARCH * HTTP/1.1",
@@ -683,8 +772,8 @@ def _discover_yeelight_metadata(host: str) -> dict[str, Any] | None:
     try:
         discovery_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         discovery_socket.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, 2)
-        discovery_socket.settimeout(1)
-        for _ in range(2):
+        discovery_socket.settimeout(DISCOVERY_TIMEOUT_SECONDS)
+        for _ in range(DISCOVERY_ATTEMPTS):
             discovery_socket.sendto(message, (DISCOVERY_HOST, DISCOVERY_PORT))
             try:
                 while True:
@@ -696,6 +785,59 @@ def _discover_yeelight_metadata(host: str) -> dict[str, Any] | None:
                 continue
     finally:
         discovery_socket.close()
+    return None
+
+
+def _discover_yeelight_metadata_via_helper(host: str) -> dict[str, Any] | None:
+    query = urllib.parse.urlencode({"host": host})
+    for base_url in _resolve_discovery_helper_urls():
+        target_url = _build_discovery_helper_url(base_url, query=query)
+        try:
+            with urllib.request.urlopen(target_url, timeout=DISCOVERY_HELPER_TIMEOUT_SECONDS) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            if isinstance(payload.get("metadata"), dict):
+                return payload["metadata"]
+            return payload
+    return None
+
+
+def _resolve_discovery_helper_urls() -> tuple[str, ...]:
+    candidates: list[str] = []
+    raw_helper_url = str(os.getenv(DISCOVERY_HELPER_URL_ENV, "")).strip()
+    if raw_helper_url:
+        candidates.append(raw_helper_url)
+    candidates.append(f"http://host.docker.internal:{DISCOVERY_HELPER_PORT}")
+    gateway = _resolve_default_gateway()
+    if gateway is not None:
+        candidates.append(f"http://{gateway}:{DISCOVERY_HELPER_PORT}")
+    return tuple(dict.fromkeys(candidate.rstrip("/") for candidate in candidates if candidate.strip()))
+
+
+def _build_discovery_helper_url(base_url: str, *, query: str) -> str:
+    parsed = urllib.parse.urlsplit(base_url)
+    if not parsed.scheme or not parsed.netloc:
+        return f"{base_url.rstrip('/')}{DISCOVERY_HELPER_PATH}?{query}"
+    helper_path = parsed.path.rstrip("/") or DISCOVERY_HELPER_PATH
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, helper_path, query, ""))
+
+
+def _resolve_default_gateway() -> str | None:
+    try:
+        with open("/proc/net/route", encoding="utf-8") as route_file:
+            next(route_file, None)
+            for line in route_file:
+                columns = line.strip().split()
+                if len(columns) < 3 or columns[1] != "00000000":
+                    continue
+                gateway = int(columns[2], 16).to_bytes(4, "little")
+                resolved = socket.inet_ntoa(gateway)
+                if resolved and resolved != "0.0.0.0":
+                    return resolved
+    except (OSError, ValueError):
+        return None
     return None
 
 
