@@ -18,14 +18,20 @@ class FakeWebSocket:
         client_state: WebSocketState = WebSocketState.CONNECTED,
         application_state: WebSocketState = WebSocketState.CONNECTED,
         fail_on_send: bool = False,
+        fail_on_accept: bool = False,
     ) -> None:
         self.client_state = client_state
         self.application_state = application_state
         self.fail_on_send = fail_on_send
+        self.fail_on_accept = fail_on_accept
         self.accepted = False
         self.sent_messages: list[str] = []
 
     async def accept(self) -> None:
+        if self.fail_on_accept:
+            self.client_state = WebSocketState.DISCONNECTED
+            self.application_state = WebSocketState.DISCONNECTED
+            raise RuntimeError("socket closed before accept")
         self.accepted = True
         self.client_state = WebSocketState.CONNECTED
         self.application_state = WebSocketState.CONNECTED
@@ -44,7 +50,10 @@ def test_connect_prunes_stale_connections_before_registering_new_socket() -> Non
         client_state=WebSocketState.DISCONNECTED,
         application_state=WebSocketState.DISCONNECTED,
     )
-    fresh_socket = FakeWebSocket()
+    fresh_socket = FakeWebSocket(
+        client_state=WebSocketState.CONNECTING,
+        application_state=WebSocketState.CONNECTING,
+    )
     manager.active_connections = [
         {
             "websocket": stale_socket,
@@ -59,6 +68,35 @@ def test_connect_prunes_stale_connections_before_registering_new_socket() -> Non
     assert fresh_socket.accepted is True
     assert len(manager.active_connections) == 1
     assert manager.active_connections[0]["websocket"] is fresh_socket
+
+
+def test_connect_skips_accept_for_already_connected_socket() -> None:
+    manager = ConnectionManager()
+    websocket = FakeWebSocket()
+
+    connected = asyncio.run(manager.connect(websocket, 2, "admin", []))
+
+    assert connected is True
+    assert websocket.accepted is False
+    assert len(manager.active_connections) == 1
+    assert manager.active_connections[0]["websocket"] is websocket
+
+
+def test_connect_ignores_stale_socket_when_accept_fails(caplog) -> None:
+    manager = ConnectionManager()
+    stale_socket = FakeWebSocket(
+        client_state=WebSocketState.CONNECTING,
+        application_state=WebSocketState.CONNECTING,
+        fail_on_accept=True,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        connected = asyncio.run(manager.connect(stale_socket, 2, "admin", []))
+
+    assert connected is False
+    assert stale_socket.accepted is False
+    assert manager.active_connections == []
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
 
 
 def test_broadcast_device_event_prunes_stale_connections_without_warning(caplog) -> None:
