@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import close_all_sessions, sessionmaker
@@ -11,9 +11,9 @@ import json
 import os
 import uuid
 
-from app.api import router
+from app.api import DEVICE_HEARTBEAT_TIMEOUT, expire_stale_online_devices_once, router
 from app.database import Base, CONFIG_HISTORY_DELETED_AT_KEY, get_db
-from app.sql_models import AuthStatus, User, Household, HouseholdMembership, HouseholdRole, Room, DiyProject, DiyProjectConfig, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration, WifiCredential, DeviceHistory
+from app.sql_models import AuthStatus, ConnStatus, User, Household, HouseholdMembership, HouseholdRole, Room, DiyProject, DiyProjectConfig, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration, WifiCredential, DeviceHistory
 from app.auth import get_password_hash, create_ota_token
 from app.services.builder import get_durable_artifact_path
 from app.services.provisioning import PRIVATE_DEVICE_SECRET_KEY
@@ -419,6 +419,84 @@ def test_get_build_job_includes_exact_build_ota_download_url():
         f"https://smart-home.local:8443/api/v1/diy/ota/download/{job_id}/firmware.bin?token="
     )
     assert PRIVATE_DEVICE_SECRET_KEY not in payload["staged_project_config"]
+
+
+def test_get_build_job_reconciles_stale_offline_ota_to_flash_failed():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    stale_seen_at = now - DEVICE_HEARTBEAT_TIMEOUT - timedelta(seconds=1)
+    device.conn_status = ConnStatus.offline
+    device.last_seen = stale_seen_at
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
+    job.updated_at = now - timedelta(seconds=90)
+    project.pending_build_job_id = job_id
+    db.add(job)
+    db.commit()
+
+    res = client.get(
+        f"/api/v1/diy/build/{job_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["status"] == JobStatus.flash_failed.value
+    assert "OTA timeout/reconciliation" in payload["error_message"]
+
+    db.refresh(job)
+    db.refresh(project)
+    assert job.status == JobStatus.flash_failed
+    assert project.pending_build_job_id == job_id
+
+
+def test_expire_stale_online_devices_once_reconciles_ota_after_device_already_went_offline():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+    project.pending_config = {"wifi_ssid": "Workshop-WiFi", "pins": [{"gpio": 2, "mode": "OUTPUT"}]}
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.flashing,
+        staged_project_config=project.pending_config,
+    )
+    job.updated_at = now - timedelta(seconds=30)
+    project.pending_build_job_id = job_id
+    device.conn_status = ConnStatus.online
+    device.last_seen = now - DEVICE_HEARTBEAT_TIMEOUT - timedelta(seconds=1)
+    db.add(job)
+    db.commit()
+
+    expired_count = expire_stale_online_devices_once(session_factory=TestingSessionLocal)
+
+    db.refresh(device)
+    db.refresh(job)
+    db.refresh(project)
+    assert expired_count == 1
+    assert device.conn_status == ConnStatus.offline
+    assert job.status == JobStatus.flashing
+    assert project.pending_build_job_id == job_id
+
+    job.updated_at = now - timedelta(seconds=90)
+    db.commit()
+
+    expired_count = expire_stale_online_devices_once(session_factory=TestingSessionLocal)
+
+    db.refresh(job)
+    db.refresh(project)
+    assert expired_count == 0
+    assert job.status == JobStatus.flash_failed
+    assert "OTA timeout/reconciliation" in job.error_message
+    assert project.pending_build_job_id == job_id
 
 
 def test_put_device_config_creates_named_saved_config_without_pruning_build_history(tmp_path):
