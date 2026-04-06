@@ -923,7 +923,7 @@ def test_execute_external_device_command_ignores_async_notification_frames(monke
     assert execution.state["ip_address"] == "192.168.1.55"
     assert execution.state["capabilities"] == ["power", "brightness"]
     assert [payload["method"] for payload in fake_socket.sent_payloads] == ["set_bright"]
-    assert fake_socket.closed is True
+    assert fake_socket.closed is False
 
 
 def test_execute_external_device_command_supports_rgb_and_color_temperature(monkeypatch):
@@ -1419,9 +1419,163 @@ def test_collect_yeelight_diagnostics_includes_discovery_and_timeout_trace(monke
     assert "recv_timeout" in event_names
     assert "probe_error" in event_names
     assert discovery_socket.closed is True
-    assert lan_socket.closed is True
+    assert lan_socket.closed is False
     assert diagnostics["online"] is True
     assert diagnostics["control_transport"] == "tcp-no-ack"
+
+
+def test_extension_runtime_reuses_per_host_session_after_late_reply(monkeypatch):
+    class LateReplySocket:
+        def __init__(self) -> None:
+            self.timeout = None
+            self.closed = False
+            self.recv_calls = 0
+            self.sent_payloads: list[dict[str, object]] = []
+
+        def settimeout(self, timeout: int) -> None:
+            self.timeout = timeout
+
+        def sendall(self, payload: bytes) -> None:
+            self.sent_payloads.append(json.loads(payload.decode("utf-8").strip()))
+
+        def recv(self, _size: int) -> bytes:
+            self.recv_calls += 1
+            if self.recv_calls <= 3:
+                raise TimeoutError("timed out")
+            if self.recv_calls == 4:
+                return b'{"id":1,"result":["on","60","4200","0","mono","0","0","2"]}\r\n'
+            if self.recv_calls == 5:
+                return b'{"id":2,"result":["on","60","4200","0","mono","0","0","2"]}\r\n'
+            return b""
+
+        def close(self) -> None:
+            self.closed = True
+
+    late_reply_socket = LateReplySocket()
+    create_connection_calls = {"count": 0}
+
+    extension = build_runtime_backed_extension()
+    runtime_module = load_test_runtime_module(extension)
+
+    def fake_create_connection(*_args, **_kwargs):
+        create_connection_calls["count"] += 1
+        return late_reply_socket
+
+    monkeypatch.setattr(runtime_module.socket, "create_connection", fake_create_connection)
+    monkeypatch.setattr(runtime_module, "_discover_yeelight_metadata", lambda _host: None)
+
+    with pytest.raises(runtime_module.ExtensionRuntimeError) as exc_info:
+        runtime_module._probe_yeelight_state(
+            host="192.168.1.55",
+            capabilities=("power", "brightness"),
+        )
+    assert "timed out" in str(exc_info.value)
+
+    state = runtime_module._probe_yeelight_state(
+        host="192.168.1.55",
+        capabilities=("power", "brightness"),
+    )
+
+    assert create_connection_calls["count"] == 1
+    assert [payload["id"] for payload in late_reply_socket.sent_payloads] == [1, 2]
+    assert [payload["method"] for payload in late_reply_socket.sent_payloads] == ["get_prop", "get_prop"]
+    assert state["power"] == "on"
+    assert state["brightness"] == 153
+    assert late_reply_socket.closed is False
+
+
+def test_extension_runtime_uses_host_side_discovery_helper_when_udp_ssdp_is_blind(monkeypatch):
+    class TimeoutLanSocket:
+        def __init__(self) -> None:
+            self.timeout = None
+
+        def settimeout(self, timeout: int) -> None:
+            self.timeout = timeout
+
+        def sendall(self, _payload: bytes) -> None:
+            return None
+
+        def recv(self, _size: int) -> bytes:
+            raise TimeoutError("timed out")
+
+        def close(self) -> None:
+            return None
+
+    class BlindDiscoverySocket:
+        def __init__(self) -> None:
+            self.sent_packets: list[tuple[bytes, tuple[str, int]]] = []
+            self.closed = False
+
+        def setsockopt(self, *_args) -> None:
+            return None
+
+        def settimeout(self, _timeout: int) -> None:
+            return None
+
+        def sendto(self, packet: bytes, address: tuple[str, int]) -> None:
+            self.sent_packets.append((packet, address))
+
+        def recvfrom(self, _size: int) -> tuple[bytes, tuple[str, int]]:
+            raise TimeoutError("timed out")
+
+        def close(self) -> None:
+            self.closed = True
+
+    class FakeHelperResponse:
+        def __init__(self, payload: dict[str, object]) -> None:
+            self._payload = payload
+
+        def __enter__(self) -> "FakeHelperResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return json.dumps(self._payload).encode("utf-8")
+
+    timeout_lan_socket = TimeoutLanSocket()
+    blind_discovery_socket = BlindDiscoverySocket()
+    helper_requests: list[tuple[str, float]] = []
+
+    extension = build_runtime_backed_extension()
+    runtime_module = load_test_runtime_module(extension)
+
+    monkeypatch.setattr(runtime_module.socket, "create_connection", lambda *_args, **_kwargs: timeout_lan_socket)
+    monkeypatch.setattr(
+        runtime_module.socket,
+        "socket",
+        lambda *_args, **_kwargs: blind_discovery_socket,
+    )
+    monkeypatch.setenv("ECONNECT_YEELIGHT_DISCOVERY_HELPER_URL", "http://helper.local:8915")
+
+    def fake_urlopen(url: str, timeout: float):
+        helper_requests.append((url, timeout))
+        return FakeHelperResponse(
+            {
+                "model": "colorb",
+                "support_methods": ["get_prop", "set_power", "set_bright", "set_ct_abx", "set_rgb"],
+                "power": "on",
+                "bright": "45",
+                "ct": "4200",
+                "rgb": "16711680",
+                "color_mode": "1",
+            }
+        )
+
+    monkeypatch.setattr(runtime_module.urllib.request, "urlopen", fake_urlopen)
+
+    state = runtime_module._probe_yeelight_state(
+        host="192.168.2.8",
+        capabilities=("power", "brightness", "rgb", "color_temperature"),
+    )
+
+    assert helper_requests == [("http://helper.local:8915/yeelight/discover?host=192.168.2.8", 1.5)]
+    assert blind_discovery_socket.closed is True
+    assert blind_discovery_socket.sent_packets
+    assert state["model"] == "colorb"
+    assert state["power"] == "on"
+    assert state["rgb"] == {"r": 255, "g": 0, "b": 0}
 
 
 def test_refresh_external_device_states_once_marks_online_and_broadcasts_state(monkeypatch):
