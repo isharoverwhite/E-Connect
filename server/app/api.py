@@ -19,7 +19,7 @@ import hashlib
 from urllib.parse import urlencode
 from pathlib import Path
 
-from .mqtt import build_pairing_rejected_ack_payload, mqtt_manager
+from .mqtt import OTA_FLASHING_RECONCILIATION_TIMEOUT, build_pairing_rejected_ack_payload, mqtt_manager
 from .ws_manager import manager as ws_manager
 
 from .models import (
@@ -401,6 +401,105 @@ def _attach_runtime_state(db: Session, device: Device) -> Device:
     return device
 
 
+def _normalize_utc_naive_timestamp(value: datetime | None, *, fallback: datetime) -> datetime:
+    if value is None:
+        return fallback
+    if getattr(value, "tzinfo", None) is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _build_job_reference_time(job: BuildJob, *, fallback: datetime) -> datetime:
+    return _normalize_utc_naive_timestamp(
+        job.finished_at or job.updated_at or job.created_at,
+        fallback=fallback,
+    )
+
+
+def _device_has_recent_heartbeat(device: Device, *, reference_time: datetime) -> bool:
+    if device.conn_status != ConnStatus.online or device.last_seen is None:
+        return False
+    return (
+        reference_time - _normalize_utc_naive_timestamp(device.last_seen, fallback=reference_time)
+    ) <= DEVICE_HEARTBEAT_TIMEOUT
+
+
+def _reconcile_stale_flashing_job(
+    db: Session,
+    job: BuildJob,
+    *,
+    reference_time: datetime,
+    device: Device | None = None,
+) -> bool:
+    if job.status != JobStatus.flashing:
+        return False
+
+    bound_device = device
+    if bound_device is None:
+        bound_device = (
+            db.query(Device)
+            .filter(Device.provisioning_project_id == job.project_id)
+            .first()
+        )
+    if bound_device is None:
+        return False
+
+    if _device_has_recent_heartbeat(bound_device, reference_time=reference_time):
+        return False
+
+    if (
+        reference_time - _build_job_reference_time(job, fallback=reference_time)
+    ) <= OTA_FLASHING_RECONCILIATION_TIMEOUT:
+        return False
+
+    last_seen = (
+        _normalize_utc_naive_timestamp(bound_device.last_seen, fallback=reference_time).isoformat()
+        if bound_device.last_seen is not None
+        else None
+    )
+    expected_version = build_job_firmware_version(job.id)
+    job.status = JobStatus.flash_failed
+    job.error_message = (
+        f"OTA timeout/reconciliation: device went offline before reporting firmware '{expected_version}'."
+        + (f" Last seen at {last_seen}." if last_seen else "")
+    )
+    job.finished_at = reference_time
+    job.updated_at = reference_time
+    logger.warning(
+        "Marked OTA job %s as flash_failed after device %s stayed offline past the OTA timeout window.",
+        job.id,
+        bound_device.device_id,
+    )
+    return True
+
+
+def _reconcile_stale_flashing_jobs(db: Session, *, reference_time: datetime) -> int:
+    jobs = db.query(BuildJob).filter(BuildJob.status == JobStatus.flashing).all()
+    if not jobs:
+        return 0
+
+    project_ids = {job.project_id for job in jobs}
+    devices_by_project_id = {
+        device.provisioning_project_id: device
+        for device in db.query(Device)
+        .filter(Device.provisioning_project_id.in_(project_ids))
+        .all()
+        if device.provisioning_project_id is not None
+    }
+
+    failed_count = 0
+    for job in jobs:
+        if _reconcile_stale_flashing_job(
+            db,
+            job,
+            reference_time=reference_time,
+            device=devices_by_project_id.get(job.project_id),
+        ):
+            failed_count += 1
+
+    return failed_count
+
+
 def _expire_device_if_stale(db: Session, device: Device, *, reference_time: datetime) -> bool:
     if device.conn_status == ConnStatus.offline:
         return False
@@ -455,7 +554,7 @@ def _expire_device_if_stale(db: Session, device: Device, *, reference_time: date
 
 
 def _expire_stale_devices(db: Session, devices: list[Device]) -> None:
-    reference_time = datetime.utcnow()
+    reference_time = datetime.now(timezone.utc).replace(tzinfo=None)
     status_changed = False
 
     for device in devices:
@@ -465,7 +564,12 @@ def _expire_stale_devices(db: Session, devices: list[Device]) -> None:
             reference_time=reference_time,
         ) or status_changed
 
-    if status_changed:
+    ota_status_changed = _reconcile_stale_flashing_jobs(
+        db,
+        reference_time=reference_time,
+    )
+
+    if status_changed or ota_status_changed:
         db.commit()
 
 
@@ -476,17 +580,20 @@ def expire_stale_online_devices_once(
     db = (session_factory or SessionLocal)()
     try:
         devices = db.query(Device).filter(Device.conn_status == ConnStatus.online).all()
-        if not devices:
-            return 0
 
-        reference_time = datetime.utcnow()
+        reference_time = datetime.now(timezone.utc).replace(tzinfo=None)
         expired_count = 0
 
         for device in devices:
             if _expire_device_if_stale(db, device, reference_time=reference_time):
                 expired_count += 1
 
-        if expired_count:
+        ota_failed_count = _reconcile_stale_flashing_jobs(
+            db,
+            reference_time=reference_time,
+        )
+
+        if expired_count or ota_failed_count:
             db.commit()
 
         return expired_count
@@ -4515,6 +4622,13 @@ async def get_build_job(
     current_user: User = Depends(get_admin_user),
 ):
     job = _get_build_job_in_household_or_404(db, current_user, job_id)
+    if _reconcile_stale_flashing_job(
+        db,
+        job,
+        reference_time=datetime.now(timezone.utc).replace(tzinfo=None),
+    ):
+        db.commit()
+        db.refresh(job)
 
     # Inject an ephemeral OTA token upon successful access by owner
     job.ota_token = create_ota_token(job.id)
