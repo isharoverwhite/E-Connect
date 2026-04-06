@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import uuid
+from zoneinfo import ZoneInfo
 
 from app.api import DEVICE_HEARTBEAT_TIMEOUT, expire_stale_online_devices_once, router
 from app.database import Base, CONFIG_HISTORY_DELETED_AT_KEY, get_db
@@ -47,6 +48,10 @@ def _write_test_artifact(tmp_path, job_id: str) -> str:
     artifact_path = tmp_path / f"{job_id}.bin"
     artifact_path.write_bytes(b"test-firmware-image")
     return str(artifact_path)
+
+
+def _as_local_naive(utc_naive: datetime, tz_name: str = "Asia/Ho_Chi_Minh") -> datetime:
+    return utc_naive.replace(tzinfo=timezone.utc).astimezone(ZoneInfo(tz_name)).replace(tzinfo=None)
 
 @pytest.fixture(autouse=True)
 def setup_db():
@@ -454,6 +459,79 @@ def test_get_build_job_reconciles_stale_offline_ota_to_flash_failed():
     db.refresh(project)
     assert job.status == JobStatus.flash_failed
     assert project.pending_build_job_id == job_id
+
+
+def test_get_build_job_reconciles_stale_offline_ota_with_local_db_timestamp(monkeypatch):
+    monkeypatch.setenv("TZ", "Asia/Ho_Chi_Minh")
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    stale_seen_at = now - DEVICE_HEARTBEAT_TIMEOUT - timedelta(seconds=1)
+    device.conn_status = ConnStatus.offline
+    device.last_seen = stale_seen_at
+    device.provisioning_project_id = project.id
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
+    job.updated_at = _as_local_naive(now - timedelta(seconds=90))
+    project.pending_build_job_id = job_id
+    db.add(job)
+    db.commit()
+
+    res = client.get(
+        f"/api/v1/diy/build/{job_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["status"] == JobStatus.flash_failed.value
+    assert "OTA timeout/reconciliation" in payload["error_message"]
+
+    db.refresh(job)
+    assert job.status == JobStatus.flash_failed
+
+
+def test_get_build_job_reconciles_online_version_mismatch_with_local_db_timestamp(monkeypatch):
+    monkeypatch.setenv("TZ", "Asia/Ho_Chi_Minh")
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    device.conn_status = ConnStatus.online
+    device.last_seen = now
+    device.firmware_version = "build-2a30626a"
+    device.provisioning_project_id = project.id
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
+    job.updated_at = _as_local_naive(now - timedelta(seconds=90))
+    project.pending_build_job_id = job_id
+    db.add(job)
+    db.commit()
+
+    res = client.get(
+        f"/api/v1/diy/build/{job_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["status"] == JobStatus.flash_failed.value
+    assert "expected" in payload["error_message"]
+    assert "build-2a30626a" in payload["error_message"]
+
+    db.refresh(job)
+    assert job.status == JobStatus.flash_failed
 
 
 def test_expire_stale_online_devices_once_reconciles_ota_after_device_already_went_offline():
@@ -2299,6 +2377,38 @@ def test_mqtt_reconcile_ota_mismatch_stale():
         
     db.refresh(job)
     # Should be rolled back to flash_failed because 90s > 60s threshold
+    assert job.status == JobStatus.flash_failed
+    assert "OTA timeout/reconciliation" in job.error_message
+
+
+def test_mqtt_reconcile_ota_mismatch_stale_with_local_db_timestamp(monkeypatch):
+    from app.mqtt import MQTTClientManager
+    import json
+    from unittest.mock import MagicMock
+
+    monkeypatch.setenv("TZ", "Asia/Ho_Chi_Minh")
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    job_id = str(uuid.uuid4())
+    job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
+    job.updated_at = _as_local_naive(now - timedelta(seconds=90))
+    db.add(job)
+    device.provisioning_project_id = project.id
+    db.commit()
+
+    mgr = MQTTClientManager()
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps({"firmware_version": "build-old1234"})
+
+    with patch('app.mqtt.SessionLocal', return_value=db_mock):
+        mgr.process_state_message(device.device_id, payload)
+
+    db.refresh(job)
     assert job.status == JobStatus.flash_failed
     assert "OTA timeout/reconciliation" in job.error_message
 
