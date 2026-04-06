@@ -801,6 +801,54 @@ def _project_response_model(project: DiyProject) -> DiyProjectResponse:
     )
 
 
+def _reconcile_project_pending_ota_state(
+    db: Session,
+    *,
+    project: DiyProject,
+    device: Device | None = None,
+) -> bool:
+    pending_job_id = _trimmed_string(project.pending_build_job_id)
+    if pending_job_id is None:
+        return False
+
+    pending_job = (
+        db.query(BuildJob)
+        .filter(
+            BuildJob.id == pending_job_id,
+            BuildJob.project_id == project.id,
+        )
+        .first()
+    )
+    if pending_job is None or pending_job.status not in {JobStatus.flashing, JobStatus.flashed}:
+        return False
+
+    if device is None:
+        device = (
+            db.query(Device)
+            .filter(Device.provisioning_project_id == project.id)
+            .first()
+        )
+
+    reported_version = _trimmed_string(device.firmware_version if device is not None else None)
+    if reported_version is None:
+        return False
+
+    previous_job_status = pending_job.status
+    previous_pending_job_id = _trimmed_string(project.pending_build_job_id)
+    previous_pending_config_id = _trimmed_string(getattr(project, "pending_config_id", None))
+
+    _reconcile_ota_jobs(db, device, reported_version)
+    db.flush()
+    db.refresh(project)
+    db.refresh(pending_job)
+
+    return (
+        pending_job.status != previous_job_status
+        or _trimmed_string(project.pending_build_job_id) != previous_pending_job_id
+        or _trimmed_string(getattr(project, "pending_config_id", None)) != previous_pending_config_id
+    )
+
+
 def _stamp_config_history_metadata(
     config: dict[str, Any],
     *,
@@ -4247,6 +4295,9 @@ async def delete_diy_project(
 @router.get("/diy/projects/{project_id}", response_model=DiyProjectResponse)
 async def get_diy_project(project_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
     project = _get_project_in_household_or_404(db, current_user, project_id)
+    if _reconcile_project_pending_ota_state(db, project=project):
+        db.commit()
+        db.refresh(project)
     return _project_response_model(project)
 
 
@@ -4257,6 +4308,9 @@ async def list_project_config_history(
     current_user: User = Depends(get_admin_user),
 ):
     project = _get_project_in_household_or_404(db, current_user, project_id)
+    if _reconcile_project_pending_ota_state(db, project=project):
+        db.commit()
+        db.refresh(project)
     
     saved_configs = (
         db.query(DiyProjectConfig)
@@ -4287,6 +4341,9 @@ async def list_device_config_history(
 
     project = _get_project_in_household_or_404(db, current_user, device.provisioning_project_id)
     if _materialize_saved_configs_for_project(db, project=project, fallback_device=device):
+        db.commit()
+        db.refresh(project)
+    if _reconcile_project_pending_ota_state(db, project=project, device=device):
         db.commit()
         db.refresh(project)
     saved_configs = (

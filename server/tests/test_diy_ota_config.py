@@ -534,6 +534,155 @@ def test_get_build_job_reconciles_online_version_mismatch_with_local_db_timestam
     assert job.status == JobStatus.flash_failed
 
 
+def test_get_diy_project_reconciles_flashing_ota_when_device_reports_expected_firmware():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    committed_config = {
+        "wifi_ssid": "test",
+        "wifi_password": "test",
+        "pins": [{"gpio": 8, "mode": "OUTPUT", "label": "Committed Relay"}],
+    }
+    pending_config = {
+        "wifi_ssid": "test",
+        "wifi_password": "test",
+        "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}],
+    }
+    project.config = dict(committed_config)
+    project.pending_config = dict(pending_config)
+
+    saved_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Living Room Relay Node",
+        config=dict(pending_config),
+    )
+    db.add(saved_config)
+    db.flush()
+
+    job_id = str(uuid.uuid4())
+    project.pending_config_id = saved_config.id
+    project.pending_build_job_id = job_id
+    device.provisioning_project_id = project.id
+    device.conn_status = ConnStatus.online
+    device.firmware_version = f"build-{job_id[:8]}"
+
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        saved_config_id=saved_config.id,
+        status=JobStatus.flashing,
+        staged_project_config=dict(pending_config),
+    )
+    job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=10)
+    db.add(job)
+    db.commit()
+
+    res = client.get(
+        f"/api/v1/diy/projects/{project.id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["pending_build_job_id"] is None
+    assert payload["pending_config"] is None
+    assert payload["pending_config_id"] is None
+    assert payload["config"]["pins"] == pending_config["pins"]
+
+    db.refresh(job)
+    db.refresh(project)
+    assert job.status == JobStatus.flashed
+    assert project.pending_build_job_id is None
+    assert project.pending_config is None
+    assert project.pending_config_id is None
+    assert project.config["pins"] == pending_config["pins"]
+    assert project.current_config_id == saved_config.id
+
+
+def test_list_device_config_history_reconciles_recent_flashed_ota_when_device_reports_expected_firmware():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    committed_config = {
+        "wifi_ssid": "test",
+        "wifi_password": "test",
+        "pins": [{"gpio": 8, "mode": "OUTPUT", "label": "Committed Relay"}],
+    }
+    pending_config = {
+        "wifi_ssid": "test",
+        "wifi_password": "test",
+        "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}],
+        "config_id": str(uuid.uuid4()),
+        "config_name": "Living Room Relay Node",
+        "assigned_device_id": device.device_id,
+        "assigned_device_name": device.name,
+    }
+    project.config = dict(committed_config)
+    project.pending_config = dict(pending_config)
+
+    saved_config = DiyProjectConfig(
+        id=pending_config["config_id"],
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Living Room Relay Node",
+        config=dict(pending_config),
+    )
+    db.add(saved_config)
+    db.flush()
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        saved_config_id=saved_config.id,
+        status=JobStatus.flashed,
+        staged_project_config=dict(pending_config),
+    )
+    finished_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=5)
+    job.finished_at = finished_at
+    job.updated_at = finished_at
+    project.pending_config_id = saved_config.id
+    project.pending_build_job_id = job_id
+    device.provisioning_project_id = project.id
+    device.conn_status = ConnStatus.online
+    device.firmware_version = f"build-{job_id[:8]}"
+    db.add(job)
+    db.commit()
+
+    res = client.get(
+        f"/api/v1/device/{device.device_id}/config-history",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    matching_entry = next((entry for entry in payload if entry["id"] == saved_config.id), None)
+    assert matching_entry is not None
+    assert matching_entry["latest_build_status"] == JobStatus.flashed.value
+    assert matching_entry["is_pending"] is False
+    assert matching_entry["is_committed"] is True
+    assert matching_entry["config"]["pins"] == pending_config["pins"]
+
+    db.refresh(job)
+    db.refresh(project)
+    assert job.status == JobStatus.flashed
+    assert project.pending_build_job_id is None
+    assert project.pending_config is None
+    assert project.pending_config_id is None
+    assert project.config["pins"] == pending_config["pins"]
+    assert project.current_config_id == saved_config.id
+
+
 def test_expire_stale_online_devices_once_reconciles_ota_after_device_already_went_offline():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
@@ -1827,6 +1976,60 @@ def test_mqtt_process_ota_status():
     db.refresh(job2)
     assert job2.status == JobStatus.flash_failed
     assert job2.error_message == "HTTP error"
+
+
+def test_mqtt_state_ota_status_success_promotes_pending_config_when_device_already_reports_expected_firmware():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+    project.config = {"wifi_ssid": "test", "wifi_password": "test", "pins": [{"gpio": 8, "mode": "OUTPUT", "label": "Committed Relay"}]}
+    project.pending_config = {"wifi_ssid": "test", "wifi_password": "test", "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}]}
+
+    saved_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Living Room Relay Node",
+        config=dict(project.pending_config),
+    )
+    db.add(saved_config)
+    db.flush()
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        saved_config_id=saved_config.id,
+        status=JobStatus.flashing,
+        staged_project_config=dict(project.pending_config),
+    )
+    project.pending_config_id = saved_config.id
+    project.pending_build_job_id = job_id
+    device.provisioning_project_id = project.id
+    device.firmware_version = f"build-{job_id[:8]}"
+    db.add(job)
+    db.commit()
+
+    mgr = MQTTClientManager()
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload_success = json.dumps({"event": "ota_status", "job_id": job_id, "status": "success"})
+    with patch('app.mqtt.SessionLocal', return_value=db_mock):
+        mgr.process_state_message(device.device_id, payload_success)
+
+    db.refresh(job)
+    db.refresh(project)
+    db.refresh(saved_config)
+    assert job.status == JobStatus.flashed
+    assert project.pending_build_job_id is None
+    assert project.pending_config is None
+    assert project.pending_config_id is None
+    assert project.config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}]
+    assert saved_config.last_applied_at is not None
 
 
 def test_mqtt_state_multi_pin_payload_acknowledges_pending_command():
