@@ -18,6 +18,11 @@
 #
 # Main WebUI:
 #   https://localhost:3443
+#
+# Built-in extension discovery helper:
+#   The stack also starts a small host-network helper for extension protocols
+#   whose LAN discovery replies do not cross the default Docker bridge.
+#   No extra action is required.
 
 x-user-config:
   # Most users only need to change these:
@@ -189,6 +194,19 @@ services:
       timeout: 5s
       retries: 24
       start_period: 5s
+
+  extension_discovery_helper:
+    image: *server_image
+    pull_policy: always
+    container_name: e-connect-extension-discovery-helper
+    restart: always
+    network_mode: host
+    command: ["python", "/app/scripts/yeelight_discovery_helper.py"]
+    environment:
+      TZ: *timezone
+    depends_on:
+      server:
+        condition: service_healthy
 
   discovery_mdns:
     image: *server_image
