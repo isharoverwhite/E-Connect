@@ -19,7 +19,8 @@ import hashlib
 from urllib.parse import urlencode
 from pathlib import Path
 
-from .mqtt import OTA_FLASHING_RECONCILIATION_TIMEOUT, build_pairing_rejected_ack_payload, mqtt_manager
+from .mqtt import OTA_FLASHING_RECONCILIATION_TIMEOUT, _reconcile_ota_jobs, build_pairing_rejected_ack_payload, mqtt_manager
+from .runtime_timestamps import normalize_build_job_timestamp, normalize_utc_naive_timestamp
 from .ws_manager import manager as ws_manager
 
 from .models import (
@@ -401,18 +402,10 @@ def _attach_runtime_state(db: Session, device: Device) -> Device:
     return device
 
 
-def _normalize_utc_naive_timestamp(value: datetime | None, *, fallback: datetime) -> datetime:
-    if value is None:
-        return fallback
-    if getattr(value, "tzinfo", None) is not None:
-        return value.astimezone(timezone.utc).replace(tzinfo=None)
-    return value
-
-
 def _build_job_reference_time(job: BuildJob, *, fallback: datetime) -> datetime:
-    return _normalize_utc_naive_timestamp(
+    return normalize_build_job_timestamp(
         job.finished_at or job.updated_at or job.created_at,
-        fallback=fallback,
+        reference_time=fallback,
     )
 
 
@@ -420,7 +413,7 @@ def _device_has_recent_heartbeat(device: Device, *, reference_time: datetime) ->
     if device.conn_status != ConnStatus.online or device.last_seen is None:
         return False
     return (
-        reference_time - _normalize_utc_naive_timestamp(device.last_seen, fallback=reference_time)
+        reference_time - normalize_utc_naive_timestamp(device.last_seen, fallback=reference_time)
     ) <= DEVICE_HEARTBEAT_TIMEOUT
 
 
@@ -453,7 +446,7 @@ def _reconcile_stale_flashing_job(
         return False
 
     last_seen = (
-        _normalize_utc_naive_timestamp(bound_device.last_seen, fallback=reference_time).isoformat()
+        normalize_utc_naive_timestamp(bound_device.last_seen, fallback=reference_time).isoformat()
         if bound_device.last_seen is not None
         else None
     )
@@ -3832,6 +3825,7 @@ async def send_command(
         ota_job.status = JobStatus.flashing
         ota_job.error_message = None
         ota_job.finished_at = None
+        ota_job.updated_at = _utcnow_naive()
         db.commit()
 
     command_id = str(uuid.uuid4())
@@ -3842,8 +3836,11 @@ async def send_command(
 
     # If the OTA publish failed entirely, revert the job out of flashing
     if not success and ota_job and ota_job.status == JobStatus.flashing:
+        failure_time = _utcnow_naive()
         ota_job.status = JobStatus.flash_failed
         ota_job.error_message = "Failed to publish firmware download command over MQTT."
+        ota_job.finished_at = failure_time
+        ota_job.updated_at = failure_time
         db.commit()
 
     if success:
@@ -4622,13 +4619,31 @@ async def get_build_job(
     current_user: User = Depends(get_admin_user),
 ):
     job = _get_build_job_in_household_or_404(db, current_user, job_id)
-    if _reconcile_stale_flashing_job(
-        db,
-        job,
-        reference_time=datetime.now(timezone.utc).replace(tzinfo=None),
-    ):
-        db.commit()
-        db.refresh(job)
+    if job.status == JobStatus.flashing:
+        reference_time = datetime.now(timezone.utc).replace(tzinfo=None)
+        device = (
+            db.query(Device)
+            .filter(Device.provisioning_project_id == job.project_id)
+            .first()
+        )
+        original_status = job.status
+
+        if device is not None and device.firmware_version:
+            _reconcile_ota_jobs(db, device, device.firmware_version)
+            db.flush()
+            db.refresh(job)
+
+        if job.status == JobStatus.flashing:
+            _reconcile_stale_flashing_job(
+                db,
+                job,
+                reference_time=reference_time,
+                device=device,
+            )
+
+        if job.status != original_status:
+            db.commit()
+            db.refresh(job)
 
     # Inject an ephemeral OTA token upon successful access by owner
     job.ota_token = create_ota_token(job.id)

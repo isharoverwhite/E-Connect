@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 import asyncio
 from app.database import SessionLocal
 from app.models import DeviceRegister
+from app.runtime_timestamps import normalize_build_job_timestamp
 from app.services.builder import (
     build_job_firmware_version,
     describe_runtime_firmware_mismatch,
@@ -66,13 +67,12 @@ def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _job_reference_time(job) -> datetime:
+def _job_reference_time(job, *, reference_time: datetime | None = None) -> datetime:
     candidate = job.finished_at or job.updated_at or job.created_at
-    if candidate is None:
-        return _utcnow_naive()
-    if getattr(candidate, "tzinfo", None) is not None:
-        return candidate.astimezone(timezone.utc).replace(tzinfo=None)
-    return candidate
+    return normalize_build_job_timestamp(
+        candidate,
+        reference_time=reference_time or _utcnow_naive(),
+    )
 
 
 def _mark_ota_job_failed(job, *, now: datetime, message: str) -> None:
@@ -118,7 +118,7 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> s
             return "noop"
 
         job = flashing_jobs[0]
-        delta = now - _job_reference_time(job)
+        delta = now - _job_reference_time(job, reference_time=now)
         if delta > OTA_FLASHING_RECONCILIATION_TIMEOUT:
             expected_version = build_job_firmware_version(job.id)
             _mark_ota_job_failed(
@@ -141,14 +141,14 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> s
             BuildJob.status == JobStatus.flashed,
         )
         .all(),
-        key=_job_reference_time,
+        key=lambda job: _job_reference_time(job, reference_time=now),
         reverse=True,
     )
     recent_flashed_job = next(
         (
             job
             for job in recent_flashed_jobs
-            if now - _job_reference_time(job) <= OTA_RECENT_FLASH_CONFIRMATION_WINDOW
+            if now - _job_reference_time(job, reference_time=now) <= OTA_RECENT_FLASH_CONFIRMATION_WINDOW
         ),
         None,
     )
