@@ -24,6 +24,7 @@ from app.sql_models import (
     HouseholdRole,
     Room,
     DiyProject,
+    DiyProjectConfig,
     BuildJob,
     JobStatus,
     SerialSession,
@@ -277,6 +278,12 @@ def test_create_project_creates_and_links_wifi_credential_from_legacy_payload():
     assert project is not None
     assert project.wifi_credential_id is not None
     assert project.config["wifi_credential_id"] == project.wifi_credential_id
+    assert project.current_config_id is not None
+    saved_config = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == project.current_config_id).first()
+    assert saved_config is not None
+    assert saved_config.project_id == project.id
+    assert saved_config.config["config_id"] == saved_config.id
+    assert project.config["config_id"] == saved_config.id
     credential = db.query(WifiCredential).filter(WifiCredential.id == project.wifi_credential_id).first()
     assert credential is not None
     assert credential.ssid == "Builder-WiFi"
