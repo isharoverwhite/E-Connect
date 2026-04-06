@@ -1,0 +1,82 @@
+name: end-user-images
+
+on:
+  pull_request:
+    paths:
+      - "server/**"
+      - "webapp/**"
+      - "mqtt/**"
+      - ".github/workflows/end-user-images.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "server/**"
+      - "webapp/**"
+      - "mqtt/**"
+      - ".github/workflows/end-user-images.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: end-user-images-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE_NAMESPACE: ryzen30xx
+
+jobs:
+  docker-images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: server
+            context: ./server
+            file: ./server/Dockerfile
+            image: econnect-server
+          - id: webapp
+            context: ./webapp
+            file: ./webapp/Dockerfile
+            image: econnect-webapp
+          - id: mqtt
+            context: ./mqtt
+            file: ./mqtt/Dockerfile
+            image: econnect-mqtt
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: docker.io/${{ env.IMAGE_NAMESPACE }}/${{ matrix.image }}
+          tags: |
+            type=sha,format=short,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.file }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.id }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.id }}
