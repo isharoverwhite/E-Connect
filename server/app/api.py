@@ -856,6 +856,13 @@ def _upsert_saved_config(
     return saved_config, stamped_payload
 
 
+def _flush_new_saved_config_rows(db: Session, *saved_configs: DiyProjectConfig | None) -> None:
+    # MariaDB enforces these foreign keys immediately, so new config-history rows
+    # must exist before projects or build jobs point at them in the same transaction.
+    if any(saved_config is not None and saved_config in db.new for saved_config in saved_configs):
+        db.flush()
+
+
 def _latest_builds_by_saved_config(db: Session, *, project_id: str) -> dict[str, BuildJob]:
     jobs = (
         db.query(BuildJob)
@@ -926,7 +933,7 @@ def _ensure_project_current_saved_config(
         explicit_config_name or (base_payload.get("config_name") if isinstance(base_payload, dict) else None),
         fallback_name=device_name or project.name,
     )
-    return _upsert_saved_config(
+    saved_config, stamped_payload = _upsert_saved_config(
         db,
         project=project,
         device_id=device_id,
@@ -936,6 +943,8 @@ def _ensure_project_current_saved_config(
         existing_config=existing_config,
         config_id=getattr(project, "current_config_id", None) or project.id,
     )
+    _flush_new_saved_config_rows(db, saved_config)
+    return saved_config, stamped_payload
 
 
 def _materialize_saved_configs_for_project(
@@ -962,6 +971,7 @@ def _materialize_saved_configs_for_project(
             config_id=getattr(project, "current_config_id", None) or _trimmed_string(project.config.get("config_id")) or project.id,
             created_at=project.created_at,
         )
+        _flush_new_saved_config_rows(db, current_saved_config)
         if getattr(project, "current_config_id", None) != current_saved_config.id:
             project.current_config_id = current_saved_config.id
             changed = True
@@ -989,6 +999,7 @@ def _materialize_saved_configs_for_project(
             ),
             created_at=project.updated_at,
         )
+        _flush_new_saved_config_rows(db, pending_saved_config)
         if getattr(project, "pending_config_id", None) != pending_saved_config.id:
             project.pending_config_id = pending_saved_config.id
             changed = True
@@ -1021,6 +1032,7 @@ def _materialize_saved_configs_for_project(
             created_at=job.created_at,
             last_applied_at=job.finished_at if job.status == JobStatus.flashed else None,
         )
+        _flush_new_saved_config_rows(db, saved_config)
         if getattr(job, "saved_config_id", None) != saved_config.id:
             job.saved_config_id = saved_config.id
             changed = True
@@ -3454,6 +3466,7 @@ async def update_device_config(
         existing_config=target_saved_config,
         update_in_place=True,
     )
+    _flush_new_saved_config_rows(db, saved_config)
     if allow_empty_draft_save:
         db.commit()
         return {
