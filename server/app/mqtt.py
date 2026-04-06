@@ -616,13 +616,22 @@ class MQTTClientManager:
                 if job_id and ota_status:
                     job = db.query(BuildJob).filter(BuildJob.id == job_id).first()
                     if job:
+                        ota_event_time = _utcnow_naive()
                         if ota_status == "success":
                             job.status = JobStatus.flashed
+                            job.error_message = None
                         elif ota_status == "failed":
-                            job.status = JobStatus.flash_failed
-                            job.error_message = payload_json.get("message")
+                            _mark_ota_job_failed(
+                                job,
+                                now=ota_event_time,
+                                message=payload_json.get("message") or "OTA status reported failure.",
+                            )
 
-                        job.finished_at = datetime.now(timezone.utc)
+                        if ota_status == "success":
+                            job.finished_at = ota_event_time
+                            job.updated_at = ota_event_time
+                            if device.firmware_version:
+                                _reconcile_ota_jobs(db, device, device.firmware_version)
                         db.commit()
 
             db.commit()
