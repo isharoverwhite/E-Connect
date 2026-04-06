@@ -61,8 +61,32 @@ class ConnectionManager:
             ]
             return before - len(self.active_connections)
 
-    async def connect(self, websocket: WebSocket, user_id: int, account_type: str, accessible_room_ids: list[int]):
-        await websocket.accept()
+    @staticmethod
+    async def _ensure_socket_accepted(websocket: WebSocket) -> bool:
+        if websocket.application_state == WebSocketState.CONNECTED:
+            return websocket.client_state != WebSocketState.DISCONNECTED
+
+        if websocket.application_state != WebSocketState.CONNECTING:
+            return False
+
+        if websocket.client_state == WebSocketState.DISCONNECTED:
+            return False
+
+        try:
+            await websocket.accept()
+        except RuntimeError as exc:
+            logger.debug("Skipping stale WS accept: %s", exc)
+            return False
+
+        return (
+            websocket.client_state == WebSocketState.CONNECTED
+            and websocket.application_state == WebSocketState.CONNECTED
+        )
+
+    async def connect(self, websocket: WebSocket, user_id: int, account_type: str, accessible_room_ids: list[int]) -> bool:
+        if not await self._ensure_socket_accepted(websocket):
+            return False
+
         if self._loop is None or self._loop.is_closed():
             self._loop = asyncio.get_running_loop()
         with self._connections_lock:
@@ -77,6 +101,7 @@ class ConnectionManager:
                 "accessible_room_ids": accessible_room_ids
             })
         logger.debug(f"WS connected user_id={user_id}. Active: {len(self.active_connections)}")
+        return True
 
     def disconnect(self, websocket: WebSocket):
         self._remove_connections([websocket])

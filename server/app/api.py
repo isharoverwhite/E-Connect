@@ -2196,7 +2196,10 @@ async def websocket_endpoint(websocket: WebSocket, token: Optional[str] = Query(
     acc_type_val = user.account_type.value if hasattr(user.account_type, "value") else str(user.account_type)
     accessible_room_ids = _get_accessible_room_ids_for_user(db, user) if acc_type_val != "admin" else []
 
-    await ws_manager.connect(websocket, user.user_id, acc_type_val, accessible_room_ids)
+    connected = await ws_manager.connect(websocket, user.user_id, acc_type_val, accessible_room_ids)
+    if not connected:
+        return
+
     try:
         while True:
             # We don't expect much client->server WS text, but we need to keep the loop
