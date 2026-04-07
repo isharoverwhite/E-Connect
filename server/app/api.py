@@ -2578,7 +2578,9 @@ async def update_layout(layout: Any, db: Session = Depends(get_db), current_user
     """
     Update User's Dashboard Grid Layout.
     """
+    from sqlalchemy.orm.attributes import flag_modified
     current_user.ui_layout = layout
+    flag_modified(current_user, "ui_layout")
     db.commit()
     db.refresh(current_user)
     return current_user
