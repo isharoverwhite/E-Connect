@@ -328,7 +328,13 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
         </div>
         <input
           type="range"
-          className="w-full accent-primary h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
+          className={`w-full h-2 rounded-lg appearance-none cursor-pointer outline-none transition-colors
+            ${(toggleState && isOnline) ? 'bg-primary/20 dark:bg-primary/30' : 'bg-slate-200 dark:bg-slate-700'}
+            [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:transition-colors
+            ${(toggleState && isOnline) ? '[&::-webkit-slider-thumb]:bg-primary' : '[&::-webkit-slider-thumb]:bg-slate-400 dark:[&::-webkit-slider-thumb]:bg-slate-500'}
+            [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:border-none [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:shadow-md [&::-moz-range-thumb]:transition-colors
+            ${(toggleState && isOnline) ? '[&::-moz-range-thumb]:bg-primary' : '[&::-moz-range-thumb]:bg-slate-400 dark:[&::-moz-range-thumb]:bg-slate-500'}
+          `}
           min={pwmRangeMin}
           max={pwmRangeMax}
           value={sliderValue}
@@ -813,7 +819,13 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
         </div>
         <input
           type="range"
-          className="w-full accent-primary h-2 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer"
+          className={`w-full h-2 rounded-lg appearance-none cursor-pointer outline-none transition-colors
+            ${(toggleState && controlReady) ? 'bg-primary/20 dark:bg-primary/30' : 'bg-slate-200 dark:bg-slate-700'}
+            [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:transition-colors
+            ${(toggleState && controlReady) ? '[&::-webkit-slider-thumb]:bg-primary' : '[&::-webkit-slider-thumb]:bg-slate-400 dark:[&::-webkit-slider-thumb]:bg-slate-500'}
+            [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:border-none [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:shadow-md [&::-moz-range-thumb]:transition-colors
+            ${(toggleState && controlReady) ? '[&::-moz-range-thumb]:bg-primary' : '[&::-moz-range-thumb]:bg-slate-400 dark:[&::-moz-range-thumb]:bg-slate-500'}
+          `}
           min={0}
           max={255}
           value={sliderValue}
@@ -891,7 +903,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
                   </div>
                   <input
                   type="range"
-                  className="w-full accent-orange-500 h-2 rounded-lg appearance-none cursor-pointer"
+                  className="w-full h-2 rounded-lg appearance-none cursor-pointer outline-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-slate-200 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:shadow-md [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border [&::-moz-range-thumb]:border-slate-200"
                   style={{
                       background: 'linear-gradient(to right, #ff8c00, #ffddaa, #eef2ff, #aaccff)'
                   }}
