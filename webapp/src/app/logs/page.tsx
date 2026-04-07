@@ -461,7 +461,7 @@ export default function LogsPage() {
                                     onClick={() => void handleMarkAllRead()}
                                 >
                                     <span className={`material-icons-round text-[18px] ${markingAll ? "animate-spin" : ""}`}>
-                                        mark_email_read
+                                        {markingAll ? "autorenew" : "mark_email_read"}
                                     </span>
                                     Mark All Read
                                 </button>
@@ -763,7 +763,7 @@ export default function LogsPage() {
                                                                                 onClick={() => void handleMarkRead(entry.id)}
                                                                             >
                                                                                 <span className={`material-icons-round text-[14px] ${isMarking ? "animate-spin" : ""}`}>
-                                                                                    {entry.is_read ? "done_all" : "mark_email_read"}
+                                                                                    {isMarking ? "autorenew" : entry.is_read ? "done_all" : "mark_email_read"}
                                                                                 </span>
                                                                                 {entry.is_read ? "Read" : "Mark Read"}
                                                                             </button>
