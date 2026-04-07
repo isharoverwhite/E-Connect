@@ -110,12 +110,13 @@ export default function SetupPage() {
                 householdName,
                 ui_layout: {}
             });
-            showToast("Server initialized successfully! Please log in.", "success");
-            // Success, send them to login
-            router.push("/login");
+            showToast("Server initialized successfully! Redirecting to login...", "success");
+            // Success, delay to show toast then send them to login
+            setTimeout(() => {
+                router.push("/login");
+            }, 1000);
         } catch (error: unknown) {
             setError(getErrorMessage(error, "Failed to initialize server"));
-        } finally {
             setIsLoading(false);
         }
     };
