@@ -256,6 +256,7 @@ export async function fetchMyProfile() {
     }
 
     const res = await fetch(`${API_URL}/users/me`, {
+        cache: "no-store",
         headers: {
             "Authorization": `Bearer ${token}`
         }
@@ -272,7 +273,7 @@ export async function fetchMyProfile() {
 }
 
 export async function fetchSystemStatus() {
-    const res = await fetch(`${API_URL}/system/status`);
+    const res = await fetch(`${API_URL}/system/status`, { cache: "no-store" });
     if (!res.ok) {
         if (res.status >= 500) {
             throw new ServerOfflineError("Server is offline");

@@ -263,6 +263,7 @@ export async function fetchCurrentUser(token?: string): Promise<Record<string, u
   if (!t) throw new Error("No token provided");
 
   const res = await fetch(`${API_URL}/users/me`, {
+    cache: "no-store",
     headers: {
       Authorization: `Bearer ${t}`,
     },

@@ -36,7 +36,7 @@ export default function Dashboard() {
   const [canvasLayouts, setCanvasLayouts] = useState<Record<string, CanvasLayout>>({});
 
   useEffect(() => {
-    if (user && user.ui_layout && Object.keys(user.ui_layout).length > 0) {
+    if (user && user.ui_layout && typeof user.ui_layout === "object") {
       setCanvasLayouts(user.ui_layout as Record<string, CanvasLayout>);
     } else if (typeof window !== "undefined") {
       try {
