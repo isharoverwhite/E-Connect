@@ -44,6 +44,19 @@ export default function Dashboard() {
         if (saved) setCanvasLayouts(JSON.parse(saved));
       } catch {}
     }
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === "dashboardCanvasLayout" && e.newValue) {
+        try {
+          setCanvasLayouts(JSON.parse(e.newValue));
+        } catch {}
+      }
+    };
+    
+    if (typeof window !== "undefined") {
+      window.addEventListener("storage", handleStorageChange);
+      return () => window.removeEventListener("storage", handleStorageChange);
+    }
   }, [user]);
 
   const [windowWidth, setWindowWidth] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
