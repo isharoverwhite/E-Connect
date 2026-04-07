@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
 
 import { AuthStatus, DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
-import { getToken } from "./auth";
+import { getToken, removeToken } from "./auth";
 import { buildProvisioningHeaders, resolvePublicApiBaseUrl } from "./secure-origin";
 
 export const API_URL = resolvePublicApiBaseUrl(process.env.NEXT_PUBLIC_API_URL);
@@ -256,6 +256,53 @@ export async function fetchServerTimeContext(token?: string): Promise<ServerTime
     }
 
     return response.json();
+}
+
+export async function fetchCurrentUser(token?: string): Promise<Record<string, unknown>> {
+  const t = token || getToken();
+  if (!t) throw new Error("No token provided");
+
+  const res = await fetch(`${API_URL}/users/me`, {
+    headers: {
+      Authorization: `Bearer ${t}`,
+    },
+  });
+
+  if (!res.ok) {
+    if (res.status === 401) {
+      if (!token) removeToken();
+      throw new Error("Unauthorized");
+    }
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || "Failed to fetch current user");
+  }
+
+  return res.json();
+}
+
+export async function updateUiLayout(layout: Record<string, unknown>, token?: string): Promise<Record<string, unknown>> {
+  const t = token || getToken();
+  if (!t) throw new Error("No token provided");
+
+  const res = await fetch(`${API_URL}/users/me/layout`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${t}`,
+    },
+    body: JSON.stringify(layout),
+  });
+
+  if (!res.ok) {
+    if (res.status === 401) {
+      if (!token) removeToken();
+      throw new Error("Unauthorized");
+    }
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail?.message || err.detail || "Failed to update layout");
+  }
+
+  return res.json();
 }
 
 export async function updateGeneralSettings(
