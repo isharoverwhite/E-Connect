@@ -84,18 +84,18 @@ export function OtaUpdateModal({ device, otaState, onClose }: OtaUpdateModalProp
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
               <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
-                Target Firmware
-              </p>
-              <p className="mt-2 break-all font-mono text-sm text-slate-700 dark:text-slate-200">
-                {expectedFirmwareVersion ?? "pending"}
-              </p>
-            </div>
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
                 Board-reported Firmware
               </p>
               <p className="mt-2 break-all font-mono text-sm text-slate-700 dark:text-slate-200">
                 {device?.firmware_version ?? "unknown"}
+              </p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
+              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                Target Firmware
+              </p>
+              <p className="mt-2 break-all font-mono text-sm text-slate-700 dark:text-slate-200">
+                {expectedFirmwareVersion ?? "pending"}
               </p>
             </div>
           </div>
@@ -157,23 +157,49 @@ export function OtaUpdateModal({ device, otaState, onClose }: OtaUpdateModalProp
           )}
 
           {jobStatus === "build_failed" && (
-            <div className="flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
-              <span className="material-icons-round">error</span>
-              Firmware rebuild failed. Review the build error before retrying.
+            <div className="flex flex-col gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
+              <div className="flex items-center gap-3 font-semibold">
+                <span className="material-icons-round">error</span>
+                Firmware rebuild failed
+              </div>
+              <p className="pl-9 text-rose-900 dark:text-rose-100">
+                Review the build error before retrying.
+              </p>
+              {jobError && (
+                <div className="ml-9 mt-2 rounded bg-white/50 p-3 font-mono text-xs dark:bg-slate-900/50 break-words">
+                  <span className="mb-1 block font-bold uppercase tracking-wider text-rose-700/70 dark:text-rose-400">
+                    Error Details
+                  </span>
+                  <span>{jobError}</span>
+                </div>
+              )}
             </div>
           )}
 
           {jobStatus === "flash_failed" && (
-            <div className="flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
-              <span className="material-icons-round">warning</span>
-              OTA update failed or timed out. Check the board power and network, then retry
-              this exact artifact or rebuild if the config changed.
+            <div className="flex flex-col gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
+              <div className="flex items-center gap-3 font-semibold">
+                <span className="material-icons-round">warning</span>
+                OTA update failed
+              </div>
+              <p className="pl-9 text-rose-900 dark:text-rose-100">
+                The board failed to update over the air. Check the board power and network, then retry this exact artifact or rebuild if the config changed.
+              </p>
+              {jobError && (
+                <div className="ml-9 mt-2 rounded bg-white/50 p-3 font-mono text-xs dark:bg-slate-900/50 break-words">
+                  <span className="mb-1 block font-bold uppercase tracking-wider text-rose-700/70 dark:text-rose-400">
+                    Error Reason
+                  </span>
+                  <span>{jobError}</span>
+                </div>
+              )}
             </div>
           )}
 
-          {jobError && (
-            <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
-              {jobError}
+          {jobError && jobStatus !== "build_failed" && jobStatus !== "flash_failed" && (
+            <div className="flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
+              <span className="material-icons-round">error</span>
+              <span className="font-mono text-xs break-words">{jobError}</span>
             </div>
           )}
 
