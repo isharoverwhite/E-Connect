@@ -32,15 +32,19 @@ export default function Dashboard() {
   const [notificationError, setNotificationError] = useState("");
   
   const [isCustomizeMode, setIsCustomizeMode] = useState(false);
-  const [canvasLayouts, setCanvasLayouts] = useState<Record<string, CanvasLayout>>(() => {
-    if (typeof window !== "undefined") {
+  const [layoutVersion, setLayoutVersion] = useState(0);
+  const [canvasLayouts, setCanvasLayouts] = useState<Record<string, CanvasLayout>>({});
+
+  useEffect(() => {
+    if (user && user.ui_layout && Object.keys(user.ui_layout).length > 0) {
+      setCanvasLayouts(user.ui_layout as Record<string, CanvasLayout>);
+    } else if (typeof window !== "undefined") {
       try {
         const saved = localStorage.getItem("dashboardCanvasLayout");
-        if (saved) return JSON.parse(saved);
+        if (saved) setCanvasLayouts(JSON.parse(saved));
       } catch {}
     }
-    return {};
-  });
+  }, [user]);
 
   const [windowWidth, setWindowWidth] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
   const [isMounted, setIsMounted] = useState(false);
@@ -57,14 +61,32 @@ export default function Dashboard() {
   // Use canvas if we are customizing, or if we have a custom layout AND we are not on mobile
   const shouldUseCanvas = isMounted && (isCustomizeMode || (hasCustomLayout && !isMobile));
 
-  const saveCanvasLayout = () => {
-    localStorage.setItem("dashboardCanvasLayout", JSON.stringify(canvasLayouts));
+  const saveCanvasLayout = async () => {
+    const layout = { ...canvasLayouts };
+    setCanvasLayouts(layout);
+    
+    // Attempt saving to DB if possible
+    try {
+      const { updateUiLayout } = await import("@/lib/api");
+      await updateUiLayout(layout);
+    } catch (e) {
+      console.warn("Failed to sync layout to server", e);
+    }
+    
+    localStorage.setItem("dashboardCanvasLayout", JSON.stringify(layout));
     setIsCustomizeMode(false);
   };
 
-  const resetCanvasLayout = () => {
+  const resetCanvasLayout = async () => {
+    try {
+      const { updateUiLayout } = await import("@/lib/api");
+      await updateUiLayout({});
+    } catch (e) {
+      console.warn("Failed to clear layout on server", e);
+    }
     localStorage.removeItem("dashboardCanvasLayout");
     setCanvasLayouts({});
+    setLayoutVersion(v => v + 1);
     setIsCustomizeMode(false);
   };
 
@@ -174,6 +196,55 @@ export default function Dashboard() {
   const offlineDevices = approvedDevices.filter((d) => !isDeviceOnline(d));
 
   const onlineCount = onlineDevices.length;
+  
+  const computedLayouts = useMemo(() => {
+    const computed: Record<string, CanvasLayout> = {};
+    for (let i = 0; i < approvedDevices.length; i++) {
+        if (!("device_id" in approvedDevices[i])) continue;
+        const c = approvedDevices[i] as DeviceConfig;
+        const deviceId = c.device_id;
+        
+        if (canvasLayouts[deviceId]) {
+            const l = canvasLayouts[deviceId];
+            computed[deviceId] = {
+                x: typeof l.x === 'number' && !Number.isNaN(l.x) ? l.x : 0,
+                y: typeof l.y === 'number' && !Number.isNaN(l.y) ? l.y : 0,
+                w: (typeof l.w === 'number' && Number.isNaN(l.w)) ? 320 : (l.w || 320),
+                h: (typeof l.h === 'number' && Number.isNaN(l.h)) ? "auto" : (l.h || "auto")
+            };
+        } else {
+            if (i === 0) {
+                computed[deviceId] = { x: 0, y: 0, w: 320, h: "auto" };
+            } else {
+                let prevId;
+                for (let j = i - 1; j >= 0; j--) {
+                    if ("device_id" in approvedDevices[j]) {
+                        prevId = (approvedDevices[j] as DeviceConfig).device_id;
+                        break;
+                    }
+                }
+                
+                if (prevId && computed[prevId]) {
+                    const prev = computed[prevId];
+                    const prevW = typeof prev.w === 'number' ? prev.w : 320;
+                    const prevH = typeof prev.h === 'number' ? prev.h : getCardMinHeight(approvedDevices[i-1] as DeviceConfig);
+                    
+                    let newX = prev.x + prevW + 20; // 20px gap
+                    let newY = prev.y;
+                    
+                    if (newX + 320 > windowWidth) {
+                        newX = 0;
+                        newY = prev.y + prevH + 20;
+                    }
+                    computed[deviceId] = { x: newX, y: newY, w: 320, h: "auto" };
+                } else {
+                    computed[deviceId] = { x: 0, y: 0, w: 320, h: "auto" };
+                }
+            }
+        }
+    }
+    return computed;
+  }, [approvedDevices, canvasLayouts, windowWidth]);
   const outdatedDevices = useMemo(() => {
     if (!latestFirmwareRevision || devices.length === 0) return [];
     return devices.filter(d => !!d.firmware_revision && d.firmware_revision !== latestFirmwareRevision);
@@ -483,32 +554,34 @@ export default function Dashboard() {
                 ) : approvedDevices.length === 0 ? (
                   <div className="py-12 text-center text-slate-400">No devices found.</div>
                 ) : shouldUseCanvas ? (
-                  <div style={{ minHeight: `${Math.max(10, ...approvedDevices.map((config, idx) => {
+                  <div style={{ minHeight: `${Math.max(10, ...approvedDevices.map((config) => {
                     if (!("device_id" in config)) return 0;
                     const c = config as DeviceConfig;
-                    const layout = canvasLayouts[c.device_id] || { y: Math.floor(idx / 3) * 220, h: 350 };
+                    const layout = computedLayouts[c.device_id] || { y: 0, h: 350 };
                     return layout.y + (typeof layout.h === 'number' ? layout.h : 350);
                   })) + (isCustomizeMode ? 400 : 20)}px`, minWidth: "100%", position: "relative" }}>
-                    {approvedDevices.map((config, index) => {
+                    {approvedDevices.map((config) => {
                       if (!("device_id" in config)) return null;
                       const c = config as DeviceConfig;
-                      const layout = canvasLayouts[c.device_id] || { x: (index % 3) * 340, y: Math.floor(index / 3) * 220, w: 320, h: "auto" };
+                      const layout = computedLayouts[c.device_id] || { x: 0, y: 0, w: 320, h: "auto" };
                       return (
                       <Rnd
-                        key={c.device_id}
+                        key={`${c.device_id}-${layoutVersion}`}
                         size={{ width: layout.w, height: layout.h }}
                         position={{ x: layout.x, y: layout.y }}
                         onDragStop={(e, d) => {
                           setCanvasLayouts(prev => ({ ...prev, [c.device_id]: { ...layout, x: d.x, y: d.y } }));
                         }}
                         onResizeStop={(e, direction, ref, delta, position) => {
+                          const parsedW = parseInt(ref.style.width, 10);
+                          const parsedH = parseInt(ref.style.height, 10);
                           setCanvasLayouts(prev => ({ 
                             ...prev, 
                             [c.device_id]: { 
                               x: position.x, 
                               y: position.y, 
-                              w: parseInt(ref.style.width, 10), 
-                              h: parseInt(ref.style.height, 10) 
+                              w: Number.isNaN(parsedW) ? layout.w : parsedW, 
+                              h: Number.isNaN(parsedH) ? layout.h : parsedH 
                             } 
                           }));
                         }}
@@ -519,7 +592,7 @@ export default function Dashboard() {
                         minWidth={200}
                         minHeight={getCardMinHeight(c)}
                         bounds="parent"
-                        className={`transition-shadow ${isCustomizeMode ? "z-50 shadow-2xl ring-2 ring-primary cursor-move rounded-xl bg-white dark:bg-surface-dark" : "z-10"}`}
+                        className={`transition-shadow ${isCustomizeMode ? "z-50 shadow-xl ring-2 ring-primary ring-offset-2 ring-offset-transparent cursor-move rounded-xl" : "z-10"}`}
                       >
                         <div className={`w-full h-full ${isCustomizeMode ? 'pointer-events-none' : ''}`}>
                           <DynamicDeviceCard config={c} isOnline={isDeviceOnline(c)} />

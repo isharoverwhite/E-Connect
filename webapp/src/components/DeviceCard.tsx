@@ -37,6 +37,7 @@ export function DeviceToggle({
   disabled,
   loading,
   readOnly,
+  hideSyncLabel,
   onChange,
 }: {
   id: string;
@@ -44,6 +45,7 @@ export function DeviceToggle({
   disabled: boolean;
   loading: boolean;
   readOnly?: boolean;
+  hideSyncLabel?: boolean;
   onChange: (event: React.ChangeEvent<HTMLInputElement>) => void;
 }) {
   const trackClass = loading
@@ -56,7 +58,7 @@ export function DeviceToggle({
 
   return (
     <div className="flex items-center gap-2">
-      {loading ? (
+      {!hideSyncLabel && loading ? (
         <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300 animate-pulse">
           Syncing...
         </span>
@@ -314,14 +316,21 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
         <div className="flex justify-between items-center mb-3">
           <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
           <div className="flex items-center gap-3">
-             <span className="text-xs font-bold text-primary">
-               {sliderValue}
-             </span>
+             {sliderLoading ? (
+               <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300 animate-pulse">
+                 Syncing...
+               </span>
+             ) : (
+               <span className="text-xs font-bold text-primary">
+                 {sliderValue}
+               </span>
+             )}
              <DeviceToggle
                 checked={toggleState}
                 disabled={pending || !isOnline}
                 id={`pin-toggle-${config.device_id}-${pin.gpio_pin}`}
                 loading={toggleLoading || sliderLoading}
+                hideSyncLabel={true}
                 onChange={handleToggle}
              />
           </div>
@@ -813,9 +822,15 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
             Brightness
           </label>
-          <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
-            {sliderValue}
-          </span>
+          {sliderLoading ? (
+            <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300 animate-pulse">
+              Syncing...
+            </span>
+          ) : (
+            <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
+              {sliderValue}
+            </span>
+          )}
         </div>
         <input
           type="range"
@@ -897,9 +912,15 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
                   <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
                       Light Temperature
                   </label>
-                  <span className="text-xs font-bold text-orange-600 dark:text-orange-400 flex items-center gap-1.5">
-                      {toneValue}K
-                  </span>
+                  {toneLoading ? (
+                    <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300 animate-pulse">
+                      Syncing...
+                    </span>
+                  ) : (
+                    <span className="text-xs font-bold text-orange-600 dark:text-orange-400 flex items-center gap-1.5">
+                        {toneValue}K
+                    </span>
+                  )}
                   </div>
                   <input
                   type="range"

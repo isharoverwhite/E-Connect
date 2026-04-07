@@ -60,6 +60,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const [serverOffline, setServerOffline] = useState(false);
+    const [isInitialized, setIsInitialized] = useState<boolean | null>(null);
     const router = useRouter();
     const pathname = usePathname();
     const sessionTimeoutRef = useRef<number | null>(null);
@@ -166,11 +167,13 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
             setServerOffline(false);
             try {
                 const sysStatus = await fetchSystemStatus();
-                if (!sysStatus.initialized) {
-                    if (!isCurrentRun()) {
-                        return;
-                    }
+                if (!isCurrentRun()) {
+                    return;
+                }
+                
+                setIsInitialized(sysStatus.initialized);
 
+                if (!sysStatus.initialized) {
                     if (pathnameRef.current !== "/setup") {
                         router.push("/setup");
                     }
@@ -248,8 +251,16 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
 
     useEffect(() => {
         if (!loading) {
+            if (isInitialized === false) {
+                if (pathname !== "/setup") {
+                    router.push("/setup");
+                }
+                return;
+            }
+
             const isSetupRoute = pathname === "/setup";
-            if (isSetupRoute) {
+            if (isSetupRoute && isInitialized === true) {
+                router.push(user ? "/" : "/login");
                 return;
             }
 
@@ -260,7 +271,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
                 router.push("/");
             }
         }
-    }, [user, loading, pathname, router]);
+    }, [user, loading, pathname, router, isInitialized]);
 
     useEffect(() => {
         return () => {
