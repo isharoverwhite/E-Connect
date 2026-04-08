@@ -20,8 +20,13 @@ export default function Sidebar() {
 
     const [isHovered, setIsHovered] = useState(false);
     const [hoverToExpandSetting, setHoverToExpandSetting] = useState(true);
+    const [isMobile, setIsMobile] = useState(false);
 
     useEffect(() => {
+        const checkMobile = () => setIsMobile(window.innerWidth < 768);
+        checkMobile();
+        window.addEventListener('resize', checkMobile);
+
         const loadSetting = () => {
             if (typeof window !== 'undefined') {
                 const stored = localStorage.getItem('hoverToExpandSidebar');
@@ -31,10 +36,13 @@ export default function Sidebar() {
         loadSetting();
         // Sync setting changes from other pages (like Settings)
         window.addEventListener('sidebarHoverSettingChanged', loadSetting);
-        return () => window.removeEventListener('sidebarHoverSettingChanged', loadSetting);
+        return () => {
+            window.removeEventListener('sidebarHoverSettingChanged', loadSetting);
+            window.removeEventListener('resize', checkMobile);
+        };
     }, []);
 
-    const isEffectivelyCollapsed = isCollapsed && (!hoverToExpandSetting || !isHovered);
+    const isEffectivelyCollapsed = isMobile || (isCollapsed && (!hoverToExpandSetting || !isHovered));
 
 
     const toggleSidebar = () => {
@@ -75,9 +83,9 @@ export default function Sidebar() {
 
     return (
         <aside
-            onMouseEnter={() => setIsHovered(true)}
-            onMouseLeave={() => setIsHovered(false)}
-            className={`z-20 hidden flex-col justify-between border-r border-slate-200 bg-surface-light shadow-lg transition-all duration-300 dark:border-slate-700 dark:bg-surface-dark md:flex shrink-0 sticky top-0 h-[100dvh] ${isEffectivelyCollapsed ? 'w-24' : 'w-64'}`}
+            onMouseEnter={() => !isMobile && setIsHovered(true)}
+            onMouseLeave={() => !isMobile && setIsHovered(false)}
+            className={`z-20 flex flex-col justify-between border-r border-slate-200 bg-surface-light shadow-lg transition-all duration-300 dark:border-slate-700 dark:bg-surface-dark shrink-0 sticky top-0 h-[100dvh] ${isEffectivelyCollapsed ? 'w-20 md:w-24' : 'w-64'}`}
         >
             <div>
                 <div className={`flex items-center border-b border-slate-200 dark:border-slate-700 overflow-hidden whitespace-nowrap transition-all duration-300 ${isEffectivelyCollapsed ? 'justify-center h-16' : 'justify-between px-4 h-16'}`}>
@@ -87,7 +95,7 @@ export default function Sidebar() {
                     </div>
                     <button
                         onClick={toggleSidebar}
-                        className="flex shrink-0 items-center justify-center rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white"
+                        className={`flex shrink-0 items-center justify-center rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white ${isMobile ? 'hidden' : ''}`}
                         title={isEffectivelyCollapsed ? "Expand Sidebar" : (isCollapsed ? "Pin Sidebar Open" : "Collapse Sidebar")}
                     >
                         <span className="material-icons-round text-[20px]">
@@ -137,7 +145,7 @@ export default function Sidebar() {
                     </div>
                     <button
                         onClick={logout}
-                        className={`rounded-md p-2 text-slate-400 transition-all duration-300 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10 shrink-0 ${isEffectivelyCollapsed ? 'hidden opacity-0' : 'opacity-0 group-hover:opacity-100'}`}
+                        className={`rounded-md p-2 text-slate-400 transition-all duration-300 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10 shrink-0 ${isEffectivelyCollapsed ? 'hidden md:opacity-0 md:group-hover:opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
                         title="Logout"
                     >
                         <span className="material-icons-round text-[18px]">logout</span>
