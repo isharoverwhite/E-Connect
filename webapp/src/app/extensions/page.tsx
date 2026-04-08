@@ -255,8 +255,9 @@ export default function ExtensionsLibrary() {
                                 ) : (
                                     <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                                         {extensions.map((extension) => (
-                                            <article
+                                            <Link
                                                 key={extension.extension_id}
+                                                href={`/extensions/${extension.extension_id}`}
                                                 className="group relative flex flex-col justify-between overflow-hidden rounded-[24px] border border-slate-200/80 bg-white shadow-sm transition-all hover:border-slate-300 hover:shadow-md dark:border-slate-800 dark:bg-surface-dark dark:hover:border-slate-700 dark:hover:bg-slate-800/50"
                                             >
                                                 <div className="p-8 pb-6">
@@ -290,7 +291,11 @@ export default function ExtensionsLibrary() {
                                                         </div>
                                                         <button
                                                             type="button"
-                                                            onClick={() => void handleDeleteExtension(extension)}
+                                                            onClick={(e) => {
+                                                                e.preventDefault();
+                                                                e.stopPropagation();
+                                                                void handleDeleteExtension(extension);
+                                                            }}
                                                             disabled={deletingExtensionId === extension.extension_id || extension.external_device_count > 0}
                                                             title={
                                                                 extension.external_device_count > 0
@@ -306,21 +311,14 @@ export default function ExtensionsLibrary() {
                                                         </button>
                                                     </div>
                                                 </div>
-                                                <div className="px-8 pb-8 pt-4">
-                                                    {extension.external_device_count > 0 ? (
-                                                        <p className="mb-3 text-xs text-amber-700 dark:text-amber-300">
+                                                {extension.external_device_count > 0 ? (
+                                                    <div className="px-8 pb-8 pt-0">
+                                                        <p className="text-xs text-amber-700 dark:text-amber-300">
                                                             Remove linked external devices before deleting this package.
                                                         </p>
-                                                    ) : null}
-                                                    <Link
-                                                        href={`/extensions/${extension.extension_id}`}
-                                                        className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-700 dark:bg-blue-600 dark:hover:bg-blue-500"
-                                                    >
-                                                        View Details
-                                                        <span className="material-icons-round text-[18px]">arrow_forward</span>
-                                                    </Link>
-                                                </div>
-                                            </article>
+                                                    </div>
+                                                ) : null}
+                                            </Link>
                                         ))}
                                     </div>
                                 )}
