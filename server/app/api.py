@@ -2574,7 +2574,7 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
 
 
 @router.put("/users/me/layout", response_model=UserResponse)
-async def update_layout(layout: Dict[str, Any] = Body(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+async def update_layout(layout: dict[str, Any] = Body(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     """
     Update User's Dashboard Grid Layout.
     """

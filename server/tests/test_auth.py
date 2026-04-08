@@ -327,6 +327,39 @@ def test_refresh_endpoint_rotates_non_persistent_session():
     assert me_resp.json()["username"] == "admin"
 
 
+def test_users_me_layout_update_persists_canvas_layout():
+    client.post(
+        "/api/v1/auth/initialserver",
+        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+    )
+
+    login_resp = client.post(
+        "/api/v1/auth/token",
+        data={"username": "admin", "password": "password"}
+    )
+    token = login_resp.json()["access_token"]
+    layout = {
+        "device-living": {"x": 12, "y": 24, "w": 320, "h": 180},
+        "device-kitchen": {"x": 360, "y": 24, "w": 280, "h": 180},
+    }
+
+    update_resp = client.put(
+        "/api/v1/users/me/layout",
+        headers={"Authorization": f"Bearer {token}"},
+        json=layout,
+    )
+
+    assert update_resp.status_code == 200
+    assert update_resp.json()["ui_layout"] == layout
+
+    me_resp = client.get(
+        "/api/v1/users/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert me_resp.status_code == 200
+    assert me_resp.json()["ui_layout"] == layout
+
+
 def test_refresh_endpoint_rejects_access_token_payload():
     client.post(
         "/api/v1/auth/initialserver",
