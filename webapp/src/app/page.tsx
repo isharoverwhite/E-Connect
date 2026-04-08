@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { fetchDashboardDevices, fetchDevices, fetchSystemLogs, markSystemLogRead, markAllSystemLogsRead, SystemLogEntry, fetchSystemStatus } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
@@ -23,6 +23,7 @@ export default function Dashboard() {
   const [pairingRequests, setPairingRequests] = useState<DeviceConfig[]>([]);
   const [systemLogs, setSystemLogs] = useState<SystemLogEntry[]>([]);
   const [latestFirmwareRevision, setLatestFirmwareRevision] = useState<string | null>(null);
+  const [serverTimezone, setServerTimezone] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [showNotifications, setShowNotifications] = useState(false);
   const [mountDropdown, setMountDropdown] = useState(false);
@@ -30,6 +31,23 @@ export default function Dashboard() {
   const [markingAllNotifications, setMarkingAllNotifications] = useState(false);
   const [markingNotificationIds, setMarkingNotificationIds] = useState<Set<number>>(new Set());
   const [notificationError, setNotificationError] = useState("");
+  const notificationRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
+        if (showNotifications) {
+          setShowNotifications(false);
+          setTimeout(() => setMountDropdown(false), 300);
+        }
+      }
+    };
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [showNotifications]);
   
   const [isCustomizeMode, setIsCustomizeMode] = useState(false);
   const [layoutVersion, setLayoutVersion] = useState(0);
@@ -119,12 +137,17 @@ export default function Dashboard() {
       fetchDashboardDevices(),
       isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
       isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
-      isAdmin ? fetchSystemStatus() : Promise.resolve(null),
+      fetchSystemStatus().catch(() => null),
     ]);
     setDevices(dashboardDevices);
     setPairingRequests((pendingRequests as DeviceConfig[]) || []);
     if (isAdmin) setSystemLogs(logsRes.entries);
-    if (statusRes) setLatestFirmwareRevision(statusRes.latest_firmware_revision || null);
+    if (statusRes) {
+        setLatestFirmwareRevision(statusRes.latest_firmware_revision || null);
+        if (statusRes.effective_timezone) {
+            setServerTimezone(statusRes.effective_timezone);
+        }
+    }
     setLoading(false);
   }, [isAdmin]);
 
@@ -191,7 +214,7 @@ export default function Dashboard() {
           fetchDashboardDevices(),
           isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
           isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
-          isAdmin ? fetchSystemStatus() : Promise.resolve(null),
+          fetchSystemStatus().catch(() => null),
         ]);
         if (cancelled) {
           return;
@@ -199,7 +222,12 @@ export default function Dashboard() {
         setDevices(dashboardDevices);
         setPairingRequests((pendingRequests as DeviceConfig[]) || []);
         if (isAdmin) setSystemLogs(logsRes.entries);
-        if (statusRes) setLatestFirmwareRevision(statusRes.latest_firmware_revision || null);
+        if (statusRes) {
+            setLatestFirmwareRevision(statusRes.latest_firmware_revision || null);
+            if (statusRes.effective_timezone) {
+                setServerTimezone(statusRes.effective_timezone);
+            }
+        }
         setLoading(false);
       })();
     }, 50);
@@ -331,10 +359,45 @@ export default function Dashboard() {
 
   const alertCount = visibleNotifications.length;
 
+  const highestSeverity = useMemo(() => {
+    if (visibleNotifications.length === 0) return 'none';
+    if (visibleNotifications.some(n => n.severity === 'critical')) return 'critical';
+    if (visibleNotifications.some(n => n.severity === 'error')) return 'error';
+    if (visibleNotifications.some(n => n.severity === 'warning')) return 'warning';
+    return 'info';
+  }, [visibleNotifications]);
+
+  const alertIconColor = highestSeverity === 'critical' || highestSeverity === 'error' ? 'text-red-500 dark:group-hover:text-red-400' :
+                         highestSeverity === 'warning' ? 'text-orange-500 dark:group-hover:text-orange-400' :
+                         highestSeverity === 'info' ? 'text-blue-500 dark:group-hover:text-blue-400' :
+                         'text-green-500 dark:group-hover:text-green-400';
+
+  const alertTextColor = highestSeverity === 'critical' || highestSeverity === 'error' ? 'text-red-500 dark:text-red-400' :
+                         highestSeverity === 'warning' ? 'text-orange-500 dark:text-orange-400' :
+                         highestSeverity === 'info' ? 'text-blue-500 dark:text-blue-400' :
+                         'text-green-500 dark:text-green-400';
+  
+  const alertCardIcon = highestSeverity === 'critical' || highestSeverity === 'error' ? 'report' :
+                        highestSeverity === 'warning' ? 'warning' :
+                        highestSeverity === 'info' ? 'info' :
+                        'check_circle';
+
+  const offlineCardDynamicClasses = offlineDevices.length > 0
+    ? "animate-[pulse_1s_ease-in-out_infinite] border-red-500 dark:border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.4)] dark:shadow-[0_0_15px_rgba(248,113,113,0.3)] bg-red-50 dark:bg-red-900/20 focus:outline-none focus:ring-2 focus:ring-red-500"
+    : "border-slate-200 dark:border-slate-700 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-500 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-green-500";
+
+  const alertCardDynamicClasses = highestSeverity === 'critical' || highestSeverity === 'error'
+    ? "animate-[pulse_1s_ease-in-out_infinite] border-red-500 dark:border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.4)] dark:shadow-[0_0_15px_rgba(248,113,113,0.3)] bg-red-50 dark:bg-red-900/20 focus:outline-none focus:ring-2 focus:ring-red-500"
+    : highestSeverity === 'warning'
+    ? "border-slate-200 dark:border-slate-700 shadow-sm hover:border-orange-300 dark:hover:border-orange-500 hover:shadow-[0_0_15px_rgba(249,115,22,0.2)] dark:hover:shadow-[0_0_15px_rgba(251,146,60,0.15)] hover:bg-orange-50 dark:hover:bg-orange-900/10 focus:outline-none focus:ring-2 focus:ring-orange-500"
+    : highestSeverity === 'info'
+    ? "border-slate-200 dark:border-slate-700 shadow-sm hover:border-blue-300 dark:hover:border-blue-500 hover:shadow-[0_0_15px_rgba(59,130,246,0.2)] dark:hover:shadow-[0_0_15px_rgba(96,165,250,0.15)] hover:bg-blue-50 dark:hover:bg-blue-900/10 focus:outline-none focus:ring-2 focus:ring-blue-500"
+    : "border-slate-200 dark:border-slate-700 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-500 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-green-500";
+
   const toggleDropdown = () => {
     if (showNotifications) {
       setShowNotifications(false);
-      setTimeout(() => setMountDropdown(false), 200);
+      setTimeout(() => setMountDropdown(false), 300);
     } else {
       setMountDropdown(true);
       setTimeout(() => setShowNotifications(true), 10);
@@ -351,6 +414,8 @@ export default function Dashboard() {
 
     try {
       await markAllSystemLogsRead();
+      // Wait for slide-out animation to finish
+      await new Promise(r => setTimeout(r, 300));
       setSystemLogs((prev) =>
         prev.map((entry) =>
           isSystemLogAlertEntry(entry) && !entry.is_read
@@ -377,6 +442,10 @@ export default function Dashboard() {
 
       try {
         await markSystemLogRead(notif.id);
+        
+        // Wait for slide-out animation to finish
+        await new Promise(r => setTimeout(r, 300));
+        
         setSystemLogs((prev) => prev.map((entry) => (
           entry.id === notif.id ? { ...entry, is_read: true } : entry
         )));
@@ -394,6 +463,32 @@ export default function Dashboard() {
     }
     router.push("/logs?view=alerts");
   };
+
+  const greetingText = useMemo(() => {
+    let currentHour = new Date().getHours();
+    if (serverTimezone) {
+      try {
+        const timeString = new Intl.DateTimeFormat('en-US', {
+            timeZone: serverTimezone,
+            hour: '2-digit',
+            hour12: false
+        }).format(new Date());
+        currentHour = parseInt(timeString, 10);
+      } catch {
+        // Fallback to local time if timezone string is invalid
+      }
+    }
+
+    let greeting = "Good evening";
+    if (currentHour >= 5 && currentHour < 12) {
+        greeting = "Good morning";
+    } else if (currentHour >= 12 && currentHour < 18) {
+        greeting = "Good afternoon";
+    }
+
+    const name = user?.fullname || user?.username || "";
+    return name ? `${greeting}, ${name}` : greeting;
+  }, [serverTimezone, user]);
 
   return (
     <div className="bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-200 font-sans h-screen flex overflow-hidden selection:bg-primary selection:text-white">
@@ -413,9 +508,9 @@ export default function Dashboard() {
 
       <main className="flex-1 flex flex-col min-w-0 relative">
         <header className="h-16 bg-surface-light dark:bg-surface-dark border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-6 shadow-sm z-30">
-          <h1 className="text-lg font-semibold text-slate-800 dark:text-white">IoT Home Control</h1>
+          <h1 className="text-lg font-semibold text-slate-800 dark:text-white capitalize truncate pr-4">{greetingText}</h1>
           <div className="flex items-center space-x-4">
-            <div className="relative group">
+            <div className="relative group" ref={notificationRef}>
               <button
                 className="w-10 h-10 flex items-center justify-center text-primary bg-blue-50 dark:bg-blue-500/10 rounded-full transition-colors relative outline-none ring-2 ring-blue-100 dark:ring-blue-900/30"
                 onClick={toggleDropdown}
@@ -431,7 +526,7 @@ export default function Dashboard() {
 
               {mountDropdown && (
                 <div 
-                  className={`absolute right-0 top-full mt-3 w-80 sm:w-96 bg-surface-light dark:bg-surface-dark rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 transition-all duration-200 origin-top-right transform ${showNotifications ? 'scale-100 opacity-100' : 'scale-95 opacity-0'}`}
+                  className={`absolute right-0 top-full mt-3 w-80 sm:w-96 bg-surface-light dark:bg-surface-dark rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 transition-all duration-300 ease-out origin-top-right transform ${showNotifications ? 'scale-100 opacity-100 translate-y-0' : 'scale-90 opacity-0 -translate-y-2'}`}
                 >
                   <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/50 backdrop-blur-sm">
                     <h3 className="font-semibold text-sm text-slate-800 dark:text-slate-100">Notifications</h3>
@@ -471,7 +566,7 @@ export default function Dashboard() {
                                        notif.severity === 'error' ? 'error' : 'report';
                           return (
                             <div key={notif.id} 
-                              className={`p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 cursor-pointer relative transition-opacity ${(isMarking || markingAllNotifications) ? 'opacity-60 pointer-events-none' : 'opacity-100'}`}
+                              className={`p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 cursor-pointer relative transition-all duration-300 ease-in-out ${(isMarking || markingAllNotifications) ? 'opacity-0 -translate-x-full pointer-events-none' : 'opacity-100 translate-x-0'}`}
                               onClick={() => void handleSingleNotifClick(notif)}
                             >
                               <div className="flex gap-3">
@@ -560,20 +655,20 @@ export default function Dashboard() {
                   </div>
                 </div>
               </div>
-              <div className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300 cursor-pointer">
+              <div className={`bg-surface-light dark:bg-surface-dark p-6 rounded-xl border relative overflow-hidden group transition-all duration-300 cursor-pointer ${offlineCardDynamicClasses}`}>
                 <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
-                  <span className="material-icons-round text-6xl text-red-500 dark:group-hover:text-red-400 transition-colors">wifi_off</span>
+                  <span className={`material-icons-round text-6xl ${offlineDevices.length > 0 ? "text-red-500 dark:group-hover:text-red-400 animate-[pulse_2s_ease-in-out_infinite]" : "text-green-500 dark:group-hover:text-green-400"} transition-colors`}>wifi_off</span>
                 </div>
                 <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">Offline</p>
                   <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{loading ? '--' : offlineDevices.length.toString().padStart(2, '0')}</h3>
-                  <div className="mt-2 text-xs text-red-500 dark:text-red-400 flex items-center font-medium">
+                  <div className={`mt-2 text-xs flex items-center font-medium ${offlineDevices.length > 0 ? "text-red-500 dark:text-red-400" : "text-green-500 dark:text-green-400"}`}>
                     {offlineDevices.length > 0 ? "Needs attention" : "All online"}
                   </div>
                 </div>
               </div>
               <div
-                className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300 cursor-pointer"
+                className={`bg-surface-light dark:bg-surface-dark p-6 rounded-xl border relative overflow-hidden group transition-all duration-300 cursor-pointer ${alertCardDynamicClasses}`}
                 onClick={() => router.push("/logs?view=alerts")}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
@@ -585,13 +680,13 @@ export default function Dashboard() {
                 tabIndex={0}
               >
                 <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
-                  <span className="material-icons-round text-6xl text-orange-500 dark:group-hover:text-orange-400 transition-colors">warning</span>
+                  <span className={`material-icons-round text-6xl ${alertIconColor} ${(highestSeverity === 'critical' || highestSeverity === 'error' || highestSeverity === 'warning') ? 'animate-[pulse_2s_ease-in-out_infinite]' : ''} transition-colors`}>{alertCardIcon}</span>
                 </div>
                 <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">System Alerts</p>
                   <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{loading ? '--' : alertCount.toString().padStart(2, '0')}</h3>
-                  <div className="mt-2 text-xs text-orange-500 dark:text-orange-400 flex items-center font-medium">
-                    <span className="material-icons-round text-sm mr-1">priority_high</span>
+                  <div className={`mt-2 text-xs flex items-center font-medium ${alertTextColor}`}>
+                    <span className="material-icons-round text-sm mr-1">{highestSeverity !== 'none' ? 'priority_high' : 'check'}</span>
                     {alertCount > 0 ? `${alertCount} unhandled issues` : 'All clear'}
                   </div>
                 </div>
