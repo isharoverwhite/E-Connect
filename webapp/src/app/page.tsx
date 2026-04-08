@@ -34,6 +34,8 @@ export default function Dashboard() {
   const [isCustomizeMode, setIsCustomizeMode] = useState(false);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [canvasLayouts, setCanvasLayouts] = useState<Record<string, CanvasLayout>>({});
+  const [isSavingLayout, setIsSavingLayout] = useState(false);
+  const [saveLayoutSuccess, setSaveLayoutSuccess] = useState(false);
 
   useEffect(() => {
     if (user && user.ui_layout && typeof user.ui_layout === "object") {
@@ -75,6 +77,7 @@ export default function Dashboard() {
   const shouldUseCanvas = isMounted && (isCustomizeMode || (hasCustomLayout && !isMobile));
 
   const saveCanvasLayout = async () => {
+    setIsSavingLayout(true);
     const layout = { ...canvasLayouts };
     setCanvasLayouts(layout);
     
@@ -87,7 +90,14 @@ export default function Dashboard() {
     }
     
     localStorage.setItem("dashboardCanvasLayout", JSON.stringify(layout));
-    setIsCustomizeMode(false);
+    
+    setIsSavingLayout(false);
+    setSaveLayoutSuccess(true);
+    
+    setTimeout(() => {
+      setSaveLayoutSuccess(false);
+      setIsCustomizeMode(false);
+    }, 800);
   };
 
   const resetCanvasLayout = async () => {
@@ -546,11 +556,22 @@ export default function Dashboard() {
                   {!isMobile && (
                     isCustomizeMode ? (
                       <>
-                        <button onClick={resetCanvasLayout} className="flex items-center px-3 py-1.5 border border-red-300 dark:border-red-600 rounded bg-white dark:bg-slate-800 shadow-sm text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors">
+                        <button 
+                          onClick={resetCanvasLayout} 
+                          disabled={isSavingLayout || saveLayoutSuccess}
+                          className="flex items-center px-3 py-1.5 border border-red-300 dark:border-red-600 rounded bg-white dark:bg-slate-800 shadow-sm text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
                           <span className="material-icons-round text-[16px] mr-1.5">restart_alt</span> Reset
                         </button>
-                        <button onClick={saveCanvasLayout} className="flex items-center px-3 py-1.5 bg-primary text-white rounded shadow-sm text-sm font-medium hover:bg-blue-600 transition-colors">
-                          <span className="material-icons-round text-[16px] mr-1.5">save</span> Save Layout
+                        <button 
+                          onClick={saveCanvasLayout} 
+                          disabled={isSavingLayout || saveLayoutSuccess}
+                          className={`flex items-center justify-center min-w-[128px] px-3 py-1.5 text-white rounded shadow-sm text-sm font-medium transition-all duration-300 ${saveLayoutSuccess ? 'bg-green-500 hover:bg-green-600' : 'bg-primary hover:bg-blue-600'} disabled:opacity-80 disabled:cursor-not-allowed`}
+                        >
+                          <span className={`material-icons-round text-[16px] mr-1.5 ${isSavingLayout ? "animate-spin" : ""}`}>
+                            {isSavingLayout ? "progress_activity" : saveLayoutSuccess ? "check_circle" : "save"}
+                          </span> 
+                          {isSavingLayout ? "Saving..." : saveLayoutSuccess ? "Saved!" : "Save Layout"}
                         </button>
                       </>
                     ) : (
