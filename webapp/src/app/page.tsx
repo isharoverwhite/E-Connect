@@ -566,12 +566,12 @@ export default function Dashboard() {
                         <button 
                           onClick={saveCanvasLayout} 
                           disabled={isSavingLayout || saveLayoutSuccess}
-                          className={`flex items-center justify-center min-w-[128px] px-3 py-1.5 text-white rounded shadow-sm text-sm font-medium transition-all duration-300 ${saveLayoutSuccess ? 'bg-green-500 hover:bg-green-600' : 'bg-primary hover:bg-blue-600'} disabled:opacity-80 disabled:cursor-not-allowed`}
+                          className={`flex items-center justify-center w-[140px] flex-none px-3 py-1.5 text-white rounded shadow-sm text-sm font-medium transition-colors duration-300 ${saveLayoutSuccess ? 'bg-green-500 hover:bg-green-600' : 'bg-primary hover:bg-blue-600'} disabled:opacity-80 disabled:cursor-not-allowed`}
                         >
-                          <span className={`material-icons-round text-[16px] mr-1.5 ${isSavingLayout ? "animate-spin" : ""}`}>
+                          <span className={`material-icons-round flex-none text-[16px] mr-1.5 ${isSavingLayout ? "animate-spin" : ""}`}>
                             {isSavingLayout ? "progress_activity" : saveLayoutSuccess ? "check_circle" : "save"}
                           </span> 
-                          {isSavingLayout ? "Saving..." : saveLayoutSuccess ? "Saved!" : "Save Layout"}
+                          <span className="flex-none">{isSavingLayout ? "Saving..." : saveLayoutSuccess ? "Saved!" : "Save Layout"}</span>
                         </button>
                       </>
                     ) : (
