@@ -222,6 +222,26 @@ export default function Dashboard() {
   
   const computedLayouts = useMemo(() => {
     const computed: Record<string, CanvasLayout> = {};
+
+    const getEstimatedH = (device: DeviceConfig) => {
+      return getCardMinHeight(device);
+    };
+
+    const doesOverlap = (rect1: {x: number, y: number, w: number, h: number}, rect2: {x: number, y: number, w: number, h: number}) => {
+      const gap = 20;
+      return rect1.x < rect2.x + rect2.w + gap &&
+             rect1.x + rect1.w + gap > rect2.x &&
+             rect1.y < rect2.y + rect2.h + gap &&
+             rect1.y + rect1.h + gap > rect2.y;
+    };
+
+    const deviceMap = new Map<string, DeviceConfig>();
+    for (const d of approvedDevices) {
+      if ("device_id" in d) {
+        deviceMap.set(d.device_id, d as DeviceConfig);
+      }
+    }
+
     for (let i = 0; i < approvedDevices.length; i++) {
         if (!("device_id" in approvedDevices[i])) continue;
         const c = approvedDevices[i] as DeviceConfig;
@@ -236,34 +256,63 @@ export default function Dashboard() {
                 h: (typeof l.h === 'number' && Number.isNaN(l.h)) ? "auto" : (l.h || "auto")
             };
         } else {
-            if (i === 0) {
-                computed[deviceId] = { x: 0, y: 0, w: 320, h: "auto" };
-            } else {
-                let prevId;
-                for (let j = i - 1; j >= 0; j--) {
-                    if ("device_id" in approvedDevices[j]) {
-                        prevId = (approvedDevices[j] as DeviceConfig).device_id;
-                        break;
-                    }
-                }
-                
-                if (prevId && computed[prevId]) {
-                    const prev = computed[prevId];
-                    const prevW = typeof prev.w === 'number' ? prev.w : 320;
-                    const prevH = typeof prev.h === 'number' ? prev.h : getCardMinHeight(approvedDevices[i-1] as DeviceConfig);
-                    
-                    let newX = prev.x + prevW + 20; // 20px gap
-                    let newY = prev.y;
-                    
-                    if (newX + 320 > windowWidth) {
-                        newX = 0;
-                        newY = prev.y + prevH + 20;
-                    }
-                    computed[deviceId] = { x: newX, y: newY, w: 320, h: "auto" };
-                } else {
-                    computed[deviceId] = { x: 0, y: 0, w: 320, h: "auto" };
+            let prevId;
+            for (let j = i - 1; j >= 0; j--) {
+                if ("device_id" in approvedDevices[j]) {
+                    prevId = (approvedDevices[j] as DeviceConfig).device_id;
+                    break;
                 }
             }
+                
+            let startX = 0;
+            let startY = 0;
+            
+            if (prevId && computed[prevId]) {
+                const prev = computed[prevId];
+                const prevW = typeof prev.w === 'number' ? prev.w : 320;
+                startX = prev.x + prevW + 20;
+                startY = prev.y;
+            }
+
+            let placed = false;
+            let currentX = startX;
+            let currentY = startY;
+            const newW = 320;
+            const newH = getEstimatedH(c);
+
+            while (!placed) {
+                if (currentX + newW > windowWidth && currentX > 0) {
+                    currentX = 0;
+                    currentY += 20;
+                    continue;
+                }
+                
+                let collision = null;
+                const testRect = { x: currentX, y: currentY, w: newW, h: newH };
+                
+                for (const key in computed) {
+                   const other = computed[key];
+                   const otherDevice = deviceMap.get(key);
+                   const otherRect = {
+                       x: other.x,
+                       y: other.y,
+                       w: typeof other.w === 'number' ? other.w : 320,
+                       h: typeof other.h === 'number' ? other.h : (otherDevice ? getEstimatedH(otherDevice) : 350)
+                   };
+                   if (doesOverlap(testRect, otherRect)) {
+                       collision = otherRect;
+                       break; // found a collision
+                   }
+                }
+                
+                if (collision) {
+                    currentX = collision.x + collision.w + 20;
+                } else {
+                    placed = true;
+                }
+            }
+            
+            computed[deviceId] = { x: currentX, y: currentY, w: newW, h: "auto" };
         }
     }
     return computed;
