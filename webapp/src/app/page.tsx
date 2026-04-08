@@ -653,20 +653,88 @@ export default function Dashboard() {
                         size={{ width: layout.w, height: layout.h }}
                         position={{ x: layout.x, y: layout.y }}
                         onDragStop={(e, d) => {
-                          setCanvasLayouts(prev => ({ ...prev, [c.device_id]: { ...layout, x: d.x, y: d.y } }));
+                          const newRect = { x: d.x, y: d.y, w: typeof layout.w === 'number' ? layout.w : 320, h: typeof layout.h === 'number' ? layout.h : getCardMinHeight(c) };
+                          let hasOverlap = false;
+
+                          const checkOverlap = (rect1: {x: number, y: number, w: number, h: number}, rect2: {x: number, y: number, w: number, h: number}) => {
+                            const gap = 20;
+                            return rect1.x < rect2.x + rect2.w + gap &&
+                                  rect1.x + rect1.w + gap > rect2.x &&
+                                  rect1.y < rect2.y + rect2.h + gap &&
+                                  rect1.y + rect1.h + gap > rect2.y;
+                          };
+
+                          for (const [id, bounds] of Object.entries(computedLayouts)) {
+                              if (id === c.device_id) continue;
+                              const otherDevice = approvedDevices.find((dev) => 'device_id' in dev && dev.device_id === id) as DeviceConfig;
+                              const otherRect = {
+                                  x: bounds.x,
+                                  y: bounds.y,
+                                  w: typeof bounds.w === 'number' ? bounds.w : 320,
+                                  h: typeof bounds.h === 'number' ? bounds.h : (otherDevice ? getCardMinHeight(otherDevice) : 350)
+                              };
+                              if (checkOverlap(newRect, otherRect)) {
+                                  hasOverlap = true;
+                                  break;
+                              }
+                          }
+
+                          if (!hasOverlap) {
+                            setCanvasLayouts(prev => ({ ...prev, [c.device_id]: { ...layout, x: d.x, y: d.y } }));
+                          } else {
+                            setLayoutVersion(v => v + 1);
+                          }
                         }}
                         onResizeStop={(e, direction, ref, delta, position) => {
                           const parsedW = parseInt(ref.style.width, 10);
                           const parsedH = parseInt(ref.style.height, 10);
-                          setCanvasLayouts(prev => ({ 
-                            ...prev, 
-                            [c.device_id]: { 
-                              x: position.x, 
-                              y: position.y, 
-                              w: Number.isNaN(parsedW) ? layout.w : parsedW, 
-                              h: Number.isNaN(parsedH) ? layout.h : parsedH 
-                            } 
-                          }));
+                          const newW = Number.isNaN(parsedW) ? layout.w : parsedW;
+                          const newH = Number.isNaN(parsedH) ? layout.h : parsedH;
+                          
+                          const newRect = {
+                              x: position.x,
+                              y: position.y,
+                              w: typeof newW === 'number' ? newW : 320,
+                              h: typeof newH === 'number' ? newH : getCardMinHeight(c)
+                          };
+
+                          let hasOverlap = false;
+                          const checkOverlap = (rect1: {x: number, y: number, w: number, h: number}, rect2: {x: number, y: number, w: number, h: number}) => {
+                            const gap = 20;
+                            return rect1.x < rect2.x + rect2.w + gap &&
+                                  rect1.x + rect1.w + gap > rect2.x &&
+                                  rect1.y < rect2.y + rect2.h + gap &&
+                                  rect1.y + rect1.h + gap > rect2.y;
+                          };
+
+                          for (const [id, bounds] of Object.entries(computedLayouts)) {
+                              if (id === c.device_id) continue;
+                              const otherDevice = approvedDevices.find((dev) => 'device_id' in dev && dev.device_id === id) as DeviceConfig;
+                              const otherRect = {
+                                  x: bounds.x,
+                                  y: bounds.y,
+                                  w: typeof bounds.w === 'number' ? bounds.w : 320,
+                                  h: typeof bounds.h === 'number' ? bounds.h : (otherDevice ? getCardMinHeight(otherDevice) : 350)
+                              };
+                              if (checkOverlap(newRect, otherRect)) {
+                                  hasOverlap = true;
+                                  break;
+                              }
+                          }
+
+                          if (!hasOverlap) {
+                            setCanvasLayouts(prev => ({ 
+                              ...prev, 
+                              [c.device_id]: { 
+                                x: position.x, 
+                                y: position.y, 
+                                w: newW, 
+                                h: newH 
+                              } 
+                            }));
+                          } else {
+                            setLayoutVersion(v => v + 1);
+                          }
                         }}
                         disableDragging={!isCustomizeMode}
                         enableResizing={isCustomizeMode}
