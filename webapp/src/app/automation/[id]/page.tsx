@@ -320,6 +320,9 @@ export default function AutomationPage() {
     const frame = window.requestAnimationFrame(() => {
       fitGraphToCanvas(nodes);
       setPendingCanvasFit(false);
+      
+      // Auto focus the canvas so keyboard events work immediately
+      canvasViewportRef.current?.focus({ preventScroll: true });
     });
 
     return () => window.cancelAnimationFrame(frame);
@@ -868,7 +871,8 @@ export default function AutomationPage() {
 
                     <div
                       ref={canvasViewportRef}
-                      className="flex-1 relative overflow-hidden"
+                      tabIndex={0}
+                      className="flex-1 relative overflow-hidden outline-none"
                       onMouseDown={(event) => {
                         if (event.button !== 0) return;
                         closeContextMenu();
