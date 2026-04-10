@@ -20,6 +20,7 @@ from app.database import SessionLocal
 from app.models import DeviceRegister
 from app.runtime_timestamps import normalize_build_job_timestamp
 from app.services.builder import (
+    cleanup_job_build_outputs,
     build_job_firmware_version,
     describe_runtime_firmware_mismatch,
     extract_runtime_firmware_network_targets,
@@ -105,6 +106,7 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> s
         matched_job.finished_at = now
         matched_job.updated_at = now
         promote_build_job_project_config(matched_job)
+        cleanup_job_build_outputs(matched_job.id)
         logger.info("Reconciled OTA job %s to flashed via firmware_version match.", matched_job.id)
         return "confirmed"
 
@@ -158,6 +160,7 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> s
     expected_version = build_job_firmware_version(recent_flashed_job.id)
     if reported_version == expected_version:
         promote_build_job_project_config(recent_flashed_job)
+        cleanup_job_build_outputs(recent_flashed_job.id)
         return "confirmed"
 
     _mark_ota_job_failed(
@@ -630,6 +633,7 @@ class MQTTClientManager:
                         if ota_status == "success":
                             job.finished_at = ota_event_time
                             job.updated_at = ota_event_time
+                            cleanup_job_build_outputs(job.id)
                             if device.firmware_version:
                                 _reconcile_ota_jobs(db, device, device.firmware_version)
                         db.commit()

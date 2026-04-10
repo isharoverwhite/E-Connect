@@ -44,6 +44,11 @@ def test_initialize_database_runs_cleanup_backfills_and_approval_drop(monkeypatc
     )
     monkeypatch.setattr(
         database_module,
+        "_cleanup_legacy_unused_tables",
+        lambda: call_order.append("cleanup_legacy_unused_tables"),
+    )
+    monkeypatch.setattr(
+        database_module,
         "_ensure_additive_columns",
         lambda: call_order.append("ensure_additive_columns"),
     )
@@ -84,6 +89,7 @@ def test_initialize_database_runs_cleanup_backfills_and_approval_drop(monkeypatc
     assert error is None
     assert call_order == [
         "create_all",
+        "cleanup_legacy_unused_tables",
         "ensure_additive_columns",
         "backfill_room_household_ids",
         "backfill_project_wifi_credentials",
@@ -349,3 +355,39 @@ def test_initialize_database_creates_extension_registry_tables(monkeypatch, tmp_
     inspector = inspect(database_module.engine)
     assert inspector.has_table("installed_extensions") is True
     assert inspector.has_table("external_devices") is True
+
+
+def test_initialize_database_drops_legacy_unused_firmwares_table(monkeypatch, tmp_path):
+    explicit_db = tmp_path / "legacy-firmwares.sqlite3"
+    explicit_url = f"sqlite:///{explicit_db}"
+
+    monkeypatch.setenv("DATABASE_URL", explicit_url)
+    monkeypatch.delenv("LOCAL_DATABASE_PATH", raising=False)
+
+    database_module = _reload_database_module()
+
+    with database_module.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE firmwares (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    version VARCHAR(50),
+                    board VARCHAR(100),
+                    filename VARCHAR(255),
+                    uploaded_at DATETIME
+                )
+                """
+            )
+        )
+
+    inspector = inspect(database_module.engine)
+    assert inspector.has_table("firmwares") is True
+
+    ok, error = database_module.initialize_database(max_attempts=1, retry_delay=0)
+
+    assert ok is True
+    assert error is None
+
+    inspector = inspect(database_module.engine)
+    assert inspector.has_table("firmwares") is False
