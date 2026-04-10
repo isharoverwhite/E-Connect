@@ -78,6 +78,7 @@ English: `Settings` centralizes instance administration, including timezone, use
 - **Local-first thật sự**: phần điều khiển cốt lõi vẫn hoạt động trong LAN ngay cả khi Internet không ổn định.
 - **Self-hosted gọn**: stack người dùng chỉ gồm `db`, `mqtt`, `server`, `webapp`.
 - **DIY-friendly**: có board picker, lưu Wi-Fi tập trung, pin mapping, build firmware, và đường dẫn flash.
+- **Firmware dễ cập nhật hơn**: backend có thể lấy firmware-template release từ repo riêng [econnectrelease/firmware](https://github.com/econnectrelease/firmware), nên không cần chờ update toàn bộ gói server chỉ để đổi source firmware.
 - **Quản trị tập trung**: dashboard, logs, settings, automation, extensions đều nằm trong cùng giao diện.
 
 ### Kiến trúc self-hosted
@@ -310,6 +311,7 @@ Mã nguồn và tài sản của repository hiện được phân phối dưới
 - **Real local-first behavior**: core control stays on the LAN.
 - **Compact self-hosted stack**: end users run only `db`, `mqtt`, `server`, and `webapp`.
 - **DIY provisioning flow**: board selection, saved Wi-Fi credentials, pin mapping, server builds, and flash-ready workflows.
+- **Faster firmware iteration**: the backend can install firmware-template releases from [econnectrelease/firmware](https://github.com/econnectrelease/firmware), so firmware-source updates do not require a full server package update first.
 - **Single admin surface**: dashboard, logs, settings, devices, automation, and extensions live in one product.
 
 ### Self-hosted architecture

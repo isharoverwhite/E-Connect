@@ -29,6 +29,7 @@ from .models import (
     AutomationCreate, AutomationResponse, AutomationUpdate,
     DeviceHistoryCreate, DeviceHistoryResponse,
     SystemLogAcknowledgeResponse, SystemLogListResponse, SystemLogResponse, SystemStatusResponse,
+    FirmwareTemplateStatusResponse,
     GeneralSettingsResponse, GeneralSettingsUpdate,
     FirmwareResponse, DeviceMode, AccountType, EventType,
     RoomAccessUpdate, RoomUpdate, RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
@@ -73,10 +74,12 @@ from .services.builder import (
     build_job_firmware_version,
     build_firmware_task,
     describe_network_target_change,
+    get_firmware_template_status,
     get_durable_artifact_path,
     infer_firmware_network_targets,
     resolve_build_job_config_snapshot,
     resolve_webapp_transport,
+    refresh_firmware_template_release,
     get_latest_firmware_revision,
 )
 from .services.device_registration import (
@@ -5037,6 +5040,20 @@ async def get_system_status(
         latest_alert_message=latest_alert.message if latest_alert else None,
         latest_firmware_revision=get_latest_firmware_revision(),
     )
+
+
+@router.get("/system/firmware-template", response_model=FirmwareTemplateStatusResponse)
+async def get_system_firmware_template_status(
+    admin: User = Depends(get_admin_user),
+):
+    return FirmwareTemplateStatusResponse(**get_firmware_template_status())
+
+
+@router.post("/system/firmware-template/refresh", response_model=FirmwareTemplateStatusResponse)
+async def refresh_system_firmware_template(
+    admin: User = Depends(get_admin_user),
+):
+    return FirmwareTemplateStatusResponse(**refresh_firmware_template_release(force=True))
 
 
 @router.get("/system/time-context", response_model=AutomationScheduleContextResponse)
