@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { BOARD_PROFILES, BOARD_FAMILIES, type ChipFamily, type BoardProfile } from "../board-profiles";
 import type { ProjectSyncState } from "../types";
@@ -97,6 +97,8 @@ export function Step1Board({
     const boardNeedsServerWifi = !isMasterBoard;
     const boardNeedsRoom = !isMasterBoard;
 
+    const [projectNameTouched, setProjectNameTouched] = useState(false);
+
     const cpuOptions = useMemo(() => {
         let maxCpu = 240;
         if (board.family === "ESP32-P4") maxCpu = 400;
@@ -154,18 +156,33 @@ export function Step1Board({
             <div className="flex flex-col gap-4 mb-10">
                 <label
                     htmlFor="diy-project-name"
-                    className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider"
+                    className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider relative"
                 >
                     Project Name
+                    <span className="text-rose-500 ml-1">*</span>
                 </label>
                 <input
                     id="diy-project-name"
                     name="projectName"
                     value={projectName}
-                    onChange={(event) => setProjectName(event.target.value)}
-                    className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                    onChange={(event) => {
+                        setProjectName(event.target.value);
+                        if (!projectNameTouched) setProjectNameTouched(true);
+                    }}
+                    onBlur={() => setProjectNameTouched(true)}
+                    className={`w-full rounded-xl border-2 ${
+                        projectNameTouched && !projectName.trim() 
+                        ? "border-rose-500 focus:border-rose-500 focus:ring-rose-500/20 bg-rose-50/50 dark:bg-rose-950/20 dark:border-rose-500/50" 
+                        : "border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 focus:border-primary focus:ring-primary/10 dark:border-slate-800"
+                    } px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:ring-4 dark:text-white`}
                     placeholder="e.g. Kitchen Relay Node"
+                    required
                 />
+                {projectNameTouched && !projectName.trim() && (
+                    <p className="text-sm font-medium text-rose-500 dark:text-rose-400 mt-1">
+                        Project Name is required to continue.
+                    </p>
+                )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
@@ -461,14 +478,14 @@ export function Step1Board({
                 <div className="flex gap-4 w-full md:w-auto">
                     <button
                         onClick={() => void onSaveDraft()}
-                        disabled={projectSyncState === "saving"}
+                        disabled={projectSyncState === "saving" || !projectName.trim()}
                         className="flex-1 md:flex-none px-6 py-3 rounded-lg border border-slate-300 dark:border-slate-600 dark:border-slate-700 text-slate-600 dark:text-slate-400 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-800 transition-all disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         {projectSyncState === "saving" ? "Saving..." : "Save Draft"}
                     </button>
                     <button
                         onClick={onNext}
-                        disabled={(boardNeedsRoom && !selectedRoomId) || (boardNeedsServerWifi && !selectedWifiCredentialId)}
+                        disabled={!projectName.trim() || (boardNeedsRoom && !selectedRoomId) || (boardNeedsServerWifi && !selectedWifiCredentialId)}
                         className="flex-1 md:flex-none px-8 py-3 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         <span>Next: Choose Config</span>
@@ -479,4 +496,3 @@ export function Step1Board({
         </div>
     );
 }
-
