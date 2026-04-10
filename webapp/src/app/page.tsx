@@ -537,7 +537,7 @@ export default function Dashboard() {
                         className="text-xs font-medium text-slate-500 hover:text-primary transition-colors flex items-center gap-1 disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         <span className={`material-icons-round text-[14px] ${markingAllNotifications ? "animate-spin" : ""}`}>
-                          {markingAllNotifications ? "progress_activity" : "mark_email_read"}
+                          {markingAllNotifications ? "autorenew" : "mark_email_read"}
                         </span>
                         Mark all read
                       </button>
@@ -581,7 +581,7 @@ export default function Dashboard() {
                                       {notif.category}
                                       <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
                                     </p>
-                                    {isMarking ? <span className="material-icons-round animate-spin text-sm text-slate-400">progress_activity</span> : null}
+                                    {isMarking ? <span className="material-icons-round animate-spin text-sm text-slate-400">autorenew</span> : null}
                                   </div>
                                   <p className="text-xs break-all sm:break-words text-slate-700 dark:text-slate-300 font-medium">{notif.message}</p>
                                   <p className="text-[10px] text-slate-400 mt-1">{new Date(notif.occurred_at).toLocaleString()}</p>
@@ -713,7 +713,7 @@ export default function Dashboard() {
                           className={`flex items-center justify-center w-[140px] flex-none px-3 py-1.5 text-white rounded shadow-sm text-sm font-medium transition-colors duration-300 ${saveLayoutSuccess ? 'bg-green-500 hover:bg-green-600' : 'bg-primary hover:bg-blue-600'} disabled:opacity-80 disabled:cursor-not-allowed`}
                         >
                           <span className={`material-icons-round flex-none text-[16px] mr-1.5 ${isSavingLayout ? "animate-spin" : ""}`}>
-                            {isSavingLayout ? "progress_activity" : saveLayoutSuccess ? "check_circle" : "save"}
+                            {isSavingLayout ? "autorenew" : saveLayoutSuccess ? "check_circle" : "save"}
                           </span> 
                           <span className="flex-none">{isSavingLayout ? "Saving..." : saveLayoutSuccess ? "Saved!" : "Save Layout"}</span>
                         </button>

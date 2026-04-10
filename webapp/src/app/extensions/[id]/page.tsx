@@ -177,7 +177,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                         {loading ? (
                             <div className="flex justify-center py-20">
                                 <span className="material-icons-round animate-spin text-4xl text-slate-300 dark:text-slate-700">
-                                    progress_activity
+                                    autorenew
                                 </span>
                             </div>
                         ) : error ? (
@@ -417,7 +417,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                     >
                                         {isCreatingDevice ? (
                                             <>
-                                                <span className="material-icons-round mr-2 animate-spin text-[18px]">progress_activity</span>
+                                                <span className="material-icons-round mr-2 animate-spin text-[18px]">autorenew</span>
                                                 Creating...
                                             </>
                                         ) : (
