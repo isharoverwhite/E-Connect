@@ -303,6 +303,12 @@ export default function DeviceScanConnectPanel({
   }
 
   const activePendingDevice = pendingDevices[0] ?? null;
+  const pendingDeviceIsUntrusted = Boolean(activePendingDevice && !activePendingDevice.provisioning_project_id);
+  const connectedDeviceWasUntrusted = Boolean(
+    connectedDevice &&
+      connectedSource === "manual" &&
+      !connectedDevice.provisioning_project_id,
+  );
   const showLiveHint = scanState === "scanning" || scanState === "found";
 
   return (
@@ -399,6 +405,12 @@ export default function DeviceScanConnectPanel({
               </div>
             </div>
 
+            {pendingDeviceIsUntrusted ? (
+              <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                This board is requesting a manual pair without a trusted server-managed provisioning identity. You can still connect it, but verify the hardware and source before approving it onto the server.
+              </div>
+            ) : null}
+
             <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900/60">
               <label
                 htmlFor="scanner-room-select"
@@ -460,7 +472,7 @@ export default function DeviceScanConnectPanel({
                 className="flex w-full items-center justify-center rounded-xl bg-green-600 px-4 py-3 font-medium text-white shadow-[0_4px_14px_0_rgba(37,99,235,0.39)] transition-all hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <span className="material-icons-round mr-2">link</span>
-                {approving ? "Connecting..." : "Connect"}
+                {approving ? "Connecting..." : pendingDeviceIsUntrusted ? "Connect With Warning" : "Connect"}
               </button>
 
               <button
@@ -514,6 +526,12 @@ export default function DeviceScanConnectPanel({
                 ? "This board was built by the server and its secure identity matched the provisioning project, so E-Connect approved it automatically."
                 : "The pair request was approved from this live scanner, and the board is now managed in your device list."}
             </div>
+
+            {connectedDeviceWasUntrusted ? (
+              <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                This board was paired through the untrusted/manual path. Review the hardware source and firmware before treating it like a server-trusted board replacement.
+              </div>
+            ) : null}
 
             <div className="space-y-3">
               <button
