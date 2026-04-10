@@ -27,8 +27,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application
 COPY . .
 
-# Create durable runtime directories for PlatformIO cache, logs, and build artifacts
-RUN mkdir -p /data/builds /data/.platformio /app/static
+# Create durable runtime directories for PlatformIO cache, logs, build artifacts,
+# and externally installed firmware template releases.
+RUN mkdir -p /data/builds /data/.platformio /data/firmware-template /app/static
 
 FROM base AS test
 

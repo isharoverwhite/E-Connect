@@ -413,6 +413,23 @@ class SystemStatusResponse(BaseModel):
     latest_firmware_revision: Optional[str] = None
 
 
+class FirmwareTemplateStatusResponse(BaseModel):
+    source_repo: str
+    auto_update_enabled: bool = True
+    active_source: Literal["bundled", "release"]
+    active_path: str
+    active_revision: Optional[str] = None
+    active_release_tag: Optional[str] = None
+    bundled_revision: Optional[str] = None
+    installed_release_tag: Optional[str] = None
+    latest_release_tag: Optional[str] = None
+    latest_release_published_at: Optional[str] = None
+    last_checked_at: Optional[str] = None
+    last_install_at: Optional[str] = None
+    update_available: bool = False
+    last_error: Optional[str] = None
+
+
 class SystemLogAcknowledgeResponse(BaseModel):
     updated_count: int = 0
 

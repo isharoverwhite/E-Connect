@@ -15,6 +15,12 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.services.diy_validation import resolve_board_definition
+from app.services.firmware_template_repo import (
+    get_firmware_template_status as get_firmware_template_status,
+    get_latest_firmware_revision as get_latest_firmware_revision,
+    refresh_firmware_template_release as refresh_firmware_template_release,
+    resolve_firmware_template_directory,
+)
 from app.services.provisioning import build_project_firmware_identity, extract_project_secret_from_payload
 from app.sql_models import AuthStatus, BuildJob, Device, DiyProject, JobStatus, SerialSession, SerialSessionStatus
 from app.services.i2c_registry import find_library_by_name
@@ -24,7 +30,6 @@ JOBS_DIR = os.path.join(BUILD_BASE_DIR, "jobs")
 ARTIFACTS_DIR = os.path.join(BUILD_BASE_DIR, "artifacts")
 LOGS_DIR = os.path.join(BUILD_BASE_DIR, "logs")
 PLATFORMIO_CORE_DIR = os.getenv("PLATFORMIO_CORE_DIR", os.path.join(BUILD_BASE_DIR, ".platformio"))
-FIRMWARE_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "firmware_template"
 BOOT_APP0_RELATIVE_PATH = Path("packages") / "framework-arduinoespressif32" / "tools" / "partitions" / "boot_app0.bin"
 ARTIFACT_FILENAMES = {
     "firmware": "{job_id}.bin",
@@ -39,21 +44,6 @@ for path in (BUILD_BASE_DIR, JOBS_DIR, ARTIFACTS_DIR, LOGS_DIR, PLATFORMIO_CORE_
 
 def build_job_firmware_version(job_id: str) -> str:
     return f"build-{job_id[:8]}"
-
-def get_latest_firmware_revision() -> str | None:
-    revision_file = FIRMWARE_TEMPLATE_DIR / "include" / "firmware_revision.h"
-    if not revision_file.exists():
-        return None
-    try:
-        with open(revision_file, "r") as f:
-            for line in f:
-                if "ECONNECT_FIRMWARE_REVISION" in line:
-                    parts = line.strip().split()
-                    if len(parts) >= 3 and parts[1] == "ECONNECT_FIRMWARE_REVISION":
-                        return parts[2].strip('"')
-    except Exception:
-        pass
-    return None
 
 
 _BLOCKED_ADVERTISED_HOSTNAMES = {
@@ -933,11 +923,12 @@ lib_deps =
 
 
 def copy_firmware_template(project_dir: str):
-    if not FIRMWARE_TEMPLATE_DIR.exists():
-        raise FileNotFoundError(f"Firmware template directory is missing: {FIRMWARE_TEMPLATE_DIR}")
+    template_dir = resolve_firmware_template_directory(check_for_updates=True)
+    if not template_dir.exists():
+        raise FileNotFoundError(f"Firmware template directory is missing: {template_dir}")
 
     shutil.copytree(
-        FIRMWARE_TEMPLATE_DIR,
+        template_dir,
         project_dir,
         dirs_exist_ok=True,
         ignore=shutil.ignore_patterns(".pio", ".vscode", "__pycache__", "*.pyc"),
