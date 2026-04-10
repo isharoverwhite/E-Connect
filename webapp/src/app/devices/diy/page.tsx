@@ -13,9 +13,7 @@ import { fetchWifiCredentials, type WifiCredentialRecord } from "@/lib/wifi-cred
 import {
   BOARD_PROFILES,
   MODE_METADATA,
-  getBoardFamily,
   getBoardProfile,
-  resolveBoardProfileId,
   type BoardProfile,
   type ChipFamily,
 } from "@/features/diy/board-profiles";
@@ -42,7 +40,6 @@ import { validatePinMappings } from "@/features/diy/validation";
 
 const FLASHER_SCRIPT =
   "https://unpkg.com/esp-web-tools@10.1.0/dist/web/install-button.js?module";
-const DRAFT_STORAGE_KEY = "econnect:diy-svg-builder:v2";
 const DEFAULT_BOARD_ID = "dfrobot-beetle-esp32-c3";
 const DEFAULT_SERIAL_PORT = "browser-web-serial";
 const BUILD_POLL_INTERVAL_MS = 2000;
@@ -72,22 +69,6 @@ const ACTIVE_BUILD_STATES = new Set<BuildJobStatus>([
   "building",
   "flashing",
 ]);
-
-interface SerializedDraft {
-  projectId?: string;
-  projectName?: string;
-  roomId?: number | null;
-  wifiCredentialId?: number | null;
-  family?: ChipFamily;
-  boardId?: string;
-  pins?: PinMapping[];
-  flashSource?: string;
-  serialPort?: string;
-  cpuMhz?: number | null;
-  flashSize?: string | null;
-  psramSize?: string | null;
-  portableDashboard?: PortableDashboardConfig;
-}
 
 interface DiyProjectRecord {
   id: string;
@@ -310,10 +291,11 @@ function createProjectPayload({
   psramSize: string | null;
   portableDashboard: PortableDashboardConfig | null;
 }) {
+  const normalizedProjectName = projectName.trim();
   const usesBoardLocalWifi = board.id === "jc3827w543";
   const config: Record<string, unknown> = {
     schema_version: 1,
-    project_name: projectName,
+    project_name: normalizedProjectName,
     room_id: roomId,
     family: board.family,
     board_id: board.id,
@@ -346,7 +328,7 @@ function createProjectPayload({
   }
 
   return {
-    name: projectName.trim() || board.name,
+    name: normalizedProjectName,
     board_profile: board.id,
     room_id: roomId,
     wifi_credential_id: usesBoardLocalWifi ? null : wifiCredentialId,
@@ -366,19 +348,6 @@ function sortProjects(projects: DiyProjectRecord[]) {
   });
 }
 
-function restoreDraftSnapshot(rawDraft: string | null) {
-  if (!rawDraft) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(rawDraft) as SerializedDraft;
-  } catch (error) {
-    console.warn("Failed to restore DIY builder draft:", error);
-    return null;
-  }
-}
-
 function normalizeFlashSource(source: unknown, hasDemoFirmware: boolean): FlashSource {
   if (source === "demo" && hasDemoFirmware) {
     return "demo";
@@ -394,10 +363,11 @@ export default function DIYBuilderPage() {
 
   const [currentStep, setCurrentStep] = useState(1);
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [templateConfigId, setTemplateConfigId] = useState<string | null>(null);
   const [boardConfigs, setBoardConfigs] = useState<DiyProjectRecord[]>([]);
   const [boardConfigsLoading, setBoardConfigsLoading] = useState(false);
   const [boardConfigsError, setBoardConfigsError] = useState("");
-  const [projectName, setProjectName] = useState("Living Room Relay Node");
+  const [projectName, setProjectName] = useState("");
   const [roomId, setRoomId] = useState<number | null>(null);
   const [rooms, setRooms] = useState<RoomRecord[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(true);
@@ -604,6 +574,9 @@ export default function DIYBuilderPage() {
     () => (boardConfigs.some((project) => project.id === projectId) ? projectId : null),
     [boardConfigs, projectId],
   );
+  const highlightedBoardConfigId = activeBoardConfigId ?? templateConfigId;
+  const selectedConfigMode =
+    activeBoardConfigId !== null ? "saved" : highlightedBoardConfigId !== null ? "template" : null;
 
   const lastSavedPayloadRef = useRef<string | null>(null);
   const latestBoardConfigRequestRef = useRef(0);
@@ -781,13 +754,19 @@ export default function DIYBuilderPage() {
     payloadJson: string,
     options?: { forceCreate?: boolean },
   ) => {
+    if (!projectName.trim()) {
+      setProjectSyncState("idle");
+      setProjectSyncMessage("Enter a project name before saving this device config.");
+      return null;
+    }
+
     if (!roomId) {
       setProjectSyncState("idle");
       setProjectSyncMessage("Select a room before syncing this device project to the server.");
       return null;
     }
 
-    if (!selectedWifiCredentialId) {
+    if (board.id !== "jc3827w543" && !selectedWifiCredentialId) {
       setProjectSyncState("idle");
       setProjectSyncMessage("Select a saved Wi-Fi credential before syncing this device project to the server.");
       return null;
@@ -837,6 +816,7 @@ export default function DIYBuilderPage() {
       const savedProjectBoardId = resolveProjectBoardProfileId(savedProject);
       lastSavedPayloadRef.current = payloadJson;
       setProjectId(savedProject.id);
+      setTemplateConfigId(null);
       setAttachedConfigBoardId(savedProjectBoardId);
       setBoardConfigs((currentConfigs) =>
         savedProjectBoardId === board.id
@@ -862,7 +842,7 @@ export default function DIYBuilderPage() {
       }
       return null;
     }
-  }, [board.id, handleBuildAuthFailure, projectId, roomId, selectedWifiCredentialId]);
+  }, [board.id, handleBuildAuthFailure, projectId, projectName, roomId, selectedWifiCredentialId]);
 
   const loadRooms = useCallback(async (token: string) => {
     setRoomsLoading(true);
@@ -1165,7 +1145,11 @@ export default function DIYBuilderPage() {
     }
   }, []);
 
-  const loadServerProject = useCallback(async (project: DiyProjectRecord) => {
+  const applyProjectToWorkspace = useCallback(async (
+    project: DiyProjectRecord,
+    options?: { asTemplate?: boolean },
+  ) => {
+    const asTemplate = options?.asTemplate ?? false;
     const config = (project.config ?? {}) as Record<string, unknown>;
     const resolvedBoardId = resolveProjectBoardProfileId(project) ?? DEFAULT_BOARD_ID;
     const nextBoard = getBoardProfile(resolvedBoardId) ?? getBoardProfile(DEFAULT_BOARD_ID) ?? BOARD_PROFILES[0];
@@ -1194,17 +1178,23 @@ export default function DIYBuilderPage() {
     const nextFlashSource = normalizeFlashSource(config.flash_source, Boolean(nextBoard.demoFirmware));
     const shouldRewriteFlashSource = nextFlashSource !== config.flash_source;
 
-    setProjectId(project.id);
+    setProjectId(asTemplate ? null : project.id);
+    setTemplateConfigId(asTemplate ? project.id : null);
     setAttachedConfigBoardId(nextBoard.id);
-    setProjectName(nextProjectName);
-    setRoomId(
-      typeof project.room_id === "number"
+    if (!asTemplate) {
+      setProjectName(nextProjectName);
+    }
+    setRoomId((currentRoomId) =>
+      currentRoomId ??
+      (typeof project.room_id === "number"
         ? project.room_id
         : typeof config.room_id === "number"
           ? config.room_id
-          : null,
+          : null),
     );
-    setSelectedWifiCredentialId(nextWifiCredentialId);
+    setSelectedWifiCredentialId((currentWifiCredentialId) =>
+      currentWifiCredentialId ?? nextWifiCredentialId,
+    );
     setFamily(nextBoard.family);
     setBoardId(nextBoard.id);
     setPins(nextPins);
@@ -1219,43 +1209,52 @@ export default function DIYBuilderPage() {
         ? config.serial_port
         : DEFAULT_SERIAL_PORT,
     );
-    setServerBuild({
-      ...createEmptyBuildState(),
-      jobId: savedBuildJobId,
-      status: savedBuildJobId ? "queued" : "idle",
-      configKey: savedBuildJobId ? savedBuildKey : null,
-    });
-    const normalizedPayload = JSON.stringify(
-      createProjectPayload({
-        board: nextBoard,
-        projectName: nextProjectName,
-        roomId:
-          typeof project.room_id === "number"
-            ? project.room_id
-            : typeof config.room_id === "number"
-              ? config.room_id
-              : null,
-        wifiCredentialId: nextWifiCredentialId,
-        flashSource: nextFlashSource,
-        pins: nextPins,
-        serialPort:
-          typeof config.serial_port === "string" && config.serial_port.trim()
-            ? config.serial_port
-            : DEFAULT_SERIAL_PORT,
-        buildJobId: savedBuildJobId,
-        buildKey: savedBuildJobId ? savedBuildKey : null,
-        cpuMhz: nextCpuMhz,
-        flashSize: nextFlashSize,
-        psramSize: nextPsramSize,
-        portableDashboard: nextBoard.id === "jc3827w543" ? nextPortableDashboard : null,
-      }),
-    );
-    lastSavedPayloadRef.current = shouldRewriteFlashSource ? null : normalizedPayload;
-    setProjectSyncState("saved");
-    setProjectSyncMessage(`Loaded saved config ${project.name}.`);
+    if (asTemplate) {
+      setServerBuild(createEmptyBuildState());
+      lastSavedPayloadRef.current = null;
+      setProjectSyncState("idle");
+      setProjectSyncMessage(
+        `Loaded ${project.name} as a template. Keep or edit your current project name, then save this as a new config before continuing.`,
+      );
+    } else {
+      setServerBuild({
+        ...createEmptyBuildState(),
+        jobId: savedBuildJobId,
+        status: savedBuildJobId ? "queued" : "idle",
+        configKey: savedBuildJobId ? savedBuildKey : null,
+      });
+      const normalizedPayload = JSON.stringify(
+        createProjectPayload({
+          board: nextBoard,
+          projectName: nextProjectName,
+          roomId:
+            typeof project.room_id === "number"
+              ? project.room_id
+              : typeof config.room_id === "number"
+                ? config.room_id
+                : null,
+          wifiCredentialId: nextWifiCredentialId,
+          flashSource: nextFlashSource,
+          pins: nextPins,
+          serialPort:
+            typeof config.serial_port === "string" && config.serial_port.trim()
+              ? config.serial_port
+              : DEFAULT_SERIAL_PORT,
+          buildJobId: savedBuildJobId,
+          buildKey: savedBuildJobId ? savedBuildKey : null,
+          cpuMhz: nextCpuMhz,
+          flashSize: nextFlashSize,
+          psramSize: nextPsramSize,
+          portableDashboard: nextBoard.id === "jc3827w543" ? nextPortableDashboard : null,
+        }),
+      );
+      lastSavedPayloadRef.current = shouldRewriteFlashSource ? null : normalizedPayload;
+      setProjectSyncState("saved");
+      setProjectSyncMessage(`Loaded saved config ${project.name}.`);
+    }
     setBoardConfigsError("");
 
-    if (savedBuildJobId) {
+    if (!asTemplate && savedBuildJobId) {
       void refreshBuildJob(savedBuildJobId, savedBuildKey, nextBoard.id);
     }
   }, [refreshBuildJob]);
@@ -1280,9 +1279,6 @@ export default function DIYBuilderPage() {
     };
   }, []);
 
-  const loadServerProjectRef = useRef(loadServerProject);
-  loadServerProjectRef.current = loadServerProject;
-
   useEffect(() => {
     if (!isAdmin) {
       return;
@@ -1296,7 +1292,7 @@ export default function DIYBuilderPage() {
   useEffect(() => {
     let cancelled = false;
 
-    async function hydrateDraft() {
+    async function hydrateBuilder() {
       if (!isAdmin) {
         setRoomsLoading(false);
         setWifiCredentialsLoading(false);
@@ -1317,35 +1313,6 @@ export default function DIYBuilderPage() {
       setBrowserIsSecureContext(window.isSecureContext);
       setBrowserSupportsSerial("serial" in navigator);
 
-      const savedDraft = restoreDraftSnapshot(window.localStorage.getItem(DRAFT_STORAGE_KEY));
-      const preferredProjectId = savedDraft?.projectId ?? null;
-
-      if (savedDraft) {
-        const nextBoardId =
-          savedDraft.boardId ? resolveBoardProfileId(savedDraft.boardId) ?? DEFAULT_BOARD_ID : DEFAULT_BOARD_ID;
-        const nextBoard = getBoardProfile(nextBoardId) ?? getBoardProfile(DEFAULT_BOARD_ID) ?? BOARD_PROFILES[0];
-
-        setProjectId(preferredProjectId);
-        setProjectName(savedDraft.projectName || "Living Room Relay Node");
-        setRoomId(typeof savedDraft.roomId === "number" ? savedDraft.roomId : null);
-        setSelectedWifiCredentialId(
-          typeof savedDraft.wifiCredentialId === "number" ? savedDraft.wifiCredentialId : null,
-        );
-        setFamily(
-          savedDraft.family && getBoardFamily(savedDraft.family)
-            ? savedDraft.family
-            : nextBoard.family,
-        );
-        setBoardId(nextBoard.id);
-        setCpuMhz(typeof savedDraft.cpuMhz === "number" ? savedDraft.cpuMhz : null);
-        setFlashSize(typeof savedDraft.flashSize === "string" ? savedDraft.flashSize : null);
-        setPsramSize(typeof savedDraft.psramSize === "string" ? savedDraft.psramSize : null);
-        setPins(Array.isArray(savedDraft.pins) ? sanitizePins(savedDraft.pins, MODE_METADATA) : []);
-        setPortableDashboard(sanitizePortableDashboard(savedDraft.portableDashboard));
-        setFlashSource(normalizeFlashSource(savedDraft.flashSource, Boolean(nextBoard.demoFirmware)));
-        setSerialPort(savedDraft.serialPort || DEFAULT_SERIAL_PORT);
-      }
-
       const token = getToken();
       if (!token) {
         if (!cancelled) {
@@ -1359,58 +1326,17 @@ export default function DIYBuilderPage() {
       }
 
       await loadRooms(token);
-      await loadWifiCredentials(token, savedDraft?.wifiCredentialId ?? null);
+      await loadWifiCredentials(token, null);
 
-      setProjectSyncState("loading");
-      setProjectSyncMessage("Loading DIY draft from server...");
-
-      try {
-        if (preferredProjectId) {
-          const response = await fetch(`${API_URL}/diy/projects/${preferredProjectId}`, {
-            headers: { Authorization: `Bearer ${token}` },
-            cache: "no-store",
-          });
-
-          if (response.status === 404) {
-            if (!cancelled) {
-              setProjectId(null);
-              setAttachedConfigBoardId(null);
-              lastSavedPayloadRef.current = null;
-              setProjectSyncState("idle");
-              setProjectSyncMessage("Saved local draft loaded. Choose or create a board config to continue.");
-            }
-          } else {
-            if (!response.ok) {
-              throw new Error(await parseApiError(response));
-            }
-
-            const preferredProject = (await response.json()) as DiyProjectRecord;
-            if (!cancelled) {
-              await loadServerProjectRef.current(preferredProject);
-            }
-          }
-        } else if (!cancelled) {
-          setProjectSyncState("idle");
-          setProjectSyncMessage(
-            savedDraft
-              ? "Saved local draft loaded. Choose or create a board config to continue."
-              : "Choose a board, then load or create a saved config for it.",
-          );
-        }
-      } catch (error) {
-        if (!cancelled) {
-          setProjectSyncState("error");
-          setProjectSyncMessage(getErrorMessage(error));
-        }
-      } finally {
-        if (!cancelled) {
-          setDraftLoaded(true);
-          setProjectHydrated(true);
-        }
+      if (!cancelled) {
+        setProjectSyncState("idle");
+        setProjectSyncMessage("Choose a board, enter a project name, then create or template a saved config.");
+        setDraftLoaded(true);
+        setProjectHydrated(true);
       }
     }
 
-    void hydrateDraft();
+    void hydrateBuilder();
 
     return () => {
       cancelled = true;
@@ -1427,7 +1353,7 @@ export default function DIYBuilderPage() {
   }, [board.id, draftLoaded, isAdmin, projectHydrated, refreshBoardConfigs]);
 
   useEffect(() => {
-    if (!draftLoaded || !projectHydrated || !projectId || !attachedConfigBoardId) {
+    if (!draftLoaded || !projectHydrated || !attachedConfigBoardId) {
       return;
     }
 
@@ -1437,11 +1363,14 @@ export default function DIYBuilderPage() {
 
     lastSavedPayloadRef.current = null;
     setProjectId(null);
+    setTemplateConfigId(null);
     setAttachedConfigBoardId(null);
     setServerBuild(createEmptyBuildState());
     setProjectSyncState("idle");
-    setProjectSyncMessage("");
-  }, [attachedConfigBoardId, board.id, board.name, draftLoaded, projectHydrated, projectId]);
+    setProjectSyncMessage(
+      "The original config stays attached to its saved board profile. Load a saved config as a template or create a new one for this board before continuing.",
+    );
+  }, [attachedConfigBoardId, board.id, draftLoaded, projectHydrated]);
 
   useEffect(() => {
     const nextOptions = BOARD_PROFILES.filter((profile) => profile.family === family);
@@ -1462,47 +1391,6 @@ export default function DIYBuilderPage() {
       setFlashSource("server");
     }
   }, [board.demoFirmware, boardPins, flashSource, selectedPinId]);
-
-  useEffect(() => {
-    if (!draftLoaded || typeof window === "undefined") {
-      return;
-    }
-
-    window.localStorage.setItem(
-      DRAFT_STORAGE_KEY,
-        JSON.stringify({
-          projectId: projectId ?? undefined,
-          projectName,
-          roomId,
-          wifiCredentialId: selectedWifiCredentialId,
-          family,
-          boardId,
-          pins,
-          flashSource,
-          serialPort,
-          cpuMhz,
-          flashSize,
-          psramSize,
-          portableDashboard: board.id === "jc3827w543" ? portableDashboard : undefined,
-        } satisfies SerializedDraft),
-    );
-  }, [
-    board.id,
-    boardId,
-    cpuMhz,
-    draftLoaded,
-    family,
-    flashSize,
-    flashSource,
-    pins,
-    portableDashboard,
-    projectId,
-    projectName,
-    psramSize,
-    roomId,
-    selectedWifiCredentialId,
-    serialPort,
-  ]);
 
   useEffect(() => {
     if (!draftLoaded || !projectHydrated) {
@@ -1831,8 +1719,11 @@ export default function DIYBuilderPage() {
       return;
     }
 
-    await loadServerProject(selectedConfig);
-  }, [boardConfigs, loadServerProject]);
+    const shouldLoadAsTemplate = configId !== projectId;
+    await applyProjectToWorkspace(selectedConfig, {
+      asTemplate: shouldLoadAsTemplate,
+    });
+  }, [applyProjectToWorkspace, boardConfigs, projectId]);
 
   const triggerServerBuild = async () => {
     if (hasActiveServerBuild && serverBuild.jobId) {
@@ -1991,7 +1882,9 @@ export default function DIYBuilderPage() {
 
     const nextBoard = getBoardProfile(DEFAULT_BOARD_ID) ?? BOARD_PROFILES[0];
     setProjectId(null);
-    setProjectName("Living Room Relay Node");
+    setTemplateConfigId(null);
+    setAttachedConfigBoardId(null);
+    setProjectName("");
     setRoomId(rooms[0]?.room_id ?? null);
     setNewRoomName("");
     setRoomError("");
@@ -2013,7 +1906,7 @@ export default function DIYBuilderPage() {
     setCurrentStep(1);
     lastSavedPayloadRef.current = null;
     setProjectSyncState("idle");
-    setProjectSyncMessage("Choose a board, then load or create a saved config for it.");
+    setProjectSyncMessage("Choose a board, enter a project name, then create or template a saved config.");
   };
 
   const flashLockedReason = getFlashLockedReason({
@@ -2203,7 +2096,8 @@ export default function DIYBuilderPage() {
             configsLoading={boardConfigsLoading}
             configListError={boardConfigsError}
             hasSelectedConfig={Boolean(activeBoardConfigId)}
-            selectedConfigId={activeBoardConfigId}
+            selectedConfigId={highlightedBoardConfigId}
+            selectedConfigMode={selectedConfigMode}
             projectSyncState={projectSyncState}
             projectSyncMessage={projectSyncMessage}
             onSelectConfig={loadBoardConfig}

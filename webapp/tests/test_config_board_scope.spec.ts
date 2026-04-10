@@ -2,8 +2,6 @@
 
 import { test, expect } from "@playwright/test";
 
-const DRAFT_STORAGE_KEY = "econnect:diy-svg-builder:v2";
-
 type RoomRecord = {
   room_id: number;
   name: string;
@@ -44,7 +42,7 @@ test.describe("DIY config board scoping", () => {
     authToken = data.access_token;
   });
 
-  test("changing Step 1 board detaches the saved config instead of rewriting it", async ({
+  test("new-device flow treats saved configs as explicit templates instead of auto-resuming them", async ({
     context,
     page,
     request,
@@ -68,6 +66,7 @@ test.describe("DIY config board scoping", () => {
     const roomId = rooms[0].room_id;
     const wifiCredentialId = wifiCredentials[0].id;
     const projectName = `Board Scope Regression ${Date.now()}`;
+    const newProjectName = `Fresh Device ${Date.now()}`;
 
     const createPayload = {
       name: projectName,
@@ -104,59 +103,55 @@ test.describe("DIY config board scoping", () => {
         window.localStorage.setItem("econnect_token", token);
       }, authToken);
 
-      await context.addInitScript(
-        ({ projectId, projectName: savedProjectName, roomId: savedRoomId, wifiCredentialId: savedWifiId }) => {
-          window.localStorage.setItem(
-            DRAFT_STORAGE_KEY,
-            JSON.stringify({
-              projectId,
-              projectName: savedProjectName,
-              roomId: savedRoomId,
-              wifiCredentialId: savedWifiId,
-              family: "ESP32",
-              boardId: "esp32-devkit-v1",
-              pins: [],
-              flashSource: "server",
-              serialPort: "browser-web-serial",
-            }),
-          );
-        },
-        {
-          projectId: project.id,
-          projectName,
-          roomId,
-          wifiCredentialId,
-        },
-      );
-
       await page.goto("/devices/diy");
       await expect(page).toHaveURL(/\/devices\/diy$/);
-      await expect(page.getByText(`Loaded saved config ${projectName}.`)).toBeVisible({
-        timeout: 10000,
-      });
-      await expect(page.getByText("Selected: ESP32 DevKit V1")).toBeVisible();
+      await expect(page.getByLabel("Project Name")).toHaveValue("");
+      await expect(page.getByRole("button", { name: "Next: Choose Config" })).toBeDisabled();
 
-      await page.getByRole("heading", { name: "ESP32-C3", exact: true }).click();
+      await page.getByLabel("Project Name").fill(newProjectName);
+      await page.getByRole("heading", { name: "ESP32", exact: true }).click();
+      await page.getByRole("button", { name: /ESP32 DevKit V1/i }).click();
+
+      const nextButton = page.getByRole("button", { name: "Next: Choose Config" });
+      await expect(nextButton).toBeEnabled({ timeout: 10000 });
+      await nextButton.click();
+
+      await expect(page.getByRole("button", { name: "Create Config" })).toBeVisible({ timeout: 10000 });
+      await page.getByRole("button", { name: projectName }).click();
 
       await expect(
         page.getByText(
-          "The original config stays attached to its saved board profile. Choose a saved config or create a new one for this board before continuing.",
+          `Loaded ${projectName} as a template. Keep or edit your current project name, then save this as a new config before continuing.`,
         ),
       ).toBeVisible({ timeout: 10000 });
+      await expect(page.getByLabel("Config Name")).toHaveValue(newProjectName);
+      await expect(page.getByText("Template")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Create Config" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Continue to Pin Mapping" })).toBeDisabled();
 
-      await page.getByRole("button", { name: /Next: Choose Config/ }).click();
-      await expect(page.getByRole("button", { name: "Create Config" })).toBeVisible({
+      await page.getByRole("button", { name: "Create Config" }).click();
+      await expect(page.getByText(`Server draft saved as ${newProjectName}.`)).toBeVisible({
         timeout: 10000,
       });
+      await expect(page.getByRole("button", { name: "Continue to Pin Mapping" })).toBeEnabled();
 
       const projectAfterRes = await request.get(`/api/v1/diy/projects/${project.id}`, {
         headers: authHeaders,
       });
       expect(projectAfterRes.ok()).toBeTruthy();
       const projectAfter = (await projectAfterRes.json()) as DiyProjectRecord;
+      expect(projectAfter.name).toBe(projectName);
       expect(projectAfter.board_profile).toBe("esp32-devkit-v1");
       expect(projectAfter.config.board_id).toBe("esp32-devkit-v1");
       expect(projectAfter.config.board_profile).toBe("esp32-devkit-v1");
+
+      const projectsRes = await request.get("/api/v1/diy/projects?board_profile=esp32-devkit-v1", {
+        headers: authHeaders,
+      });
+      expect(projectsRes.ok()).toBeTruthy();
+      const projects = (await projectsRes.json()) as DiyProjectRecord[];
+      expect(projects.some((entry) => entry.id === project.id && entry.name === projectName)).toBeTruthy();
+      expect(projects.some((entry) => entry.name === newProjectName)).toBeTruthy();
     } finally {
       await request.delete(`/api/v1/diy/projects/${project.id}`, {
         headers: {
@@ -165,6 +160,23 @@ test.describe("DIY config board scoping", () => {
         },
         data: { password: accountPassword },
       });
+
+      const cleanupProjectsRes = await request.get("/api/v1/diy/projects?board_profile=esp32-devkit-v1", {
+        headers: authHeaders,
+      });
+      if (cleanupProjectsRes.ok()) {
+        const cleanupProjects = (await cleanupProjectsRes.json()) as DiyProjectRecord[];
+        const clonedProject = cleanupProjects.find((entry) => entry.name === newProjectName);
+        if (clonedProject) {
+          await request.delete(`/api/v1/diy/projects/${clonedProject.id}`, {
+            headers: {
+              ...authHeaders,
+              "Content-Type": "application/json",
+            },
+            data: { password: accountPassword },
+          });
+        }
+      }
     }
   });
 });

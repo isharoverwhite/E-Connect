@@ -21,6 +21,7 @@ interface Step2ConfigsProps {
     configListError: string;
     hasSelectedConfig: boolean;
     selectedConfigId: string | null;
+    selectedConfigMode: "saved" | "template" | null;
     projectSyncState: ProjectSyncState;
     projectSyncMessage: string;
     onSelectConfig: (configId: string) => Promise<void>;
@@ -52,6 +53,7 @@ export function Step2Configs({
     configListError,
     hasSelectedConfig,
     selectedConfigId,
+    selectedConfigMode,
     projectSyncState,
     projectSyncMessage,
     onSelectConfig,
@@ -68,7 +70,7 @@ export function Step2Configs({
                     Choose a Saved Config
                 </h1>
                 <p className="text-lg text-slate-600 dark:text-slate-400 dark:text-slate-400">
-                    Saved configs stay scoped to the board profile they were created for. Load one for {board.name} or create a new config before editing GPIO mappings.
+                    Saved configs stay scoped to the board profile they were created for. Load one for {board.name} as a template or create a brand-new config before editing GPIO mappings.
                 </p>
             </div>
 
@@ -128,7 +130,7 @@ export function Step2Configs({
                                                     </h3>
                                                     {isSelected ? (
                                                         <span className="rounded-full bg-primary px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white">
-                                                            Active
+                                                            {selectedConfigMode === "template" ? "Template" : "Active"}
                                                         </span>
                                                     ) : null}
                                                 </div>
@@ -156,7 +158,7 @@ export function Step2Configs({
                     <div>
                         <h2 className="text-xl font-bold text-slate-900 dark:text-white dark:text-white">Config Workspace</h2>
                         <p className="mt-2 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:text-slate-400">
-                            Give this board config a clear name, then save it. Switching boards creates a new workspace instead of rewriting the saved config already attached to another board.
+                            Every new device must be saved under an explicit config name. Loading a library item copies it into this workspace as a template until you save the new config.
                         </p>
                     </div>
 
@@ -210,7 +212,7 @@ export function Step2Configs({
                     <div className="rounded-2xl border border-dashed border-slate-300 dark:border-slate-600 px-4 py-4 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:border-slate-700 dark:text-slate-400">
                         {hasSelectedConfig
                             ? "This config is ready. Continue to pin mapping to edit the selected board setup."
-                            : "Choose a saved config or create one first. Pin editing stays locked until this board has an active saved config."}
+                            : "Choose a saved config template or create one first. Pin editing stays locked until this board has an active saved config."}
                     </div>
                 </aside>
             </div>
