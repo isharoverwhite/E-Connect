@@ -660,6 +660,16 @@ def _normalize_staged_device_name(raw_value: Any, *, fallback_name: str) -> str:
     return fallback[:255]
 
 
+def _require_project_name(raw_value: Any, *, message: str) -> str:
+    normalized = _trimmed_string(raw_value)
+    if normalized:
+        return normalized[:255]
+    raise HTTPException(
+        status_code=400,
+        detail={"error": "validation", "message": message},
+    )
+
+
 def _build_direct_ota_api_base_url(advertised_host: str | None) -> Optional[str]:
     normalized_host = _trimmed_string(advertised_host)
     if not normalized_host:
@@ -4116,6 +4126,10 @@ async def list_i2c_libraries(current_user: User = Depends(get_current_user)):
 
 @router.post("/diy/projects", response_model=DiyProjectResponse)
 async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
+    project_name = _require_project_name(
+        project.name,
+        message="Enter a project name before creating a device project.",
+    )
     if project.room_id is None:
         raise HTTPException(
             status_code=400,
@@ -4146,7 +4160,7 @@ async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(ge
         user_id=current_user.user_id,
         room_id=room.room_id,
         wifi_credential_id=wifi_credential.id if wifi_credential is not None else None,
-        name=project.name,
+        name=project_name,
         board_profile=project.board_profile,
         config=stamped_config,
     )
@@ -4526,6 +4540,10 @@ async def delete_device_config_history(
 @router.put("/diy/projects/{project_id}", response_model=DiyProjectResponse)
 async def update_diy_project(project_id: str, project_update: DiyProjectCreate, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
     project = _get_project_in_household_or_404(db, current_user, project_id)
+    project_name = _require_project_name(
+        project_update.name,
+        message="Enter a project name before saving the device project.",
+    )
     board_definition = resolve_board_definition(project.board_profile)
     if project_update.board_profile != project.board_profile:
         raise HTTPException(
@@ -4548,7 +4566,7 @@ async def update_diy_project(project_id: str, project_update: DiyProjectCreate, 
         required=board_definition.canonical_id != "jc3827w543",
         missing_message="Select a Wi-Fi credential before saving the device project.",
     )
-    project.name = project_update.name
+    project.name = project_name
     project.board_profile = project_update.board_profile
     project.room_id = room.room_id
     project.wifi_credential_id = wifi_credential.id if wifi_credential is not None else None
