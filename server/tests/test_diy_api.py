@@ -1613,3 +1613,58 @@ def test_update_project_immutable_board_profile():
     update_response = client.put(f"/api/v1/diy/projects/{project_id}", json=update_payload, headers={"Authorization": f"Bearer {token}"})
     assert update_response.status_code == 400
     assert update_response.json()["detail"]["message"] == "Cannot change the board profile of an existing project."
+
+
+def test_create_project_requires_explicit_project_name():
+    db = TestingSessionLocal()
+    _user, room = create_test_user(db, username="blankprojectname")
+    token = get_token("blankprojectname")
+
+    payload = {
+        "name": "   ",
+        "board_profile": "esp32-devkit-v1",
+        "room_id": room.room_id,
+        "config": {
+            "pins": [],
+            "wifi_ssid": "test",
+            "wifi_password": "test",
+        },
+    }
+
+    response = client.post("/api/v1/diy/projects", json=payload, headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 400
+    assert response.json()["detail"] == {
+        "error": "validation",
+        "message": "Enter a project name before creating a device project.",
+    }
+
+
+def test_update_project_requires_explicit_project_name():
+    db = TestingSessionLocal()
+    _user, room = create_test_user(db, username="blankupdateprojectname")
+    token = get_token("blankupdateprojectname")
+
+    payload = {
+        "name": "Original Project",
+        "board_profile": "esp32-devkit-v1",
+        "room_id": room.room_id,
+        "config": {
+            "pins": [],
+            "wifi_ssid": "test",
+            "wifi_password": "test",
+        },
+    }
+    create_response = client.post("/api/v1/diy/projects", json=payload, headers={"Authorization": f"Bearer {token}"})
+    assert create_response.status_code == 200
+    project_id = create_response.json()["id"]
+
+    update_payload = {
+        **payload,
+        "name": "  ",
+    }
+    update_response = client.put(f"/api/v1/diy/projects/{project_id}", json=update_payload, headers={"Authorization": f"Bearer {token}"})
+    assert update_response.status_code == 400
+    assert update_response.json()["detail"] == {
+        "error": "validation",
+        "message": "Enter a project name before saving the device project.",
+    }

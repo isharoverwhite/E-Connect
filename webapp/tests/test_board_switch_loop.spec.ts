@@ -5,10 +5,10 @@ import { test, expect } from '@playwright/test';
 
 const ESP8266_SAVED_DRAFT = {
   projectId: null,
-  projectName: 'Test Project Node',
+  projectName: 'Cached Project Name',
   boardId: 'nodemcuv2',
-  wifiSsid: 'TestWiFi',
-  wifiPassword: 'TestPassword',
+  roomId: 1,
+  wifiCredentialId: 1,
   flashSource: 'server',
   pins: [],
   family: 'ESP8266'
@@ -78,6 +78,7 @@ test.describe('DIY Flasher Infinite Loop Regression Tests', () => {
 
     // The user needs a room to be selected to proceed. Wait for the API to auto-select the first room.
     // Ensure the 'Next: Choose Config' button is enabled.
+    await page.getByLabel('Project Name').fill('Loop Regression Device');
     const nextBtn = page.getByRole('button', { name: 'Next: Choose Config' });
     await expect(nextBtn).toBeEnabled({ timeout: 10000 });
     await nextBtn.click();
@@ -97,8 +98,8 @@ test.describe('DIY Flasher Infinite Loop Regression Tests', () => {
     expect(fatalErrors.length).toBe(0);
   });
 
-  test('Should correctly reload with a saved ESP8266 draft without permanently wedging early returns', async ({ page }) => {
-    // 1. Inject the draft BEFORE visiting the page so component hydrates it immediately
+  test('Should ignore cached local DIY drafts when opening a fresh new-device session', async ({ page }) => {
+    // 1. Inject the legacy draft BEFORE visiting the page. The fresh-device flow should ignore it.
     await page.addInitScript((draftData) => {
       window.localStorage.setItem('econnect:diy-svg-builder:v2', JSON.stringify(draftData));
     }, ESP8266_SAVED_DRAFT);
@@ -114,13 +115,12 @@ test.describe('DIY Flasher Infinite Loop Regression Tests', () => {
     
     await expect(page).toHaveURL(/.*\/devices\/diy$/, { timeout: 5000 });
 
-    // 3. Ensure the hydration lock releases and UI allows us to proceed (no longer hanging)
-    await expect(page.getByText('Saved local draft loaded')).toBeVisible({ timeout: 10000 });
+    // 3. The new-device path must stay fresh instead of restoring the cached draft name/board.
+    await expect(page.getByLabel('Project Name')).toHaveValue('');
+    await expect(page.getByText('Selected: DFRobot Beetle ESP32-C3')).toBeVisible();
+    await expect(page.getByText('Choose a board, enter a project name, then create or template a saved config.')).toBeVisible({ timeout: 10000 });
 
-    // 4. ESP8266 DOM should be hydrated
-    await expect(page.getByText('Selected: NodeMCU (v2/v3)')).toBeVisible();
-
-    // 5. No depth loops or crashes
+    // 4. No depth loops or crashes
     const fatalErrors = errors.filter(e => 
         e.includes('Maximum update depth exceeded') || 
         e.includes('ERR_INSUFFICIENT_RESOURCES')
