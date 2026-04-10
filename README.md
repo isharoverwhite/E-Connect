@@ -89,7 +89,7 @@ English: `Settings` centralizes instance administration, including timezone, use
 | `mqtt` | Mosquitto broker cho command/state loop |
 | `db` | MariaDB lưu user, household, device, config, automation, log |
 
-`find_website` không nằm trong stack self-hosted. Luồng chuẩn là người dùng chạy `db`, `mqtt`, `server`, `webapp` trong LAN của họ, rồi mở [find.isharoverwhite.com](https://find.isharoverwhite.com) từ một thiết bị cùng LAN để browser của chính họ scan ra server vừa cài.
+`find_website` không nằm trong stack self-hosted. Luồng chuẩn là người dùng chạy `db`, `mqtt`, `server`, `webapp` trong LAN của họ, rồi mở [find.isharoverwhite.com](https://find.isharoverwhite.com) từ một thiết bị cùng LAN để browser của chính họ scan ra server vừa cài. Mã nguồn của public finder hiện được tách riêng tại [econnectrelease/findwebsite](https://github.com/econnectrelease/findwebsite).
 
 ### Chạy Nhanh Theo Kiểu Copy & Run
 
@@ -321,7 +321,7 @@ Mã nguồn và tài sản của repository hiện được phân phối dưới
 | `mqtt` | Mosquitto broker for command/state transport |
 | `db` | MariaDB for users, households, devices, configs, automations, and logs |
 
-`find_website` is not part of the self-hosted stack. The normal topology is that users run only `db`, `mqtt`, `server`, and `webapp` on their own LAN, then open [find.isharoverwhite.com](https://find.isharoverwhite.com) from a device on that same LAN so their own browser can discover the server they just installed.
+`find_website` is not part of the self-hosted stack. The normal topology is that users run only `db`, `mqtt`, `server`, and `webapp` on their own LAN, then open [find.isharoverwhite.com](https://find.isharoverwhite.com) from a device on that same LAN so their own browser can discover the server they just installed. The public finder source now lives in its own repository at [econnectrelease/findwebsite](https://github.com/econnectrelease/findwebsite).
 
 ### Copy And Run Quick Start
 
