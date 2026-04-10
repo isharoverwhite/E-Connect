@@ -34,6 +34,7 @@ from app.ws_manager import manager as ws_manager
 from app.services.builder import (
     audit_runtime_firmware_target_mismatches,
     extract_runtime_firmware_network_targets,
+    refresh_firmware_template_release,
     resolve_runtime_firmware_network_state,
     resolve_webapp_transport,
 )
@@ -59,6 +60,10 @@ RUNTIME_NETWORK_REFRESH_INTERVAL_SECONDS = max(
 SYSTEM_LOG_RETENTION_SWEEP_INTERVAL_SECONDS = max(
     60.0,
     float(os.getenv("SYSTEM_LOG_RETENTION_SWEEP_INTERVAL_SECONDS", "3600")),
+)
+FIRMWARE_TEMPLATE_REFRESH_INTERVAL_SECONDS = max(
+    60.0,
+    float(os.getenv("FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS", "3600")),
 )
 AUTOMATION_TIME_TRIGGER_INTERVAL_SECONDS = max(
     5.0,
@@ -468,6 +473,18 @@ async def lifespan(app: FastAPI):
             finally:
                 db.close()
 
+    async def firmware_template_refresh_watchdog() -> None:
+        if os.getenv("FIRMWARE_TEMPLATE_AUTO_UPDATE", "1").strip().lower() in {"0", "false", "no", "off"}:
+            return
+        while True:
+            await asyncio.sleep(FIRMWARE_TEMPLATE_REFRESH_INTERVAL_SECONDS)
+            if _using_overridden_database(app):
+                continue
+            try:
+                refresh_firmware_template_release(force=False)
+            except Exception:
+                logger.exception("Firmware template auto-refresh failed")
+
     async def external_device_watchdog() -> None:
         while True:
             await asyncio.sleep(EXTERNAL_DEVICE_POLL_INTERVAL_SECONDS)
@@ -583,6 +600,7 @@ async def lifespan(app: FastAPI):
     runtime_network_watchdog_task = asyncio.create_task(runtime_network_watchdog())
     system_log_retention_task = asyncio.create_task(system_log_retention_watchdog())
     automation_time_trigger_task = asyncio.create_task(automation_time_trigger_watchdog())
+    firmware_template_refresh_task = asyncio.create_task(firmware_template_refresh_watchdog())
     external_device_watchdog_task = asyncio.create_task(external_device_watchdog())
     app.state.stale_device_watchdog_started = True
 
@@ -609,6 +627,10 @@ async def lifespan(app: FastAPI):
             automation_time_trigger_task.cancel()
             with suppress(asyncio.CancelledError):
                 await automation_time_trigger_task
+        if firmware_template_refresh_task is not None:
+            firmware_template_refresh_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await firmware_template_refresh_task
         if external_device_watchdog_task is not None:
             external_device_watchdog_task.cancel()
             with suppress(asyncio.CancelledError):
