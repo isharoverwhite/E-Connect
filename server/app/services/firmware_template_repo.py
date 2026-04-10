@@ -161,6 +161,22 @@ def _build_status(state: Mapping[str, Any] | None = None) -> dict[str, Any]:
     }
 
 
+def _build_pending_notification(state: Mapping[str, Any]) -> dict[str, Any] | None:
+    pending_release_tag = state.get("pending_notification_release_tag")
+    if not isinstance(pending_release_tag, str) or not pending_release_tag.strip():
+        return None
+
+    payload: dict[str, Any] = {
+        "release_tag": pending_release_tag.strip(),
+        "release_revision": state.get("pending_notification_release_revision"),
+        "previous_release_tag": state.get("pending_notification_previous_release_tag"),
+        "previous_revision": state.get("pending_notification_previous_revision"),
+        "installed_at": state.get("pending_notification_installed_at"),
+        "source_repo": FIRMWARE_TEMPLATE_REPO,
+    }
+    return payload
+
+
 def _build_github_request(url: str) -> Request:
     return Request(
         url,
@@ -290,6 +306,8 @@ def refresh_firmware_template_release(*, force: bool = False) -> dict[str, Any]:
     latest_release_tag = release_metadata["tag_name"]
     state["latest_release_tag"] = latest_release_tag
     state["latest_release_published_at"] = release_metadata["published_at"]
+    previous_release_tag = state.get("installed_release_tag")
+    previous_revision = state.get("installed_revision")
 
     if (
         state.get("installed_release_tag") == latest_release_tag
@@ -320,11 +338,18 @@ def refresh_firmware_template_release(*, force: bool = False) -> dict[str, Any]:
             return _build_status(state)
 
     state["installed_release_tag"] = latest_release_tag
-    state["last_install_at"] = _serialize_datetime(_utcnow())
+    installed_at = _serialize_datetime(_utcnow())
+    state["last_install_at"] = installed_at
     if installed_revision:
         state["installed_revision"] = installed_revision
     else:
         state.pop("installed_revision", None)
+    if previous_release_tag != latest_release_tag:
+        state["pending_notification_release_tag"] = latest_release_tag
+        state["pending_notification_release_revision"] = installed_revision
+        state["pending_notification_previous_release_tag"] = previous_release_tag
+        state["pending_notification_previous_revision"] = previous_revision
+        state["pending_notification_installed_at"] = installed_at
     _save_state(state)
     return _build_status(state)
 
@@ -352,3 +377,21 @@ def get_firmware_template_status(*, force_check: bool = False) -> dict[str, Any]
     if force_check:
         return refresh_firmware_template_release(force=True)
     return _build_status(_load_state())
+
+
+def consume_pending_firmware_template_notification() -> dict[str, Any] | None:
+    state = _load_state()
+    payload = _build_pending_notification(state)
+    if payload is None:
+        return None
+
+    for key in (
+        "pending_notification_release_tag",
+        "pending_notification_release_revision",
+        "pending_notification_previous_release_tag",
+        "pending_notification_previous_revision",
+        "pending_notification_installed_at",
+    ):
+        state.pop(key, None)
+    _save_state(state)
+    return payload

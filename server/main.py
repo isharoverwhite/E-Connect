@@ -33,6 +33,7 @@ from app.mqtt import mqtt_manager
 from app.ws_manager import manager as ws_manager
 from app.services.builder import (
     audit_runtime_firmware_target_mismatches,
+    consume_pending_firmware_template_notification,
     extract_runtime_firmware_network_targets,
     refresh_firmware_template_release,
     resolve_runtime_firmware_network_state,
@@ -233,6 +234,44 @@ def _serialize_discovery_webapp_transport(app: FastAPI) -> dict[str, str] | None
         "protocol": str(webapp_transport["webapp_protocol"]),
         "port": str(webapp_transport["webapp_port"]),
     }
+
+
+def _record_pending_firmware_template_notification() -> None:
+    pending_notification = consume_pending_firmware_template_notification()
+    if pending_notification is None:
+        return
+
+    release_tag = str(pending_notification.get("release_tag") or "").strip()
+    release_revision = str(pending_notification.get("release_revision") or "").strip() or None
+    previous_release_tag = str(pending_notification.get("previous_release_tag") or "").strip() or None
+    previous_revision = str(pending_notification.get("previous_revision") or "").strip() or None
+
+    if release_revision:
+        message = (
+            f"New firmware release {release_tag} ({release_revision}) was downloaded automatically. "
+            "Update your boards to apply it."
+        )
+    else:
+        message = (
+            f"New firmware release {release_tag} was downloaded automatically. "
+            "Update your boards to apply it."
+        )
+
+    record_system_log(
+        event_code="firmware_template_release_installed",
+        message=message,
+        severity=SystemLogSeverity.warning,
+        category=SystemLogCategory.firmware,
+        firmware_revision=release_revision,
+        details={
+            "release_tag": release_tag,
+            "release_revision": release_revision,
+            "previous_release_tag": previous_release_tag,
+            "previous_revision": previous_revision,
+            "installed_at": pending_notification.get("installed_at"),
+            "source_repo": pending_notification.get("source_repo"),
+        },
+    )
 
 
 def _set_app_timezone_context(app: FastAPI, context: dict[str, object]) -> None:
@@ -482,6 +521,8 @@ async def lifespan(app: FastAPI):
                 continue
             try:
                 refresh_firmware_template_release(force=False)
+                if getattr(app.state, "database_ready", False):
+                    _record_pending_firmware_template_notification()
             except Exception:
                 logger.exception("Firmware template auto-refresh failed")
 
@@ -551,6 +592,11 @@ async def lifespan(app: FastAPI):
     app.state.database_error = database_error
 
     if database_ready:
+        try:
+            refresh_firmware_template_release(force=False)
+            _record_pending_firmware_template_notification()
+        except Exception:
+            logger.exception("Initial firmware template release refresh failed")
         db = SessionLocal()
         try:
             primary_household = (

@@ -178,6 +178,41 @@ def test_refresh_firmware_template_release_installs_latest_release(monkeypatch, 
     assert (install_root / "state.json").exists()
 
 
+def test_refresh_firmware_template_release_sets_pending_notification(monkeypatch, tmp_path):
+    bundled_dir, _, _ = configure_template_paths(monkeypatch, tmp_path)
+    create_template_dir(bundled_dir, "1.1.4", marker="bundled")
+
+    release_source_dir = tmp_path / "release-source"
+    create_template_dir(release_source_dir, "2.0.0", marker="release")
+    archive_path = tmp_path / "firmware-release.tar.gz"
+    build_release_archive(release_source_dir, archive_path, prefix="econnectrelease-firmware-abcdef")
+
+    monkeypatch.setattr(
+        firmware_template_repo,
+        "_fetch_latest_release_metadata",
+        lambda: {
+            "tag_name": "v2.0.0",
+            "tarball_url": "https://example.test/firmware-v2.0.0.tar.gz",
+            "html_url": "https://github.com/econnectrelease/firmware/releases/tag/v2.0.0",
+            "published_at": "2026-04-10T16:00:00Z",
+        },
+    )
+    monkeypatch.setattr(
+        firmware_template_repo,
+        "_download_release_tarball",
+        lambda url, destination: shutil.copy2(archive_path, destination),
+    )
+
+    firmware_template_repo.refresh_firmware_template_release(force=True)
+
+    payload = firmware_template_repo.consume_pending_firmware_template_notification()
+    assert payload is not None
+    assert payload["release_tag"] == "v2.0.0"
+    assert payload["release_revision"] == "2.0.0"
+    assert payload["source_repo"] == "econnectrelease/firmware"
+    assert firmware_template_repo.consume_pending_firmware_template_notification() is None
+
+
 def test_refresh_firmware_template_endpoint_returns_status(monkeypatch):
     create_admin_user()
     expected_status = {
@@ -210,3 +245,28 @@ def test_refresh_firmware_template_endpoint_returns_status(monkeypatch):
     assert payload["source_repo"] == "econnectrelease/firmware"
     assert payload["active_source"] == "release"
     assert payload["installed_release_tag"] == "v1.1.4"
+
+
+def test_main_records_pending_firmware_template_notification_as_warning(monkeypatch):
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        main,
+        "consume_pending_firmware_template_notification",
+        lambda: {
+            "release_tag": "v2.0.0",
+            "release_revision": "2.0.0",
+            "previous_release_tag": "v1.1.4",
+            "previous_revision": "1.1.4",
+            "installed_at": "2026-04-10T16:00:00Z",
+            "source_repo": "econnectrelease/firmware",
+        },
+    )
+    monkeypatch.setattr(main, "record_system_log", lambda **kwargs: captured.update(kwargs) or True)
+
+    main._record_pending_firmware_template_notification()
+
+    assert captured["event_code"] == "firmware_template_release_installed"
+    assert captured["severity"] == main.SystemLogSeverity.warning
+    assert captured["category"] == main.SystemLogCategory.firmware
+    assert "Update your boards to apply it." in str(captured["message"])
