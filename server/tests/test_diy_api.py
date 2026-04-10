@@ -1326,6 +1326,26 @@ def test_collect_build_outputs_includes_boot_app0_for_jc3827_full_bundle(tmp_pat
     }
 
 
+def test_cleanup_job_build_outputs_removes_platformio_build_directory_only(tmp_path, monkeypatch):
+    import app.services.builder as builder
+
+    jobs_dir = tmp_path / "jobs"
+    monkeypatch.setattr(builder, "JOBS_DIR", str(jobs_dir))
+
+    job_id = str(uuid.uuid4())
+    build_root = jobs_dir / job_id / ".pio" / "build"
+    build_dir = build_root / "esp32dev"
+    build_dir.mkdir(parents=True)
+    (build_dir / "firmware.bin").write_bytes(b"firmware")
+
+    workspace_file = jobs_dir / job_id / "platformio.ini"
+    workspace_file.write_text("[env:esp32dev]\nboard = esp32dev\n")
+
+    assert builder.cleanup_job_build_outputs(job_id) is True
+    assert not build_root.exists()
+    assert workspace_file.exists()
+
+
 def test_resolve_build_artifact_path_keeps_firmware_and_part_paths_separate(tmp_path):
     from app.services.builder import get_durable_artifact_path
 

@@ -63,6 +63,24 @@ def check_database_connection():
         logger.warning("Database connectivity check failed: %s", error_message)
         return False, error_message
 
+def _table_exists(table_name: str) -> bool:
+    with engine.connect() as conn:
+        if DATABASE_URL.startswith("sqlite"):
+            result = conn.execute(
+                text("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = :table_name"),
+                {"table_name": table_name},
+            )
+            return bool(result.scalar())
+
+        result = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM information_schema.TABLES "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name"
+            ),
+            {"table_name": table_name},
+        )
+        return bool(result.scalar())
+
 def _column_exists(table_name: str, column_name: str) -> bool:
     with engine.connect() as conn:
         if DATABASE_URL.startswith("sqlite"):
@@ -98,6 +116,15 @@ def _drop_column_if_exists(table_name: str, column_name: str):
     with engine.connect() as conn:
         conn.execute(text(f"ALTER TABLE {table_name} DROP COLUMN {column_name}"))
         conn.commit()
+
+def _drop_table_if_exists(table_name: str) -> bool:
+    if not _table_exists(table_name):
+        return False
+
+    with engine.connect() as conn:
+        conn.execute(text(f"DROP TABLE IF EXISTS {table_name}"))
+        conn.commit()
+    return True
 
 def _trimmed_string(value):
     if not isinstance(value, str):
@@ -822,6 +849,15 @@ def _cleanup_legacy_user_approval_status():
         logger.warning("Legacy users.approval_status cleanup failed (non-fatal): %s", exc)
 
 
+def _cleanup_legacy_unused_tables():
+    for table_name in ("firmwares",):
+        try:
+            if _drop_table_if_exists(table_name):
+                logger.info("Dropped legacy unused table %s", table_name)
+        except Exception as exc:
+            logger.warning("Legacy unused-table cleanup failed for %s (non-fatal): %s", table_name, exc)
+
+
 def _backfill_room_household_ids():
     with engine.connect() as conn:
         try:
@@ -922,6 +958,7 @@ def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
     for attempt in range(1, max_attempts + 1):
         try:
             Base.metadata.create_all(bind=engine)
+            _cleanup_legacy_unused_tables()
             _ensure_additive_columns()
             _backfill_room_household_ids()
             _backfill_project_wifi_credentials()

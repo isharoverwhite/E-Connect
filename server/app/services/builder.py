@@ -1311,6 +1311,35 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+def get_job_workspace_path(job_id: str) -> Path:
+    return Path(JOBS_DIR) / str(job_id)
+
+
+def get_job_platformio_build_dir(job_id: str) -> Path:
+    return get_job_workspace_path(job_id) / ".pio" / "build"
+
+
+def cleanup_job_build_outputs(job_id: str) -> bool:
+    build_dir = get_job_platformio_build_dir(job_id)
+    if not build_dir.exists():
+        return False
+
+    try:
+        shutil.rmtree(build_dir)
+    except OSError:
+        logger.exception("Failed to clean temporary PlatformIO build directory for job %s", job_id)
+        return False
+
+    try:
+        build_dir.parent.rmdir()
+    except OSError:
+        pass
+
+    logger.info("Cleaned temporary PlatformIO build directory for job %s", job_id)
+    return True
+
+
 def build_firmware_task(
     job_id: str,
     warnings: list[str] | None = None,

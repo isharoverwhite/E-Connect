@@ -337,16 +337,6 @@ class SystemLog(Base):
     device = relationship("Device")
     read_by_user = relationship("User", foreign_keys=[read_by_user_id])
 
-# Legacy Firmware table support (optional, keeping for OTA feature)
-class Firmware(Base):
-    __tablename__ = "firmwares"
-
-    id = Column(Integer, primary_key=True, index=True)
-    version = Column(String(50))
-    board = Column(String(100))
-    filename = Column(String(255))
-    uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
-
 class DiyProject(Base):
     __tablename__ = "diy_projects"
 

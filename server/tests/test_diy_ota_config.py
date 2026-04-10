@@ -534,7 +534,9 @@ def test_get_build_job_reconciles_online_version_mismatch_with_local_db_timestam
     assert job.status == JobStatus.flash_failed
 
 
-def test_get_diy_project_reconciles_flashing_ota_when_device_reports_expected_firmware():
+def test_get_diy_project_reconciles_flashing_ota_when_device_reports_expected_firmware(tmp_path, monkeypatch):
+    import app.services.builder as builder
+
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
 
@@ -583,6 +585,13 @@ def test_get_diy_project_reconciles_flashing_ota_when_device_reports_expected_fi
     db.add(job)
     db.commit()
 
+    jobs_dir = tmp_path / "jobs"
+    monkeypatch.setattr(builder, "JOBS_DIR", str(jobs_dir))
+    build_root = jobs_dir / job_id / ".pio" / "build"
+    build_dir = build_root / "esp32dev"
+    build_dir.mkdir(parents=True)
+    (build_dir / "firmware.bin").write_bytes(b"pending-firmware")
+
     res = client.get(
         f"/api/v1/diy/projects/{project.id}",
         headers={"Authorization": f"Bearer {token}"},
@@ -603,9 +612,12 @@ def test_get_diy_project_reconciles_flashing_ota_when_device_reports_expected_fi
     assert project.pending_config_id is None
     assert project.config["pins"] == pending_config["pins"]
     assert project.current_config_id == saved_config.id
+    assert not build_root.exists()
 
 
-def test_list_device_config_history_reconciles_recent_flashed_ota_when_device_reports_expected_firmware():
+def test_list_device_config_history_reconciles_recent_flashed_ota_when_device_reports_expected_firmware(tmp_path, monkeypatch):
+    import app.services.builder as builder
+
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
 
@@ -659,6 +671,13 @@ def test_list_device_config_history_reconciles_recent_flashed_ota_when_device_re
     db.add(job)
     db.commit()
 
+    jobs_dir = tmp_path / "jobs"
+    monkeypatch.setattr(builder, "JOBS_DIR", str(jobs_dir))
+    build_root = jobs_dir / job_id / ".pio" / "build"
+    build_dir = build_root / "esp32dev"
+    build_dir.mkdir(parents=True)
+    (build_dir / "firmware.bin").write_bytes(b"flashed-firmware")
+
     res = client.get(
         f"/api/v1/device/{device.device_id}/config-history",
         headers={"Authorization": f"Bearer {token}"},
@@ -681,6 +700,7 @@ def test_list_device_config_history_reconciles_recent_flashed_ota_when_device_re
     assert project.pending_config_id is None
     assert project.config["pins"] == pending_config["pins"]
     assert project.current_config_id == saved_config.id
+    assert not build_root.exists()
 
 
 def test_expire_stale_online_devices_once_reconciles_ota_after_device_already_went_offline():
@@ -1921,8 +1941,9 @@ def test_send_command_ota_rejects_wrong_project_job():
     assert res.status_code == 400
     assert "does not belong to the target device" in res.json()["detail"]
 
-def test_mqtt_process_ota_status():
+def test_mqtt_process_ota_status(tmp_path, monkeypatch):
     from app.mqtt import MQTTClientManager
+    import app.services.builder as builder
     import json
     from unittest.mock import MagicMock
     
@@ -1941,6 +1962,13 @@ def test_mqtt_process_ota_status():
     project.pending_build_job_id = job_id
     db.add(job)
     db.commit()
+
+    jobs_dir = tmp_path / "jobs"
+    monkeypatch.setattr(builder, "JOBS_DIR", str(jobs_dir))
+    success_build_root = jobs_dir / job_id / ".pio" / "build"
+    success_build_dir = success_build_root / "esp32dev"
+    success_build_dir.mkdir(parents=True)
+    (success_build_dir / "firmware.bin").write_bytes(b"ota-success-firmware")
 
     mgr = MQTTClientManager()
     
@@ -1961,12 +1989,18 @@ def test_mqtt_process_ota_status():
     assert project.config["pins"] == [{"gpio": 8, "mode": "OUTPUT", "label": "Committed Relay"}]
     assert project.pending_config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "Staged Relay"}]
     assert project.pending_build_job_id == job_id
+    assert not success_build_root.exists()
 
     # setup another job for failure
     job2_id = str(uuid.uuid4())
     job2 = BuildJob(id=job2_id, project_id=project.id, status=JobStatus.flashing)
     db.add(job2)
     db.commit()
+
+    failed_build_root = jobs_dir / job2_id / ".pio" / "build"
+    failed_build_dir = failed_build_root / "esp32dev"
+    failed_build_dir.mkdir(parents=True)
+    (failed_build_dir / "firmware.bin").write_bytes(b"ota-failure-firmware")
 
     # simulate failure
     payload_fail = json.dumps({"event": "ota_status", "job_id": job2_id, "status": "failed", "message": "HTTP error"})
@@ -1976,6 +2010,7 @@ def test_mqtt_process_ota_status():
     db.refresh(job2)
     assert job2.status == JobStatus.flash_failed
     assert job2.error_message == "HTTP error"
+    assert failed_build_root.exists()
 
 
 def test_mqtt_state_ota_status_success_promotes_pending_config_when_device_already_reports_expected_firmware():
