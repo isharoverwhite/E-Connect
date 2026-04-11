@@ -18,7 +18,6 @@ from urllib.request import Request, urlopen
 logger = logging.getLogger(__name__)
 
 BUILD_BASE_DIR = Path(os.getenv("BUILD_BASE_DIR", "/tmp/econnect_builds"))
-BUNDLED_FIRMWARE_TEMPLATE_DIR = Path(__file__).resolve().parents[2] / "firmware_template"
 FIRMWARE_TEMPLATE_REPO = os.getenv("FIRMWARE_TEMPLATE_REPO", "econnectrelease/firmware").strip()
 FIRMWARE_TEMPLATE_API_BASE_URL = os.getenv("FIRMWARE_TEMPLATE_API_BASE_URL", "https://api.github.com").rstrip("/")
 FIRMWARE_TEMPLATE_INSTALL_ROOT = Path(
@@ -131,22 +130,21 @@ def _save_state(state: Mapping[str, Any]) -> None:
 
 def _build_status(state: Mapping[str, Any] | None = None) -> dict[str, Any]:
     payload = dict(state or {})
-    active_dir = FIRMWARE_TEMPLATE_CURRENT_DIR if _is_valid_template_dir(FIRMWARE_TEMPLATE_CURRENT_DIR) else BUNDLED_FIRMWARE_TEMPLATE_DIR
-    active_source = "release" if active_dir == FIRMWARE_TEMPLATE_CURRENT_DIR else "bundled"
     installed_release_tag = payload.get("installed_release_tag")
     latest_release_tag = payload.get("latest_release_tag")
 
-    active_revision = _read_firmware_revision(active_dir)
-    bundled_revision = _read_firmware_revision(BUNDLED_FIRMWARE_TEMPLATE_DIR)
+    active_dir: Path | None = FIRMWARE_TEMPLATE_CURRENT_DIR if _is_valid_template_dir(FIRMWARE_TEMPLATE_CURRENT_DIR) else None
+    active_source = "release" if active_dir else "missing"
+    active_revision = _read_firmware_revision(active_dir) if active_dir else None
 
     return {
         "source_repo": FIRMWARE_TEMPLATE_REPO,
         "auto_update_enabled": _bool_env("FIRMWARE_TEMPLATE_AUTO_UPDATE", "1"),
         "active_source": active_source,
-        "active_path": str(active_dir),
+        "active_path": str(active_dir) if active_dir else None,
         "active_revision": active_revision,
         "active_release_tag": installed_release_tag if active_source == "release" else None,
-        "bundled_revision": bundled_revision,
+        "bundled_revision": None,
         "installed_release_tag": installed_release_tag if isinstance(installed_release_tag, str) and installed_release_tag.strip() else None,
         "latest_release_tag": latest_release_tag if isinstance(latest_release_tag, str) and latest_release_tag.strip() else None,
         "latest_release_published_at": payload.get("latest_release_published_at"),
@@ -361,16 +359,21 @@ def resolve_firmware_template_directory(*, check_for_updates: bool = True) -> Pa
     if _is_valid_template_dir(FIRMWARE_TEMPLATE_CURRENT_DIR):
         return FIRMWARE_TEMPLATE_CURRENT_DIR
 
-    if not _is_valid_template_dir(BUNDLED_FIRMWARE_TEMPLATE_DIR):
-        raise FileNotFoundError(
-            f"Bundled firmware template directory is missing required files: {BUNDLED_FIRMWARE_TEMPLATE_DIR}"
-        )
-
-    return BUNDLED_FIRMWARE_TEMPLATE_DIR
+    state = _load_state()
+    last_error = state.get("last_error")
+    last_error_hint = f" Last error: {last_error}" if isinstance(last_error, str) and last_error.strip() else ""
+    raise FileNotFoundError(
+        "Firmware template is not installed yet. "
+        f"Expected required files under: {FIRMWARE_TEMPLATE_CURRENT_DIR}.{last_error_hint}"
+    )
 
 
 def get_latest_firmware_revision() -> str | None:
-    return _read_firmware_revision(resolve_firmware_template_directory(check_for_updates=False))
+    try:
+        template_dir = resolve_firmware_template_directory(check_for_updates=False)
+    except FileNotFoundError:
+        return None
+    return _read_firmware_revision(template_dir)
 
 
 def get_firmware_template_status(*, force_check: bool = False) -> dict[str, Any]:

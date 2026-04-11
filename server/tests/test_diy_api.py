@@ -1431,11 +1431,24 @@ def test_builder_generates_correct_config(tmp_path):
     assert '#define ECONNECT_SECRET_KEY "persisted-secret"' in content
 
 
-def test_firmware_template_declares_developer_managed_revision():
-    header_path = Path(__file__).resolve().parents[1] / "firmware_template" / "include" / "firmware_revision.h"
-    content = header_path.read_text()
+def test_firmware_revision_parser_reads_define(tmp_path):
+    from app.services.firmware_template_repo import _read_firmware_revision
 
-    assert '#define ECONNECT_FIRMWARE_REVISION "1.1.4"' in content
+    template_dir = tmp_path / "firmware-template"
+    (template_dir / "include").mkdir(parents=True, exist_ok=True)
+    (template_dir / "include" / "firmware_revision.h").write_text(
+        "\n".join(
+            [
+                "/* test firmware revision */",
+                "#pragma once",
+                '#define ECONNECT_FIRMWARE_REVISION "1.1.4"',
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    assert _read_firmware_revision(template_dir) == "1.1.4"
 
 
 def test_builder_uses_distinct_stamped_public_mqtt_target(tmp_path):

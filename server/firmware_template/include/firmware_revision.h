@@ -1,7 +1,0 @@
-/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
-
-#pragma once
-
-// Developer-managed firmware revision. Bump this only when the firmware source
-// changes.
-#define ECONNECT_FIRMWARE_REVISION "1.1.4"
