@@ -162,13 +162,18 @@ export default function DevicesPage() {
             return prev.map((device) => {
                 if (device.device_id === event.device_id) {
                     if (event.type === "device_online") {
-                        return { ...device, conn_status: "online", last_seen: event.payload?.reported_at || new Date().toISOString() };
+                        const reportedAt = readTrimmedString(event.payload?.["reported_at"]);
+                        return {
+                            ...device,
+                            conn_status: "online",
+                            last_seen: reportedAt || ("last_seen" in device ? device.last_seen : undefined),
+                        };
                     }
                     if (event.type === "device_offline") {
                         return { ...device, conn_status: "offline" };
                     }
                     if (event.type === "device_state") {
-                        const reportedAt = readTrimmedString(event.payload?.["reported_at"]) || new Date().toISOString();
+                        const reportedAt = readTrimmedString(event.payload?.["reported_at"]);
                         const reportedIp = readTrimmedString(event.payload?.["ip_address"]);
                         const reportedFirmwareRevision = readTrimmedString(event.payload?.["firmware_revision"]);
                         const reportedFirmwareVersion = readTrimmedString(event.payload?.["firmware_version"]);
@@ -179,7 +184,8 @@ export default function DevicesPage() {
                         return {
                             ...device,
                             conn_status: "online",
-                            last_seen: reportedAt,
+                            last_seen: reportedAt || ("last_seen" in device ? device.last_seen : undefined),
+                            last_state: (event.payload ?? null) as DeviceConfig["last_state"],
                             ip_address: reportedIp || currentIpAddress,
                             firmware_revision: reportedFirmwareRevision || currentFirmwareRevision,
                             firmware_version: reportedFirmwareVersion || currentFirmwareVersion,

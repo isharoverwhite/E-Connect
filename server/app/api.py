@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload, sessionmaker
 from sqlalchemy.exc import IntegrityError
 from typing import List, Optional, Any, Callable, Literal, Union
 import ast
+import copy
 import datetime as stdlib_datetime
 import json
 import logging
@@ -19,7 +20,14 @@ import hashlib
 from urllib.parse import urlencode
 from pathlib import Path
 
-from .mqtt import OTA_FLASHING_RECONCILIATION_TIMEOUT, _reconcile_ota_jobs, build_pairing_rejected_ack_payload, mqtt_manager
+from .mqtt import (
+    OTA_FLASHING_RECONCILIATION_TIMEOUT,
+    _reconcile_ota_jobs,
+    build_pairing_rejected_ack_payload,
+    build_predicted_mqtt_state,
+    load_latest_device_state_payload,
+    mqtt_manager,
+)
 from .runtime_timestamps import normalize_build_job_timestamp, normalize_utc_naive_timestamp
 from .ws_manager import manager as ws_manager
 
@@ -387,20 +395,8 @@ def _calculate_system_overall_status(
 
 
 def _attach_runtime_state(db: Session, device: Device) -> Device:
-    latest_state = (
-        db.query(DeviceHistory)
-        .filter(
-            DeviceHistory.device_id == device.device_id,
-            DeviceHistory.event_type == EventType.state_change,
-        )
-        .order_by(DeviceHistory.timestamp.desc())
-        .first()
-    )
-
-    if latest_state:
-        setattr(device, "last_state", _decode_history_payload(latest_state.payload))
-    else:
-        setattr(device, "last_state", None)
+    _latest_state_record, latest_state_payload = load_latest_device_state_payload(db, device.device_id)
+    setattr(device, "last_state", latest_state_payload)
 
     return device
 
@@ -3891,6 +3887,29 @@ async def send_command(
         ota_job.updated_at = _utcnow_naive()
         db.commit()
 
+    _latest_state_record, previous_state = load_latest_device_state_payload(db, device.device_id)
+    previous_state_snapshot = copy.deepcopy(previous_state) if isinstance(previous_state, dict) else None
+    predicted_state = None
+    if command.get("action") != "ota":
+        predicted_state = build_predicted_mqtt_state(previous_state_snapshot, device.pin_configurations, command)
+        if isinstance(predicted_state, dict) and "brightness" not in command:
+            target_pin = command.get("pin")
+            if predicted_state.get("pin") == target_pin and "brightness" in predicted_state:
+                command["brightness"] = predicted_state["brightness"]
+            else:
+                predicted_pins = predicted_state.get("pins")
+                if isinstance(predicted_pins, list):
+                    matching_pin = next(
+                        (
+                            row
+                            for row in predicted_pins
+                            if isinstance(row, dict) and row.get("pin") == target_pin and "brightness" in row
+                        ),
+                        None,
+                    )
+                    if isinstance(matching_pin, dict):
+                        command["brightness"] = matching_pin["brightness"]
+
     command_id = str(uuid.uuid4())
     command["command_id"] = command_id
 
@@ -3924,6 +3943,27 @@ async def send_command(
     if not success:
         return {"status": "failed", "message": "Failed to publish to MQTT broker"}
 
+    predicted_state_history_id: int | None = None
+    if isinstance(predicted_state, dict):
+        predicted_history = DeviceHistory(
+            device_id=device_id,
+            event_type=EventType.state_change,
+            payload=json.dumps(predicted_state),
+            changed_by=current_user.user_id,
+        )
+        db.add(predicted_history)
+        db.commit()
+        predicted_state_history_id = predicted_history.id
+        try:
+            ws_manager.broadcast_device_event_sync(
+                "device_state",
+                device_id,
+                device.room_id,
+                predicted_state,
+            )
+        except Exception:
+            pass
+
     if command.get("action") != "ota":
         mqtt_manager.pending_commands[command_id] = {
             "device_id": device_id,
@@ -3931,7 +3971,8 @@ async def send_command(
             "value": command.get("value"),
             "brightness": command.get("brightness"),
             "timestamp": datetime.utcnow().timestamp(),
-            "command_id": command_id
+            "command_id": command_id,
+            "predicted_state_history_id": predicted_state_history_id,
         }
 
         async def check_command_timeout():
@@ -3942,6 +3983,19 @@ async def send_command(
                     from app.database import SessionLocal
                     db_bg = SessionLocal()
                     try:
+                        predicted_history_id = cmd.get("predicted_state_history_id")
+                        if isinstance(predicted_history_id, int):
+                            predicted_history = (
+                                db_bg.query(DeviceHistory)
+                                .filter(
+                                    DeviceHistory.id == predicted_history_id,
+                                    DeviceHistory.device_id == device_id,
+                                    DeviceHistory.event_type == EventType.state_change,
+                                )
+                                .first()
+                            )
+                            if predicted_history is not None:
+                                db_bg.delete(predicted_history)
                         db_bg.add(
                             DeviceHistory(
                                 device_id=device_id,
@@ -3953,6 +4007,15 @@ async def send_command(
                         db_bg.commit()
                     finally:
                         db_bg.close()
+                    try:
+                        ws_manager.broadcast_device_event_sync(
+                            "device_state",
+                            device_id,
+                            device.room_id,
+                            previous_state_snapshot,
+                        )
+                    except Exception:
+                        pass
                     try:
                         ws_manager.broadcast_device_event_sync(
                             "command_delivery",
@@ -3968,7 +4031,12 @@ async def send_command(
                         pass
         asyncio.create_task(check_command_timeout())
 
-    return {"status": "pending", "command_id": command_id, "message": "Command requested"}
+    return {
+        "status": "pending",
+        "command_id": command_id,
+        "message": "Command requested",
+        "last_state": predicted_state,
+    }
 
 @router.get("/device/{device_id}/command/latest")
 async def get_latest_command(device_id: str, db: Session = Depends(get_db)):

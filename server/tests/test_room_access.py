@@ -1,5 +1,6 @@
 # Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
 
+import json
 import uuid
 from datetime import datetime
 from unittest.mock import Mock
@@ -12,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.auth import create_access_token
 from app.database import Base, get_db
+from app.mqtt import mqtt_manager
 from app.services.provisioning import build_project_firmware_identity
 from app.sql_models import (
     AccountType,
@@ -26,6 +28,8 @@ from app.sql_models import (
     HouseholdMembership,
     HouseholdRole,
     JobStatus,
+    PinConfiguration,
+    PinMode,
     RoomPermission,
     User,
     WifiCredential,
@@ -166,6 +170,45 @@ def _insert_device(*, device_id: str, name: str, room_id: int, owner_id: int):
     db.add(device)
     db.commit()
     db.close()
+
+
+def _insert_pin_config(
+    *,
+    device_id: str,
+    gpio_pin: int,
+    mode: PinMode,
+    function: str | None = None,
+    label: str | None = None,
+    extra_params: dict | None = None,
+):
+    db = TestingSessionLocal()
+    db.add(
+        PinConfiguration(
+            device_id=device_id,
+            gpio_pin=gpio_pin,
+            mode=mode,
+            function=function,
+            label=label,
+            extra_params=extra_params or {},
+        )
+    )
+    db.commit()
+    db.close()
+
+
+def _append_state_history(*, device_id: str, payload: dict) -> int:
+    db = TestingSessionLocal()
+    history = DeviceHistory(
+        device_id=device_id,
+        event_type=EventType.state_change,
+        payload=json.dumps(payload),
+    )
+    db.add(history)
+    db.commit()
+    db.refresh(history)
+    history_id = history.id
+    db.close()
+    return history_id
 
 
 def _room_permission_ids(room_id: int) -> set[int]:
@@ -336,6 +379,206 @@ def test_room_access_filters_devices_and_commands(monkeypatch):
     observer_devices = client.get("/api/v1/devices", headers=observer_headers)
     assert observer_devices.status_code == 200
     assert observer_devices.json() == []
+
+
+def test_pwm_command_persists_restore_brightness_and_reuses_it_on_power_on(monkeypatch):
+    publish_mock = Mock(return_value=True)
+    monkeypatch.setattr("app.api.mqtt_manager.publish_command", publish_mock)
+    ws_mock = Mock()
+    monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", ws_mock)
+
+    household, admin, _member, _observer = _seed_household(prefix="pwm")
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+    room = _create_room(admin_headers, name="Dimmer Room")
+    _insert_device(
+        device_id="device-dimmer",
+        name="Dimmer Lamp",
+        room_id=room["room_id"],
+        owner_id=admin["user_id"],
+    )
+    _insert_pin_config(
+        device_id="device-dimmer",
+        gpio_pin=5,
+        mode=PinMode.PWM,
+        function="light",
+        label="Dimmer",
+        extra_params={"min_value": 0, "max_value": 255},
+    )
+    _append_state_history(
+        device_id="device-dimmer",
+        payload={
+            "kind": "action",
+            "pin": 5,
+            "value": 1,
+            "brightness": 250,
+            "restore_value": 1,
+            "restore_brightness": 250,
+            "pins": [
+                {
+                    "pin": 5,
+                    "mode": "PWM",
+                    "function": "light",
+                    "label": "Dimmer",
+                    "value": 1,
+                    "brightness": 250,
+                    "restore_value": 1,
+                    "restore_brightness": 250,
+                    "extra_params": {"min_value": 0, "max_value": 255},
+                }
+            ],
+        },
+    )
+
+    off_response = client.post(
+        "/api/v1/device/device-dimmer/command",
+        headers=admin_headers,
+        json={"kind": "action", "pin": 5, "value": 0},
+    )
+    assert off_response.status_code == 200, off_response.text
+    off_payload = off_response.json()
+    assert off_payload["status"] == "pending"
+    assert off_payload["last_state"]["value"] == 0
+    assert off_payload["last_state"]["brightness"] == 0
+    assert off_payload["last_state"]["restore_brightness"] == 250
+    assert off_payload["last_state"]["pins"][0]["restore_brightness"] == 250
+
+    dashboard_response = client.get("/api/v1/dashboard/devices", headers=admin_headers)
+    assert dashboard_response.status_code == 200
+    assert dashboard_response.json()[0]["last_state"]["pins"][0]["restore_brightness"] == 250
+
+    on_response = client.post(
+        "/api/v1/device/device-dimmer/command",
+        headers=admin_headers,
+        json={"kind": "action", "pin": 5, "value": 1},
+    )
+    assert on_response.status_code == 200, on_response.text
+    on_payload = on_response.json()
+    assert on_payload["status"] == "pending"
+    assert on_payload["last_state"]["value"] == 1
+    assert on_payload["last_state"]["brightness"] == 250
+    assert on_payload["last_state"]["restore_brightness"] == 250
+
+    last_command = publish_mock.call_args_list[-1].args[1]
+    assert last_command["brightness"] == 250
+
+    db = TestingSessionLocal()
+    try:
+        latest_state = (
+            db.query(DeviceHistory)
+            .filter(
+                DeviceHistory.device_id == "device-dimmer",
+                DeviceHistory.event_type == EventType.state_change,
+            )
+            .order_by(DeviceHistory.id.desc())
+            .first()
+        )
+        assert latest_state is not None
+        latest_payload = json.loads(latest_state.payload)
+        assert latest_payload["brightness"] == 250
+        assert latest_payload["pins"][0]["restore_brightness"] == 250
+    finally:
+        db.close()
+
+    state_calls = [
+        call.args
+        for call in ws_mock.call_args_list
+        if call.args[:3] == ("device_state", "device-dimmer", room["room_id"])
+    ]
+    assert state_calls
+    assert state_calls[-1][3]["brightness"] == 250
+
+
+def test_reported_pwm_off_state_keeps_restore_brightness(monkeypatch):
+    monkeypatch.setattr("app.mqtt.SessionLocal", TestingSessionLocal)
+    monkeypatch.setattr("app.mqtt.process_state_event_for_automations", lambda *args, **kwargs: None)
+    monkeypatch.setattr("app.mqtt.mqtt_manager.publish_json", lambda *args, **kwargs: True)
+    ws_mock = Mock()
+    monkeypatch.setattr("app.mqtt.ws_manager.broadcast_device_event_sync", ws_mock)
+
+    household, admin, _member, _observer = _seed_household(prefix="reported-pwm")
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+    room = _create_room(admin_headers, name="Reported Dimmer Room")
+    _insert_device(
+        device_id="device-reported-dimmer",
+        name="Reported Dimmer",
+        room_id=room["room_id"],
+        owner_id=admin["user_id"],
+    )
+    _insert_pin_config(
+        device_id="device-reported-dimmer",
+        gpio_pin=5,
+        mode=PinMode.PWM,
+        function="light",
+        label="Dimmer",
+        extra_params={"min_value": 0, "max_value": 255},
+    )
+    _append_state_history(
+        device_id="device-reported-dimmer",
+        payload={
+            "kind": "action",
+            "pin": 5,
+            "value": 1,
+            "brightness": 250,
+            "restore_value": 1,
+            "restore_brightness": 250,
+            "pins": [
+                {
+                    "pin": 5,
+                    "mode": "PWM",
+                    "function": "light",
+                    "label": "Dimmer",
+                    "value": 1,
+                    "brightness": 250,
+                    "restore_value": 1,
+                    "restore_brightness": 250,
+                    "extra_params": {"min_value": 0, "max_value": 255},
+                }
+            ],
+        },
+    )
+
+    mqtt_manager.process_state_message(
+        "device-reported-dimmer",
+        json.dumps({"kind": "action", "pin": 5, "value": 0, "brightness": 0}),
+    )
+
+    db = TestingSessionLocal()
+    try:
+        latest_state = (
+            db.query(DeviceHistory)
+            .filter(
+                DeviceHistory.device_id == "device-reported-dimmer",
+                DeviceHistory.event_type == EventType.state_change,
+            )
+            .order_by(DeviceHistory.id.desc())
+            .first()
+        )
+        assert latest_state is not None
+        latest_payload = json.loads(latest_state.payload)
+        assert latest_payload["value"] == 0
+        assert latest_payload["brightness"] == 0
+        assert latest_payload["restore_brightness"] == 250
+        assert latest_payload["pins"][0]["restore_brightness"] == 250
+    finally:
+        db.close()
+
+    state_call = next(
+        call.args
+        for call in reversed(ws_mock.call_args_list)
+        if call.args[:3] == ("device_state", "device-reported-dimmer", room["room_id"])
+    )
+    assert state_call[3]["value"] == 0
+    assert state_call[3]["pins"][0]["restore_brightness"] == 250
 
 
 def test_non_admin_cannot_create_project_delete_device_or_pair():

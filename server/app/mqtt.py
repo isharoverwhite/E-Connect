@@ -6,8 +6,9 @@ import json
 import logging
 import os
 import uuid
+import copy
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Iterable, Mapping
 
 import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
@@ -213,6 +214,417 @@ def _normalize_state_scalar(value: Any) -> Any:
     if isinstance(value, bool):
         return 1 if value else 0
     return value
+
+
+_STATE_PIN_TOP_LEVEL_KEYS = {
+    "pin",
+    "value",
+    "brightness",
+    "restore_value",
+    "restore_brightness",
+    "mode",
+    "function",
+    "label",
+    "extra_params",
+    "active_level",
+    "datatype",
+    "trend",
+    "unit",
+    "pins",
+}
+_STATE_METADATA_EXCLUDED_KEYS = {
+    "pin",
+    "value",
+    "brightness",
+    "restore_value",
+    "restore_brightness",
+    "pins",
+    "reported_at",
+    "command_id",
+    "applied",
+}
+
+
+def _coerce_pin_number(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _coerce_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _coerce_pin_mode(pin_config: Any) -> str | None:
+    raw_mode = getattr(pin_config, "mode", None)
+    if hasattr(raw_mode, "value"):
+        raw_mode = raw_mode.value
+    return str(raw_mode).strip().upper() if raw_mode else None
+
+
+def _copy_json_value(value: Any) -> Any:
+    return copy.deepcopy(value)
+
+
+def _pwm_bounds_from_extra_params(extra_params: Mapping[str, Any] | None) -> tuple[int, int]:
+    if not isinstance(extra_params, Mapping):
+        return 0, 255
+
+    raw_min = _coerce_int(extra_params.get("min_value"))
+    raw_max = _coerce_int(extra_params.get("max_value"))
+    return raw_min if raw_min is not None else 0, raw_max if raw_max is not None else 255
+
+
+def _pwm_off_output_value(extra_params: Mapping[str, Any] | None) -> int:
+    pwm_min, pwm_max = _pwm_bounds_from_extra_params(extra_params)
+    return pwm_min if pwm_min > pwm_max else 0
+
+
+def _pwm_on_output_value(extra_params: Mapping[str, Any] | None) -> int:
+    _pwm_min, pwm_max = _pwm_bounds_from_extra_params(extra_params)
+    return pwm_max
+
+
+def _clamp_pwm_brightness(extra_params: Mapping[str, Any] | None, brightness: int) -> int:
+    pwm_min, pwm_max = _pwm_bounds_from_extra_params(extra_params)
+    lower_bound = pwm_min if pwm_min < pwm_max else pwm_max
+    upper_bound = pwm_min if pwm_min > pwm_max else pwm_max
+    return max(lower_bound, min(upper_bound, brightness))
+
+
+def _copy_state_pin_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: _copy_json_value(value) for key, value in row.items()}
+
+
+def _extract_state_top_level_row(state_payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(state_payload, Mapping):
+        return None
+
+    pin_number = _coerce_pin_number(state_payload.get("pin"))
+    if pin_number is None:
+        return None
+
+    row: dict[str, Any] = {"pin": pin_number}
+    for key in _STATE_PIN_TOP_LEVEL_KEYS:
+        if key in {"pin", "pins"}:
+            continue
+        if key in state_payload:
+            row[key] = _copy_json_value(state_payload[key])
+    return row
+
+
+def _extract_state_pin_rows_by_pin(state_payload: Mapping[str, Any] | None) -> dict[int, dict[str, Any]]:
+    rows: dict[int, dict[str, Any]] = {}
+    if not isinstance(state_payload, Mapping):
+        return rows
+
+    raw_pins = state_payload.get("pins")
+    if isinstance(raw_pins, list):
+        for row in raw_pins:
+            if not isinstance(row, Mapping):
+                continue
+            pin_number = _coerce_pin_number(row.get("pin"))
+            if pin_number is None:
+                continue
+            rows[pin_number] = _copy_state_pin_row(row)
+
+    top_level_row = _extract_state_top_level_row(state_payload)
+    if top_level_row is not None:
+        rows[top_level_row["pin"]] = {
+            **rows.get(top_level_row["pin"], {}),
+            **top_level_row,
+        }
+
+    return rows
+
+
+def _build_pin_row_from_config(pin_config: Any) -> dict[str, Any]:
+    pin_number = _coerce_pin_number(getattr(pin_config, "gpio_pin", None))
+    if pin_number is None:
+        raise ValueError("Pin configuration must provide a numeric gpio_pin")
+
+    mode = _coerce_pin_mode(pin_config)
+    extra_params = getattr(pin_config, "extra_params", None)
+    extra_params = _copy_json_value(extra_params) if isinstance(extra_params, Mapping) else {}
+    row: dict[str, Any] = {
+        "pin": pin_number,
+        "mode": mode,
+        "function": getattr(pin_config, "function", None),
+        "label": getattr(pin_config, "label", None),
+        "extra_params": extra_params,
+    }
+
+    if mode == "OUTPUT":
+        active_level = _coerce_int(extra_params.get("active_level")) if isinstance(extra_params, Mapping) else None
+        row["value"] = 0
+        if active_level in (0, 1):
+            row["active_level"] = active_level
+    elif mode == "PWM":
+        row["value"] = 0
+        row["brightness"] = _pwm_off_output_value(extra_params)
+
+    return row
+
+
+def _copy_snapshot_metadata(*sources: Mapping[str, Any] | None) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for source in sources:
+        if not isinstance(source, Mapping):
+            continue
+        for key, value in source.items():
+            if key in _STATE_METADATA_EXCLUDED_KEYS:
+                continue
+            payload[key] = _copy_json_value(value)
+    return payload
+
+
+def _enrich_restore_fields(
+    row: dict[str, Any],
+    *,
+    previous_row: Mapping[str, Any] | None = None,
+) -> None:
+    previous_row = previous_row if isinstance(previous_row, Mapping) else {}
+    mode = str(row.get("mode") or "").upper()
+
+    if mode == "PWM":
+        extra_params = row.get("extra_params") if isinstance(row.get("extra_params"), Mapping) else {}
+        off_output = _pwm_off_output_value(extra_params)
+        current_value = _coerce_int(row.get("value"))
+        current_brightness = _coerce_int(row.get("brightness"))
+        previous_restore_brightness = _coerce_int(previous_row.get("restore_brightness"))
+        previous_restore_value = _coerce_int(previous_row.get("restore_value"))
+        previous_brightness = _coerce_int(previous_row.get("brightness"))
+        previous_value = _coerce_int(previous_row.get("value"))
+
+        if current_value is None:
+            if current_brightness is not None:
+                current_value = 0 if current_brightness == off_output else 1
+            else:
+                current_value = previous_value if previous_value is not None else 0
+
+        if current_brightness is None:
+            if current_value == 0:
+                current_brightness = off_output
+            else:
+                remembered = previous_restore_brightness
+                if remembered is None and previous_brightness is not None and previous_brightness != off_output:
+                    remembered = previous_brightness
+                current_brightness = remembered if remembered is not None else _pwm_on_output_value(extra_params)
+
+        row["value"] = 0 if current_value == 0 else 1
+        row["brightness"] = _clamp_pwm_brightness(extra_params, current_brightness)
+
+        if row["value"] == 0:
+            remembered_brightness = previous_restore_brightness
+            if remembered_brightness is None and previous_brightness is not None and previous_brightness != off_output:
+                remembered_brightness = previous_brightness
+            if remembered_brightness is None and row["brightness"] != off_output:
+                remembered_brightness = row["brightness"]
+            if remembered_brightness is not None:
+                row["restore_brightness"] = remembered_brightness
+            row["restore_value"] = previous_restore_value if previous_restore_value is not None else 1
+        else:
+            row["restore_brightness"] = row["brightness"]
+            row["restore_value"] = 1
+        return
+
+    if mode == "OUTPUT":
+        current_value = _coerce_int(row.get("value"))
+        if current_value is None:
+            current_value = _coerce_int(previous_row.get("value"))
+        row["value"] = 0 if current_value == 0 else 1
+        row["restore_value"] = 1 if row["value"] != 0 else (_coerce_int(previous_row.get("restore_value")) or 1)
+        return
+
+    row.pop("restore_value", None)
+    row.pop("restore_brightness", None)
+
+
+def _finalize_state_payload(
+    rows_by_pin: dict[int, dict[str, Any]],
+    *,
+    metadata: Mapping[str, Any] | None = None,
+    reported_at: str | None = None,
+) -> dict[str, Any]:
+    payload = dict(metadata) if isinstance(metadata, Mapping) else {}
+    if reported_at:
+        payload["reported_at"] = reported_at
+
+    pins = [_copy_state_pin_row(rows_by_pin[pin]) for pin in sorted(rows_by_pin)]
+    payload["pins"] = pins
+
+    if len(pins) == 1:
+        row = pins[0]
+        payload["pin"] = row["pin"]
+        for key in ("value", "brightness", "restore_value", "restore_brightness"):
+            if key in row:
+                payload[key] = row[key]
+        if "mode" in row:
+            payload["mode"] = row["mode"]
+    else:
+        for key in ("pin", "value", "brightness", "restore_value", "restore_brightness", "mode"):
+            payload.pop(key, None)
+
+    return payload
+
+
+def _build_physical_device_rows(
+    previous_state: Mapping[str, Any] | None,
+    pin_configurations: Iterable[Any],
+) -> tuple[dict[int, dict[str, Any]], dict[int, dict[str, Any]], dict[int, Any]]:
+    previous_rows = _extract_state_pin_rows_by_pin(previous_state)
+    rows_by_pin: dict[int, dict[str, Any]] = {
+        pin_number: _copy_state_pin_row(row)
+        for pin_number, row in previous_rows.items()
+    }
+    pin_config_map: dict[int, Any] = {}
+
+    for pin_config in pin_configurations:
+        pin_number = _coerce_pin_number(getattr(pin_config, "gpio_pin", None))
+        if pin_number is None:
+            continue
+        pin_config_map[pin_number] = pin_config
+        config_row = _build_pin_row_from_config(pin_config)
+        rows_by_pin[pin_number] = {
+            **config_row,
+            **rows_by_pin.get(pin_number, {}),
+        }
+
+    for pin_number, row in rows_by_pin.items():
+        _enrich_restore_fields(row, previous_row=previous_rows.get(pin_number))
+
+    return rows_by_pin, previous_rows, pin_config_map
+
+
+def load_latest_device_state_payload(db: Session, device_id: str) -> tuple[DeviceHistory | None, dict[str, Any] | None]:
+    latest_state = (
+        db.query(DeviceHistory)
+        .filter(
+            DeviceHistory.device_id == device_id,
+            DeviceHistory.event_type == EventType.state_change,
+        )
+        .order_by(DeviceHistory.timestamp.desc(), DeviceHistory.id.desc())
+        .first()
+    )
+
+    if latest_state is None:
+        return None, None
+
+    try:
+        decoded = json.loads(latest_state.payload)
+    except json.JSONDecodeError:
+        return latest_state, None
+
+    return latest_state, decoded if isinstance(decoded, dict) else None
+
+
+def enrich_reported_mqtt_state(
+    previous_state: Mapping[str, Any] | None,
+    pin_configurations: Iterable[Any],
+    state_payload: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    rows_by_pin, previous_rows, pin_config_map = _build_physical_device_rows(previous_state, pin_configurations)
+    incoming_rows = _extract_state_pin_rows_by_pin(state_payload)
+
+    for pin_number, incoming_row in incoming_rows.items():
+        current_row = rows_by_pin.get(pin_number, {})
+        rows_by_pin[pin_number] = {
+            **current_row,
+            **_copy_state_pin_row(incoming_row),
+        }
+
+    for pin_number, row in rows_by_pin.items():
+        if pin_number in pin_config_map:
+            row.update(
+                {
+                    key: value
+                    for key, value in _build_pin_row_from_config(pin_config_map[pin_number]).items()
+                    if key not in row or row[key] is None
+                }
+            )
+        _enrich_restore_fields(row, previous_row=previous_rows.get(pin_number))
+
+    metadata = _copy_snapshot_metadata(previous_state, state_payload)
+    return _finalize_state_payload(
+        rows_by_pin,
+        metadata=metadata,
+        reported_at=str(state_payload.get("reported_at")) if isinstance(state_payload, Mapping) and state_payload.get("reported_at") else None,
+    )
+
+
+def build_predicted_mqtt_state(
+    previous_state: Mapping[str, Any] | None,
+    pin_configurations: Iterable[Any],
+    command: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(command, Mapping):
+        return None
+
+    command_kind = str(command.get("kind") or "action").strip().lower()
+    if command_kind != "action":
+        return None
+
+    target_pin = _coerce_pin_number(command.get("pin"))
+    if target_pin is None:
+        return None
+
+    rows_by_pin, previous_rows, pin_config_map = _build_physical_device_rows(previous_state, pin_configurations)
+    target_row = _copy_state_pin_row(rows_by_pin.get(target_pin, {"pin": target_pin}))
+    target_mode = str(target_row.get("mode") or "").upper()
+    if not target_mode and target_pin in pin_config_map:
+        target_row.update(_build_pin_row_from_config(pin_config_map[target_pin]))
+        target_mode = str(target_row.get("mode") or "").upper()
+
+    if target_mode == "OUTPUT":
+        next_value = _coerce_int(command.get("value"))
+        if next_value is None:
+            return None
+        target_row["value"] = 0 if next_value == 0 else 1
+    elif target_mode == "PWM":
+        extra_params = target_row.get("extra_params") if isinstance(target_row.get("extra_params"), Mapping) else {}
+        off_output = _pwm_off_output_value(extra_params)
+        requested_value = _coerce_int(command.get("value"))
+        requested_brightness = _coerce_int(command.get("brightness"))
+        remembered_brightness = _coerce_int(target_row.get("restore_brightness"))
+        current_brightness = _coerce_int(target_row.get("brightness"))
+
+        if requested_value == 0:
+            target_row["value"] = 0
+            target_row["brightness"] = off_output
+        else:
+            if requested_brightness is None and requested_value is not None:
+                requested_brightness = remembered_brightness
+                if requested_brightness is None and current_brightness is not None and current_brightness != off_output:
+                    requested_brightness = current_brightness
+                if requested_brightness is None:
+                    requested_brightness = _pwm_on_output_value(extra_params)
+
+            if requested_brightness is None:
+                return None
+
+            target_row["brightness"] = _clamp_pwm_brightness(extra_params, requested_brightness)
+            target_row["value"] = 0 if target_row["brightness"] == off_output else 1
+    else:
+        return None
+
+    _enrich_restore_fields(target_row, previous_row=previous_rows.get(target_pin))
+    rows_by_pin[target_pin] = target_row
+
+    metadata = _copy_snapshot_metadata(previous_state, {"kind": command_kind})
+    if not metadata.get("kind"):
+        metadata["kind"] = command_kind
+
+    return _finalize_state_payload(rows_by_pin, metadata=metadata)
 
 
 def _extract_state_pin_rows(state_payload: dict[str, Any]) -> list[dict[str, Any]]:
@@ -462,11 +874,11 @@ class MQTTClientManager:
             was_offline = device.conn_status != ConnStatus.online
             previous_revision = device.firmware_revision
             previous_version = device.firmware_version
+            _latest_state_record, previous_state = load_latest_device_state_payload(db, device.device_id)
             device.conn_status = ConnStatus.online
             device.last_seen = observed_at
+            enriched_state_payload: dict[str, Any] | None = None
             if isinstance(payload_json, dict):
-                self.resolve_command_ack(device_id, payload_json, db)
-
                 reported_ip = payload_json.get("ip_address")
                 if isinstance(reported_ip, str) and reported_ip.strip():
                     device.ip_address = reported_ip.strip()
@@ -479,6 +891,16 @@ class MQTTClientManager:
                 if isinstance(reported_fw, str) and reported_fw.strip():
                     device.firmware_version = reported_fw.strip()
                     _reconcile_ota_jobs(db, device, device.firmware_version)
+
+                enriched_state_payload = enrich_reported_mqtt_state(
+                    previous_state,
+                    device.pin_configurations,
+                    {
+                        **payload_json,
+                        "reported_at": observed_at.isoformat(),
+                    },
+                )
+                self.resolve_command_ack(device_id, enriched_state_payload, db)
 
             if was_offline:
                 db.add(
@@ -551,7 +973,7 @@ class MQTTClientManager:
                 DeviceHistory(
                     device_id=device_id,
                     event_type=EventType.state_change,
-                    payload=payload_str,
+                    payload=json.dumps(enriched_state_payload if isinstance(enriched_state_payload, dict) else payload_json or {}),
                 )
             )
 
@@ -560,15 +982,15 @@ class MQTTClientManager:
                     "device_state",
                     device_id,
                     device.room_id,
-                    {
+                    enriched_state_payload if isinstance(enriched_state_payload, dict) else {
                         **(payload_json or {}),
                         "reported_at": observed_at.isoformat(),
-                    }
+                    },
                 )
             except Exception:
                 pass
 
-            if isinstance(payload_json, dict):
+            if isinstance(enriched_state_payload, dict):
                 try:
                     import time
                     start_time = time.perf_counter()
@@ -601,7 +1023,7 @@ class MQTTClientManager:
                     process_state_event_for_automations(
                         db,
                         device_id=device_id,
-                        state_payload=payload_json,
+                        state_payload=enriched_state_payload,
                         publish_command=dispatch_command,
                         triggered_at=observed_at,
                     )

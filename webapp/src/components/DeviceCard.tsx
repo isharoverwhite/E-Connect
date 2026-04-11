@@ -113,6 +113,8 @@ export function getStatePin(state: DeviceStateSnapshot | null | undefined, gpioP
       pin: state.pin,
       value: state.value,
       brightness: state.brightness,
+      restore_value: state.restore_value,
+      restore_brightness: state.restore_brightness,
       trend: state.trend,
       unit: state.unit,
     };
@@ -153,12 +155,23 @@ export function getBrightnessState(
   fallback: number,
 ): number {
   const pinState = getStatePin(state, gpioPin);
+  const numericValue = getNumericStateValue(pinState?.value);
+  const restoreBrightness =
+    typeof pinState?.restore_brightness === "number"
+      ? pinState.restore_brightness
+      : getNumericStateValue(pinState?.restore_value);
+
+  if (numericValue === 0 && restoreBrightness !== null) {
+    return restoreBrightness;
+  }
   if (typeof pinState?.brightness === "number") {
     return pinState.brightness;
   }
-  const numericValue = getNumericStateValue(pinState?.value);
   if (numericValue !== null) {
     return numericValue;
+  }
+  if (restoreBrightness !== null) {
+    return restoreBrightness;
   }
   return fallback;
 }
@@ -181,6 +194,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
   const pwmMax = pin.extra_params?.max_value ?? 255;
   const pwmRangeMin = Math.min(pwmMin, pwmMax);
   const pwmRangeMax = Math.max(pwmMin, pwmMax);
+  const pwmOffValue = pwmMin > pwmMax ? pwmMin : 0;
   const pwmSliderStyle = pwmMin > pwmMax ? { direction: "rtl" as const } : undefined;
 
   const pinState = getStatePin(config.last_state, pin.mode === 'I2C' ? null : pin.gpio_pin);
@@ -243,20 +257,30 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
     }
   }, [pendingCmdId]);
 
+  const applyPersistedState = (state: DeviceStateSnapshot | null | undefined) => {
+    if (!state) {
+      setOptimisticToggleState(null);
+      setOptimisticSliderValue(null);
+      return;
+    }
+
+    setOptimisticToggleState(getBinaryState(state, pin.gpio_pin));
+    if (pin.mode === "PWM") {
+      setOptimisticSliderValue(getBrightnessState(state, pin.gpio_pin, pwmMin));
+    } else {
+      setOptimisticSliderValue(null);
+    }
+  };
+
   const handleToggle = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const isChecked = e.target.checked;
     setRequestPending(true);
     setPendingCmdId(null);
-    setOptimisticToggleState(isChecked);
-    
-    if (pin.mode === 'PWM') {
-      setOptimisticSliderValue(!isChecked ? pwmMin : (sliderValue === pwmMin ? pwmMax : sliderValue));
-    }
-    
+
     try {
       const payload: { kind: string; pin: number; value: number; brightness?: number } = { kind: "action", pin: pin.gpio_pin, value: isChecked ? 1 : 0 };
-      if (pin.mode === 'PWM' && isChecked && sliderValue === pwmMin) {
-        payload.brightness = pwmMax;
+      if (pin.mode === "PWM" && isChecked) {
+        payload.brightness = sliderValue === pwmOffValue ? pwmMax : sliderValue;
       }
       const response = await sendDeviceCommand(config.device_id, payload);
       setRequestPending(false);
@@ -264,6 +288,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
         setOptimisticToggleState(null);
         setOptimisticSliderValue(null);
       } else {
+        applyPersistedState(response.last_state);
         setPendingCmdId(response?.command_id || null);
       }
     } catch {
@@ -285,6 +310,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
       if (response && response.status === "failed") {
         setOptimisticSliderValue(null);
       } else {
+        applyPersistedState(response.last_state);
         setPendingCmdId(response?.command_id || null);
       }
     } catch {
