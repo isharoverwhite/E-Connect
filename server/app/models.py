@@ -182,6 +182,27 @@ class TokenData(BaseModel):
     household_id: Optional[int] = None
     household_role: Optional[str] = None
 
+
+class ApiKeyCreateRequest(BaseModel):
+    label: str = Field(..., min_length=1, max_length=120)
+
+
+class ApiKeyResponse(BaseModel):
+    key_id: str
+    label: str
+    token_prefix: str
+    created_at: Optional[datetime] = None
+    last_used_at: Optional[datetime] = None
+    revoked_at: Optional[datetime] = None
+    is_revoked: bool = False
+
+    class Config:
+        from_attributes = True
+
+
+class ApiKeyCreateResponse(ApiKeyResponse):
+    api_key: str
+
 # --- Pin Configuration ---
 class PinConfigCreate(BaseModel):
     gpio_pin: int

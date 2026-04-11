@@ -32,6 +32,7 @@ import {
     updateRoomAccess,
 } from "@/lib/rooms";
 import Sidebar from "@/components/Sidebar";
+import { ApiKeysPanel } from "./ApiKeysPanel";
 import { ConfigsPanel } from "./ConfigsPanel";
 import { WifiCredentialsPanel } from "./WifiCredentialsPanel";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -68,7 +69,7 @@ function formatServerTimePreview(value?: string | null, timezone?: string | null
     });
 }
 
-type SettingsPanel = "general" | "users" | "rooms" | "wifi" | "configs";
+type SettingsPanel = "general" | "apiKeys" | "users" | "rooms" | "wifi" | "configs";
 type AccountType = ManagedUser["account_type"];
 
 export default function SettingsPage() {
@@ -603,6 +604,16 @@ export default function SettingsPage() {
                     >
                         General
                     </button>
+                    <button
+                        onClick={() => setActivePanel("apiKeys")}
+                        className={`py-4 text-sm font-semibold transition-colors ${
+                            activePanel === "apiKeys"
+                                ? "border-b-[3px] border-primary text-primary"
+                                : "text-slate-500 hover:text-primary dark:text-slate-400"
+                        }`}
+                    >
+                        API Keys
+                    </button>
                     {isAdmin ? (
                         <button
                             onClick={() => setActivePanel("users")}
@@ -864,6 +875,10 @@ export default function SettingsPage() {
                                     </section>
                                 ) : null}
                             </div>
+                        ) : null}
+
+                        {activePanel === "apiKeys" ? (
+                            <ApiKeysPanel timezone={generalSettings?.effective_timezone ?? null} />
                         ) : null}
 
                         {activePanel === "users" ? (

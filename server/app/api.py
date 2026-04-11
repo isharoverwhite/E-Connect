@@ -32,6 +32,7 @@ from .runtime_timestamps import normalize_build_job_timestamp, normalize_utc_nai
 from .ws_manager import manager as ws_manager
 
 from .models import (
+    ApiKeyCreateRequest, ApiKeyCreateResponse, ApiKeyResponse,
     UserCreate, UserResponse, Token, TokenData, InitialServerRequest, RefreshTokenRequest,
     DeviceApprovalRequest, DeviceAvailabilityResponse, DeviceHandshakeResponse, DeviceRegister, DeviceResponse, PinConfigCreate,
     AutomationCreate, AutomationResponse, AutomationUpdate,
@@ -51,7 +52,7 @@ from .models import (
     InstalledExtensionResponse, ExternalDeviceCreate,
 )
 from .sql_models import (
-    User, Device, Automation, DeviceHistory,
+    ApiKey, User, Device, Automation, DeviceHistory,
     Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
     AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, DiyProjectConfig, BuildJob, SerialSession, SerialSessionStatus,
     SystemLog, SystemLogCategory as SqlSystemLogCategory, SystemLogSeverity as SqlSystemLogSeverity,
@@ -68,13 +69,18 @@ from .auth import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     ACCESS_TOKEN_TYPE,
     ALGORITHM,
+    API_KEY_PREFIX,
     REFRESH_TOKEN_EXPIRE_MINUTES,
     REFRESH_TOKEN_TYPE,
     SECRET_KEY,
     create_access_token,
+    generate_api_key_credentials,
+    is_api_key_token,
+    parse_api_key_token,
     create_ota_token,
     create_refresh_token,
     get_password_hash,
+    verify_api_key_secret,
     verify_ota_token,
     verify_password,
 )
@@ -232,6 +238,53 @@ def _issue_user_session_tokens(
         refresh_token_expires_at=refresh_expires_at,
         keep_login=keep_login,
     )
+
+
+def _attach_user_household_context(
+    user: User,
+    membership: Optional[HouseholdMembership],
+    *,
+    via_api_key: bool = False,
+    api_key: Optional[ApiKey] = None,
+) -> User:
+    household_role = None
+    household_id = None
+    if membership is not None:
+        household_id = membership.household_id
+        if membership.role is not None:
+            household_role = membership.role.value if hasattr(membership.role, "value") else str(membership.role)
+
+    setattr(user, "current_household_id", household_id)
+    setattr(user, "current_household_role", household_role)
+    setattr(user, "authenticated_via_api_key", via_api_key)
+    setattr(user, "current_api_key_id", api_key.key_id if api_key is not None else None)
+    return user
+
+
+def _serialize_api_key(api_key: ApiKey, *, plain_text_key: str | None = None) -> dict[str, Any]:
+    payload = {
+        "key_id": api_key.key_id,
+        "label": api_key.label,
+        "token_prefix": api_key.token_prefix,
+        "created_at": _coerce_utc_api_datetime(api_key.created_at),
+        "last_used_at": _coerce_utc_api_datetime(api_key.last_used_at),
+        "revoked_at": _coerce_utc_api_datetime(api_key.revoked_at),
+        "is_revoked": api_key.revoked_at is not None,
+    }
+    if plain_text_key is not None:
+        payload["api_key"] = plain_text_key
+    return payload
+
+
+def _get_user_owned_api_key_or_404(db: Session, current_user: User, key_id: str) -> ApiKey:
+    api_key = (
+        db.query(ApiKey)
+        .filter(ApiKey.key_id == key_id, ApiKey.user_id == current_user.user_id)
+        .first()
+    )
+    if api_key is None:
+        raise HTTPException(status_code=404, detail="API key not found")
+    return api_key
 
 
 def _set_request_timezone_context(request: Request, context: dict[str, Any]) -> None:
@@ -2281,6 +2334,38 @@ def _raise_legacy_ota_disabled() -> None:
     )
 
 # --- Dependencies ---
+def _authenticate_api_key_user(token: str, db: Session) -> User:
+    credentials_exception = HTTPException(
+        status_code=401,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": f'Bearer realm="api", error="invalid_token", error_description="invalid {API_KEY_PREFIX} token"'},
+    )
+
+    parsed = parse_api_key_token(token)
+    if parsed is None:
+        raise credentials_exception
+
+    public_id, secret = parsed
+    api_key = (
+        db.query(ApiKey)
+        .options(joinedload(ApiKey.user))
+        .filter(ApiKey.key_id == public_id)
+        .first()
+    )
+    if api_key is None or api_key.user is None or api_key.revoked_at is not None:
+        raise credentials_exception
+    if not verify_api_key_secret(secret, api_key.secret_hash):
+        raise credentials_exception
+
+    membership = _get_primary_membership(db, api_key.user)
+    api_key.last_used_at = _utcnow_naive()
+    db.add(api_key)
+    db.commit()
+    db.refresh(api_key)
+
+    return _attach_user_household_context(api_key.user, membership, via_api_key=True, api_key=api_key)
+
+
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     from jose import jwt, JWTError
     credentials_exception = HTTPException(
@@ -2288,6 +2373,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    if is_api_key_token(token):
+        return _authenticate_api_key_user(token, db)
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         username: str = payload.get("sub")
@@ -2310,11 +2398,20 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     if user is None:
         raise credentials_exception
 
-    # Attach session household context dynamically for route handlers
-    setattr(user, "current_household_id", token_data.household_id)
-    setattr(user, "current_household_role", token_data.household_role)
+    membership = None
+    if token_data.household_id is not None:
+        membership = (
+            db.query(HouseholdMembership)
+            .filter(
+                HouseholdMembership.user_id == user.user_id,
+                HouseholdMembership.household_id == token_data.household_id,
+            )
+            .first()
+        )
+    if membership is None:
+        membership = _get_primary_membership(db, user)
 
-    return user
+    return _attach_user_household_context(user, membership)
 
 async def get_admin_user(current_user: User = Depends(get_current_user)):
     if not _is_room_admin(current_user):
@@ -2581,6 +2678,62 @@ async def refresh_access_token(payload: RefreshTokenRequest, db: Session = Depen
 @router.get("/users/me", response_model=UserResponse)
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.get("/api-keys", response_model=List[ApiKeyResponse])
+async def list_api_keys(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    api_keys = (
+        db.query(ApiKey)
+        .filter(ApiKey.user_id == current_user.user_id)
+        .order_by(ApiKey.created_at.desc(), ApiKey.key_id.desc())
+        .all()
+    )
+    return [_serialize_api_key(api_key) for api_key in api_keys]
+
+
+@router.post("/api-keys", response_model=ApiKeyCreateResponse)
+async def create_api_key(
+    payload: ApiKeyCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    label = payload.label.strip()
+    if not label:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": "validation", "message": "API key label is required."},
+        )
+
+    public_id, raw_api_key, token_prefix, secret_hash = generate_api_key_credentials()
+    api_key = ApiKey(
+        key_id=public_id,
+        user_id=current_user.user_id,
+        label=label,
+        token_prefix=token_prefix,
+        secret_hash=secret_hash,
+    )
+    db.add(api_key)
+    db.commit()
+    db.refresh(api_key)
+    return _serialize_api_key(api_key, plain_text_key=raw_api_key)
+
+
+@router.post("/api-keys/{key_id}/revoke", response_model=ApiKeyResponse)
+async def revoke_api_key(
+    key_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    api_key = _get_user_owned_api_key_or_404(db, current_user, key_id)
+    if api_key.revoked_at is None:
+        api_key.revoked_at = _utcnow_naive()
+        db.add(api_key)
+        db.commit()
+        db.refresh(api_key)
+    return _serialize_api_key(api_key)
 
 
 @router.put("/users/me/layout", response_model=UserResponse)

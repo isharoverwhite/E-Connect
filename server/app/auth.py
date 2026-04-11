@@ -1,8 +1,11 @@
 # Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
 
 import bcrypt
+import hashlib
 import logging
 import os
+import secrets
+from hmac import compare_digest
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -16,6 +19,7 @@ ACCESS_TOKEN_TYPE = "access"
 REFRESH_TOKEN_TYPE = "refresh"
 DEFAULT_ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 4
 DEFAULT_REFRESH_TOKEN_EXPIRE_MINUTES = 60 * 4
+API_KEY_PREFIX = "eak_"
 
 
 def _load_positive_minutes(env_name: str, default_minutes: int) -> int:
@@ -129,3 +133,37 @@ def verify_ota_token(token: str) -> str | None:
         return payload.get("sub")
     except jwt.JWTError:
         return None
+
+
+def hash_api_key_secret(secret: str) -> str:
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def verify_api_key_secret(secret: str, expected_hash: str) -> bool:
+    return compare_digest(hash_api_key_secret(secret), expected_hash)
+
+
+def build_api_key_token(public_id: str, secret: str) -> str:
+    return f"{API_KEY_PREFIX}{public_id}.{secret}"
+
+
+def is_api_key_token(token: str) -> bool:
+    return isinstance(token, str) and token.startswith(API_KEY_PREFIX)
+
+
+def parse_api_key_token(token: str) -> tuple[str, str] | None:
+    if not is_api_key_token(token):
+        return None
+
+    token_body = token[len(API_KEY_PREFIX):]
+    public_id, separator, secret = token_body.partition(".")
+    if not separator or not public_id or not secret:
+        return None
+    return public_id, secret
+
+
+def generate_api_key_credentials() -> tuple[str, str, str, str]:
+    public_id = secrets.token_urlsafe(9)
+    secret = secrets.token_urlsafe(32)
+    api_key = build_api_key_token(public_id, secret)
+    return public_id, api_key, f"{API_KEY_PREFIX}{public_id}", hash_api_key_secret(secret)
