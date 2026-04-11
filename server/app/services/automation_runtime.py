@@ -42,6 +42,7 @@ SUPPORTED_TRIGGER_KINDS = ("device_state", "device_value", "device_on_off_event"
 SUPPORTED_CONDITION_KINDS = ("state_equals", "numeric_compare")
 SUPPORTED_ACTION_KINDS = ("set_output", "set_value", "send_telegram_notification")
 SUPPORTED_COMPARISON_OPERATORS = ("gt", "gte", "lt", "lte", "between")
+SUPPORTED_DHT_METRICS = ("temperature", "humidity")
 EXPECTED_BINARY_VALUES = {"on", "off"}
 SET_OUTPUT_VALUES = {0, 1}
 NUMERIC_TRIGGER_FUNCTION_KEYWORDS = ("temp", "temperature", "hum", "humidity", "moisture", "analog", "sensor")
@@ -108,6 +109,18 @@ def _normalize_number(value: object, *, field_name: str) -> float:
         raise AutomationGraphValidationError(f"{field_name} must be numeric.") from exc
 
 
+def _normalize_metric(value: object, *, field_name: str) -> str | None:
+    if value in (None, ""):
+        return None
+    if hasattr(value, "value"):
+        value = getattr(value, "value")
+    normalized = str(value).strip().lower()
+    if normalized not in SUPPORTED_DHT_METRICS:
+        supported = ", ".join(SUPPORTED_DHT_METRICS)
+        raise AutomationGraphValidationError(f"{field_name} must be one of: {supported}.")
+    return normalized
+
+
 def _normalize_binary_state(value: object) -> bool | None:
     if isinstance(value, bool):
         return value
@@ -165,6 +178,16 @@ def _pin_function_text(pin_config: object) -> str:
     return str(getattr(pin_config, "function", "") or "").strip().lower()
 
 
+def _pin_extra_params(pin_config: object) -> Mapping[str, Any]:
+    extra_params = getattr(pin_config, "extra_params", None)
+    return extra_params if isinstance(extra_params, Mapping) else {}
+
+
+def _pin_input_type(pin_config: object) -> str:
+    raw_input_type = _pin_extra_params(pin_config).get("input_type")
+    return str(raw_input_type or "").strip().lower()
+
+
 def _pin_matches_function_keywords(pin_config: object, keywords: tuple[str, ...]) -> bool:
     function_text = _pin_function_text(pin_config)
     return any(keyword in function_text for keyword in keywords)
@@ -172,6 +195,12 @@ def _pin_matches_function_keywords(pin_config: object, keywords: tuple[str, ...]
 
 def _pin_supports_numeric_trigger(pin_config: object) -> bool:
     pin_mode = _pin_mode_value(pin_config)
+    input_type = _pin_input_type(pin_config)
+    if pin_mode == PinMode.INPUT.value:
+        if input_type in {"dht", "tachometer"}:
+            return True
+        if input_type == "switch":
+            return False
     return pin_mode in {PinMode.ADC.value, PinMode.PWM.value, PinMode.INPUT.value, PinMode.OUTPUT.value} or _pin_matches_function_keywords(
         pin_config,
         NUMERIC_TRIGGER_FUNCTION_KEYWORDS,
@@ -180,6 +209,12 @@ def _pin_supports_numeric_trigger(pin_config: object) -> bool:
 
 def _pin_supports_binary_trigger(pin_config: object) -> bool:
     pin_mode = _pin_mode_value(pin_config)
+    input_type = _pin_input_type(pin_config)
+    if pin_mode == PinMode.INPUT.value:
+        if input_type == "switch":
+            return True
+        if input_type in {"dht", "tachometer"}:
+            return False
     return pin_mode in {PinMode.INPUT.value, PinMode.OUTPUT.value, PinMode.ADC.value, PinMode.PWM.value} or _pin_matches_function_keywords(
         pin_config,
         BINARY_TRIGGER_FUNCTION_KEYWORDS,
@@ -227,10 +262,15 @@ def _normalize_trigger_config(kind: str, config: Mapping[str, Any]) -> dict[str,
             "weekdays": _normalize_time_trigger_weekdays(config.get("weekdays")),
         }
 
-    return {
+    normalized = {
         "device_id": _normalize_text(config.get("device_id"), field_name="Trigger device_id"),
         "pin": _normalize_int(config.get("pin"), field_name="Trigger pin"),
     }
+    if kind == "device_value":
+        metric = _normalize_metric(config.get("metric"), field_name="Trigger metric")
+        if metric is not None:
+            normalized["metric"] = metric
+    return normalized
 
 
 def _normalize_condition_config(kind: str, config: Mapping[str, Any]) -> dict[str, Any]:
@@ -254,6 +294,9 @@ def _normalize_condition_config(kind: str, config: Mapping[str, Any]) -> dict[st
     value = _normalize_number(config.get("value"), field_name="Condition value")
     normalized["operator"] = operator
     normalized["value"] = value
+    metric = _normalize_metric(config.get("metric"), field_name="Condition metric")
+    if metric is not None:
+        normalized["metric"] = metric
     if operator == "between":
         secondary_value = _normalize_number(config.get("secondary_value"), field_name="Condition secondary_value")
         lower = min(value, secondary_value)
@@ -377,6 +420,11 @@ def _validate_device_bindings(normalized_graph: dict[str, Any], *, device_scope:
             )
 
         if node["type"] == "trigger":
+            metric = config.get("metric")
+            if metric is not None and _pin_input_type(pin_config) != "dht":
+                raise AutomationGraphValidationError(
+                    f"Metric '{metric}' is only supported for DHT sensor telemetry. Device '{device.name}' GPIO {pin} is not configured as DHT."
+                )
             if node["kind"] == "device_value" and not _pin_supports_numeric_trigger(pin_config):
                 raise AutomationGraphValidationError(
                     f"device_value triggers require a numeric-capable pin. Device '{device.name}' GPIO {pin} is not configured for numeric telemetry."
@@ -388,6 +436,11 @@ def _validate_device_bindings(normalized_graph: dict[str, Any], *, device_scope:
             continue
 
         if node["type"] != "action":
+            metric = config.get("metric")
+            if metric is not None and _pin_input_type(pin_config) != "dht":
+                raise AutomationGraphValidationError(
+                    f"Metric '{metric}' is only supported for DHT sensor telemetry. Device '{device.name}' GPIO {pin} is not configured as DHT."
+                )
             continue
 
         pin_mode = _enum_value(pin_config.mode, default="")
@@ -763,11 +816,23 @@ def _extract_pin_snapshot(state_payload: Mapping[str, Any] | None, pin: int) -> 
                 return dict(row)
 
     if state_payload.get("pin") == pin:
-        return {
-            "pin": pin,
-            "value": state_payload.get("value"),
-            "brightness": state_payload.get("brightness"),
-        }
+        snapshot = {"pin": pin}
+        for key in (
+            "value",
+            "brightness",
+            "temperature",
+            "humidity",
+            "mode",
+            "function",
+            "label",
+            "extra_params",
+            "datatype",
+            "trend",
+            "unit",
+        ):
+            if key in state_payload:
+                snapshot[key] = state_payload.get(key)
+        return snapshot
 
     return None
 
@@ -777,13 +842,14 @@ def _state_trigger_value_changed(
     *,
     current_snapshot: Mapping[str, Any] | None,
     previous_snapshot: Mapping[str, Any] | None,
+    metric: str | None = None,
 ) -> bool:
     if previous_snapshot is None:
         return True
 
     if trigger_kind == "device_value":
-        current_value = _extract_numeric_value(current_snapshot)
-        previous_value = _extract_numeric_value(previous_snapshot)
+        current_value = _extract_metric_value(current_snapshot, metric=metric)
+        previous_value = _extract_metric_value(previous_snapshot, metric=metric)
     else:
         current_value = _extract_binary_value(current_snapshot)
         previous_value = _extract_binary_value(previous_snapshot)
@@ -805,6 +871,34 @@ def _extract_numeric_value(snapshot: Mapping[str, Any] | None) -> float | None:
         if isinstance(value, (int, float)):
             return float(value)
     return None
+
+
+def _extract_metric_value(snapshot: Mapping[str, Any] | None, *, metric: str | None = None) -> float | None:
+    if metric == "temperature":
+        if isinstance(snapshot, Mapping):
+            value = snapshot.get("temperature")
+            if isinstance(value, bool):
+                return 1.0 if value else 0.0
+            if isinstance(value, (int, float)):
+                return float(value)
+
+            legacy_value = snapshot.get("value")
+            if isinstance(legacy_value, bool):
+                return 1.0 if legacy_value else 0.0
+            if isinstance(legacy_value, (int, float)):
+                return float(legacy_value) / 10.0
+        return None
+
+    if metric == "humidity":
+        if isinstance(snapshot, Mapping):
+            value = snapshot.get("humidity")
+            if isinstance(value, bool):
+                return 1.0 if value else 0.0
+            if isinstance(value, (int, float)):
+                return float(value)
+        return None
+
+    return _extract_numeric_value(snapshot)
 
 
 def _extract_binary_value(snapshot: Mapping[str, Any] | None) -> bool | None:
@@ -839,7 +933,8 @@ def _evaluate_condition_node(
         result = actual == expected
         return result, f"{node['id']}: GPIO {pin} expected {config['expected']} -> {str(result).lower()}"
 
-    numeric_value = _extract_numeric_value(snapshot)
+    metric = config.get("metric") if isinstance(config.get("metric"), str) else None
+    numeric_value = _extract_metric_value(snapshot, metric=metric)
     if numeric_value is None:
         return False, f"{node['id']}: GPIO {pin} is not numeric"
 
@@ -857,7 +952,8 @@ def _evaluate_condition_node(
         secondary_value = float(config["secondary_value"])
         result = target_value <= numeric_value <= secondary_value
 
-    return result, f"{node['id']}: GPIO {pin} {operator} check with {numeric_value} -> {str(result).lower()}"
+    metric_label = f"{metric} " if metric else ""
+    return result, f"{node['id']}: GPIO {pin} {metric_label}{operator} check with {numeric_value} -> {str(result).lower()}"
 
 
 def _dispatch_action(
@@ -1122,6 +1218,7 @@ def _trigger_matches_state_event(
             trigger_node["kind"],
             current_snapshot=current_snapshot,
             previous_snapshot=previous_snapshot,
+            metric=config.get("metric") if isinstance(config.get("metric"), str) else None,
         )
     if trigger_node["kind"] == "device_on_off_event":
         previous_snapshot = _extract_pin_snapshot(previous_state_payload, config["pin"])

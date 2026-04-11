@@ -22,6 +22,8 @@ export const getCardMinHeight = (config: DeviceConfig) => {
         h += 55;
         i2c = true;
       }
+    } else if (p.extra_params?.input_type === "dht") {
+      h += 92;
     } else if (p.mode === 'PWM') {
       h += 75; // PWM slider UI takes more vertical space
     } else {
@@ -113,6 +115,8 @@ export function getStatePin(state: DeviceStateSnapshot | null | undefined, gpioP
       pin: state.pin,
       value: state.value,
       brightness: state.brightness,
+      temperature: state.temperature,
+      humidity: state.humidity,
       restore_value: state.restore_value,
       restore_brightness: state.restore_brightness,
       trend: state.trend,
@@ -134,6 +138,34 @@ export function getNumericStateValue(value: number | boolean | undefined): numbe
   if (typeof value === "number") {
     return value;
   }
+  return null;
+}
+
+function formatClimateReading(value: number | null): string {
+  if (value === null || Number.isNaN(value)) {
+    return "--";
+  }
+  return value.toFixed(1);
+}
+
+function getDhtTemperatureValue(pinState: DeviceStatePin | null): number | null {
+  if (typeof pinState?.temperature === "number") {
+    return pinState.temperature;
+  }
+
+  const legacyValue = getNumericStateValue(pinState?.value);
+  if (legacyValue === null) {
+    return null;
+  }
+
+  return legacyValue / 10;
+}
+
+function getDhtHumidityValue(pinState: DeviceStatePin | null): number | null {
+  if (typeof pinState?.humidity === "number") {
+    return pinState.humidity;
+  }
+
   return null;
 }
 
@@ -385,6 +417,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
 
   if (pin.mode === 'ADC' || pin.mode === 'INPUT') {
     const inputType = pin.extra_params?.input_type;
+    const isDht = inputType === "dht";
     const isSwitch = inputType === "switch";
     const isTach = inputType === "tachometer";
     const numValue = getNumericStateValue(pinState?.value);
@@ -410,6 +443,34 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
     
     if (isTach) {
       unit = unit || "RPM";
+    }
+
+    if (isDht) {
+      const temperature = getDhtTemperatureValue(pinState);
+      const humidity = getDhtHumidityValue(pinState);
+
+      return (
+        <div className="py-3 border-t border-slate-100 dark:border-slate-800/50">
+          <div className="flex justify-between items-center">
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Temperature</span>
+            <div className="flex items-baseline space-x-1">
+              <span className="text-lg font-bold text-slate-800 dark:text-white">
+                {formatClimateReading(temperature)}
+              </span>
+              <span className="text-xs font-medium text-slate-500">°C</span>
+            </div>
+          </div>
+          <div className="mt-3 flex justify-between items-center border-t border-slate-100 pt-3 dark:border-slate-800/50">
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Humidity</span>
+            <div className="flex items-baseline space-x-1">
+              <span className="text-lg font-bold text-slate-800 dark:text-white">
+                {formatClimateReading(humidity)}
+              </span>
+              <span className="text-xs font-medium text-slate-500">%</span>
+            </div>
+          </div>
+        </div>
+      );
     }
 
     return (

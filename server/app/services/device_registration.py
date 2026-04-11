@@ -182,17 +182,31 @@ def _can_reclaim_stale_secure_mac_binding(device: Device | None) -> bool:
     )
 
 
+def can_rebind_hidden_device_mac(device: Device | None) -> bool:
+    if not device:
+        return False
+
+    return device.auth_status == AuthStatus.pending and device.pairing_requested_at is None
+
+
+def generate_detached_mac_address(db: Session) -> str:
+    while True:
+        candidate = ":".join(
+            uuid.uuid4().hex[index : index + 2].upper()
+            for index in range(0, 12, 2)
+        )
+        exists = db.query(Device.device_id).filter(Device.mac_address == candidate).first()
+        if exists is None:
+            return candidate
+
+
 def _reclaim_stale_secure_mac_binding(db: Session, device: Device, *, target_device_id: str) -> Device:
     old_device_id = device.device_id
     original_mac = device.mac_address
     owner = db.query(User).filter(User.user_id == device.owner_id).first()
     remove_device_widgets(owner, old_device_id)
 
-    temporary_mac = ":".join(
-        uuid.uuid4().hex[index : index + 2].upper()
-        for index in range(0, 12, 2)
-    )
-    device.mac_address = temporary_mac
+    device.mac_address = generate_detached_mac_address(db)
     db.flush()
 
     reclaimed_device = Device(
@@ -347,7 +361,7 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
                         reclaimed_stale_secure_mac = True
                     else:
                         _raise_secure_pairing_error("MAC address is already bound to another device.")
-                else:
+                elif not can_rebind_hidden_device_mac(device):
                     _raise_secure_pairing_error("Trusted MAC address mismatch for provisioned device.")
         else:
             mac_bound_device = db.query(Device).filter(Device.mac_address == normalized_payload_mac).first()

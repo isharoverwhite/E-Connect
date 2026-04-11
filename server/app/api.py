@@ -93,6 +93,7 @@ from .services.builder import (
 from .services.device_registration import (
     build_pairing_queue_event_payload,
     build_pairing_request_event_payload,
+    generate_detached_mac_address,
     is_mqtt_managed_device,
     mqtt_only_error,
     register_device_payload,
@@ -3746,7 +3747,7 @@ async def rebuild_device_firmware(
 @router.delete("/device/{device_id}")
 async def delete_device(device_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
     """
-    Unpair a device from the dashboard while preserving its identity so it can be paired again.
+    Unpair a device from the dashboard while preserving its identity and freeing its MAC for future pairing.
     """
     try:
         device = _get_device_in_household_or_404(db, current_user, device_id)
@@ -3757,7 +3758,10 @@ async def delete_device(device_id: str, db: Session = Depends(get_db), current_u
 
     if device is not None:
         owner = db.query(User).filter(User.user_id == device.owner_id).first()
+        device.mac_address = generate_detached_mac_address(db)
         device.auth_status = AuthStatus.pending
+        device.conn_status = ConnStatus.offline
+        device.ip_address = None
         device.pairing_requested_at = None
         _remove_device_widgets(owner, device.device_id)
         db.commit()

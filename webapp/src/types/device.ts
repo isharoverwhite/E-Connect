@@ -13,6 +13,9 @@ export interface PinExtraParams {
     i2c_role?: "SDA" | "SCL";
     i2c_address?: string;
     i2c_library?: string;
+    input_type?: "switch" | "tachometer" | "dht";
+    switch_type?: "momentary" | "momentary_toggle" | "toggle";
+    dht_version?: "DHT11" | "DHT21" | "DHT22";
     [key: string]: unknown;
 }
 
@@ -43,6 +46,8 @@ export interface DeviceStatePin {
     label?: string;
     value?: number | boolean;
     brightness?: number;
+    temperature?: number;
+    humidity?: number;
     restore_value?: number | boolean;
     restore_brightness?: number;
     active_level?: 0 | 1;
@@ -61,6 +66,8 @@ export interface DeviceStateSnapshot {
     firmware_revision?: string;
     firmware_version?: string;
     brightness?: number;
+    temperature?: number;
+    humidity?: number;
     restore_value?: number | boolean;
     restore_brightness?: number;
     color_temperature?: number;

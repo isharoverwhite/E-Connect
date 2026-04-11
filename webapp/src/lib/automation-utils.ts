@@ -31,6 +31,11 @@ interface PortSelection {
   type: "in" | "out";
 }
 
+export const DHT_METRIC_OPTIONS = [
+  { value: "temperature", label: "Temperature" },
+  { value: "humidity", label: "Humidity" },
+] as const;
+
 export const NODE_WIDTH = 260;
 export const NODE_HEIGHT = 100;
 export const CANVAS_BASE_X = 1500;
@@ -336,27 +341,100 @@ export function getLinearRule(nodes: AutomationGraphNode[], edges: AutomationGra
   return { trigger, condition, action };
 }
 
-export function isNumericPin(p: { mode?: string; function?: string | null; gpio_pin?: number } | undefined | null, lastState?: DeviceStateSnapshot | null) {
+function getRuntimeStatePin(
+  pin: { gpio_pin?: number } | undefined | null,
+  lastState?: DeviceStateSnapshot | null,
+): DeviceStatePin | undefined {
+  if (pin?.gpio_pin == null || !lastState?.pins) {
+    return undefined;
+  }
+
+  return lastState.pins.find((runtimePin: DeviceStatePin) => runtimePin.pin === pin.gpio_pin);
+}
+
+function getPinInputType(
+  pin: { gpio_pin?: number; extra_params?: Record<string, unknown> | null } | undefined | null,
+  lastState?: DeviceStateSnapshot | null,
+): string | undefined {
+  const runtimeInputType = getRuntimeStatePin(pin, lastState)?.extra_params?.input_type;
+  if (typeof runtimeInputType === "string" && runtimeInputType.trim()) {
+    return runtimeInputType.trim().toLowerCase();
+  }
+
+  const configuredInputType = pin?.extra_params?.input_type;
+  if (typeof configuredInputType === "string" && configuredInputType.trim()) {
+    return configuredInputType.trim().toLowerCase();
+  }
+
+  return undefined;
+}
+
+export function isDhtMetric(value: unknown): value is "temperature" | "humidity" {
+  return value === "temperature" || value === "humidity";
+}
+
+export function getAutomationMetricLabel(metric: unknown): string {
+  if (metric === "humidity") return "Humidity";
+  if (metric === "temperature") return "Temperature";
+  return "Value";
+}
+
+export function isDhtPin(
+  p: { mode?: string; function?: string | null; gpio_pin?: number; extra_params?: Record<string, unknown> | null } | undefined | null,
+  lastState?: DeviceStateSnapshot | null,
+) {
+  return getPinInputType(p, lastState) === "dht";
+}
+
+export function resolveNumericMetricForPin(
+  pin: { mode?: string; function?: string | null; gpio_pin?: number; extra_params?: Record<string, unknown> | null } | undefined | null,
+  lastState?: DeviceStateSnapshot | null,
+  currentMetric?: unknown,
+): "temperature" | "humidity" | undefined {
+  if (!isDhtPin(pin, lastState)) {
+    return undefined;
+  }
+
+  return isDhtMetric(currentMetric) ? currentMetric : "temperature";
+}
+
+export function isNumericPin(
+  p: { mode?: string; function?: string | null; gpio_pin?: number; extra_params?: Record<string, unknown> | null } | undefined | null,
+  lastState?: DeviceStateSnapshot | null,
+) {
   let mode = p?.mode;
   let datatype;
-  if (p?.gpio_pin != null && lastState?.pins) {
-    const s = lastState.pins.find((x: DeviceStatePin) => x.pin === p.gpio_pin);
-    if (s && s.mode) mode = s.mode;
-    if (s && s.datatype) datatype = s.datatype;
+  const runtimePin = getRuntimeStatePin(p, lastState);
+  if (runtimePin) {
+    if (runtimePin.mode) mode = runtimePin.mode;
+    if (runtimePin.datatype) datatype = runtimePin.datatype;
   }
   if (datatype) return datatype === "number";
+
+  const inputType = getPinInputType(p, lastState);
+  if (inputType === "dht" || inputType === "tachometer") return true;
+  if (inputType === "switch") return false;
+
   return mode === "ADC" || mode === "DHT22" || mode === "PWM" || p?.function?.toLowerCase().includes("temp") || p?.function?.toLowerCase().includes("hum") || p?.function?.toLowerCase().includes("moisture");
 }
 
-export function isSwitchPin(p: { mode?: string; function?: string | null; gpio_pin?: number } | undefined | null, lastState?: DeviceStateSnapshot | null) {
+export function isSwitchPin(
+  p: { mode?: string; function?: string | null; gpio_pin?: number; extra_params?: Record<string, unknown> | null } | undefined | null,
+  lastState?: DeviceStateSnapshot | null,
+) {
   let mode = p?.mode;
   let datatype;
-  if (p?.gpio_pin != null && lastState?.pins) {
-    const s = lastState.pins.find((x: DeviceStatePin) => x.pin === p.gpio_pin);
-    if (s && s.mode) mode = s.mode;
-    if (s && s.datatype) datatype = s.datatype;
+  const runtimePin = getRuntimeStatePin(p, lastState);
+  if (runtimePin) {
+    if (runtimePin.mode) mode = runtimePin.mode;
+    if (runtimePin.datatype) datatype = runtimePin.datatype;
   }
   if (datatype) return datatype === "boolean";
+
+  const inputType = getPinInputType(p, lastState);
+  if (inputType === "switch") return true;
+  if (inputType === "dht" || inputType === "tachometer") return false;
+
   return mode === "INPUT" || mode === "OUTPUT" || p?.function?.toLowerCase().includes("switch") || p?.function?.toLowerCase().includes("btn") || p?.function?.toLowerCase().includes("button") || p?.function?.toLowerCase().includes("relay") || p?.function?.toLowerCase().includes("contact") || p?.function?.toLowerCase().includes("pir");
 }
 
@@ -378,6 +456,7 @@ export function buildTimeTriggerConfig(config: AutomationGraphNodeConfig): Autom
     ...config,
     device_id: undefined,
     pin: undefined,
+    metric: undefined,
     hour: getTimeTriggerHour(config),
     minute: getTimeTriggerMinute(config),
     weekdays: getTimeTriggerWeekdays(config),
@@ -568,6 +647,7 @@ export function buildConditionStateForTriggerKind(
   currentKind: string,
   currentConfig: AutomationGraphNodeConfig,
   pin: number | undefined,
+  metric?: "temperature" | "humidity",
 ): Pick<AutomationGraphNode, "kind" | "config"> {
   if (triggerKind === DEVICE_VALUE_TRIGGER_KIND) {
     return {
@@ -575,6 +655,7 @@ export function buildConditionStateForTriggerKind(
       config: {
         ...currentConfig,
         pin,
+        metric: isDhtMetric(currentConfig.metric) ? currentConfig.metric : metric,
         operator: currentKind === "numeric_compare" && typeof currentConfig.operator === "string" ? currentConfig.operator : "gt",
         value:
           currentKind === "numeric_compare" && typeof currentConfig.value === "number"
@@ -599,6 +680,7 @@ export function buildConditionStateForTriggerKind(
           currentKind === "state_equals" && typeof currentConfig.expected === "string"
             ? currentConfig.expected
             : "on",
+        metric: undefined,
         operator: undefined,
         secondary_value: undefined,
         value: undefined,
@@ -619,6 +701,7 @@ export function buildConditionStateForTriggerKind(
     kind: currentKind,
     config: {
       ...currentConfig,
+      metric: undefined,
       pin,
     },
   };
