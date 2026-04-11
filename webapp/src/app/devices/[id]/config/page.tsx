@@ -417,7 +417,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
           conn_status: "online",
           firmware_revision: reportedFirmwareRevision ?? current.firmware_revision,
           firmware_version: reportedFirmwareVersion ?? current.firmware_version,
-          last_seen: reportedAt ?? new Date().toISOString(),
+          last_seen: reportedAt ?? current.last_seen,
         };
       }
 
@@ -435,7 +435,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
           firmware_revision: reportedFirmwareRevision ?? current.firmware_revision,
           firmware_version: reportedFirmwareVersion ?? current.firmware_version,
           last_state: (event.payload ?? null) as DeviceConfig["last_state"],
-          last_seen: reportedAt ?? new Date().toISOString(),
+          last_seen: reportedAt ?? current.last_seen,
         };
       }
 

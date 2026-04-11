@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
 
-import { AuthStatus, DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
+import { AuthStatus, DeviceConfig, DeviceDirectoryEntry, DeviceStateSnapshot } from "@/types/device";
 import { getToken, removeToken } from "./auth";
 import { buildProvisioningHeaders, resolvePublicApiBaseUrl } from "./secure-origin";
 
@@ -11,6 +11,7 @@ export interface DeviceCommandResponse {
     message?: string;
     command_id?: string;
     command?: unknown;
+    last_state?: DeviceStateSnapshot | null;
 }
 
 export interface RuntimeNetworkInfo {

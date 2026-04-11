@@ -175,22 +175,26 @@ export default function Dashboard() {
       return prev.map((device) => {
         if (device.device_id === event.device_id) {
           if (event.type === "device_online") {
+            const reportedAt =
+              typeof event.payload?.reported_at === "string" ? event.payload.reported_at : null;
             return {
               ...device,
               conn_status: "online",
-              last_seen: (event.payload?.reported_at as string) || new Date().toISOString(),
+              last_seen: reportedAt ?? device.last_seen,
             };
           }
           if (event.type === "device_offline") {
             return { ...device, conn_status: "offline" };
           }
           if (event.type === "device_state") {
+            const reportedAt =
+              typeof event.payload?.reported_at === "string" ? event.payload.reported_at : null;
             return {
               ...device,
               conn_status: "online",
               runtime_state: event.payload,
               last_state: (event.payload ?? null) as DeviceConfig["last_state"],
-              last_seen: (event.payload?.reported_at as string) || new Date().toISOString(),
+              last_seen: reportedAt ?? device.last_seen,
             };
           }
           if (event.type === "command_delivery") {

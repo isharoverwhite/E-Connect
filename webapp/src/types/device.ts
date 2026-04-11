@@ -43,6 +43,8 @@ export interface DeviceStatePin {
     label?: string;
     value?: number | boolean;
     brightness?: number;
+    restore_value?: number | boolean;
+    restore_brightness?: number;
     active_level?: 0 | 1;
     extra_params?: PinExtraParams | null;
     trend?: string;
@@ -59,6 +61,8 @@ export interface DeviceStateSnapshot {
     firmware_revision?: string;
     firmware_version?: string;
     brightness?: number;
+    restore_value?: number | boolean;
+    restore_brightness?: number;
     color_temperature?: number;
     rgb?: {
         r: number;
