@@ -270,3 +270,53 @@ def test_main_records_pending_firmware_template_notification_as_warning(monkeypa
     assert captured["severity"] == main.SystemLogSeverity.warning
     assert captured["category"] == main.SystemLogCategory.firmware
     assert "Update your boards to apply it." in str(captured["message"])
+
+
+def test_main_run_firmware_template_auto_refresh_forces_release_poll(monkeypatch):
+    app = main.app
+    app.state.database_ready = True
+    app.dependency_overrides.clear()
+
+    captured: dict[str, object] = {}
+
+    monkeypatch.setenv("FIRMWARE_TEMPLATE_AUTO_UPDATE", "1")
+    def fake_refresh(*, force: bool):
+        captured["force"] = force
+        return {"installed_release_tag": "v1.1.6"}
+
+    monkeypatch.setattr(main, "refresh_firmware_template_release", fake_refresh)
+    monkeypatch.setattr(
+        main,
+        "_record_pending_firmware_template_notification",
+        lambda: captured.setdefault("notification_recorded", True),
+    )
+
+    status = main._run_firmware_template_auto_refresh(app, force=True)
+
+    assert status == {"installed_release_tag": "v1.1.6"}
+    assert captured["force"] is True
+    assert captured["notification_recorded"] is True
+
+
+def test_main_run_firmware_template_auto_refresh_skips_when_disabled(monkeypatch):
+    app = main.app
+    app.state.database_ready = True
+    app.dependency_overrides.clear()
+
+    called = {"refresh": False, "notification": False}
+
+    monkeypatch.setenv("FIRMWARE_TEMPLATE_AUTO_UPDATE", "0")
+    monkeypatch.setattr(
+        main,
+        "refresh_firmware_template_release",
+        lambda *, force: called.__setitem__("refresh", True) or {},
+    )
+    monkeypatch.setattr(
+        main,
+        "_record_pending_firmware_template_notification",
+        lambda: called.__setitem__("notification", True),
+    )
+
+    assert main._run_firmware_template_auto_refresh(app, force=True) is None
+    assert called["refresh"] is False
+    assert called["notification"] is False

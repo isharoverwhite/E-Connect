@@ -62,9 +62,9 @@ SYSTEM_LOG_RETENTION_SWEEP_INTERVAL_SECONDS = max(
     60.0,
     float(os.getenv("SYSTEM_LOG_RETENTION_SWEEP_INTERVAL_SECONDS", "3600")),
 )
-FIRMWARE_TEMPLATE_REFRESH_INTERVAL_SECONDS = max(
+FIRMWARE_TEMPLATE_AUTO_POLL_INTERVAL_SECONDS = max(
     60.0,
-    float(os.getenv("FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS", "3600")),
+    float(os.getenv("FIRMWARE_TEMPLATE_AUTO_POLL_INTERVAL_SECONDS", "300")),
 )
 AUTOMATION_TIME_TRIGGER_INTERVAL_SECONDS = max(
     5.0,
@@ -272,6 +272,20 @@ def _record_pending_firmware_template_notification() -> None:
             "source_repo": pending_notification.get("source_repo"),
         },
     )
+
+
+def _firmware_template_auto_update_enabled() -> bool:
+    return os.getenv("FIRMWARE_TEMPLATE_AUTO_UPDATE", "1").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _run_firmware_template_auto_refresh(app: FastAPI, *, force: bool) -> dict[str, object] | None:
+    if not _firmware_template_auto_update_enabled():
+        return None
+
+    status = refresh_firmware_template_release(force=force)
+    if getattr(app.state, "database_ready", False) and not _using_overridden_database(app):
+        _record_pending_firmware_template_notification()
+    return status
 
 
 def _set_app_timezone_context(app: FastAPI, context: dict[str, object]) -> None:
@@ -513,16 +527,14 @@ async def lifespan(app: FastAPI):
                 db.close()
 
     async def firmware_template_refresh_watchdog() -> None:
-        if os.getenv("FIRMWARE_TEMPLATE_AUTO_UPDATE", "1").strip().lower() in {"0", "false", "no", "off"}:
+        if not _firmware_template_auto_update_enabled():
             return
         while True:
-            await asyncio.sleep(FIRMWARE_TEMPLATE_REFRESH_INTERVAL_SECONDS)
+            await asyncio.sleep(FIRMWARE_TEMPLATE_AUTO_POLL_INTERVAL_SECONDS)
             if _using_overridden_database(app):
                 continue
             try:
-                refresh_firmware_template_release(force=False)
-                if getattr(app.state, "database_ready", False):
-                    _record_pending_firmware_template_notification()
+                _run_firmware_template_auto_refresh(app, force=True)
             except Exception:
                 logger.exception("Firmware template auto-refresh failed")
 
@@ -593,8 +605,7 @@ async def lifespan(app: FastAPI):
 
     if database_ready:
         try:
-            refresh_firmware_template_release(force=False)
-            _record_pending_firmware_template_notification()
+            _run_firmware_template_auto_refresh(app, force=True)
         except Exception:
             logger.exception("Initial firmware template release refresh failed")
         db = SessionLocal()
