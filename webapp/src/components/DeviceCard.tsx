@@ -308,6 +308,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
     const isChecked = e.target.checked;
     setRequestPending(true);
     setPendingCmdId(null);
+    setOptimisticToggleState(isChecked);
 
     try {
       const payload: { kind: string; pin: number; value: number; brightness?: number } = { kind: "action", pin: pin.gpio_pin, value: isChecked ? 1 : 0 };
