@@ -89,6 +89,7 @@ class User(Base):
     automations = relationship("Automation", back_populates="creator")
     history_logs = relationship("DeviceHistory", back_populates="user")
     memberships = relationship("HouseholdMembership", back_populates="user", cascade="all, delete-orphan")
+    api_keys = relationship("ApiKey", back_populates="user", cascade="all, delete-orphan")
 
 class Household(Base):
     __tablename__ = "households"
@@ -113,6 +114,21 @@ class HouseholdMembership(Base):
 
     household = relationship("Household", back_populates="memberships")
     user = relationship("User", back_populates="memberships")
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+
+    key_id = Column(String(64), primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False, index=True)
+    label = Column(String(120), nullable=False)
+    token_prefix = Column(String(80), nullable=False, unique=True)
+    secret_hash = Column(String(64), nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    last_used_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="api_keys")
 
 class Room(Base):
     __tablename__ = "rooms"
