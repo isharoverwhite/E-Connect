@@ -19,7 +19,8 @@ interface Step2ConfigsProps {
     configs: SavedBoardConfigOption[];
     configsLoading: boolean;
     configListError: string;
-    hasSelectedConfig: boolean;
+    hasSavedConfig: boolean;
+    canContinue: boolean;
     selectedConfigId: string | null;
     selectedConfigMode: "saved" | "template" | null;
     projectSyncState: ProjectSyncState;
@@ -28,7 +29,7 @@ interface Step2ConfigsProps {
     onSaveConfig: () => Promise<void>;
     onSaveAsNewConfig: () => Promise<void>;
     onBack: () => void;
-    onNext: () => void;
+    onNext: () => Promise<void>;
     timezone?: string | null;
 }
 
@@ -51,7 +52,8 @@ export function Step2Configs({
     configs,
     configsLoading,
     configListError,
-    hasSelectedConfig,
+    hasSavedConfig,
+    canContinue,
     selectedConfigId,
     selectedConfigMode,
     projectSyncState,
@@ -192,12 +194,12 @@ export function Step2Configs({
                         >
                             {projectSyncState === "saving"
                                 ? "Saving..."
-                                : hasSelectedConfig
+                                : hasSavedConfig
                                     ? "Save Current Config"
                                     : "Create Config"}
                         </button>
 
-                        {hasSelectedConfig ? (
+                        {hasSavedConfig ? (
                             <button
                                 type="button"
                                 onClick={() => void onSaveAsNewConfig()}
@@ -210,9 +212,11 @@ export function Step2Configs({
                     </div>
 
                     <div className="rounded-2xl border border-dashed border-slate-300 dark:border-slate-600 px-4 py-4 text-sm leading-6 text-slate-500 dark:text-slate-400 dark:border-slate-700 dark:text-slate-400">
-                        {hasSelectedConfig
+                        {selectedConfigMode === "saved"
                             ? "This config is ready. Continue to pin mapping to edit the selected board setup."
-                            : "Choose a saved config template or create one first. Pin editing stays locked until this board has an active saved config."}
+                            : selectedConfigMode === "template"
+                                ? "This template can be cloned into the current project when you continue, or you can create it now to save the clone first."
+                                : "Choose a saved config template or create one first. Pin editing stays locked until this board has an active saved config."}
                     </div>
                 </aside>
             </div>
@@ -227,8 +231,8 @@ export function Step2Configs({
                 </button>
                 <button
                     type="button"
-                    onClick={onNext}
-                    disabled={!hasSelectedConfig}
+                    onClick={() => void onNext()}
+                    disabled={!canContinue || projectSyncState === "saving"}
                     className="rounded-2xl bg-primary px-6 py-3 text-sm font-semibold text-white shadow-lg shadow-primary/20 transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                     Continue to Pin Mapping

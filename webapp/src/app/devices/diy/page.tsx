@@ -577,6 +577,7 @@ export default function DIYBuilderPage() {
   const highlightedBoardConfigId = activeBoardConfigId ?? templateConfigId;
   const selectedConfigMode =
     activeBoardConfigId !== null ? "saved" : highlightedBoardConfigId !== null ? "template" : null;
+  const canContinueToPinMapping = Boolean(highlightedBoardConfigId) && Boolean(projectName.trim());
 
   const lastSavedPayloadRef = useRef<string | null>(null);
   const latestBoardConfigRequestRef = useRef(0);
@@ -1713,6 +1714,34 @@ export default function DIYBuilderPage() {
     await persistProject(projectPayloadJson, { forceCreate: true });
   }, [persistProject, projectPayloadJson]);
 
+  const continueToPinMapping = useCallback(async () => {
+    if (!projectName.trim()) {
+      setProjectSyncState("idle");
+      setProjectSyncMessage("Enter a project name before continuing to Pin Mapping.");
+      return;
+    }
+
+    if (activeBoardConfigId) {
+      setCurrentStep(3);
+      return;
+    }
+
+    if (!templateConfigId) {
+      setProjectSyncState("idle");
+      setProjectSyncMessage(
+        "Choose a saved config template or create one first before continuing to Pin Mapping.",
+      );
+      return;
+    }
+
+    const clonedProjectId = await persistProject(projectPayloadJson, { forceCreate: true });
+    if (!clonedProjectId) {
+      return;
+    }
+
+    setCurrentStep(3);
+  }, [activeBoardConfigId, persistProject, projectName, projectPayloadJson, templateConfigId]);
+
   const loadBoardConfig = useCallback(async (configId: string) => {
     const selectedConfig = boardConfigs.find((project) => project.id === configId);
     if (!selectedConfig) {
@@ -2095,7 +2124,8 @@ export default function DIYBuilderPage() {
             configs={boardConfigOptions}
             configsLoading={boardConfigsLoading}
             configListError={boardConfigsError}
-            hasSelectedConfig={Boolean(activeBoardConfigId)}
+            hasSavedConfig={Boolean(activeBoardConfigId)}
+            canContinue={canContinueToPinMapping}
             selectedConfigId={highlightedBoardConfigId}
             selectedConfigMode={selectedConfigMode}
             projectSyncState={projectSyncState}
@@ -2104,7 +2134,7 @@ export default function DIYBuilderPage() {
             onSaveConfig={saveProjectNow}
             onSaveAsNewConfig={saveProjectAsNewConfig}
             onBack={() => setCurrentStep(1)}
-            onNext={() => setCurrentStep(3)}
+            onNext={continueToPinMapping}
             timezone={effectiveTimezone}
           />
         )}
