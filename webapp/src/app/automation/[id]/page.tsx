@@ -7,7 +7,7 @@ import Sidebar from "@/components/Sidebar";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TransformWrapper, TransformComponent, type ReactZoomPanPinchContentRef } from "react-zoom-pan-pinch";
 import { fetchDashboardDevices } from "@/lib/api";
-import { DeviceConfig } from "@/types/device";
+import { DeviceConfig, PinConfig } from "@/types/device";
 import { useToast } from "@/components/ToastContext";
 
 // --- Types ---
@@ -98,6 +98,38 @@ function RealtimeServerClock({ timezone, initialServerTime }: { timezone?: strin
   );
 }
 
+function MetricSelector({
+  value,
+  onChange,
+}: {
+  value?: string;
+  onChange: (metric: "temperature" | "humidity") => void;
+}) {
+  const effectiveMetric = isDhtMetric(value) ? value : "temperature";
+
+  return (
+    <div className="space-y-2">
+      <span className="text-xs font-bold text-slate-500 block">Reading</span>
+      <div className="flex gap-2">
+        {DHT_METRIC_OPTIONS.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`flex-1 rounded-lg border px-3 py-2 text-xs font-bold transition shadow-sm ${
+              effectiveMetric === option.value
+                ? "bg-cyan-600 border-cyan-700 text-white"
+                : "bg-white border-slate-300 text-slate-600 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:text-slate-300"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 
 
 // --- Node Ports Logic ---
@@ -110,10 +142,11 @@ import {
   buildStarterGraph, formatAutomationRunTime,
   buildGraphAutomationPayload, buildRenamePayload,
   getAutomationGraphSaveIssues,
-  getLinearRule, isNumericPin, isSwitchPin,
+  getLinearRule, isDhtMetric, isDhtPin, isNumericPin, isSwitchPin,
   getTimeTriggerWeekdays, buildTimeTriggerConfig,
   formatTimeTriggerValue, formatTimeTriggerSummary,
   formatServerTimePreview, getTriggerKindLabel, getPreferredTriggerKindForPin,
+  DHT_METRIC_OPTIONS, getAutomationMetricLabel, resolveNumericMetricForPin,
   buildConditionStateForTriggerKind, getNodePorts
 } from "@/lib/automation-utils";
 
@@ -1172,6 +1205,12 @@ export default function AutomationPage() {
                        }));
                    };
 
+                   const resolveMetricForPin = (
+                       pin: PinConfig | undefined,
+                       lastState: DeviceConfig["last_state"] | undefined,
+                       currentMetric?: unknown,
+                   ) => resolveNumericMetricForPin(pin, lastState, currentMetric);
+
                    const handleSetTriggerSource = (source: "device" | "time") => {
                        setNodes(prev => prev.map(n => {
                            if (n.id !== trigger.id) return n;
@@ -1193,13 +1232,14 @@ export default function AutomationPage() {
 
                    const handleSetSourceDevice = (devId: string) => {
                        updateConfigMany([
-                           { id: trigger.id, config: { device_id: devId, pin: undefined } },
-                           { id: condition.id, config: { device_id: devId, pin: undefined } }
+                           { id: trigger.id, config: { device_id: devId, pin: undefined, metric: undefined } },
+                           { id: condition.id, config: { device_id: devId, pin: undefined, metric: undefined } }
                        ]);
                    };
 
-                   const handleSetSourcePin = (pinValue: number, mode: string, func: string) => {
-                       const nextTriggerKind = getPreferredTriggerKindForPin({ mode, function: func, gpio_pin: pinValue }, sourceDev?.last_state);
+                   const handleSetSourcePin = (pin: PinConfig) => {
+                       const nextTriggerKind = getPreferredTriggerKindForPin(pin, sourceDev?.last_state);
+                       const nextMetric = resolveMetricForPin(pin, sourceDev?.last_state, trigger.config.metric);
                        setNodes(prev => prev.map(n => {
                            if (n.id === trigger.id) {
                                return {
@@ -1207,7 +1247,8 @@ export default function AutomationPage() {
                                    kind: nextTriggerKind,
                                    config: {
                                        ...n.config,
-                                       pin: pinValue,
+                                       pin: pin.gpio_pin,
+                                       metric: nextTriggerKind === DEVICE_VALUE_TRIGGER_KIND ? nextMetric : undefined,
                                        hour: undefined,
                                        minute: undefined,
                                        weekdays: undefined,
@@ -1217,7 +1258,7 @@ export default function AutomationPage() {
                            if (n.id === condition.id) {
                                return {
                                    ...n,
-                                   ...buildConditionStateForTriggerKind(nextTriggerKind, n.kind, n.config, pinValue),
+                                   ...buildConditionStateForTriggerKind(nextTriggerKind, n.kind, n.config, pin.gpio_pin, nextMetric),
                                };
                            }
                            return n;
@@ -1250,20 +1291,32 @@ export default function AutomationPage() {
                    };
 
                    const handleSetConditionDevice = (devId: string) => {
-                       updateConfigMany([{ id: condition.id, config: { device_id: devId, pin: undefined } }]);
+                       updateConfigMany([{ id: condition.id, config: { device_id: devId, pin: undefined, metric: undefined } }]);
                    };
 
-                   const handleSetConditionPin = (pinValue: number, mode: string, func: string) => {
-                       const nextTriggerKind = isNumericPin({ mode, function: func })
+                   const handleSetConditionPin = (pin: PinConfig) => {
+                       const nextTriggerKind = isNumericPin(pin, conditionDev?.last_state)
                            ? DEVICE_VALUE_TRIGGER_KIND
                            : DEVICE_ON_OFF_TRIGGER_KIND;
+                       const nextMetric = resolveMetricForPin(pin, conditionDev?.last_state, condition.config.metric);
                        setNodes(prev => prev.map(n => {
                            if (n.id !== condition.id) return n;
                            return {
                                ...n,
-                               ...buildConditionStateForTriggerKind(nextTriggerKind, n.kind, n.config, pinValue),
+                               ...buildConditionStateForTriggerKind(nextTriggerKind, n.kind, n.config, pin.gpio_pin, nextMetric),
                            };
                        }));
+                   };
+
+                   const handleSetSourceMetric = (metric: "temperature" | "humidity") => {
+                       updateConfigMany([
+                           { id: trigger.id, config: { metric } },
+                           { id: condition.id, config: { metric } },
+                       ]);
+                   };
+
+                   const handleSetConditionMetric = (metric: "temperature" | "humidity") => {
+                       updateConfigMany([{ id: condition.id, config: { metric } }]);
                    };
 
                    const handleSetTargetDevice = (devId: string) => {
@@ -1377,7 +1430,7 @@ export default function AutomationPage() {
                                                {sourceDev.pin_configurations.map(pin => (
                                                    <button
                                                        key={pin.gpio_pin}
-                                                       onClick={() => handleSetSourcePin(pin.gpio_pin, pin.mode, pin.function || "")}
+                                                       onClick={() => handleSetSourcePin(pin)}
                                                        className={`flex flex-col text-left p-2 border rounded-lg transition-colors ${trigger.config.pin === pin.gpio_pin ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-slate-900'}`}
                                                    >
                                                        <div className="flex items-center justify-between mb-1 w-full gap-2">
@@ -1388,6 +1441,10 @@ export default function AutomationPage() {
                                                    </button>
                                                ))}
                                            </div>
+                                       )}
+
+                                       {trigger.kind === DEVICE_VALUE_TRIGGER_KIND && isDhtPin(sourcePinObj, sourceDev?.last_state) && (
+                                           <MetricSelector value={trigger.config.metric as string | undefined} onChange={handleSetSourceMetric} />
                                        )}
 
                                        {trigger.config.pin !== undefined && trigger.kind === LEGACY_DEVICE_TRIGGER_KIND && (
@@ -1419,7 +1476,7 @@ export default function AutomationPage() {
                                                {conditionDev.pin_configurations.map(pin => (
                                                    <button
                                                        key={pin.gpio_pin}
-                                                       onClick={() => handleSetConditionPin(pin.gpio_pin, pin.mode, pin.function || "")}
+                                                       onClick={() => handleSetConditionPin(pin)}
                                                        className={`flex flex-col text-left p-2 border rounded-lg transition-colors ${condition.config.pin === pin.gpio_pin ? 'border-primary bg-primary/5 dark:bg-primary/10' : 'border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600 bg-white dark:bg-slate-900'}`}
                                                    >
                                                        <div className="flex items-center justify-between mb-1 w-full gap-2">
@@ -1431,11 +1488,15 @@ export default function AutomationPage() {
                                                ))}
                                            </div>
                                        )}
+
                                    </>
                                )}
 
                                {condition.kind === "numeric_compare" && isNumericConditionSource ? (
                                    <div className="space-y-3">
+                                       {isDhtPin(conditionPinObj, conditionDev?.last_state) && (
+                                           <MetricSelector value={condition.config.metric as string | undefined} onChange={handleSetConditionMetric} />
+                                       )}
                                        <div className="flex flex-wrap gap-1.5">
                                            {['gt', 'gte', 'lt', 'lte', 'between'].map(op => (
                                                <button
@@ -1607,11 +1668,13 @@ export default function AutomationPage() {
                                            <span className="text-blue-600 dark:text-blue-400 font-bold">When</span>{" "}
                                            {isTimeTrigger
                                                ? `server time reaches ${formatTimeTriggerSummary(trigger.config)}${scheduleContext?.effective_timezone ? ` (${scheduleContext.effective_timezone})` : ""}`
-                                               : `${getTriggerKindLabel(trigger.kind).toLowerCase()} on ${sourcePinObj?.label || `GPIO ${trigger.config.pin}`} from ${sourceDev?.name}`}
+                                               : trigger.kind === DEVICE_VALUE_TRIGGER_KIND
+                                                   ? `${getAutomationMetricLabel(trigger.config.metric)} on ${sourcePinObj?.label || `GPIO ${trigger.config.pin}`} from ${sourceDev?.name} changes`
+                                                   : `${getTriggerKindLabel(trigger.kind).toLowerCase()} on ${sourcePinObj?.label || `GPIO ${trigger.config.pin}`} from ${sourceDev?.name}`}
                                            {" "}
                                            <span className="text-amber-600 dark:text-amber-500 font-bold">
                                              {condition.kind === 'state_equals' ? (condition.config.expected === 'on' ? 'is ON' : 'is OFF') :
-                                              condition.kind === 'numeric_compare' ? `is ${condition.config.operator === 'between' ? 'between ' + condition.config.value + ' AND ' + condition.config.secondary_value : (condition.config.operator === 'gt' ? '>' : condition.config.operator === 'lt' ? '<' : condition.config.operator === 'gte' ? '>=' : '<=') + ' ' + condition.config.value}` : 'changes'}
+                                              condition.kind === 'numeric_compare' ? `${isDhtMetric(condition.config.metric) ? `${getAutomationMetricLabel(condition.config.metric)} ` : ''}is ${condition.config.operator === 'between' ? 'between ' + condition.config.value + ' AND ' + condition.config.secondary_value : (condition.config.operator === 'gt' ? '>' : condition.config.operator === 'lt' ? '<' : condition.config.operator === 'gte' ? '>=' : '<=') + ' ' + condition.config.value}` : 'changes'}
                                            </span>
                                            , <br/><span className="text-emerald-600 dark:text-emerald-500 font-bold">Then</span> set {targetDev?.pin_configurations.find(p => p.gpio_pin === action.config.pin)?.label || `GPIO ${action.config.pin}`} on {targetDev?.name} to <span className="font-bold">{action.kind === 'set_output' ? (action.config.value ? 'ON' : 'OFF') : action.config.value}</span>.
                                        </p>
@@ -1637,19 +1700,33 @@ export default function AutomationPage() {
                            if (n.type === "trigger" && kind === TIME_TRIGGER_KIND) {
                                return { ...n, kind, config: { ui: n.config.ui, ...buildTimeTriggerConfig(n.config) } };
                            }
-                           return { ...n, kind, config: { ui: n.config.ui, device_id: n.config.device_id, pin: n.config.pin } };
+                           const nextMetric =
+                               kind === DEVICE_VALUE_TRIGGER_KIND || kind === "numeric_compare"
+                                   ? resolveNumericMetricForPin(selectedPinObj, selectedDevice?.last_state, n.config.metric)
+                                   : undefined;
+                           return {
+                               ...n,
+                               kind,
+                               config: { ui: n.config.ui, device_id: n.config.device_id, pin: n.config.pin, metric: nextMetric },
+                           };
                        }));
                    };
                    
                    const handleSetDevice = (device_id: string) => {
-                       setNodes(prev => prev.map(n => n.id === node.id ? { ...n, config: { ui: n.config.ui, device_id } } : n));
+                       setNodes(prev => prev.map(n => n.id === node.id ? { ...n, config: { ui: n.config.ui, device_id, pin: undefined, metric: undefined } } : n));
                    };
                    
-                   const handleSetPin = (pin: number, pinMeta?: { mode?: string; function?: string | null }) => {
+                   const handleSetPin = (pin: number, pinMeta?: PinConfig) => {
                        setNodes(prev => prev.map(n => {
                            if (n.id === node.id) {
-                               const nextKind = n.type === "trigger" ? getPreferredTriggerKindForPin(pinMeta) : n.kind;
-                               const newConfig = { ...n.config, pin };
+                               const nextKind = n.type === "trigger" ? getPreferredTriggerKindForPin(pinMeta, selectedDevice?.last_state) : n.kind;
+                               const nextMetric =
+                                   n.type === "trigger"
+                                       ? resolveNumericMetricForPin(pinMeta, selectedDevice?.last_state, n.config.metric)
+                                       : n.kind === "numeric_compare"
+                                           ? resolveNumericMetricForPin(pinMeta, selectedDevice?.last_state, n.config.metric)
+                                           : undefined;
+                               const newConfig = { ...n.config, pin, metric: nextMetric };
                                delete newConfig.operator;
                                delete newConfig.value;
                                delete newConfig.secondary_value;
@@ -1664,6 +1741,10 @@ export default function AutomationPage() {
                        }));
                    };
 
+                   const handleSetMetric = (metric: "temperature" | "humidity") => {
+                       updateConfig("metric", metric);
+                   };
+
                    const isTimeTriggerNode = node.type === "trigger" && node.kind === TIME_TRIGGER_KIND;
                    const isVirtualNode = isTimeTriggerNode || (node.type === "action" && node.kind === TELEGRAM_ACTION_KIND);
                    const selectedDevice = devices.find(d => d.device_id === node.config.device_id);
@@ -1675,8 +1756,8 @@ export default function AutomationPage() {
                    }) || [];
                    const triggerKindOptions = [
                      { k: TIME_TRIGGER_KIND, l: "Time", enabled: true },
-                     { k: DEVICE_ON_OFF_TRIGGER_KIND, l: "On/Off Event", enabled: !selectedPinObj || isSwitchPin(selectedPinObj) },
-                     { k: DEVICE_VALUE_TRIGGER_KIND, l: "Device Value", enabled: !selectedPinObj || isNumericPin(selectedPinObj) },
+                     { k: DEVICE_ON_OFF_TRIGGER_KIND, l: "On/Off Event", enabled: !selectedPinObj || isSwitchPin(selectedPinObj, selectedDevice?.last_state) },
+                     { k: DEVICE_VALUE_TRIGGER_KIND, l: "Device Value", enabled: !selectedPinObj || isNumericPin(selectedPinObj, selectedDevice?.last_state) },
                    ];
 
                    return (
@@ -1768,6 +1849,12 @@ export default function AutomationPage() {
                                         ))}
                                     </div>
                                  )}
+                             </div>
+                         )}
+
+                         {!isTimeTriggerNode && node.type === "trigger" && node.kind === DEVICE_VALUE_TRIGGER_KIND && isDhtPin(selectedPinObj, selectedDevice?.last_state) && (
+                             <div className="space-y-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+                                 <MetricSelector value={node.config.metric as string | undefined} onChange={handleSetMetric} />
                              </div>
                          )}
 
@@ -1865,6 +1952,9 @@ export default function AutomationPage() {
 
                                  {node.kind === "numeric_compare" && (
                                      <div className="space-y-3">
+                                         {isDhtPin(selectedPinObj, selectedDevice?.last_state) && (
+                                             <MetricSelector value={node.config.metric as string | undefined} onChange={handleSetMetric} />
+                                         )}
                                          <span className="text-xs font-bold text-slate-500 block">Condition</span>
                                          <div className="flex flex-wrap gap-1.5">
                                              {['gt', 'gte', 'lt', 'lte', 'between'].map(op => (

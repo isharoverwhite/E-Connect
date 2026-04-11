@@ -62,6 +62,20 @@ function normalizeExtraParams(
     }
   }
 
+  if (typeof source.input_type === "string" && source.input_type.trim()) {
+    normalized.input_type = source.input_type.trim();
+  }
+  if (
+    source.switch_type === "momentary" ||
+    source.switch_type === "momentary_toggle" ||
+    source.switch_type === "toggle"
+  ) {
+    normalized.switch_type = source.switch_type;
+  }
+  if (typeof source.dht_version === "string" && source.dht_version.trim()) {
+    normalized.dht_version = source.dht_version.trim();
+  }
+
   return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
@@ -117,12 +131,34 @@ export function mapRuntimePinsToPinConfigurations(
 export function getActivePinConfigurations(
   device: Pick<DeviceConfig, "pin_configurations" | "last_state"> | null | undefined,
 ): PinConfig[] {
+  const configuredPins = [...(device?.pin_configurations ?? [])].sort((left, right) => left.gpio_pin - right.gpio_pin);
   const runtimePins = mapRuntimePinsToPinConfigurations(device?.last_state);
   if (runtimePins.length > 0) {
-    return runtimePins;
+    const mergedPins = new Map<number, PinConfig>();
+
+    for (const pin of configuredPins) {
+      mergedPins.set(pin.gpio_pin, pin);
+    }
+
+    for (const runtimePin of runtimePins) {
+      const configuredPin = mergedPins.get(runtimePin.gpio_pin);
+      const mergedExtraParams = {
+        ...(configuredPin?.extra_params ?? {}),
+        ...(runtimePin.extra_params ?? {}),
+      };
+      mergedPins.set(runtimePin.gpio_pin, {
+        ...configuredPin,
+        ...runtimePin,
+        function: runtimePin.function ?? configuredPin?.function,
+        label: runtimePin.label ?? configuredPin?.label,
+        extra_params: Object.keys(mergedExtraParams).length > 0 ? mergedExtraParams : null,
+      });
+    }
+
+    return [...mergedPins.values()].sort((left, right) => left.gpio_pin - right.gpio_pin);
   }
 
-  return [...(device?.pin_configurations ?? [])].sort((left, right) => left.gpio_pin - right.gpio_pin);
+  return configuredPins;
 }
 
 export function arePinConfigurationsEquivalent(

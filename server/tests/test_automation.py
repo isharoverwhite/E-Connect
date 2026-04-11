@@ -159,6 +159,14 @@ def seeded_context():
                     function="temperature_sensor",
                     label="Temperature Probe",
                 ),
+                PinConfiguration(
+                    device_id="sensor-device",
+                    gpio_pin=35,
+                    mode=PinMode.INPUT,
+                    function="climate_sensor",
+                    label="Climate Sensor",
+                    extra_params={"input_type": "dht", "dht_version": "DHT22"},
+                ),
             ]
         )
         db.commit()
@@ -1260,6 +1268,180 @@ def test_process_state_event_ignores_duplicate_numeric_snapshot(seeded_context):
         assert logs[0].status == ExecutionStatus.success
     finally:
         db.close()
+
+
+def test_process_state_event_runs_enabled_automation_for_dht_temperature_metric(seeded_context):
+    user = seeded_context["user"]
+    automation_id = _create_automation_record(
+        {
+            "nodes": [
+                {
+                    "id": "trigger-1",
+                    "type": "trigger",
+                    "kind": "device_value",
+                    "config": {"device_id": "sensor-device", "pin": 35, "metric": "temperature"},
+                },
+                {
+                    "id": "condition-1",
+                    "type": "condition",
+                    "kind": "numeric_compare",
+                    "config": {
+                        "device_id": "sensor-device",
+                        "pin": 35,
+                        "metric": "temperature",
+                        "operator": "gte",
+                        "value": 30,
+                    },
+                },
+                {
+                    "id": "action-1",
+                    "type": "action",
+                    "kind": "set_value",
+                    "config": {"device_id": "dimmer-device", "pin": 13, "value": 180},
+                },
+            ],
+            "edges": [
+                {
+                    "source_node_id": "trigger-1",
+                    "source_port": "event_out",
+                    "target_node_id": "condition-1",
+                    "target_port": "event_in",
+                },
+                {
+                    "source_node_id": "condition-1",
+                    "source_port": "pass_out",
+                    "target_node_id": "action-1",
+                    "target_port": "event_in",
+                },
+            ],
+        },
+        creator_id=user.user_id,
+        name="DHT Temperature Trigger",
+    )
+    published_commands: list[tuple[str, dict]] = []
+
+    def fake_publish(device_id: str, command: dict) -> bool:
+        published_commands.append((device_id, command))
+        return True
+
+    db = TestingSessionLocal()
+    try:
+        logs = process_state_event_for_automations(
+            db,
+            device_id="sensor-device",
+            state_payload={"pins": [{"pin": 35, "value": 301, "temperature": 30.1, "humidity": 58.4}]},
+            publish_command=fake_publish,
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    assert len(logs) == 1
+    assert logs[0].automation_id == automation_id
+    assert published_commands
+    assert published_commands[0][0] == "dimmer-device"
+    assert published_commands[0][1]["brightness"] == 180
+
+
+def test_process_state_event_uses_selected_dht_humidity_metric_for_trigger_changes(seeded_context):
+    user = seeded_context["user"]
+    _create_automation_record(
+        {
+            "nodes": [
+                {
+                    "id": "trigger-1",
+                    "type": "trigger",
+                    "kind": "device_value",
+                    "config": {"device_id": "sensor-device", "pin": 35, "metric": "humidity"},
+                },
+                {
+                    "id": "condition-1",
+                    "type": "condition",
+                    "kind": "numeric_compare",
+                    "config": {
+                        "device_id": "sensor-device",
+                        "pin": 35,
+                        "metric": "humidity",
+                        "operator": "gt",
+                        "value": 60,
+                    },
+                },
+                {
+                    "id": "action-1",
+                    "type": "action",
+                    "kind": "set_value",
+                    "config": {"device_id": "dimmer-device", "pin": 13, "value": 180},
+                },
+            ],
+            "edges": [
+                {
+                    "source_node_id": "trigger-1",
+                    "source_port": "event_out",
+                    "target_node_id": "condition-1",
+                    "target_port": "event_in",
+                },
+                {
+                    "source_node_id": "condition-1",
+                    "source_port": "pass_out",
+                    "target_node_id": "action-1",
+                    "target_port": "event_in",
+                },
+            ],
+        },
+        creator_id=user.user_id,
+        name="DHT Humidity Trigger",
+    )
+    published_commands: list[tuple[str, dict]] = []
+
+    def fake_publish(device_id: str, command: dict) -> bool:
+        published_commands.append((device_id, command))
+        return True
+
+    initial_payload = {"pins": [{"pin": 35, "value": 260, "temperature": 26.0, "humidity": 60.0}]}
+    same_humidity_payload = {"pins": [{"pin": 35, "value": 275, "temperature": 27.5, "humidity": 60.0}]}
+    changed_humidity_payload = {"pins": [{"pin": 35, "value": 275, "temperature": 27.5, "humidity": 61.3}]}
+
+    db = TestingSessionLocal()
+    try:
+        db.add(
+            DeviceHistory(
+                device_id="sensor-device",
+                event_type=EventType.state_change,
+                payload=json.dumps(initial_payload),
+            )
+        )
+        db.flush()
+        first_logs = process_state_event_for_automations(
+            db,
+            device_id="sensor-device",
+            state_payload=same_humidity_payload,
+            publish_command=fake_publish,
+        )
+        db.commit()
+
+        db.add(
+            DeviceHistory(
+                device_id="sensor-device",
+                event_type=EventType.state_change,
+                payload=json.dumps(same_humidity_payload),
+            )
+        )
+        db.flush()
+        second_logs = process_state_event_for_automations(
+            db,
+            device_id="sensor-device",
+            state_payload=changed_humidity_payload,
+            publish_command=fake_publish,
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    assert first_logs == []
+    assert len(second_logs) == 1
+    assert len(published_commands) == 1
+    assert published_commands[0][0] == "dimmer-device"
+    assert published_commands[0][1]["brightness"] == 180
 
 
 def test_process_state_event_runs_enabled_automation_for_on_off_trigger(monkeypatch, seeded_context):

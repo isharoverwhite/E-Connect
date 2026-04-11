@@ -650,6 +650,15 @@ def test_unpair_stays_hidden_until_board_requests_pairing_again():
     )
     assert delete_response.status_code == 200, delete_response.text
 
+    db = TestingSessionLocal()
+    unpaired_device = db.query(Device).filter(Device.device_id == project["device_id"]).first()
+    assert unpaired_device is not None
+    assert unpaired_device.mac_address != handshake_payload["mac_address"]
+    assert unpaired_device.auth_status == AuthStatus.pending
+    assert unpaired_device.pairing_requested_at is None
+    assert unpaired_device.provisioning_project_id == project["project_id"]
+    db.close()
+
     pending_after_unpair = client.get(
         "/api/v1/devices?auth_status=pending",
         headers=admin_headers,
@@ -671,6 +680,81 @@ def test_unpair_stays_hidden_until_board_requests_pairing_again():
     assert len(pending_devices) == 1
     assert pending_devices[0]["device_id"] == project["device_id"]
     assert pending_devices[0]["pairing_requested_at"] is not None
+
+
+def test_unpair_releases_mac_binding_for_a_new_secure_project():
+    household, admin, _member, _observer = _seed_household(prefix="unpair-release")
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+
+    room = _create_room(admin_headers, name="Swap Lab")
+    original_project = _insert_diy_project(
+        user_id=admin["user_id"],
+        room_id=room["room_id"],
+        project_name="Original Board",
+    )
+    reused_mac = "AA:BB:CC:21:43:65"
+
+    first_handshake = client.post(
+        "/api/v1/config",
+        json={
+            "device_id": original_project["device_id"],
+            "project_id": original_project["project_id"],
+            "secret_key": original_project["secret_key"],
+            "mac_address": reused_mac,
+            "name": "Original Board",
+            "mode": "no-code",
+            "firmware_version": "build-original01",
+            "pins": [],
+        },
+    )
+    assert first_handshake.status_code == 200, first_handshake.text
+    assert first_handshake.json()["auth_status"] == "approved"
+
+    delete_response = client.delete(
+        f"/api/v1/device/{original_project['device_id']}",
+        headers=admin_headers,
+    )
+    assert delete_response.status_code == 200, delete_response.text
+
+    replacement_project = _insert_diy_project(
+        user_id=admin["user_id"],
+        room_id=room["room_id"],
+        project_name="Replacement Board",
+    )
+
+    second_handshake = client.post(
+        "/api/v1/config",
+        json={
+            "device_id": replacement_project["device_id"],
+            "project_id": replacement_project["project_id"],
+            "secret_key": replacement_project["secret_key"],
+            "mac_address": reused_mac,
+            "name": "Replacement Board",
+            "mode": "no-code",
+            "firmware_version": "build-replacement01",
+            "pins": [],
+        },
+    )
+    assert second_handshake.status_code == 200, second_handshake.text
+    assert second_handshake.json()["auth_status"] == "approved"
+    assert second_handshake.json()["device_id"] == replacement_project["device_id"]
+    assert second_handshake.json()["mac_address"] == reused_mac
+
+    db = TestingSessionLocal()
+    original_device = db.query(Device).filter(Device.device_id == original_project["device_id"]).first()
+    replacement_device = db.query(Device).filter(Device.device_id == replacement_project["device_id"]).first()
+    assert original_device is not None
+    assert replacement_device is not None
+    assert original_device.mac_address != reused_mac
+    assert original_device.provisioning_project_id == original_project["project_id"]
+    assert replacement_device.mac_address == reused_mac
+    assert replacement_device.provisioning_project_id == replacement_project["project_id"]
+    db.close()
 
 
 def test_secure_handshake_persists_firmware_revision_for_device_directory():

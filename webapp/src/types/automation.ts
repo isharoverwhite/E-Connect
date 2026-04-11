@@ -7,6 +7,7 @@ export interface AutomationGraphNodeConfig {
   ui?: { x: number; y: number };
   device_id?: string;
   pin?: number;
+  metric?: string;
   operator?: string;
   value?: number | string | boolean;
   secondary_value?: number | string | boolean;
