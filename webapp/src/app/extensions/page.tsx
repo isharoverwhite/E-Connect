@@ -172,17 +172,17 @@ export default function ExtensionsLibrary() {
                                     <button
                                         onClick={() => void handleUpload()}
                                         disabled={isUploading || !selectedFile}
-                                        className="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+                                        className="inline-flex items-center justify-center w-[160px] flex-none rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
                                     >
                                         {isUploading ? (
                                             <>
-                                                <span className="material-icons-round mr-2 animate-spin text-[18px]">autorenew</span>
-                                                Uploading...
+                                                <span className="material-icons-round mr-2 animate-spin text-[18px] flex-none">autorenew</span>
+                                                <span className="flex-none">Uploading...</span>
                                             </>
                                         ) : (
                                             <>
-                                                <span className="material-icons-round mr-2 text-[18px]">inventory_2</span>
-                                                Install package
+                                                <span className="material-icons-round mr-2 text-[18px] flex-none">inventory_2</span>
+                                                <span className="flex-none">Install package</span>
                                             </>
                                         )}
                                     </button>
@@ -302,12 +302,12 @@ export default function ExtensionsLibrary() {
                                                                     ? "Delete linked external devices before removing this package."
                                                                     : `Delete ${extension.name}`
                                                             }
-                                                            className="inline-flex shrink-0 items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition-colors hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200 dark:hover:bg-rose-500/20 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-500"
+                                                            className="inline-flex shrink-0 w-[110px] flex-none justify-center items-center gap-2 rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 transition-colors hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200 dark:hover:bg-rose-500/20 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-500"
                                                         >
-                                                            <span className={`material-icons-round text-[16px] ${deletingExtensionId === extension.extension_id ? "animate-spin" : ""}`}>
+                                                            <span className={`material-icons-round flex-none text-[16px] ${deletingExtensionId === extension.extension_id ? "animate-spin" : ""}`}>
                                                                 {deletingExtensionId === extension.extension_id ? "autorenew" : "delete"}
                                                             </span>
-                                                            {deletingExtensionId === extension.extension_id ? "Deleting" : "Delete"}
+                                                            <span className="flex-none">{deletingExtensionId === extension.extension_id ? "Deleting" : "Delete"}</span>
                                                         </button>
                                                     </div>
                                                 </div>

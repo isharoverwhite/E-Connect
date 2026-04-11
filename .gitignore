@@ -102,3 +102,10 @@ TASK_REPORT.md
 /DIAGRAMS*.md
 /OUR*.md
 /USER*.md
+# Deployment scripts with secrets
+scripts/deploy_production_auto*.py
+scripts/fetch_*.py
+scripts/find_*.py
+scripts/*_ps.py
+scripts/*_v.py
+scripts/cat_*.py

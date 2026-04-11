@@ -413,16 +413,16 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                     <button
                                         type="submit"
                                         disabled={isCreatingDevice}
-                                        className="inline-flex items-center justify-center min-w-[140px] rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+                                        className="inline-flex items-center justify-center w-[170px] flex-none rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
                                     >
                                         {isCreatingDevice ? (
                                             <>
-                                                <span className="material-icons-round mr-2 animate-spin text-[18px]">autorenew</span>
-                                                Creating...
+                                                <span className="material-icons-round mr-2 animate-spin text-[18px] flex-none">autorenew</span>
+                                                <span className="flex-none">Creating...</span>
                                             </>
                                         ) : (
                                             <>
-                                                Create Device
+                                                <span className="flex-none">Create Device</span>
                                             </>
                                         )}
                                     </button>
