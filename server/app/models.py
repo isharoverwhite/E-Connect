@@ -416,8 +416,8 @@ class SystemStatusResponse(BaseModel):
 class FirmwareTemplateStatusResponse(BaseModel):
     source_repo: str
     auto_update_enabled: bool = True
-    active_source: Literal["bundled", "release"]
-    active_path: str
+    active_source: Literal["bundled", "release", "missing"]
+    active_path: Optional[str] = None
     active_revision: Optional[str] = None
     active_release_tag: Optional[str] = None
     bundled_revision: Optional[str] = None

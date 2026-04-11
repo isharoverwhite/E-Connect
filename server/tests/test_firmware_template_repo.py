@@ -85,16 +85,14 @@ def get_token(client: TestClient, username: str = "firmware-admin") -> str:
 
 
 def configure_template_paths(monkeypatch, tmp_path: Path) -> tuple[Path, Path, Path]:
-    bundled_dir = tmp_path / "bundled"
     install_root = tmp_path / "firmware-template"
     current_dir = install_root / "current"
     state_file = install_root / "state.json"
 
-    monkeypatch.setattr(firmware_template_repo, "BUNDLED_FIRMWARE_TEMPLATE_DIR", bundled_dir)
     monkeypatch.setattr(firmware_template_repo, "FIRMWARE_TEMPLATE_INSTALL_ROOT", install_root)
     monkeypatch.setattr(firmware_template_repo, "FIRMWARE_TEMPLATE_CURRENT_DIR", current_dir)
     monkeypatch.setattr(firmware_template_repo, "FIRMWARE_TEMPLATE_STATE_FILE", state_file)
-    return bundled_dir, install_root, current_dir
+    return install_root, current_dir, state_file
 
 
 def create_template_dir(root: Path, revision: str, *, marker: str) -> None:
@@ -122,16 +120,19 @@ def build_release_archive(source_dir: Path, archive_path: Path, *, prefix: str) 
 
 
 def test_get_latest_firmware_revision_prefers_installed_release(monkeypatch, tmp_path):
-    bundled_dir, _, current_dir = configure_template_paths(monkeypatch, tmp_path)
-    create_template_dir(bundled_dir, "1.1.4", marker="bundled")
+    _, current_dir, _ = configure_template_paths(monkeypatch, tmp_path)
     create_template_dir(current_dir, "2.0.0", marker="installed")
 
     assert builder.get_latest_firmware_revision() == "2.0.0"
 
+def test_get_latest_firmware_revision_returns_none_when_missing(monkeypatch, tmp_path):
+    configure_template_paths(monkeypatch, tmp_path)
+
+    assert builder.get_latest_firmware_revision() is None
+
 
 def test_copy_firmware_template_prefers_installed_release_template(monkeypatch, tmp_path):
-    bundled_dir, _, current_dir = configure_template_paths(monkeypatch, tmp_path)
-    create_template_dir(bundled_dir, "1.1.4", marker="bundled")
+    _, current_dir, _ = configure_template_paths(monkeypatch, tmp_path)
     create_template_dir(current_dir, "2.0.0", marker="installed")
     monkeypatch.setenv("FIRMWARE_TEMPLATE_AUTO_UPDATE", "0")
 
@@ -143,8 +144,7 @@ def test_copy_firmware_template_prefers_installed_release_template(monkeypatch, 
 
 
 def test_refresh_firmware_template_release_installs_latest_release(monkeypatch, tmp_path):
-    bundled_dir, install_root, current_dir = configure_template_paths(monkeypatch, tmp_path)
-    create_template_dir(bundled_dir, "1.1.4", marker="bundled")
+    install_root, current_dir, _ = configure_template_paths(monkeypatch, tmp_path)
 
     release_source_dir = tmp_path / "release-source"
     create_template_dir(release_source_dir, "2.0.0", marker="release")
@@ -170,6 +170,7 @@ def test_refresh_firmware_template_release_installs_latest_release(monkeypatch, 
     status = firmware_template_repo.refresh_firmware_template_release(force=True)
 
     assert status["active_source"] == "release"
+    assert status["bundled_revision"] is None
     assert status["installed_release_tag"] == "v2.0.0"
     assert status["active_revision"] == "2.0.0"
     assert status["update_available"] is False
@@ -179,8 +180,7 @@ def test_refresh_firmware_template_release_installs_latest_release(monkeypatch, 
 
 
 def test_refresh_firmware_template_release_sets_pending_notification(monkeypatch, tmp_path):
-    bundled_dir, _, _ = configure_template_paths(monkeypatch, tmp_path)
-    create_template_dir(bundled_dir, "1.1.4", marker="bundled")
+    configure_template_paths(monkeypatch, tmp_path)
 
     release_source_dir = tmp_path / "release-source"
     create_template_dir(release_source_dir, "2.0.0", marker="release")
@@ -222,7 +222,7 @@ def test_refresh_firmware_template_endpoint_returns_status(monkeypatch):
         "active_path": "/data/firmware-template/current",
         "active_revision": "1.1.4",
         "active_release_tag": "v1.1.4",
-        "bundled_revision": "1.1.4",
+        "bundled_revision": None,
         "installed_release_tag": "v1.1.4",
         "latest_release_tag": "v1.1.4",
         "latest_release_published_at": "2026-04-10T16:00:00Z",
