@@ -3940,6 +3940,7 @@ async def send_command(
     """
     command = dict(command or {})
     supplied_password = command.pop("password", None)
+    current_user_id = current_user.user_id
 
     device = db.query(Device).filter(Device.device_id == device_id).first()
     if device is None:
@@ -4071,7 +4072,12 @@ async def send_command(
     command["command_id"] = command_id
 
     # Publish via MQTT
-    success = mqtt_manager.publish_command(device_id, command)
+    publish_command = (
+        mqtt_manager.publish_command
+        if command.get("action") == "ota"
+        else mqtt_manager.enqueue_command
+    )
+    success = publish_command(device_id, command)
 
     # If the OTA publish failed entirely, revert the job out of flashing
     if not success and ota_job and ota_job.status == JobStatus.flashing:
@@ -4092,7 +4098,7 @@ async def send_command(
         device_id=device_id,
         event_type=event_type,
         payload=str(command),
-        changed_by=current_user.user_id
+        changed_by=current_user_id
     )
     db.add(history)
     db.commit()
@@ -4106,7 +4112,7 @@ async def send_command(
             device_id=device_id,
             event_type=EventType.state_change,
             payload=json.dumps(predicted_state),
-            changed_by=current_user.user_id,
+            changed_by=current_user_id,
         )
         db.add(predicted_history)
         db.commit()
@@ -4158,7 +4164,7 @@ async def send_command(
                                 device_id=device_id,
                                 event_type=EventType.command_failed,
                                 payload=json.dumps({"command_id": command_id, "reason": "timeout"}),
-                                changed_by=current_user.user_id
+                                changed_by=current_user_id,
                             )
                         )
                         db_bg.commit()

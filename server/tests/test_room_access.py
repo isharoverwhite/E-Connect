@@ -311,7 +311,7 @@ def reset_state():
 
 
 def test_room_access_filters_devices_and_commands(monkeypatch):
-    monkeypatch.setattr("app.api.mqtt_manager.publish_command", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("app.api.mqtt_manager.enqueue_command", lambda *_args, **_kwargs: True)
 
     household, admin, member, observer = _seed_household()
     admin_headers = _auth_headers(
@@ -382,8 +382,8 @@ def test_room_access_filters_devices_and_commands(monkeypatch):
 
 
 def test_pwm_command_persists_restore_brightness_and_reuses_it_on_power_on(monkeypatch):
-    publish_mock = Mock(return_value=True)
-    monkeypatch.setattr("app.api.mqtt_manager.publish_command", publish_mock)
+    enqueue_mock = Mock(return_value=True)
+    monkeypatch.setattr("app.api.mqtt_manager.enqueue_command", enqueue_mock)
     ws_mock = Mock()
     monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", ws_mock)
 
@@ -413,6 +413,9 @@ def test_pwm_command_persists_restore_brightness_and_reuses_it_on_power_on(monke
         device_id="device-dimmer",
         payload={
             "kind": "action",
+            "event": "ota_status",
+            "status": "success",
+            "job_id": "old-ota-job",
             "pin": 5,
             "value": 1,
             "brightness": 250,
@@ -445,11 +448,16 @@ def test_pwm_command_persists_restore_brightness_and_reuses_it_on_power_on(monke
     assert off_payload["last_state"]["value"] == 0
     assert off_payload["last_state"]["brightness"] == 0
     assert off_payload["last_state"]["restore_brightness"] == 250
+    assert off_payload["last_state"]["predicted"] is True
+    assert "event" not in off_payload["last_state"]
+    assert "status" not in off_payload["last_state"]
+    assert "job_id" not in off_payload["last_state"]
     assert off_payload["last_state"]["pins"][0]["restore_brightness"] == 250
 
     dashboard_response = client.get("/api/v1/dashboard/devices", headers=admin_headers)
     assert dashboard_response.status_code == 200
     assert dashboard_response.json()[0]["last_state"]["pins"][0]["restore_brightness"] == 250
+    assert dashboard_response.json()[0]["last_state"]["predicted"] is True
 
     on_response = client.post(
         "/api/v1/device/device-dimmer/command",
@@ -462,8 +470,9 @@ def test_pwm_command_persists_restore_brightness_and_reuses_it_on_power_on(monke
     assert on_payload["last_state"]["value"] == 1
     assert on_payload["last_state"]["brightness"] == 250
     assert on_payload["last_state"]["restore_brightness"] == 250
+    assert on_payload["last_state"]["predicted"] is True
 
-    last_command = publish_mock.call_args_list[-1].args[1]
+    last_command = enqueue_mock.call_args_list[-1].args[1]
     assert last_command["brightness"] == 250
 
     db = TestingSessionLocal()

@@ -208,6 +208,16 @@ export function getBrightnessState(
   return fallback;
 }
 
+function isConfirmedStateSnapshot(state: DeviceStateSnapshot | null | undefined): boolean {
+  if (!state) {
+    return false;
+  }
+  if (state.predicted === true) {
+    return false;
+  }
+  return state.kind !== "action";
+}
+
 export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig, pin: PinConfig, isOnline: boolean }) {
   const [requestPending, setRequestPending] = useState(false);
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
@@ -228,15 +238,16 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
   const pwmRangeMax = Math.max(pwmMin, pwmMax);
   const pwmOffValue = pwmMin > pwmMax ? pwmMin : 0;
   const pwmSliderStyle = pwmMin > pwmMax ? { direction: "rtl" as const } : undefined;
+  const hasConfirmedState = isConfirmedStateSnapshot(config.last_state);
 
   const pinState = getStatePin(config.last_state, pin.mode === 'I2C' ? null : pin.gpio_pin);
   const baselineToggleState = getBinaryState(config.last_state, pin.gpio_pin);
   const baselineSliderValue = getBrightnessState(config.last_state, pin.gpio_pin, pwmMin);
 
   const toggleTargetMatched =
-    optimisticToggleState !== null && baselineToggleState === optimisticToggleState;
+    optimisticToggleState !== null && hasConfirmedState && baselineToggleState === optimisticToggleState;
   const sliderTargetMatched =
-    optimisticSliderValue !== null && baselineSliderValue === optimisticSliderValue;
+    optimisticSliderValue !== null && hasConfirmedState && baselineSliderValue === optimisticSliderValue;
   const commandStateSynced =
     (optimisticToggleState === null || toggleTargetMatched) &&
     (optimisticSliderValue === null || sliderTargetMatched);
