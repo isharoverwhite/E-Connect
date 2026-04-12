@@ -27,6 +27,7 @@ from .mqtt import (
     build_predicted_mqtt_state,
     load_latest_device_state_payload,
     mqtt_manager,
+    sanitize_physical_device_state_payload,
 )
 from .runtime_timestamps import normalize_build_job_timestamp, normalize_utc_naive_timestamp
 from .ws_manager import manager as ws_manager
@@ -450,6 +451,10 @@ def _calculate_system_overall_status(
 
 def _attach_runtime_state(db: Session, device: Device) -> Device:
     _latest_state_record, latest_state_payload = load_latest_device_state_payload(db, device.device_id)
+    latest_state_payload = sanitize_physical_device_state_payload(
+        latest_state_payload,
+        device.pin_configurations,
+    )
     setattr(device, "last_state", latest_state_payload)
 
     return device

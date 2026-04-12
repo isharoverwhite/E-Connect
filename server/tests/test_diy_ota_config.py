@@ -2558,6 +2558,203 @@ def test_mqtt_state_persists_reported_firmware_revision():
     assert device.firmware_version == "build-new1234"
 
 
+def test_dashboard_devices_filters_stale_runtime_pins_not_in_pin_configurations():
+    db = TestingSessionLocal()
+    _user, _room, _project, device = create_test_data(db)
+
+    db.add_all(
+        [
+            PinConfiguration(
+                device_id=device.device_id,
+                gpio_pin=0,
+                mode="INPUT",
+                function="Tốc độ",
+                label="Living GPIO0",
+                extra_params={"input_type": "tachometer", "switch_type": "momentary"},
+            ),
+            PinConfiguration(
+                device_id=device.device_id,
+                gpio_pin=3,
+                mode="PWM",
+                function="Quạt",
+                label="Living GPIO3",
+                extra_params={"min_value": 0, "max_value": 255, "input_type": "switch", "switch_type": "momentary"},
+            ),
+        ]
+    )
+    db.add(
+        DeviceHistory(
+            device_id=device.device_id,
+            event_type="state_change",
+            payload=json.dumps(
+                {
+                    "kind": "state",
+                    "pins": [
+                        {
+                            "pin": 0,
+                            "mode": "INPUT",
+                            "function": "Tốc độ",
+                            "label": "Living GPIO0",
+                            "extra_params": {"input_type": "tachometer", "switch_type": "momentary"},
+                            "value": 5227,
+                        },
+                        {
+                            "pin": 3,
+                            "mode": "PWM",
+                            "function": "Quạt",
+                            "label": "Living GPIO3",
+                            "extra_params": {"min_value": 0, "max_value": 255, "input_type": "switch", "switch_type": "momentary"},
+                            "value": 1,
+                            "brightness": 128,
+                        },
+                        {
+                            "pin": 4,
+                            "mode": "INPUT",
+                            "function": "input",
+                            "label": "Quạt GPIO4",
+                            "extra_params": {"input_type": "switch", "switch_type": "momentary_toggle"},
+                            "value": 0,
+                        },
+                    ],
+                }
+            ),
+        )
+    )
+    db.commit()
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    res = client.get(
+        "/api/v1/dashboard/devices",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200, res.text
+    dashboard_device = next(item for item in res.json() if item["device_id"] == device.device_id)
+    pins = dashboard_device["last_state"]["pins"]
+    assert [row["pin"] for row in pins] == [0, 3]
+    assert all(row["pin"] != 4 for row in pins)
+    assert pins[0]["value"] == 5227
+    assert pins[1]["value"] == 1
+    assert pins[1]["brightness"] == 128
+
+
+def test_mqtt_state_prunes_stale_unconfigured_pins_from_previous_snapshot():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    _user, _room, _project, device = create_test_data(db)
+
+    db.add_all(
+        [
+            PinConfiguration(
+                device_id=device.device_id,
+                gpio_pin=0,
+                mode="INPUT",
+                function="Tốc độ",
+                label="Living GPIO0",
+                extra_params={"input_type": "tachometer", "switch_type": "momentary"},
+            ),
+            PinConfiguration(
+                device_id=device.device_id,
+                gpio_pin=3,
+                mode="PWM",
+                function="Quạt",
+                label="Living GPIO3",
+                extra_params={"min_value": 0, "max_value": 255, "input_type": "switch", "switch_type": "momentary"},
+            ),
+        ]
+    )
+    db.add(
+        DeviceHistory(
+            device_id=device.device_id,
+            event_type="state_change",
+            payload=json.dumps(
+                {
+                    "kind": "state",
+                    "pins": [
+                        {
+                            "pin": 0,
+                            "mode": "INPUT",
+                            "function": "Tốc độ",
+                            "label": "Living GPIO0",
+                            "extra_params": {"input_type": "tachometer", "switch_type": "momentary"},
+                            "value": 5200,
+                        },
+                        {
+                            "pin": 3,
+                            "mode": "PWM",
+                            "function": "Quạt",
+                            "label": "Living GPIO3",
+                            "extra_params": {"min_value": 0, "max_value": 255, "input_type": "switch", "switch_type": "momentary"},
+                            "value": 1,
+                            "brightness": 96,
+                        },
+                        {
+                            "pin": 4,
+                            "mode": "INPUT",
+                            "function": "input",
+                            "label": "Quạt GPIO4",
+                            "extra_params": {"input_type": "switch", "switch_type": "momentary_toggle"},
+                            "value": 1,
+                        },
+                    ],
+                }
+            ),
+        )
+    )
+    db.commit()
+
+    mgr = MQTTClientManager()
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps(
+        {
+            "firmware_version": "build-new1234",
+            "pins": [
+                {
+                    "pin": 0,
+                    "mode": "INPUT",
+                    "function": "Tốc độ",
+                    "label": "Living GPIO0",
+                    "extra_params": {"input_type": "tachometer", "switch_type": "momentary"},
+                    "value": 5300,
+                },
+                {
+                    "pin": 3,
+                    "mode": "PWM",
+                    "function": "Quạt",
+                    "label": "Living GPIO3",
+                    "extra_params": {"min_value": 0, "max_value": 255, "input_type": "switch", "switch_type": "momentary"},
+                    "value": 1,
+                    "brightness": 128,
+                },
+            ],
+        }
+    )
+
+    with patch("app.mqtt.SessionLocal", return_value=db_mock):
+        mgr.process_state_message(device.device_id, payload)
+
+    latest = (
+        db.query(DeviceHistory)
+        .filter(
+            DeviceHistory.device_id == device.device_id,
+            DeviceHistory.event_type == "state_change",
+        )
+        .order_by(DeviceHistory.id.desc())
+        .first()
+    )
+    assert latest is not None
+
+    state_payload = json.loads(latest.payload)
+    assert [row["pin"] for row in state_payload["pins"]] == [0, 3]
+    assert all(row["pin"] != 4 for row in state_payload["pins"])
+
+
 def test_mqtt_reconcile_ota_mismatch_recent():
     from app.mqtt import MQTTClientManager
     import json

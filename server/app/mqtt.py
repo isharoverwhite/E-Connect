@@ -490,10 +490,6 @@ def _build_physical_device_rows(
     pin_configurations: Iterable[Any],
 ) -> tuple[dict[int, dict[str, Any]], dict[int, dict[str, Any]], dict[int, Any]]:
     previous_rows = _extract_state_pin_rows_by_pin(previous_state)
-    rows_by_pin: dict[int, dict[str, Any]] = {
-        pin_number: _copy_state_pin_row(row)
-        for pin_number, row in previous_rows.items()
-    }
     pin_config_map: dict[int, Any] = {}
 
     for pin_config in pin_configurations:
@@ -501,16 +497,57 @@ def _build_physical_device_rows(
         if pin_number is None:
             continue
         pin_config_map[pin_number] = pin_config
+
+    if pin_config_map:
+        rows_by_pin: dict[int, dict[str, Any]] = {}
+    else:
+        rows_by_pin = {
+            pin_number: _copy_state_pin_row(row)
+            for pin_number, row in previous_rows.items()
+        }
+
+    for pin_number, pin_config in pin_config_map.items():
         config_row = _build_pin_row_from_config(pin_config)
+        previous_row = previous_rows.get(pin_number)
         rows_by_pin[pin_number] = {
             **config_row,
-            **rows_by_pin.get(pin_number, {}),
+            **(_copy_state_pin_row(previous_row) if isinstance(previous_row, Mapping) else {}),
         }
 
     for pin_number, row in rows_by_pin.items():
         _enrich_restore_fields(row, previous_row=previous_rows.get(pin_number))
 
     return rows_by_pin, previous_rows, pin_config_map
+
+
+def sanitize_physical_device_state_payload(
+    state_payload: Mapping[str, Any] | None,
+    pin_configurations: Iterable[Any],
+) -> dict[str, Any] | None:
+    if not isinstance(state_payload, Mapping):
+        return None
+
+    rows_by_pin, _previous_rows, pin_config_map = _build_physical_device_rows(state_payload, pin_configurations)
+    if not pin_config_map:
+        copied_payload = _copy_json_value(state_payload)
+        return copied_payload if isinstance(copied_payload, dict) else None
+
+    reported_at = None
+    raw_reported_at = state_payload.get("reported_at")
+    if isinstance(raw_reported_at, str) and raw_reported_at.strip():
+        reported_at = raw_reported_at
+
+    metadata = {
+        key: _copy_json_value(value)
+        for key, value in state_payload.items()
+        if key not in {"pin", "value", "brightness", "restore_value", "restore_brightness", "pins", "reported_at"}
+    }
+
+    return _finalize_state_payload(
+        rows_by_pin,
+        metadata=metadata,
+        reported_at=reported_at,
+    )
 
 
 def load_latest_device_state_payload(db: Session, device_id: str) -> tuple[DeviceHistory | None, dict[str, Any] | None]:
@@ -544,6 +581,8 @@ def enrich_reported_mqtt_state(
     incoming_rows = _extract_state_pin_rows_by_pin(state_payload)
 
     for pin_number, incoming_row in incoming_rows.items():
+        if pin_config_map and pin_number not in pin_config_map:
+            continue
         current_row = rows_by_pin.get(pin_number, {})
         rows_by_pin[pin_number] = {
             **current_row,
