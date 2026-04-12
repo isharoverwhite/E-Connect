@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react';
 
 export default function MqttWarningBanner() {
+    const HEALTH_POLL_INTERVAL_MS = 30000;
     const [mqttStatus, setMqttStatus] = useState<'connected' | 'disconnected' | 'unknown'>('connected');
 
     useEffect(() => {
@@ -36,8 +37,8 @@ export default function MqttWarningBanner() {
         // Check immediately on mount
         void checkHealth();
 
-        // Then poll every 5 seconds
-        const interval = setInterval(checkHealth, 5000);
+        // Background warning state does not need aggressive polling on every page.
+        const interval = setInterval(checkHealth, HEALTH_POLL_INTERVAL_MS);
         return () => {
             mounted = false;
             clearInterval(interval);
