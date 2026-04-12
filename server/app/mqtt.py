@@ -242,6 +242,13 @@ _STATE_METADATA_EXCLUDED_KEYS = {
     "reported_at",
     "command_id",
     "applied",
+    "predicted",
+}
+_PREDICTED_STATE_STALE_METADATA_KEYS = {
+    "event",
+    "job_id",
+    "message",
+    "status",
 }
 
 
@@ -555,6 +562,7 @@ def enrich_reported_mqtt_state(
         _enrich_restore_fields(row, previous_row=previous_rows.get(pin_number))
 
     metadata = _copy_snapshot_metadata(previous_state, state_payload)
+    metadata["predicted"] = False
     return _finalize_state_payload(
         rows_by_pin,
         metadata=metadata,
@@ -620,7 +628,11 @@ def build_predicted_mqtt_state(
     _enrich_restore_fields(target_row, previous_row=previous_rows.get(target_pin))
     rows_by_pin[target_pin] = target_row
 
-    metadata = _copy_snapshot_metadata(previous_state, {"kind": command_kind})
+    metadata = _copy_snapshot_metadata(previous_state)
+    for key in _PREDICTED_STATE_STALE_METADATA_KEYS:
+        metadata.pop(key, None)
+    metadata["kind"] = command_kind
+    metadata["predicted"] = True
     if not metadata.get("kind"):
         metadata["kind"] = command_kind
 

@@ -59,6 +59,7 @@ export interface DeviceStatePin {
 
 export interface DeviceStateSnapshot {
     kind?: string;
+    predicted?: boolean;
     device_id?: string;
     pin?: number;
     value?: number | boolean;
