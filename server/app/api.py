@@ -4093,7 +4093,8 @@ async def send_command(
     else:
         event_type = EventType.command_failed
 
-    # Log command request/failure
+    # Persist command and predicted-state history in one transaction to avoid
+    # paying two separate database fsyncs for a single WebUI action.
     history = DeviceHistory(
         device_id=device_id,
         event_type=event_type,
@@ -4101,12 +4102,8 @@ async def send_command(
         changed_by=current_user_id
     )
     db.add(history)
-    db.commit()
 
-    if not success:
-        return {"status": "failed", "message": "Failed to publish to MQTT broker"}
-
-    predicted_state_history_id: int | None = None
+    predicted_history: DeviceHistory | None = None
     if isinstance(predicted_state, dict):
         predicted_history = DeviceHistory(
             device_id=device_id,
@@ -4115,7 +4112,14 @@ async def send_command(
             changed_by=current_user_id,
         )
         db.add(predicted_history)
-        db.commit()
+
+    db.commit()
+
+    if not success:
+        return {"status": "failed", "message": "Failed to publish to MQTT broker"}
+
+    predicted_state_history_id: int | None = None
+    if predicted_history is not None:
         predicted_state_history_id = predicted_history.id
         try:
             ws_manager.broadcast_device_event_sync(
