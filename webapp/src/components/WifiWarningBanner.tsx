@@ -8,6 +8,7 @@ import { fetchWifiCredentials } from '@/lib/wifi-credentials';
 import Link from 'next/link';
 
 export default function WifiWarningBanner() {
+    const WIFI_POLL_INTERVAL_MS = 30000;
     const { user } = useAuth();
     const [hasWifi, setHasWifi] = useState<boolean | null>(true);
 
@@ -33,8 +34,8 @@ export default function WifiWarningBanner() {
 
         void checkWifi();
 
-        // Periodically check every 5 seconds
-        const interval = setInterval(checkWifi, 5000);
+        // Background warning state does not need aggressive polling on every page.
+        const interval = setInterval(checkWifi, WIFI_POLL_INTERVAL_MS);
         return () => {
             mounted = false;
             clearInterval(interval);
