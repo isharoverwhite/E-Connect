@@ -2080,7 +2080,7 @@ def test_mqtt_state_multi_pin_payload_acknowledges_pending_command():
         "pin": 2,
         "value": 1,
         "brightness": None,
-        "timestamp": datetime.utcnow().timestamp(),
+        "timestamp": datetime.now(timezone.utc).timestamp(),
         "command_id": "cmd-1",
     }
 
@@ -2096,6 +2096,52 @@ def test_mqtt_state_multi_pin_payload_acknowledges_pending_command():
                 {"pin": 2, "mode": "OUTPUT", "label": "LED", "value": 1},
                 {"pin": 8, "mode": "PWM", "label": "Dimmer", "value": 0, "brightness": 0},
             ],
+        }
+    )
+
+    with patch("app.mqtt.SessionLocal", return_value=db_mock), \
+         patch("app.mqtt.ws_manager.broadcast_device_event_sync") as broadcast_sync:
+        mgr.process_state_message(device.device_id, payload)
+
+    assert "cmd-1" not in mgr.pending_commands
+    broadcast_sync.assert_any_call(
+        "command_delivery",
+        device.device_id,
+        None,
+        {
+            "command_id": "cmd-1",
+            "status": "acknowledged",
+            "reason": "state_match",
+        },
+    )
+
+
+def test_mqtt_state_command_id_acknowledges_pending_command_without_row_match():
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    mgr = MQTTClientManager()
+    mgr.pending_commands["cmd-1"] = {
+        "device_id": device.device_id,
+        "pin": 2,
+        "value": 1,
+        "brightness": None,
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "command_id": "cmd-1",
+    }
+
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps(
+        {
+            "kind": "state",
+            "device_id": device.device_id,
+            "command_id": "cmd-1",
+            "applied": True,
         }
     )
 
