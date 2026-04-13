@@ -21,6 +21,7 @@ env/
 *.log
 *.out
 *.bak
+/firmware_template/
 server/firmware_template/.cache/
 
 # Scratch tests and debug helpers kept outside the real test suites
@@ -87,7 +88,6 @@ server/firmware_template/.cache/
 !/design/flows/automation-rule-graph.md
 !/design/change-requests/CR-AUTOMATION-RULE-GRAPH-001.md
 !/design/change-requests/CR-DEPLOY-FULL-STACK-JENKINS-001.md
-AGENTS.md
 PRD.md
 run.md
 run_*.md
