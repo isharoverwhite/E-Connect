@@ -93,6 +93,21 @@ def _column_exists(table_name: str, column_name: str) -> bool:
         ), {"table_name": table_name, "column_name": column_name})
         return bool(result.scalar())
 
+def _index_exists(table_name: str, index_name: str) -> bool:
+    with engine.connect() as conn:
+        if DATABASE_URL.startswith("sqlite"):
+            existing_indexes = conn.execute(text(f"PRAGMA index_list({table_name})")).fetchall()
+            return any(index[1] == index_name for index in existing_indexes)
+
+        result = conn.execute(
+            text(
+                "SELECT COUNT(*) FROM information_schema.STATISTICS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :table_name AND INDEX_NAME = :index_name"
+            ),
+            {"table_name": table_name, "index_name": index_name},
+        )
+        return bool(result.scalar())
+
 def _ensure_column(table_name: str, column_name: str, sqlite_definition: str, maria_definition: str):
     with engine.connect() as conn:
         if DATABASE_URL.startswith("sqlite"):
@@ -108,6 +123,14 @@ def _ensure_column(table_name: str, column_name: str, sqlite_definition: str, ma
                 f"ALTER TABLE {table_name} ADD COLUMN {column_name} {maria_definition}"
             ))
             conn.commit()
+
+def _ensure_index(table_name: str, index_name: str, sqlite_sql: str, maria_sql: str) -> None:
+    if _index_exists(table_name, index_name):
+        return
+
+    with engine.connect() as conn:
+        conn.execute(text(sqlite_sql if DATABASE_URL.startswith("sqlite") else maria_sql))
+        conn.commit()
 
 def _drop_column_if_exists(table_name: str, column_name: str):
     if not _column_exists(table_name, column_name):
@@ -951,6 +974,23 @@ def _backfill_project_wifi_credentials():
     finally:
         db.close()
 
+def _ensure_runtime_indexes() -> None:
+    if not _table_exists("device_history"):
+        return
+
+    _ensure_index(
+        "device_history",
+        "ix_device_history_device_event_timestamp_id",
+        (
+            "CREATE INDEX ix_device_history_device_event_timestamp_id "
+            "ON device_history (device_id, event_type, timestamp, id)"
+        ),
+        (
+            "CREATE INDEX ix_device_history_device_event_timestamp_id "
+            "ON device_history (device_id, event_type, `timestamp`, id)"
+        ),
+    )
+
 
 def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
     last_error = None
@@ -960,6 +1000,7 @@ def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
             Base.metadata.create_all(bind=engine)
             _cleanup_legacy_unused_tables()
             _ensure_additive_columns()
+            _ensure_runtime_indexes()
             _backfill_room_household_ids()
             _backfill_project_wifi_credentials()
             _backfill_legacy_build_history_metadata()

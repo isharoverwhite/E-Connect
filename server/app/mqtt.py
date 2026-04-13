@@ -744,6 +744,22 @@ class MQTTClientManager:
     def state_ack_topic(self, device_id: str) -> str:
         return f"econnect/{MQTT_NAMESPACE}/device/{device_id}/state/ack"
 
+    def latest_pending_predicted_state(self, device_id: str) -> dict[str, Any] | None:
+        latest_match: dict[str, Any] | None = None
+        latest_timestamp = float("-inf")
+        for pending in self.pending_commands.values():
+            if pending.get("device_id") != device_id:
+                continue
+            predicted_state = pending.get("predicted_state")
+            if not isinstance(predicted_state, dict):
+                continue
+            timestamp = float(pending.get("timestamp") or 0.0)
+            if latest_match is None or timestamp >= latest_timestamp:
+                latest_match = predicted_state
+                latest_timestamp = timestamp
+
+        return _copy_json_value(latest_match) if isinstance(latest_match, dict) else None
+
     def _runtime_network_targets(self) -> dict[str, object] | None:
         return extract_runtime_firmware_network_targets(self.runtime_network_state)
 

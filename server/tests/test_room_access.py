@@ -502,6 +502,98 @@ def test_pwm_command_persists_restore_brightness_and_reuses_it_on_power_on(monke
     assert state_calls[-1][3]["brightness"] == 250
 
 
+def test_dashboard_prefers_pending_predicted_state_before_history_commit():
+    household, admin, _member, _observer = _seed_household(prefix="pending-predicted")
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+    room = _create_room(admin_headers, name="Pending Predicted Room")
+    _insert_device(
+        device_id="device-pending-predicted",
+        name="Pending Predicted Lamp",
+        room_id=room["room_id"],
+        owner_id=admin["user_id"],
+    )
+    _insert_pin_config(
+        device_id="device-pending-predicted",
+        gpio_pin=5,
+        mode=PinMode.PWM,
+        function="light",
+        label="Pending Predicted Dimmer",
+        extra_params={"min_value": 0, "max_value": 255},
+    )
+    _append_state_history(
+        device_id="device-pending-predicted",
+        payload={
+            "kind": "state",
+            "predicted": False,
+            "pin": 5,
+            "value": 0,
+            "brightness": 0,
+            "restore_value": 1,
+            "restore_brightness": 250,
+            "pins": [
+                {
+                    "pin": 5,
+                    "mode": "PWM",
+                    "function": "light",
+                    "label": "Pending Predicted Dimmer",
+                    "value": 0,
+                    "brightness": 0,
+                    "restore_value": 1,
+                    "restore_brightness": 250,
+                    "extra_params": {"min_value": 0, "max_value": 255},
+                }
+            ],
+        },
+    )
+
+    mqtt_manager.pending_commands["pending-command"] = {
+        "device_id": "device-pending-predicted",
+        "pin": 5,
+        "value": 1,
+        "brightness": 250,
+        "timestamp": datetime.utcnow().timestamp(),
+        "command_id": "pending-command",
+        "predicted_state_history_id": None,
+        "predicted_state": {
+            "kind": "action",
+            "predicted": True,
+            "pin": 5,
+            "value": 1,
+            "brightness": 250,
+            "restore_value": 1,
+            "restore_brightness": 250,
+            "pins": [
+                {
+                    "pin": 5,
+                    "mode": "PWM",
+                    "function": "light",
+                    "label": "Pending Predicted Dimmer",
+                    "value": 1,
+                    "brightness": 250,
+                    "restore_value": 1,
+                    "restore_brightness": 250,
+                    "extra_params": {"min_value": 0, "max_value": 255},
+                }
+            ],
+        },
+    }
+
+    try:
+        dashboard_response = client.get("/api/v1/dashboard/devices", headers=admin_headers)
+        assert dashboard_response.status_code == 200
+        payload = dashboard_response.json()[0]["last_state"]
+        assert payload["predicted"] is True
+        assert payload["value"] == 1
+        assert payload["brightness"] == 250
+    finally:
+        mqtt_manager.pending_commands.pop("pending-command", None)
+
+
 def test_reported_pwm_off_state_keeps_restore_brightness(monkeypatch):
     monkeypatch.setattr("app.mqtt.SessionLocal", TestingSessionLocal)
     monkeypatch.setattr("app.mqtt.process_state_event_for_automations", lambda *args, **kwargs: None)
