@@ -700,6 +700,27 @@ def _state_row_matches_command(command: dict[str, Any], state_row: dict[str, Any
     return value_matches or brightness_matches
 
 
+def _build_command_ack_resolution_payload(
+    enriched_state_payload: Mapping[str, Any] | None,
+    raw_state_payload: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if isinstance(enriched_state_payload, Mapping):
+        payload = _copy_json_value(enriched_state_payload)
+        if not isinstance(payload, dict):
+            payload = dict(enriched_state_payload)
+    else:
+        payload = {}
+
+    if not isinstance(raw_state_payload, Mapping):
+        return payload
+
+    if "command_id" in raw_state_payload:
+        payload["command_id"] = _copy_json_value(raw_state_payload.get("command_id"))
+    if "applied" in raw_state_payload:
+        payload["applied"] = _copy_json_value(raw_state_payload.get("applied"))
+    return payload
+
+
 class MQTTClientManager:
     def __init__(self):
         self.client_id = f"econnect_server_{MQTT_NAMESPACE}_{uuid.uuid4().hex[:8]}"
@@ -967,7 +988,14 @@ class MQTTClientManager:
                         "reported_at": observed_at.isoformat(),
                     },
                 )
-                self.resolve_command_ack(device_id, enriched_state_payload, db)
+                self.resolve_command_ack(
+                    device_id,
+                    _build_command_ack_resolution_payload(
+                        enriched_state_payload,
+                        payload_json,
+                    ),
+                    db,
+                )
 
             if was_offline:
                 db.add(
