@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
 
-from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime, Text, ForeignKey, Enum, TIMESTAMP, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime, Text, ForeignKey, Enum, TIMESTAMP, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
@@ -321,6 +321,15 @@ class ExternalDevice(Base):
 
 class DeviceHistory(Base):
     __tablename__ = "device_history"
+    __table_args__ = (
+        Index(
+            "ix_device_history_device_event_timestamp_id",
+            "device_id",
+            "event_type",
+            "timestamp",
+            "id",
+        ),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     device_id = Column(String(36), ForeignKey("devices.device_id"), nullable=False)

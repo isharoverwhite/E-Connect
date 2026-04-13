@@ -380,6 +380,53 @@ def _background_session_factory(db: Session) -> sessionmaker:
     return sessionmaker(autocommit=False, autoflush=False, bind=db.get_bind())
 
 
+def _persist_mqtt_command_artifacts_task(
+    session_factory: sessionmaker,
+    *,
+    device_id: str,
+    command: dict[str, Any],
+    current_user_id: int,
+    success: bool,
+    predicted_state: dict[str, Any] | None,
+) -> None:
+    db = session_factory()
+    try:
+        event_type = EventType.command_requested if success else EventType.command_failed
+        history = DeviceHistory(
+            device_id=device_id,
+            event_type=event_type,
+            payload=str(command),
+            changed_by=current_user_id,
+        )
+        db.add(history)
+
+        predicted_history: DeviceHistory | None = None
+        command_id = _trimmed_string(command.get("command_id")) if isinstance(command, dict) else None
+        pending_command = mqtt_manager.pending_commands.get(command_id) if command_id else None
+        if success and isinstance(predicted_state, dict) and pending_command is not None:
+            predicted_history = DeviceHistory(
+                device_id=device_id,
+                event_type=EventType.state_change,
+                payload=json.dumps(predicted_state),
+                changed_by=current_user_id,
+            )
+            db.add(predicted_history)
+
+        db.commit()
+
+        if (
+            predicted_history is not None
+            and command_id is not None
+            and command_id in mqtt_manager.pending_commands
+        ):
+            mqtt_manager.pending_commands[command_id]["predicted_state_history_id"] = predicted_history.id
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to persist MQTT command artifacts for device %s", device_id)
+    finally:
+        db.close()
+
+
 def _get_runtime_firmware_network_state(request: Request) -> dict[str, object] | None:
     runtime_state = getattr(request.app.state, "firmware_network_state", None)
     return runtime_state if isinstance(runtime_state, dict) else None
@@ -455,6 +502,12 @@ def _attach_runtime_state(db: Session, device: Device) -> Device:
         latest_state_payload,
         device.pin_configurations,
     )
+    pending_predicted_state = mqtt_manager.latest_pending_predicted_state(device.device_id)
+    if pending_predicted_state is not None:
+        latest_state_payload = sanitize_physical_device_state_payload(
+            pending_predicted_state,
+            device.pin_configurations,
+        )
     setattr(device, "last_state", latest_state_payload)
 
     return device
@@ -4093,59 +4146,55 @@ async def send_command(
         ota_job.updated_at = failure_time
         db.commit()
 
-    if success:
-        event_type = EventType.command_requested
-    else:
-        event_type = EventType.command_failed
-
-    # Persist command and predicted-state history in one transaction to avoid
-    # paying two separate database fsyncs for a single WebUI action.
-    history = DeviceHistory(
-        device_id=device_id,
-        event_type=event_type,
-        payload=str(command),
-        changed_by=current_user_id
-    )
-    db.add(history)
-
-    predicted_history: DeviceHistory | None = None
-    if isinstance(predicted_state, dict):
-        predicted_history = DeviceHistory(
+    if command.get("action") == "ota":
+        event_type = EventType.command_requested if success else EventType.command_failed
+        history = DeviceHistory(
             device_id=device_id,
-            event_type=EventType.state_change,
-            payload=json.dumps(predicted_state),
+            event_type=event_type,
+            payload=str(command),
             changed_by=current_user_id,
         )
-        db.add(predicted_history)
+        db.add(history)
+        db.commit()
 
-    db.commit()
+        if not success:
+            return {"status": "failed", "message": "Failed to publish to MQTT broker"}
+    else:
+        if success:
+            mqtt_manager.pending_commands[command_id] = {
+                "device_id": device_id,
+                "pin": command.get("pin"),
+                "value": command.get("value"),
+                "brightness": command.get("brightness"),
+                "timestamp": datetime.now(timezone.utc).timestamp(),
+                "command_id": command_id,
+                "predicted_state_history_id": None,
+                "predicted_state": copy.deepcopy(predicted_state) if isinstance(predicted_state, dict) else None,
+            }
 
-    if not success:
-        return {"status": "failed", "message": "Failed to publish to MQTT broker"}
+        background_tasks.add_task(
+            _persist_mqtt_command_artifacts_task,
+            _background_session_factory(db),
+            device_id=device_id,
+            command=dict(command),
+            current_user_id=current_user_id,
+            success=success,
+            predicted_state=copy.deepcopy(predicted_state) if isinstance(predicted_state, dict) else None,
+        )
 
-    predicted_state_history_id: int | None = None
-    if predicted_history is not None:
-        predicted_state_history_id = predicted_history.id
-        try:
-            ws_manager.broadcast_device_event_sync(
-                "device_state",
-                device_id,
-                device.room_id,
-                predicted_state,
-            )
-        except Exception:
-            pass
+        if not success:
+            return {"status": "failed", "message": "Failed to publish to MQTT broker"}
 
-    if command.get("action") != "ota":
-        mqtt_manager.pending_commands[command_id] = {
-            "device_id": device_id,
-            "pin": command.get("pin"),
-            "value": command.get("value"),
-            "brightness": command.get("brightness"),
-            "timestamp": datetime.utcnow().timestamp(),
-            "command_id": command_id,
-            "predicted_state_history_id": predicted_state_history_id,
-        }
+        if isinstance(predicted_state, dict):
+            try:
+                ws_manager.broadcast_device_event_sync(
+                    "device_state",
+                    device_id,
+                    device.room_id,
+                    predicted_state,
+                )
+            except Exception:
+                pass
 
         async def check_command_timeout():
             await asyncio.sleep(5)

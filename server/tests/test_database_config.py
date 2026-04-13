@@ -54,6 +54,11 @@ def test_initialize_database_runs_cleanup_backfills_and_approval_drop(monkeypatc
     )
     monkeypatch.setattr(
         database_module,
+        "_ensure_runtime_indexes",
+        lambda: call_order.append("ensure_runtime_indexes"),
+    )
+    monkeypatch.setattr(
+        database_module,
         "_backfill_room_household_ids",
         lambda: call_order.append("backfill_room_household_ids"),
     )
@@ -91,6 +96,7 @@ def test_initialize_database_runs_cleanup_backfills_and_approval_drop(monkeypatc
         "create_all",
         "cleanup_legacy_unused_tables",
         "ensure_additive_columns",
+        "ensure_runtime_indexes",
         "backfill_room_household_ids",
         "backfill_project_wifi_credentials",
         "backfill_legacy_build_history_metadata",
@@ -98,6 +104,40 @@ def test_initialize_database_runs_cleanup_backfills_and_approval_drop(monkeypatc
         "backfill_saved_project_configs",
         "cleanup_legacy_user_approval_status",
     ]
+
+
+def test_ensure_runtime_indexes_recreates_device_history_lookup_index(monkeypatch, tmp_path):
+    explicit_db = tmp_path / "index-rebuild.sqlite3"
+    explicit_url = f"sqlite:///{explicit_db}"
+
+    monkeypatch.setenv("DATABASE_URL", explicit_url)
+    monkeypatch.delenv("LOCAL_DATABASE_PATH", raising=False)
+
+    database_module = _reload_database_module()
+
+    with database_module.engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                CREATE TABLE device_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    device_id VARCHAR(36) NOT NULL,
+                    timestamp DATETIME,
+                    event_type VARCHAR(32) NOT NULL,
+                    payload TEXT,
+                    changed_by INTEGER
+                )
+                """
+            )
+        )
+
+    before_indexes = {index["name"] for index in inspect(database_module.engine).get_indexes("device_history")}
+    assert "ix_device_history_device_event_timestamp_id" not in before_indexes
+
+    database_module._ensure_runtime_indexes()
+
+    after_indexes = {index["name"] for index in inspect(database_module.engine).get_indexes("device_history")}
+    assert "ix_device_history_device_event_timestamp_id" in after_indexes
 
 
 def test_initialize_database_backfills_legacy_history_and_cleans_stale_board_config(monkeypatch, tmp_path):
