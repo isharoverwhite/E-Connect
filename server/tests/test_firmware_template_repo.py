@@ -179,6 +179,20 @@ def test_refresh_firmware_template_release_installs_latest_release(monkeypatch, 
     assert (install_root / "state.json").exists()
 
 
+def test_get_firmware_template_auto_poll_interval_defaults_to_release_check_interval(monkeypatch):
+    monkeypatch.delenv("FIRMWARE_TEMPLATE_AUTO_POLL_INTERVAL_SECONDS", raising=False)
+    monkeypatch.setattr(firmware_template_repo, "FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS", 60)
+
+    assert firmware_template_repo.get_firmware_template_auto_poll_interval_seconds() == 60.0
+
+
+def test_get_firmware_template_auto_poll_interval_respects_explicit_override(monkeypatch):
+    monkeypatch.setenv("FIRMWARE_TEMPLATE_AUTO_POLL_INTERVAL_SECONDS", "15")
+    monkeypatch.setattr(firmware_template_repo, "FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS", 60)
+
+    assert firmware_template_repo.get_firmware_template_auto_poll_interval_seconds() == 60.0
+
+
 def test_refresh_firmware_template_release_sets_pending_notification(monkeypatch, tmp_path):
     configure_template_paths(monkeypatch, tmp_path)
 
