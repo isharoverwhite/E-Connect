@@ -5,33 +5,17 @@ pipeline {
         buildDiscarder(logRotator(numToKeepStr: '20', artifactNumToKeepStr: '10'))
         disableConcurrentBuilds()
         skipDefaultCheckout(true)
-        timeout(time: 60, unit: 'MINUTES')
+        timeout(time: 90, unit: 'MINUTES')
         timestamps()
     }
 
-    parameters {
-        booleanParam(
-            name: 'DEPLOY',
-            defaultValue: true,
-            description: 'Deploy the public find_website container after validation.'
-        )
-        booleanParam(
-            name: 'ALLOW_NON_MAIN_DEPLOY',
-            defaultValue: false,
-            description: 'Allow deployment from a branch other than main/master.'
-        )
-        string(
-            name: 'PUBLIC_DISCOVERY_URL',
-            defaultValue: '',
-            description: 'Optional public find_website URL to smoke after deploy. Leave blank to skip.'
-        )
-    }
-
     environment {
-        COMPOSE_FILE = 'docker-compose.jenkins.yml'
-        COMPOSE_PROJECT_NAME = 'econnect'
         DOCKER_BUILDKIT = '1'
         BUILDKIT_PROGRESS = 'plain'
+        DOCKER_REGISTRY = 'ryzen30xx'
+        IMAGE_MQTT = 'econnect-mqtt'
+        IMAGE_SERVER = 'econnect-server'
+        IMAGE_WEBAPP = 'econnect-webapp'
     }
 
     stages {
@@ -57,12 +41,12 @@ pipeline {
                                 fi
                             done
 
-                            remote_branches="$(git for-each-ref --format='%(refname:short)' refs/remotes/origin --contains HEAD \
-                                | sed 's#^origin/##' \
+                            remote_branches="$(git for-each-ref --format='%(refname:short)' refs/remotes/origin --contains HEAD \\
+                                | sed 's#^origin/##' \\
                                 | grep -v '^HEAD$' || true)"
 
                             if [ -n "$remote_branches" ]; then
-                                printf '%s\n' "$remote_branches" | awk '/^(main|master)$/{ print; found=1; exit } END { if (!found && NR > 0) print $1 }'
+                                printf '%s\\n' "$remote_branches" | awk '/^(main|master)$/{ print; found=1; exit } END { if (!found && NR > 0) print $1 }'
                             else
                                 printf 'detached'
                             fi
@@ -74,9 +58,12 @@ pipeline {
                 sh '''
                     set -eu
                     docker version
-                    docker compose version
-                    docker compose config -q
+                    docker buildx version
                     docker system df || true
+
+                    # Ensure buildx builder exists and is configured for multi-platform
+                    docker buildx create --name econnect-builder --use || true
+                    docker buildx inspect --bootstrap
 
                     buildx_activity_dir="${HOME:-/root}/.docker/buildx/activity"
                     mkdir -p "$buildx_activity_dir"
@@ -85,142 +72,38 @@ pipeline {
             }
         }
 
-        stage('Build Gate') {
+        stage('Build & Push CD') {
+            when {
+                expression { return ['main', 'master'].contains(env.RESOLVED_BRANCH) }
+            }
             steps {
-                echo 'Building the public find_website image for Zotac.'
+                echo 'Building and Pushing multi-platform images for E-Connect to Docker Hub.'
                 sh '''
                     set -eu
-                    docker compose build find_website
-                '''
-            }
-        }
+                    
+                    echo "Building and Pushing MQTT..."
+                    docker buildx build \\
+                        --platform linux/amd64,linux/arm64 \\
+                        -t ${DOCKER_REGISTRY}/${IMAGE_MQTT}:latest \\
+                        --push \\
+                        ./mqtt
 
-        stage('Deploy Gate') {
-            when {
-                expression { return params.DEPLOY }
-            }
-            steps {
-                script {
-                    if (!(params.ALLOW_NON_MAIN_DEPLOY || ['main', 'master'].contains(env.RESOLVED_BRANCH))) {
-                        error("Refusing to deploy branch '${env.RESOLVED_BRANCH}'. Set ALLOW_NON_MAIN_DEPLOY=true to override.")
-                    }
-                }
-            }
-        }
+                    echo "Building and Pushing Server..."
+                    docker buildx build \\
+                        --platform linux/amd64,linux/arm64 \\
+                        -t ${DOCKER_REGISTRY}/${IMAGE_SERVER}:latest \\
+                        --push \\
+                        ./server
 
-        stage('Cleanup Legacy E-Connect Runtime') {
-            when {
-                expression { return params.DEPLOY }
-            }
-            steps {
-                echo 'Removing legacy E-Connect runtime containers and images from Zotac before deploying only find_website.'
-                sh '''
-                    set -eu
-
-                    docker compose down --remove-orphans || true
-
-                    remove_container_if_present() {
-                        name="$1"
-                        if docker ps -a --format '{{.Names}}' | grep -Fxq "$name"; then
-                            docker rm -f "$name" >/dev/null || true
-                        fi
-                    }
-
-                    remove_repo_images() {
-                        repo="$1"
-                        image_ids="$(docker images --format '{{.Repository}} {{.ID}}' | awk -v repo="$repo" '$1 == repo { print $2 }' | sort -u)"
-                        if [ -n "$image_ids" ]; then
-                            printf '%s\n' "$image_ids" | xargs -r docker image rm -f >/dev/null || true
-                        fi
-                    }
-
-                    for container in e-connect-db e-connect-mqtt e-connect-server e-connect-webapp; do
-                        remove_container_if_present "$container"
-                    done
-
-                    project_container_ids="$(docker ps -aq --filter label=com.docker.compose.project=econnect || true)"
-                    if [ -n "$project_container_ids" ]; then
-                        printf '%s\n' "$project_container_ids" | xargs -r docker rm -f >/dev/null || true
-                    fi
-
-                    for repo in econnect-mqtt econnect-server econnect-webapp econnect-webapp-check econnect-server-test; do
-                        remove_repo_images "$repo"
-                    done
-
-                    docker image prune -f --filter dangling=true || true
-                    docker system df || true
-                '''
-            }
-        }
-
-        stage('Deploy') {
-            when {
-                expression { return params.DEPLOY }
-            }
-            steps {
-                sh '''
-                    set -eu
-                    docker compose up -d --wait --wait-timeout 120 --remove-orphans
-                '''
-            }
-        }
-
-        stage('Smoke Test') {
-            when {
-                expression { return params.DEPLOY }
-            }
-            steps {
-                sh '''
-                    set -eu
-
-                    retry() {
-                        attempts="$1"
-                        delay="$2"
-                        shift 2
-
-                        count=1
-                        while [ "$count" -le "$attempts" ]; do
-                            if "$@"; then
-                                return 0
-                            fi
-
-                            if [ "$count" -eq "$attempts" ]; then
-                                return 1
-                            fi
-
-                            count=$((count + 1))
-                            sleep "$delay"
-                        done
-                    }
-
-                    published_port="$(docker compose port find_website 9123 | awk -F: 'NF { print $NF }' | tail -n1)"
-                    if [ -z "$published_port" ]; then
-                        echo "Could not resolve the published port for find_website." >&2
-                        exit 1
-                    fi
-
-                    host_probe_image="$(docker image inspect econnect-find-website --format '{{.Id}}' 2>/dev/null || true)"
-                    if [ -z "$host_probe_image" ]; then
-                        echo "Could not resolve the built image ID for find_website." >&2
-                        exit 1
-                    fi
-
-                    retry 30 2 docker compose exec -T find_website wget -q --spider http://127.0.0.1:9123/
-
-                    # Jenkins runs inside a container on Zotac, so probe the published port from the host network namespace.
-                    docker_server_os="$(docker version --format '{{.Server.Os}}' 2>/dev/null || true)"
-                    if [ "$docker_server_os" = "linux" ]; then
-                        retry 30 2 sh -c "docker run --rm --network host --entrypoint wget \"$host_probe_image\" -q --spider \"http://127.0.0.1:${published_port}/\""
-                    else
-                        echo "Skipping published-port smoke: Docker server OS '${docker_server_os:-unknown}' does not support the host-network probe."
-                    fi
-
-                    public_discovery_url="${PUBLIC_DISCOVERY_URL:-}"
-                    if [ -n "$public_discovery_url" ]; then
-                        retry 10 3 sh -c "curl -fsSI \"$public_discovery_url\" >/dev/null"
-                    else
-                        echo "Skipping public URL smoke: PUBLIC_DISCOVERY_URL is not configured."
-                    fi
+                    echo "Building and Pushing WebApp..."
+                    # Webapp requires NEXT_PUBLIC_API_URL and BACKEND_INTERNAL_URL build args
+                    docker buildx build \\
+                        --platform linux/amd64,linux/arm64 \\
+                        --build-arg NEXT_PUBLIC_API_URL=/api/v1 \\
+                        --build-arg BACKEND_INTERNAL_URL=http://server:8000 \\
+                        -t ${DOCKER_REGISTRY}/${IMAGE_WEBAPP}:latest \\
+                        --push \\
+                        ./webapp
                 '''
             }
         }
@@ -228,20 +111,18 @@ pipeline {
 
     post {
         always {
+            echo 'Cleaning up old images and build cache...'
             sh '''
-                docker compose ps || true
+                set -eu
+                docker buildx prune -f || true
+                docker image prune -a -f --filter "until=24h" || true
             '''
         }
-
-        failure {
-            sh '''
-                docker compose logs --tail=200 find_website || true
-            '''
-            echo 'Deployment failed. Review the public finder logs above.'
-        }
-
         success {
-            echo 'Pipeline finished successfully.'
+            echo 'Pipeline finished successfully. Images pushed to Docker Hub.'
+        }
+        failure {
+            echo 'Pipeline failed. Check build logs.'
         }
     }
 }
