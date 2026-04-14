@@ -65,20 +65,29 @@ English: `Settings` centralizes instance administration, including timezone, use
 
 **E-Connect** là nền tảng smart home `self-hosted`, `local-first`, tập trung vào:
 
-- điều khiển thiết bị trong mạng LAN
-- quản lý vòng đời thiết bị DIY dùng `ESP32` và `ESP8266`
-- giao tiếp ưu tiên `MQTT`
-- dashboard điều khiển và giám sát trạng thái
-- build firmware phía server, flash qua trình duyệt và mapping GPIO bằng giao diện trực quan
-- automation dạng graph builder
-- lưu trạng thái bền vững trên hạ tầng của chính người dùng
+- Điều khiển thiết bị trong mạng LAN nhanh chóng và bảo mật.
+- Quản lý vòng đời thiết bị DIY dùng `ESP32` và `ESP8266`.
+- Giao tiếp ưu tiên `MQTT` cho tốc độ phản hồi tức thì.
+- Dashboard điều khiển và giám sát trạng thái trực quan, thân thiện.
+- Build firmware phía server, flash qua trình duyệt và mapping GPIO dễ dàng.
+- Automation dạng graph builder cho phép thiết lập tự động hóa kéo thả.
+- Lưu trữ dữ liệu an toàn trên hạ tầng của chính người dùng.
+
+### Ứng dụng thực tế
+
+E-Connect giúp biến các linh kiện DIY thành giải pháp nhà thông minh hoàn chỉnh thông qua Automation Builder trực quan. Một số ứng dụng phổ biến:
+
+- **Tự động hóa ánh sáng**: Kết hợp cảm biến ánh sáng và relay điều khiển đèn. Nếu hệ thống nhận diện môi trường quá tối, đèn sẽ tự động bật sáng.
+- **Điều khiển nhiệt độ, thông gió**: Dùng cảm biến nhiệt độ/độ ẩm (DHT11/DHT22) để kích hoạt quạt tự động khi phòng nóng vượt mức thiết lập (ví dụ: > 28°C).
+- **Hệ thống tưới tiêu thông minh**: Theo dõi độ ẩm đất và tự động kích hoạt máy bơm nước khi phát hiện đất khô.
+- **Cảnh báo an ninh**: Kết hợp cảm biến chuyển động hoặc cảm biến cửa để gửi thông báo tự động hoặc hú còi khi có xâm nhập lạ ban đêm.
 
 ### Điểm nổi bật
 
 - **Local-first thật sự**: phần điều khiển cốt lõi vẫn hoạt động trong LAN ngay cả khi Internet không ổn định.
 - **Self-hosted gọn**: stack người dùng chỉ gồm `db`, `mqtt`, `server`, `webapp`.
 - **DIY-friendly**: có board picker, lưu Wi-Fi tập trung, pin mapping, build firmware, và đường dẫn flash.
-- **Firmware dễ cập nhật hơn**: backend theo dõi GitHub release từ repo riêng [econnectrelease/firmware](https://github.com/econnectrelease/firmware), mặc định kiểm tra mỗi 60 giây và tự kéo firmware-template mới về server khi có release mới.
+- **Firmware dễ cập nhật hơn**: backend theo dõi GitHub release từ repo trusted cố định [econnectrelease/firmware](https://github.com/econnectrelease/firmware), mặc định kiểm tra mỗi 60 giây và tự kéo firmware-template mới về server khi có release mới.
 - **Quản trị tập trung**: dashboard, logs, settings, automation, extensions đều nằm trong cùng giao diện.
 
 ### Kiến trúc self-hosted
@@ -265,6 +274,12 @@ x-user-config:
 
 Phần `mqtt_image`, `server_image`, `webapp_image` thường không cần đổi, trừ khi bạn muốn pin sang tag image khác.
 
+### Hướng dẫn phát triển Extension (Developer Docs)
+
+E-Connect hỗ trợ mở rộng nền tảng thông qua hệ thống **Extensions** linh hoạt. Các nhà phát triển có thể tìm hiểu thêm về kiến trúc và cách xây dựng extension tại tài liệu sau:
+
+👉 **[Xem Hướng dẫn phát triển Extension](./docs/EXTENSIONS.md)**
+
 ### Build từ source
 
 Nếu bạn muốn chạy trực tiếp từ mã nguồn thay vì image public:
@@ -282,7 +297,7 @@ Sau đó truy cập `https://localhost:3443`.
 - `docker-compose.user.yml` đã được cấu hình sẵn image mặc định từ Docker Hub và không yêu cầu khai báo image bằng tay.
 - GitHub Actions `.github/workflows/end-user-images.yml` sẽ build ba image self-hosted (`server`, `webapp`, `mqtt`) và publish lên Docker Hub khi `main` thay đổi ở các thư mục tương ứng.
 - Workflow publish end-user image cần hai GitHub repository secrets: `DOCKERHUB_USERNAME` và `DOCKERHUB_TOKEN`.
-- `server` mặc định theo dõi release mới nhất từ `econnectrelease/firmware` mỗi 60 giây qua `FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS`; khi có bản mới, firmware-template sẽ tự được tải về `/data/firmware-template/current`.
+- `server` mặc định theo dõi release mới nhất từ repo trusted cố định `econnectrelease/firmware` mỗi 60 giây qua `FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS`; khi có bản mới, firmware-template sẽ tự được tải về `/data/firmware-template/current`.
 - Các image Docker Hub được phát hành với cả tag `latest` và tag bất biến dạng `sha-<commit>`. Người dùng cuối có thể pin `mqtt_image`, `server_image`, hoặc `webapp_image` sang tag `sha-...` nếu muốn rollback hoặc khóa phiên bản cụ thể.
 - Cổng HTTPS chính cho WebUI là `3443`.
 - Lần đầu mở WebUI trên một máy mới, trình duyệt có thể cảnh báo certificate tự ký. Bạn chỉ cần chấp nhận certificate đó cho host nội bộ mà bạn đang dùng.
@@ -297,22 +312,31 @@ Mã nguồn và tài sản của repository hiện được phân phối dưới
 
 ### Overview
 
-**E-Connect** is a `self-hosted`, `local-first` smart home platform focused on:
+**E-Connect** is a `self-hosted`, `local-first` smart home platform prioritizing speed, privacy, and DIY experiences. Core capabilities include:
 
-- LAN-native device control
-- DIY ESP32 / ESP8266 onboarding
-- MQTT-first messaging
-- dashboard-driven operations
-- server-side firmware builds, browser flashing, and visual GPIO mapping
-- visual automations
-- durable state stored on user-owned infrastructure
+- Fast and secure LAN-native device control.
+- Seamless DIY ESP32 / ESP8266 lifecycle onboarding.
+- MQTT-first messaging for instant responsivity.
+- Clean, dashboard-driven operations for device monitoring.
+- Server-side firmware builds, browser flashing, and visual GPIO mapping.
+- Visual, drag-and-drop graph builders for complex automations.
+- Durable state storage strictly isolated on user-owned infrastructure.
+
+### Real-life Applications
+
+The core objective of E-Connect is turning DIY modules into functional, autonomous home solutions via the intuitive Automation Builder. Common use cases:
+
+- **Smart Lighting**: Combine a light sensor with a relay. The system can evaluate ambient light and automatically turn on room lights when it gets too dark.
+- **Automated Climate/Fan Control**: Utilize DHT11/DHT22 temperature & humidity sensors. Trigger a fan or AC switch immediately if the room temperature surpasses a certain point (e.g., > 28°C).
+- **Smart Irrigation**: Track soil moisture levels and trigger water pumps automatically when your plants need hydration.
+- **Security Alerts**: Connect motion or door sensors to push notifications or sirens, establishing a capable night-time security perimeter.
 
 ### Highlights
 
 - **Real local-first behavior**: core control stays on the LAN.
 - **Compact self-hosted stack**: end users run only `db`, `mqtt`, `server`, and `webapp`.
 - **DIY provisioning flow**: board selection, saved Wi-Fi credentials, pin mapping, server builds, and flash-ready workflows.
-- **Faster firmware iteration**: the backend tracks GitHub releases from [econnectrelease/firmware](https://github.com/econnectrelease/firmware), checks every 60 seconds by default, and auto-installs the latest firmware template onto the server.
+- **Faster firmware iteration**: the backend tracks GitHub releases from the fixed trusted repository [econnectrelease/firmware](https://github.com/econnectrelease/firmware), checks every 60 seconds by default, and auto-installs the latest firmware template onto the server.
 - **Single admin surface**: dashboard, logs, settings, devices, automation, and extensions live in one product.
 
 ### Self-hosted architecture
@@ -500,6 +524,12 @@ x-user-config:
 
 The `mqtt_image`, `server_image`, and `webapp_image` fields usually do not need to be changed unless you want to pin a different image tag.
 
+### Extension Development Guide (Developer Docs)
+
+E-Connect is highly extensible via its **Extensions** system. Developers can learn more about building custom logic, widgets, and API integrations in our dedicated documentation:
+
+👉 **[Read the Extension Development Guide](./docs/EXTENSIONS.md)**
+
 ### Run From Source
 
 If you want to build directly from the repository instead of the published Docker Hub images:
@@ -517,7 +547,7 @@ Then open `https://localhost:3443`.
 - `deploy/user/compose.yml` is the primary end-user artifact; `docker-compose.user.yml` remains the in-repo compatibility variant.
 - GitHub Actions `.github/workflows/end-user-images.yml` builds the three self-hosted images (`server`, `webapp`, and `mqtt`) and publishes them to Docker Hub when `main` changes in those delivery paths.
 - The publish workflow requires two repository secrets: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
-- `server` watches the latest `econnectrelease/firmware` release every 60 seconds by default through `FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS` and auto-downloads fresh templates into `/data/firmware-template/current`.
+- `server` watches the latest release from the fixed trusted repo `econnectrelease/firmware` every 60 seconds by default through `FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS` and auto-downloads fresh templates into `/data/firmware-template/current`.
 - Docker Hub releases include both `latest` and immutable `sha-<commit>` tags. End users can pin `mqtt_image`, `server_image`, or `webapp_image` to a `sha-...` tag when they need rollback-friendly or fixed-version installs.
 - The primary HTTPS WebUI entrypoint is `:3443`.
 - Host `:8000` remains part of the self-hosted runtime because the public find website needs `/health`, `/web-assistant.js`, and `/discovery-bridge` on the user's LAN server.
