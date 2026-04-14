@@ -5,6 +5,7 @@
 /PROJECT_STATUS.md
 /E2E_*REPORT.md
 CLAUDE.md
+AGENTS.md
 
 # Python caches and local environments
 **/__pycache__/
@@ -109,3 +110,4 @@ scripts/find_*.py
 scripts/*_ps.py
 scripts/*_v.py
 scripts/cat_*.py
+AGENT*.md
