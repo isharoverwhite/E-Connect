@@ -331,8 +331,10 @@ export default function Dashboard() {
             const newW = 320;
             const newH = getEstimatedH(c);
 
+            const maxUsableWidth = Math.min(windowWidth - (windowWidth < 1024 ? 0 : 256) - 48, 1280);
+
             while (!placed) {
-                if (currentX + newW > windowWidth && currentX > 0) {
+                if (currentX + newW > maxUsableWidth && currentX > 0) {
                     currentX = 0;
                     currentY += 20;
                     continue;
