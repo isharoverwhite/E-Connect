@@ -35,6 +35,7 @@ from app.services.builder import (
     audit_runtime_firmware_target_mismatches,
     consume_pending_firmware_template_notification,
     extract_runtime_firmware_network_targets,
+    get_firmware_template_auto_poll_interval_seconds,
     refresh_firmware_template_release,
     resolve_runtime_firmware_network_state,
     resolve_webapp_transport,
@@ -61,10 +62,6 @@ RUNTIME_NETWORK_REFRESH_INTERVAL_SECONDS = max(
 SYSTEM_LOG_RETENTION_SWEEP_INTERVAL_SECONDS = max(
     60.0,
     float(os.getenv("SYSTEM_LOG_RETENTION_SWEEP_INTERVAL_SECONDS", "3600")),
-)
-FIRMWARE_TEMPLATE_AUTO_POLL_INTERVAL_SECONDS = max(
-    60.0,
-    float(os.getenv("FIRMWARE_TEMPLATE_AUTO_POLL_INTERVAL_SECONDS", "300")),
 )
 AUTOMATION_TIME_TRIGGER_INTERVAL_SECONDS = max(
     5.0,
@@ -530,11 +527,11 @@ async def lifespan(app: FastAPI):
         if not _firmware_template_auto_update_enabled():
             return
         while True:
-            await asyncio.sleep(FIRMWARE_TEMPLATE_AUTO_POLL_INTERVAL_SECONDS)
+            await asyncio.sleep(get_firmware_template_auto_poll_interval_seconds())
             if _using_overridden_database(app):
                 continue
             try:
-                _run_firmware_template_auto_refresh(app, force=True)
+                _run_firmware_template_auto_refresh(app, force=False)
             except Exception:
                 logger.exception("Firmware template auto-refresh failed")
 

@@ -34,7 +34,7 @@ FIRMWARE_TEMPLATE_HTTP_TIMEOUT_SECONDS = max(
 )
 FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS = max(
     60,
-    int(os.getenv("FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS", "3600")),
+    int(os.getenv("FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS", "60")),
 )
 GITHUB_API_VERSION = os.getenv("FIRMWARE_TEMPLATE_GITHUB_API_VERSION", "2026-03-10").strip() or "2026-03-10"
 
@@ -275,6 +275,19 @@ def _should_check_remote(state: Mapping[str, Any], *, force: bool) -> bool:
 
     age_seconds = (_utcnow() - last_checked_at).total_seconds()
     return age_seconds >= FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS
+
+
+def get_firmware_template_auto_poll_interval_seconds() -> float:
+    raw_value = os.getenv("FIRMWARE_TEMPLATE_AUTO_POLL_INTERVAL_SECONDS")
+    if raw_value is None or not raw_value.strip():
+        return float(FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS)
+
+    try:
+        parsed_value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError("FIRMWARE_TEMPLATE_AUTO_POLL_INTERVAL_SECONDS must be a valid number.") from exc
+
+    return max(60.0, parsed_value)
 
 
 def refresh_firmware_template_release(*, force: bool = False) -> dict[str, Any]:

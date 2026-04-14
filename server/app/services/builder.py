@@ -17,6 +17,7 @@ from app.database import SessionLocal
 from app.services.diy_validation import resolve_board_definition
 from app.services.firmware_template_repo import (
     consume_pending_firmware_template_notification as consume_pending_firmware_template_notification,
+    get_firmware_template_auto_poll_interval_seconds as get_firmware_template_auto_poll_interval_seconds,
     get_firmware_template_status as get_firmware_template_status,
     get_latest_firmware_revision as get_latest_firmware_revision,
     refresh_firmware_template_release as refresh_firmware_template_release,
