@@ -24,7 +24,6 @@ def setup_function():
 
 
 def test_resolve_runtime_firmware_network_state_autodetects_startup_ip(monkeypatch):
-    monkeypatch.delenv("FIRMWARE_PUBLIC_BASE_URL", raising=False)
     monkeypatch.delenv("FIRMWARE_PUBLIC_PORT", raising=False)
     monkeypatch.delenv("FIRMWARE_PUBLIC_SCHEME", raising=False)
     monkeypatch.delenv("FIRMWARE_MQTT_BROKER", raising=False)
@@ -44,9 +43,7 @@ def test_resolve_runtime_firmware_network_state_autodetects_startup_ip(monkeypat
         "target_key": "192.168.8.4|http://192.168.8.4:3000/api/v1|192.168.8.4|1883",
     }
 
-
 def test_resolve_runtime_firmware_network_state_uses_public_mqtt_override(monkeypatch):
-    monkeypatch.delenv("FIRMWARE_PUBLIC_BASE_URL", raising=False)
     monkeypatch.delenv("FIRMWARE_PUBLIC_PORT", raising=False)
     monkeypatch.delenv("FIRMWARE_PUBLIC_SCHEME", raising=False)
     monkeypatch.setenv("FIRMWARE_MQTT_BROKER", "mqtt-lan.local")
@@ -66,7 +63,6 @@ def test_resolve_runtime_firmware_network_state_uses_public_mqtt_override(monkey
 
 
 def test_resolve_runtime_firmware_network_state_ignores_internal_mqtt_broker_env(monkeypatch):
-    monkeypatch.delenv("FIRMWARE_PUBLIC_BASE_URL", raising=False)
     monkeypatch.delenv("FIRMWARE_PUBLIC_PORT", raising=False)
     monkeypatch.delenv("FIRMWARE_PUBLIC_SCHEME", raising=False)
     monkeypatch.delenv("FIRMWARE_MQTT_BROKER", raising=False)
@@ -86,7 +82,6 @@ def test_resolve_runtime_firmware_network_state_ignores_internal_mqtt_broker_env
 
 
 def test_resolve_runtime_firmware_network_state_warns_for_docker_bridge(monkeypatch):
-    monkeypatch.delenv("FIRMWARE_PUBLIC_BASE_URL", raising=False)
     monkeypatch.delenv("FIRMWARE_PUBLIC_PORT", raising=False)
     monkeypatch.delenv("FIRMWARE_PUBLIC_SCHEME", raising=False)
     monkeypatch.setattr(builder, "_detect_runtime_advertised_host", lambda: "172.19.0.4")
@@ -126,7 +121,6 @@ def test_infer_firmware_network_targets_can_fallback_to_request_when_runtime_sta
 
 
 def test_infer_firmware_network_targets_normalizes_https_companion_origin_to_http_lan_transport(monkeypatch):
-    monkeypatch.delenv("FIRMWARE_PUBLIC_BASE_URL", raising=False)
     monkeypatch.delenv("FIRMWARE_MQTT_BROKER", raising=False)
     monkeypatch.delenv("FIRMWARE_MQTT_PORT", raising=False)
 

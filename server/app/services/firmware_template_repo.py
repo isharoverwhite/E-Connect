@@ -18,8 +18,9 @@ from urllib.request import Request, urlopen
 logger = logging.getLogger(__name__)
 
 BUILD_BASE_DIR = Path(os.getenv("BUILD_BASE_DIR", "/tmp/econnect_builds"))
-FIRMWARE_TEMPLATE_REPO = os.getenv("FIRMWARE_TEMPLATE_REPO", "econnectrelease/firmware").strip()
-FIRMWARE_TEMPLATE_API_BASE_URL = os.getenv("FIRMWARE_TEMPLATE_API_BASE_URL", "https://api.github.com").rstrip("/")
+# Firmware templates are only sourced from the trusted SCM repository.
+FIRMWARE_TEMPLATE_REPO = "econnectrelease/firmware"
+FIRMWARE_TEMPLATE_API_BASE_URL = "https://api.github.com"
 FIRMWARE_TEMPLATE_INSTALL_ROOT = Path(
     os.getenv(
         "FIRMWARE_TEMPLATE_INSTALL_ROOT",
