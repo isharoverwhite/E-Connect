@@ -122,6 +122,38 @@ def on_probe_state(device_context):
     }
 ```
 
+### 3.1. Ví dụ cấu trúc dữ liệu Context (Yeelight Extension)
+
+Khi Server gọi các hàm hook, nó sẽ truyền vào một `dict` (trong Python) chứa toàn bộ thông tin giao tiếp. Lấy ví dụ với một thiết bị đèn **Yeelight**:
+
+**Dữ liệu `command_context` (được truyền qua `validate_command` và `execute_command`):**
+```python
+{
+    "device_id": "dev_yeelight_01",
+    "schema_id": "yeelight_color",
+    "config": {
+        "ip_address": "192.168.1.100",
+        "port": 55443
+    },
+    "command": "set_brightness",
+    "args": {
+        "brightness": 80
+    }
+}
+```
+
+**Dữ liệu `device_context` (được truyền qua `probe_state`):**
+```python
+{
+    "device_id": "dev_yeelight_01",
+    "schema_id": "yeelight_color",
+    "config": {
+        "ip_address": "192.168.1.100",
+        "port": 55443
+    }
+}
+```
+
 ### 4. Quá trình Backend (Server) nạp Extension
 
 - **Upload & Cài đặt:** File ZIP được upload lên backend. Payload qua validation và extract vào `/data/extensions/extracted/`.
@@ -247,6 +279,38 @@ def on_probe_state(device_context):
             "brightness": 100
         }
     }
+```
+
+### 3.1. Context Data Structure Example (Yeelight Extension)
+
+When the Server invokes your hooks, it passes a full `dict` (in Python) representing the execution context. Applying this to a **Yeelight** smart bulb as an example:
+
+**The `command_context` payload (passed into `validate_command` and `execute_command`):**
+```python
+{
+    "device_id": "dev_yeelight_01",
+    "schema_id": "yeelight_color",
+    "config": {
+        "ip_address": "192.168.1.100",
+        "port": 55443
+    },
+    "command": "set_brightness",
+    "args": {
+        "brightness": 80
+    }
+}
+```
+
+**The `device_context` payload (passed into `probe_state`):**
+```python
+{
+    "device_id": "dev_yeelight_01",
+    "schema_id": "yeelight_color",
+    "config": {
+        "ip_address": "192.168.1.100",
+        "port": 55443
+    }
+}
 ```
 
 ### 4. How the Server Consumes an Extension
