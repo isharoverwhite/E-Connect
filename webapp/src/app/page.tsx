@@ -328,7 +328,6 @@ export default function Dashboard() {
             let placed = false;
             let currentX = startX;
             let currentY = startY;
-            let checkedZeroForY = false;
             const newW = 320;
             const newH = getEstimatedH(c);
 
@@ -337,16 +336,30 @@ export default function Dashboard() {
 
             while (!placed) {
                 if (currentX + newW > maxUsableWidth && currentX > 0) {
-                    if (!checkedZeroForY && currentY === startY) {
-                        currentX = 0;
-                        checkedZeroForY = true;
-                        continue;
-                    } else {
-                        currentX = 0;
-                        currentY += 20;
-                        checkedZeroForY = true;
-                        continue;
+                    currentX = 0;
+                    
+                    // Find the maximum bottom coordinate of all cards in the current row
+                    let maxBottom = currentY;
+                    for (const key in computed) {
+                        const other = computed[key];
+                        const otherDevice = deviceMap.get(key);
+                        const otherH = typeof other.h === 'number' ? other.h : (otherDevice ? getEstimatedH(otherDevice) : 350);
+                        
+                        // Check if the card intersects with the current row's baseline
+                        if (other.y <= currentY + 50 && other.y + otherH > currentY) {
+                            if (other.y + otherH > maxBottom) {
+                                maxBottom = other.y + otherH;
+                            }
+                        }
                     }
+                    
+                    // Prevent infinite loops just in case
+                    if (maxBottom === currentY) {
+                        currentY += 50; 
+                    } else {
+                        currentY = maxBottom + 20;
+                    }
+                    continue;
                 }
                 
                 let collision = null;
