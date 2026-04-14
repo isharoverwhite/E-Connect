@@ -14,9 +14,11 @@ from zoneinfo import ZoneInfo
 
 from app.api import DEVICE_HEARTBEAT_TIMEOUT, expire_stale_online_devices_once, router
 from app.database import Base, CONFIG_HISTORY_DELETED_AT_KEY, get_db
+from app.mqtt import mqtt_manager
 from app.sql_models import AuthStatus, ConnStatus, User, Household, HouseholdMembership, HouseholdRole, Room, DiyProject, DiyProjectConfig, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration, WifiCredential, DeviceHistory
 from app.auth import get_password_hash, create_ota_token
 from app.services.builder import get_durable_artifact_path
+from app.services.command_ordering import command_ordering_manager
 from app.services.provisioning import PRIVATE_DEVICE_SECRET_KEY
 
 # Setup test DB
@@ -58,8 +60,12 @@ def setup_db():
     close_all_sessions()
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    mqtt_manager.pending_commands.clear()
+    command_ordering_manager.reset()
     yield
     close_all_sessions()
+    mqtt_manager.pending_commands.clear()
+    command_ordering_manager.reset()
 
 def create_test_data(db):
     user = User(
@@ -2156,6 +2162,53 @@ def test_mqtt_state_command_id_acknowledges_pending_command_without_row_match():
         None,
         {
             "command_id": "cmd-1",
+            "status": "acknowledged",
+            "reason": "state_match",
+        },
+    )
+
+
+def test_mqtt_ack_matching_prefers_latest_pending_sequence_for_same_target(monkeypatch):
+    from app.mqtt import MQTTClientManager
+    from unittest.mock import Mock
+
+    mgr = MQTTClientManager()
+    mgr.pending_commands["cmd-1"] = {
+        "device_id": "device-sequenced",
+        "pin": 5,
+        "value": 1,
+        "brightness": 180,
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "command_id": "cmd-1",
+        "sequence_number": 1,
+    }
+    mgr.pending_commands["cmd-2"] = {
+        "device_id": "device-sequenced",
+        "pin": 5,
+        "value": 1,
+        "brightness": 180,
+        "timestamp": datetime.now(timezone.utc).timestamp(),
+        "command_id": "cmd-2",
+        "sequence_number": 2,
+    }
+
+    ws_mock = Mock()
+    monkeypatch.setattr("app.mqtt.ws_manager.broadcast_device_event_sync", ws_mock)
+
+    mgr.resolve_command_ack(
+        "device-sequenced",
+        {"pin": 5, "value": 1, "brightness": 180, "applied": True},
+        TestingSessionLocal(),
+    )
+
+    assert "cmd-2" not in mgr.pending_commands
+    assert "cmd-1" in mgr.pending_commands
+    ws_mock.assert_any_call(
+        "command_delivery",
+        "device-sequenced",
+        None,
+        {
+            "command_id": "cmd-2",
             "status": "acknowledged",
             "reason": "state_match",
         },

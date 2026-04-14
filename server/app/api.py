@@ -165,6 +165,7 @@ from .services.automation_devices import (
     dispatch_external_device_automation_command,
     serialize_external_device_automation_pins,
 )
+from .services.command_ordering import command_ordering_manager
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
@@ -378,6 +379,65 @@ def _require_current_user_password(
 
 def _background_session_factory(db: Session) -> sessionmaker:
     return sessionmaker(autocommit=False, autoflush=False, bind=db.get_bind())
+
+
+def _coerce_command_pin(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _build_mqtt_command_scope_key(device_id: str, command: dict[str, Any] | None) -> str | None:
+    if not isinstance(command, dict):
+        return None
+
+    if str(command.get("kind") or "action").strip().lower() != "action":
+        return None
+
+    pin = _coerce_command_pin(command.get("pin"))
+    if pin is None:
+        return None
+
+    return f"mqtt:{device_id}:pin:{pin}"
+
+
+def _build_external_command_scope_key(device_id: str) -> str:
+    return f"external:{device_id}"
+
+
+def _drop_superseded_mqtt_command(
+    db: Session,
+    superseded_command_id: str | None,
+) -> bool:
+    if not superseded_command_id:
+        return False
+
+    command_ordering_manager.complete(superseded_command_id)
+    pending_command = mqtt_manager.pending_commands.pop(superseded_command_id, None)
+    if not isinstance(pending_command, dict):
+        return False
+
+    predicted_history_id = pending_command.get("predicted_state_history_id")
+    if not isinstance(predicted_history_id, int):
+        return False
+
+    predicted_history = (
+        db.query(DeviceHistory)
+        .filter(
+            DeviceHistory.id == predicted_history_id,
+            DeviceHistory.event_type == EventType.state_change,
+        )
+        .first()
+    )
+    if predicted_history is None:
+        return False
+
+    db.delete(predicted_history)
+    return True
 
 
 def _persist_mqtt_command_artifacts_task(
@@ -1979,6 +2039,7 @@ def _execute_external_device_command_task(
     command: dict[str, Any],
 ) -> None:
     db = session_factory()
+    command_id = str(command.get("command_id") or "")
     try:
         external_device = (
             db.query(ExternalDevice)
@@ -1989,12 +2050,16 @@ def _execute_external_device_command_task(
         if external_device is None:
             return
 
-        command_id = str(command.get("command_id") or "")
+        if command_id and not command_ordering_manager.is_latest(command_id):
+            return
+
         previous_state = external_device.last_state if isinstance(external_device.last_state, dict) else {}
         previous_payload = build_external_device_state_payload(external_device, state=previous_state)
         try:
             runtime_result = execute_external_device_command(external_device, command)
         except ExternalDeviceRuntimeValidationError as exc:
+            if command_id and not command_ordering_manager.is_latest(command_id):
+                return
             try:
                 ws_manager.broadcast_device_event_sync(
                     "command_delivery",
@@ -2010,6 +2075,8 @@ def _execute_external_device_command_task(
                 pass
             return
         except ExternalDeviceRuntimeUnsupportedError as exc:
+            if command_id and not command_ordering_manager.is_latest(command_id):
+                return
             try:
                 ws_manager.broadcast_device_event_sync(
                     "command_delivery",
@@ -2025,6 +2092,8 @@ def _execute_external_device_command_task(
                 pass
             return
         except ExternalDeviceRuntimeError as exc:
+            if command_id and not command_ordering_manager.is_latest(command_id):
+                return
             if exc.mark_offline:
                 _mark_external_device_offline(db, external_device)
                 try:
@@ -2056,6 +2125,8 @@ def _execute_external_device_command_task(
             return
 
         runtime_state = runtime_result.state if isinstance(runtime_result.state, dict) else {}
+        if command_id and not command_ordering_manager.is_latest(command_id):
+            return
         state_changed = _external_runtime_state_changed(previous_state, runtime_state)
         _persist_external_runtime_state(db, external_device, state=runtime_state)
         current_payload = build_external_device_state_payload(external_device, state=runtime_state)
@@ -2099,6 +2170,8 @@ def _execute_external_device_command_task(
                     external_device.device_id,
                 )
     finally:
+        if command_id:
+            command_ordering_manager.complete(command_id)
         db.close()
 
 
@@ -4019,6 +4092,11 @@ async def send_command(
 
         command_id = str(uuid.uuid4())
         command["command_id"] = command_id
+        command_ordering_manager.activate(
+            command_id=command_id,
+            device_id=external_device.device_id,
+            scope_key=_build_external_command_scope_key(external_device.device_id),
+        )
 
         background_tasks.add_task(
             _execute_external_device_command_task,
@@ -4161,6 +4239,21 @@ async def send_command(
             return {"status": "failed", "message": "Failed to publish to MQTT broker"}
     else:
         if success:
+            ordering_ticket = None
+            scope_key = _build_mqtt_command_scope_key(device_id, command)
+            if scope_key:
+                ordering_ticket = command_ordering_manager.activate(
+                    command_id=command_id,
+                    device_id=device_id,
+                    scope_key=scope_key,
+                )
+                removed_superseded_prediction = _drop_superseded_mqtt_command(
+                    db,
+                    ordering_ticket.superseded_command_id,
+                )
+                if removed_superseded_prediction:
+                    db.commit()
+
             mqtt_manager.pending_commands[command_id] = {
                 "device_id": device_id,
                 "pin": command.get("pin"),
@@ -4170,6 +4263,8 @@ async def send_command(
                 "command_id": command_id,
                 "predicted_state_history_id": None,
                 "predicted_state": copy.deepcopy(predicted_state) if isinstance(predicted_state, dict) else None,
+                "command_scope": ordering_ticket.scope_key if ordering_ticket is not None else None,
+                "sequence_number": ordering_ticket.sequence_number if ordering_ticket is not None else 0,
             }
 
         background_tasks.add_task(
@@ -4201,6 +4296,7 @@ async def send_command(
             if command_id in mqtt_manager.pending_commands:
                 cmd = mqtt_manager.pending_commands.pop(command_id, None)
                 if cmd:
+                    command_ordering_manager.complete(command_id)
                     from app.database import SessionLocal
                     db_bg = SessionLocal()
                     try:

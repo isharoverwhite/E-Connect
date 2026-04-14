@@ -19,6 +19,8 @@ from sqlalchemy.pool import StaticPool
 from app.api import refresh_external_device_states_once, router
 from app.auth import get_password_hash
 from app.database import Base, get_db
+from app.mqtt import mqtt_manager
+from app.services.command_ordering import command_ordering_manager
 from app.services.extension_runtime_loader import clear_extension_runtime_cache, load_installed_extension_runtime
 from app.services.external_runtime import (
     collect_yeelight_diagnostics,
@@ -92,10 +94,14 @@ def setup_db():
     cleanup_test_extension_archives()
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    mqtt_manager.pending_commands.clear()
+    command_ordering_manager.reset()
     yield
     close_all_sessions()
     clear_extension_runtime_cache()
     cleanup_test_extension_archives()
+    mqtt_manager.pending_commands.clear()
+    command_ordering_manager.reset()
 
 
 def create_admin_user(username: str = "extension-admin") -> User:
@@ -670,6 +676,81 @@ def test_external_device_command_executes_runtime_and_updates_state(monkeypatch)
             "status": "acknowledged",
         },
     )
+
+
+def test_external_device_command_task_drops_stale_result_when_newer_sequence_takes_over(monkeypatch):
+    import app.api as api_module
+
+    create_admin_user()
+    token = get_token()
+    room = create_room(token, name="Desk")
+
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={"file": ("yeelight.zip", build_extension_zip(), "application/zip")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    create_response = client.post(
+        "/api/v1/external-devices",
+        json={
+            "installed_extension_id": "yeelight_control",
+            "device_schema_id": "yeelight_white_light",
+            "name": "Desk Bulb",
+            "room_id": room["room_id"],
+            "config": {"ip_address": "192.168.1.61"},
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 200, create_response.text
+    device_payload = create_response.json()
+    original_state = device_payload.get("last_state")
+
+    runtime_result = Mock()
+    runtime_result.state = {
+        "kind": "action",
+        "pin": 0,
+        "value": 1,
+        "brightness": 64,
+        "reported_at": "2026-04-14T04:40:00+00:00",
+        "ip_address": "192.168.1.61",
+    }
+
+    def fake_execute(external_device, command):
+        command_ordering_manager.activate(
+            command_id="cmd-2",
+            device_id=external_device.device_id,
+            scope_key=api_module._build_external_command_scope_key(external_device.device_id),
+        )
+        return runtime_result
+
+    monkeypatch.setattr("app.api.execute_external_device_command", Mock(side_effect=fake_execute))
+    ws_mock = Mock()
+    monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", ws_mock)
+
+    command_ordering_manager.activate(
+        command_id="cmd-1",
+        device_id=device_payload["device_id"],
+        scope_key=api_module._build_external_command_scope_key(device_payload["device_id"]),
+    )
+
+    api_module._execute_external_device_command_task(
+        TestingSessionLocal,
+        device_id=device_payload["device_id"],
+        command={"command_id": "cmd-1", "kind": "action", "pin": 0, "brightness": 64},
+    )
+
+    db = TestingSessionLocal()
+    try:
+        stored_device = db.query(ExternalDevice).filter_by(device_id=device_payload["device_id"]).one()
+        assert stored_device.last_state == original_state
+    finally:
+        db.close()
+
+    assert ws_mock.call_count == 0
+    assert command_ordering_manager.get("cmd-1") is None
+    assert command_ordering_manager.is_latest("cmd-2") is True
 
 
 def test_external_device_command_accepts_color_temperature_for_legacy_color_schema(monkeypatch):
