@@ -113,7 +113,7 @@ export default function SetupPage() {
             showToast("Server initialized successfully! Redirecting to login...", "success");
             // Success, delay to show toast then send them to login
             setTimeout(() => {
-                router.push("/login");
+                window.location.href = "/login";
             }, 1000);
         } catch (error: unknown) {
             setError(getErrorMessage(error, "Failed to initialize server"));
