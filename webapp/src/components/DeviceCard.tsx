@@ -7,7 +7,7 @@ import { DeviceConfig, DeviceStatePin, DeviceStateSnapshot, PinConfig } from "@/
 
 export const getCardMinHeight = (config: DeviceConfig) => {
   if (config.provider) {
-    return 210; // Extension Card
+    return 450; // Extension Card
   }
   
   const pins = getActivePinConfigurations(config);

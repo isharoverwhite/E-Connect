@@ -279,7 +279,7 @@ export default function Dashboard() {
     };
 
     const doesOverlap = (rect1: {x: number, y: number, w: number, h: number}, rect2: {x: number, y: number, w: number, h: number}) => {
-      const gap = 20;
+      const gap = 30;
       return rect1.x < rect2.x + rect2.w + gap &&
              rect1.x + rect1.w + gap > rect2.x &&
              rect1.y < rect2.y + rect2.h + gap &&
@@ -799,7 +799,7 @@ export default function Dashboard() {
                           let hasOverlap = false;
 
                           const checkOverlap = (rect1: {x: number, y: number, w: number, h: number}, rect2: {x: number, y: number, w: number, h: number}) => {
-                            const gap = 20;
+                            const gap = 30;
                             return rect1.x < rect2.x + rect2.w + gap &&
                                   rect1.x + rect1.w + gap > rect2.x &&
                                   rect1.y < rect2.y + rect2.h + gap &&
@@ -842,7 +842,7 @@ export default function Dashboard() {
 
                           let hasOverlap = false;
                           const checkOverlap = (rect1: {x: number, y: number, w: number, h: number}, rect2: {x: number, y: number, w: number, h: number}) => {
-                            const gap = 20;
+                            const gap = 30;
                             return rect1.x < rect2.x + rect2.w + gap &&
                                   rect1.x + rect1.w + gap > rect2.x &&
                                   rect1.y < rect2.y + rect2.h + gap &&
