@@ -55,7 +55,6 @@ _BLOCKED_ADVERTISED_HOSTNAMES = {
     "db",
     "webapp",
 }
-_FIRMWARE_PUBLIC_BASE_URL_ENV = "FIRMWARE_PUBLIC_BASE_URL"
 _FIRMWARE_PUBLIC_PORT_ENV = "FIRMWARE_PUBLIC_PORT"
 _FIRMWARE_PUBLIC_SCHEME_ENV = "FIRMWARE_PUBLIC_SCHEME"
 _FIRMWARE_MQTT_BROKER_ENV = "FIRMWARE_MQTT_BROKER"
@@ -152,28 +151,10 @@ def _validate_advertised_hostname(hostname: str) -> None:
         raise ValueError(f"Host '{hostname}' is multicast and cannot be used as the server address.")
 
 
-def _resolve_configured_public_network_targets() -> dict[str, str] | None:
-    configured_base_url = os.getenv(_FIRMWARE_PUBLIC_BASE_URL_ENV)
-    if not configured_base_url or not configured_base_url.strip():
-        return None
-
-    raw_value = configured_base_url.strip()
-    netloc, hostname, scheme = _parse_host_candidate(raw_value, default_scheme="https")
-    _validate_advertised_hostname(hostname)
-    return build_firmware_network_targets(
-        hostname,
-        f"{scheme}://{netloc.rstrip('/')}/api/v1",
-        mqtt_broker=_resolve_runtime_mqtt_broker(hostname),
-        mqtt_port=_resolve_runtime_mqtt_port(),
-    )
-
-
 def _normalize_firmware_public_scheme() -> str:
     candidate = os.getenv(_FIRMWARE_PUBLIC_SCHEME_ENV, _DEFAULT_FIRMWARE_PUBLIC_SCHEME).strip().lower()
     if candidate not in {"http", "https"}:
-        raise ValueError(
-            f"{_FIRMWARE_PUBLIC_SCHEME_ENV} must be http or https when {_FIRMWARE_PUBLIC_BASE_URL_ENV} is unset."
-        )
+        raise ValueError(f"{_FIRMWARE_PUBLIC_SCHEME_ENV} must be http or https.")
     return candidate
 
 
@@ -492,14 +473,6 @@ def _looks_like_docker_bridge_ip(hostname: str) -> bool:
 
 
 def resolve_runtime_firmware_network_state() -> dict[str, object]:
-    configured_targets = _resolve_configured_public_network_targets()
-    if configured_targets is not None:
-        return {
-            "source": "configured_env",
-            "targets": configured_targets,
-            "error": None,
-        }
-
     detected_host = _detect_runtime_advertised_host()
     if not detected_host:
         return {
@@ -507,7 +480,8 @@ def resolve_runtime_firmware_network_state() -> dict[str, object]:
             "targets": None,
             "error": (
                 "Server startup could not auto-detect a reachable LAN host for firmware provisioning. "
-                f"Open the Web UI from the server LAN/public origin or set {_FIRMWARE_PUBLIC_BASE_URL_ENV} explicitly."
+                "Open the Web UI from the server LAN/public origin so the backend can derive a reachable host "
+                "from the active browser session when a build is triggered."
             ),
         }
 
@@ -518,8 +492,8 @@ def resolve_runtime_firmware_network_state() -> dict[str, object]:
             "error": (
                 f"Server startup detected container address {detected_host}, not the host LAN IP. "
                 "If you run Docker and want automatic firmware IP handling on startup, configure the relevant containers "
-                "with `network_mode: host` so the server sees the real host interfaces, or set "
-                f"{_FIRMWARE_PUBLIC_BASE_URL_ENV} explicitly."
+                "with `network_mode: host` so the server sees the real host interfaces, or open the Web UI from a "
+                "reachable LAN/public origin so build requests can derive the correct host."
             ),
         }
 
@@ -642,10 +616,6 @@ def infer_firmware_network_targets(
     request_scheme: str,
     runtime_state: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    configured_targets = _resolve_configured_public_network_targets()
-    if configured_targets is not None:
-        return configured_targets
-
     runtime_targets = extract_runtime_firmware_network_targets(runtime_state)
     if runtime_targets is not None:
         return runtime_targets
@@ -697,8 +667,8 @@ def infer_firmware_network_targets(
     detail = (
         "Server could not infer a reachable host for firmware provisioning from the current request. "
         "Open the Web UI using the server LAN IP or a trusted reverse-proxy hostname, not localhost, "
-        "127.0.0.1, or Docker-only names. If operators must access the Web UI through localhost, "
-        f"set {_FIRMWARE_PUBLIC_BASE_URL_ENV} to the server LAN/public origin so firmware builds keep a reachable host."
+        "127.0.0.1, or Docker-only names. Firmware builds must be triggered from a request that already uses the "
+        "same reachable LAN/public origin the board will contact."
     )
     runtime_error = _extract_runtime_network_error(runtime_state)
     if runtime_error:

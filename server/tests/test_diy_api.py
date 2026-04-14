@@ -600,13 +600,13 @@ def test_trigger_build_stamps_distinct_public_mqtt_target(monkeypatch):
     assert project.config["target_key"] == "192.168.50.10|http://192.168.50.10:3000/api/v1|mqtt-lan.local|2883"
 
 
-def test_trigger_build_prefers_configured_public_base_url_over_localhost_request(monkeypatch):
+def test_trigger_build_prefers_runtime_startup_target_over_localhost_request():
     db = TestingSessionLocal()
-    _user, room = create_test_user(db, username="publicbase")
-    token = get_token(username="publicbase")
+    _user, room = create_test_user(db, username="runtimestamppref")
+    token = get_token(username="runtimestamppref")
 
     project_payload = {
-        "name": "Public Base Node",
+        "name": "Runtime Target Node",
         "board_profile": "esp32",
         "room_id": room.room_id,
         "config": {
@@ -625,16 +625,29 @@ def test_trigger_build_prefers_configured_public_base_url_over_localhost_request
     assert create_response.status_code == 200
     project_id = create_response.json()["id"]
 
-    monkeypatch.setenv("FIRMWARE_PUBLIC_BASE_URL", "https://192.168.8.4:3000")
+    app.state.firmware_network_state = {
+        "source": "startup_auto",
+        "targets": {
+            "advertised_host": "192.168.8.4",
+            "api_base_url": "https://192.168.8.4:3000/api/v1",
+            "mqtt_broker": "192.168.8.4",
+            "mqtt_port": 1883,
+            "target_key": "192.168.8.4|https://192.168.8.4:3000/api/v1|192.168.8.4|1883",
+        },
+        "error": None,
+    }
 
-    with patch("app.api.build_firmware_task", return_value=None):
-        response = client.post(
-            f"/api/v1/diy/build?project_id={project_id}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Host": "127.0.0.1:3000",
-            },
-        )
+    try:
+        with patch("app.api.build_firmware_task", return_value=None):
+            response = client.post(
+                f"/api/v1/diy/build?project_id={project_id}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Host": "127.0.0.1:3000",
+                },
+            )
+    finally:
+        app.state.firmware_network_state = None
 
     assert response.status_code == 200, response.text
     project = db.query(DiyProject).filter(DiyProject.id == project_id).first()
@@ -849,47 +862,6 @@ def test_get_diy_network_targets_rejects_authenticated_non_admin_user():
 
     assert response.status_code == 403, response.text
     assert response.json()["detail"] == "Admin or Owner privileges required"
-
-
-def test_trigger_build_rejects_invalid_configured_public_base_url(monkeypatch):
-    db = TestingSessionLocal()
-    _user, room = create_test_user(db, username="badpublicbase")
-    token = get_token(username="badpublicbase")
-
-    project_payload = {
-        "name": "Bad Public Base Node",
-        "board_profile": "esp32",
-        "room_id": room.room_id,
-        "config": {
-            "wifi_ssid": "SSID",
-            "wifi_password": "PASS",
-            "pins": [
-                {"gpio": 2, "mode": "OUTPUT", "label": "LED"}
-            ]
-        }
-    }
-    create_response = client.post(
-        "/api/v1/diy/projects",
-        json=project_payload,
-        headers={"Authorization": f"Bearer {token}"},
-    )
-    assert create_response.status_code == 200
-    project_id = create_response.json()["id"]
-
-    monkeypatch.setenv("FIRMWARE_PUBLIC_BASE_URL", "http://localhost:3000")
-
-    response = client.post(
-        f"/api/v1/diy/build?project_id={project_id}",
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Host": "127.0.0.1:3000",
-        },
-    )
-
-    assert response.status_code == 400
-    payload = response.json()["detail"]
-    assert payload["error"] == "validation"
-    assert "loopback" in payload["message"] or "Docker-local" in payload["message"]
 
 def test_describe_network_target_change_requires_rebuild_for_new_server_ip():
     from app.services.builder import describe_network_target_change

@@ -40,7 +40,6 @@ def teardown_function():
 
 
 def test_root_route_redirects_to_default_https_companion_port(monkeypatch):
-    monkeypatch.delenv("FIRMWARE_PUBLIC_BASE_URL", raising=False)
     monkeypatch.setenv("FIRMWARE_PUBLIC_SCHEME", "http")
     monkeypatch.setenv("FIRMWARE_PUBLIC_PORT", "3000")
 
@@ -51,11 +50,23 @@ def test_root_route_redirects_to_default_https_companion_port(monkeypatch):
     assert response.headers["location"] == "https://econnect.local:3443/"
 
 
-def test_root_route_uses_runtime_webapp_transport_when_available(monkeypatch):
-    monkeypatch.setenv("FIRMWARE_PUBLIC_BASE_URL", "https://econnect.local:3443")
-
+def test_root_route_uses_runtime_webapp_transport_when_available():
     with TestClient(app) as client:
-        response = client.get("/", follow_redirects=False, headers={"host": "econnect.local"})
+        app.state.firmware_network_state = {
+            "source": "startup_auto",
+            "targets": {
+                "advertised_host": "econnect.local",
+                "api_base_url": "https://econnect.local:3000/api/v1",
+                "mqtt_broker": "econnect.local",
+                "mqtt_port": 1883,
+                "target_key": "econnect.local|https://econnect.local:3000/api/v1|econnect.local|1883",
+            },
+            "error": None,
+        }
+        try:
+            response = client.get("/", follow_redirects=False, headers={"host": "econnect.local"})
+        finally:
+            app.state.firmware_network_state = None
 
     assert response.status_code == 307
     assert response.headers["location"] == "https://econnect.local:3443/"
