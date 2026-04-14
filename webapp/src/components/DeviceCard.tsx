@@ -1,7 +1,7 @@
 /* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
 
-import React, { useState, useEffect } from "react";
-import { sendDeviceCommand } from "@/lib/api";
+import React, { memo, useCallback, useEffect, useRef, useState } from "react";
+import { DeviceCommandResponse, sendDeviceCommand } from "@/lib/api";
 import { getActivePinConfigurations, getStatePins as readStatePins } from "@/lib/device-config";
 import { DeviceConfig, DeviceStatePin, DeviceStateSnapshot, PinConfig } from "@/types/device";
 
@@ -141,6 +141,162 @@ export function getNumericStateValue(value: number | boolean | undefined): numbe
   return null;
 }
 
+const REALTIME_RANGE_COMMAND_INTERVAL_MS = 75;
+
+function useRealtimeRangeCommand({
+  deviceId,
+  buildPayload,
+  onLatestAccepted,
+  onLatestRejected,
+  intervalMs = REALTIME_RANGE_COMMAND_INTERVAL_MS,
+}: {
+  deviceId: string;
+  buildPayload: (value: number) => Record<string, unknown>;
+  onLatestAccepted: (response: DeviceCommandResponse) => void;
+  onLatestRejected: () => void;
+  intervalMs?: number;
+}) {
+  const activeRef = useRef(true);
+  const latestIntentRef = useRef<{ seq: number; value: number } | null>(null);
+  const queuedIntentRef = useRef<{ seq: number; value: number } | null>(null);
+  const inFlightIntentsRef = useRef(new Map<number, number>());
+  const lastCompletedIntentRef = useRef<{ seq: number; status: "fulfilled" | "rejected" } | null>(null);
+  const nextSequenceRef = useRef(0);
+  const timerRef = useRef<number | null>(null);
+  const lastDispatchAtRef = useRef(0);
+
+  const dispatchQueuedValue = useCallback(async () => {
+    if (!activeRef.current) {
+      return;
+    }
+
+    const nextIntent = queuedIntentRef.current;
+    if (nextIntent === null) {
+      return;
+    }
+
+    queuedIntentRef.current = null;
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+
+    lastDispatchAtRef.current = Date.now();
+    inFlightIntentsRef.current.set(nextIntent.seq, nextIntent.value);
+
+    try {
+      const response = await sendDeviceCommand(deviceId, buildPayload(nextIntent.value));
+      lastCompletedIntentRef.current = {
+        seq: nextIntent.seq,
+        status: response.status === "failed" ? "rejected" : "fulfilled",
+      };
+      if (!activeRef.current) {
+        return;
+      }
+
+      const isLatestIntent = latestIntentRef.current?.seq === nextIntent.seq && queuedIntentRef.current === null;
+      if (response.status === "failed") {
+        if (isLatestIntent) {
+          onLatestRejected();
+        }
+      } else if (isLatestIntent) {
+        onLatestAccepted(response);
+      }
+    } catch {
+      lastCompletedIntentRef.current = { seq: nextIntent.seq, status: "rejected" };
+      if (activeRef.current && latestIntentRef.current?.seq === nextIntent.seq && queuedIntentRef.current === null) {
+        onLatestRejected();
+      }
+    } finally {
+      inFlightIntentsRef.current.delete(nextIntent.seq);
+
+      if (!activeRef.current || queuedIntentRef.current === null) {
+        return;
+      }
+
+      const elapsed = Date.now() - lastDispatchAtRef.current;
+      const delay = Math.max(0, intervalMs - elapsed);
+      timerRef.current = window.setTimeout(() => {
+        timerRef.current = null;
+        void dispatchQueuedValue();
+      }, delay);
+    }
+  }, [buildPayload, deviceId, intervalMs, onLatestAccepted, onLatestRejected]);
+
+  const queueValue = useCallback((value: number, options?: { immediate?: boolean }) => {
+    if (!activeRef.current) {
+      return;
+    }
+
+    const queuedIntent = queuedIntentRef.current;
+    if (queuedIntent?.value === value) {
+      if (options?.immediate && timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+        timerRef.current = window.setTimeout(() => {
+          timerRef.current = null;
+          void dispatchQueuedValue();
+        }, 0);
+      }
+      return;
+    }
+
+    const latestIntent = latestIntentRef.current;
+    const latestIntentInFlight = latestIntent !== null && inFlightIntentsRef.current.has(latestIntent.seq);
+    if (latestIntent?.value === value && latestIntentInFlight && queuedIntent === null) {
+      return;
+    }
+
+    const latestIntentCompletedSuccessfully =
+      latestIntent?.value === value &&
+      queuedIntent === null &&
+      !latestIntentInFlight &&
+      lastCompletedIntentRef.current?.seq === latestIntent.seq &&
+      lastCompletedIntentRef.current.status === "fulfilled";
+    if (latestIntentCompletedSuccessfully) {
+      return;
+    }
+
+    const nextIntent = { seq: nextSequenceRef.current + 1, value };
+    nextSequenceRef.current = nextIntent.seq;
+    latestIntentRef.current = nextIntent;
+    queuedIntentRef.current = nextIntent;
+
+    if (timerRef.current !== null) {
+      if (!options?.immediate) {
+        return;
+      }
+      window.clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+
+    const elapsed = Date.now() - lastDispatchAtRef.current;
+    const delay = options?.immediate ? 0 : Math.max(0, intervalMs - elapsed);
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      void dispatchQueuedValue();
+    }, delay);
+  }, [dispatchQueuedValue, intervalMs]);
+
+  useEffect(() => {
+    activeRef.current = true;
+    const inFlightIntents = inFlightIntentsRef.current;
+    return () => {
+      activeRef.current = false;
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
+      latestIntentRef.current = null;
+      queuedIntentRef.current = null;
+      inFlightIntents.clear();
+      lastCompletedIntentRef.current = null;
+    };
+  }, []);
+
+  return { queueValue };
+}
+
 function formatClimateReading(value: number | null): string {
   if (value === null || Number.isNaN(value)) {
     return "--";
@@ -252,7 +408,9 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
     (optimisticToggleState === null || toggleTargetMatched) &&
     (optimisticSliderValue === null || sliderTargetMatched);
 
-  const pending = requestPending || (pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced);
+  const commandPending = pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced;
+  const toggleDisabled = requestPending || commandPending || !isOnline;
+  const sliderDisabled = requestPending || !isOnline;
   const toggleLoading =
     optimisticToggleState !== null &&
     !toggleTargetMatched &&
@@ -315,6 +473,19 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
     }
   };
 
+  const { queueValue: queueRealtimeSliderValue } = useRealtimeRangeCommand({
+    deviceId: config.device_id,
+    buildPayload: (rawValue) => ({ kind: "action", pin: pin.gpio_pin, brightness: rawValue }),
+    onLatestAccepted: (response) => {
+      setPendingCmdId(response.command_id || null);
+    },
+    onLatestRejected: () => {
+      setOptimisticToggleState(null);
+      setOptimisticSliderValue(null);
+      setPendingCmdId(null);
+    },
+  });
+
   const handleToggle = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const isChecked = e.target.checked;
     setRequestPending(true);
@@ -342,25 +513,11 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
     }
   };
 
-  const handleSliderCommit = async (rawValue: number) => {
-    setRequestPending(true);
+  const scheduleSliderValue = (rawValue: number, immediate = false) => {
     setPendingCmdId(null);
-    setOptimisticToggleState(null);
+    setOptimisticToggleState(rawValue !== pwmOffValue);
     setOptimisticSliderValue(rawValue);
-    try {
-      const payload = { kind: "action", pin: pin.gpio_pin, brightness: rawValue };
-      const response = await sendDeviceCommand(config.device_id, payload);
-      setRequestPending(false);
-      if (response && response.status === "failed") {
-        setOptimisticSliderValue(null);
-      } else {
-        applyPersistedState(response.last_state);
-        setPendingCmdId(response?.command_id || null);
-      }
-    } catch {
-      setRequestPending(false);
-      setOptimisticSliderValue(null);
-    }
+    queueRealtimeSliderValue(rawValue, immediate ? { immediate: true } : undefined);
   };
 
   const label = pin.function || pin.label || `${pin.mode} Pin ${pin.gpio_pin}`;
@@ -371,7 +528,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
         <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
         <DeviceToggle
           checked={toggleState}
-          disabled={pending || !isOnline}
+          disabled={toggleDisabled}
           id={`pin-${config.device_id}-${pin.gpio_pin}`}
           loading={toggleLoading}
           onChange={handleToggle}
@@ -397,7 +554,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
              )}
              <DeviceToggle
                 checked={toggleState}
-                disabled={pending || !isOnline}
+                disabled={toggleDisabled}
                 id={`pin-toggle-${config.device_id}-${pin.gpio_pin}`}
                 loading={toggleLoading || sliderLoading}
                 hideSyncLabel={true}
@@ -417,11 +574,11 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
           min={pwmRangeMin}
           max={pwmRangeMax}
           value={sliderValue}
-          disabled={pending || !isOnline}
+          disabled={sliderDisabled}
           style={pwmSliderStyle}
-          onChange={(e) => setOptimisticSliderValue(parseInt(e.target.value))}
-          onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
-          onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
+          onChange={(e) => scheduleSliderValue(parseInt(e.target.value, 10))}
+          onMouseUp={(e) => scheduleSliderValue(parseInt(e.currentTarget.value, 10), true)}
+          onTouchEnd={(e) => scheduleSliderValue(parseInt(e.currentTarget.value, 10), true)}
         />
       </div>
     );
@@ -731,7 +888,10 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
     (optimisticRgb === null || rgbTargetMatched) &&
     (optimisticTone === null || toneTargetMatched);
 
-  const pending = requestPending || (pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced);
+  const controlReady = isOnline || Boolean(config.is_external);
+  const commandPending = pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced;
+  const toggleDisabled = requestPending || commandPending || !controlReady;
+  const valueControlDisabled = requestPending || !controlReady;
   const toggleLoading = optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
   const sliderLoading = optimisticSliderValue !== null && !sliderTargetMatched && !failedPendingCommand;
   const rgbLoading = optimisticRgb !== null && !rgbTargetMatched && !failedPendingCommand;
@@ -741,7 +901,6 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
   const sliderValue = optimisticSliderValue !== null ? optimisticSliderValue : baselineSliderValue;
   const rgbValue = optimisticRgb !== null ? optimisticRgb : baselineRgb;
   const toneValue = optimisticTone !== null ? optimisticTone : baselineTone;
-  const controlReady = isOnline || Boolean(config.is_external);
   const effectiveCaps = getEffectiveExtensionCapabilities(config);
   const temperatureRange = getExtensionSchemaTemperatureRange(config);
   const supportsRgb = effectiveCaps.includes("rgb");
@@ -794,6 +953,31 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
     }
   }, [pendingCmdId]);
 
+  const { queueValue: queueRealtimeBrightnessValue } = useRealtimeRangeCommand({
+    deviceId: config.device_id,
+    buildPayload: (rawValue) => ({ kind: "action", pin: 0, brightness: Math.round(rawValue) }),
+    onLatestAccepted: (response) => {
+      setPendingCmdId(response.command_id || null);
+    },
+    onLatestRejected: () => {
+      setOptimisticToggleState(null);
+      setOptimisticSliderValue(null);
+      setPendingCmdId(null);
+    },
+  });
+
+  const { queueValue: queueRealtimeToneValue } = useRealtimeRangeCommand({
+    deviceId: config.device_id,
+    buildPayload: (rawValue) => ({ kind: "action", pin: 0, color_temperature: Math.round(rawValue) }),
+    onLatestAccepted: (response) => {
+      setPendingCmdId(response.command_id || null);
+    },
+    onLatestRejected: () => {
+      setOptimisticTone(null);
+      setPendingCmdId(null);
+    },
+  });
+
   const handleToggle = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const isChecked = e.target.checked;
     setRequestPending(true);
@@ -817,24 +1001,11 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
     }
   };
 
-  const handleSliderCommit = async (rawValue: number) => {
-    setRequestPending(true);
+  const scheduleBrightnessValue = (rawValue: number, immediate = false) => {
     setPendingCmdId(null);
-    setOptimisticToggleState(null);
+    setOptimisticToggleState(rawValue > 0);
     setOptimisticSliderValue(rawValue);
-    try {
-      const payload = { kind: "action", pin: 0, brightness: Math.round(rawValue) };
-      const response = await sendDeviceCommand(config.device_id, payload);
-      setRequestPending(false);
-      if (response && response.status === "failed") {
-        setOptimisticSliderValue(null);
-      } else {
-        setPendingCmdId(response?.command_id || null);
-      }
-    } catch {
-      setRequestPending(false);
-      setOptimisticSliderValue(null);
-    }
+    queueRealtimeBrightnessValue(rawValue, immediate ? { immediate: true } : undefined);
   };
   
   const handleRgbCommit = async (rgb: [number, number, number]) => {
@@ -857,24 +1028,11 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
     }
   };
 
-  const handleToneCommit = async (tone: number) => {
-    setRequestPending(true);
+  const scheduleToneValue = (tone: number, immediate = false) => {
     setPendingCmdId(null);
     setAdvancedModeOverride("temperature");
     setOptimisticTone(tone);
-    try {
-      const payload = { kind: "action", pin: 0, color_temperature: Math.round(tone) };
-      const response = await sendDeviceCommand(config.device_id, payload);
-      setRequestPending(false);
-      if (response && response.status === "failed") {
-        setOptimisticTone(null);
-      } else {
-        setPendingCmdId(response?.command_id || null);
-      }
-    } catch {
-      setRequestPending(false);
-      setOptimisticTone(null);
-    }
+    queueRealtimeToneValue(tone, immediate ? { immediate: true } : undefined);
   };
 
   return (
@@ -895,7 +1053,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
            {/* offset toggle to not overlap with the icon */}
           <DeviceToggle
             checked={toggleState}
-            disabled={pending || !controlReady}
+            disabled={toggleDisabled}
             id={`ext-${config.device_id}`}
             loading={toggleLoading || sliderLoading || rgbLoading || toneLoading}
             onChange={handleToggle}
@@ -943,10 +1101,10 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
           min={0}
           max={255}
           value={sliderValue}
-          disabled={pending || !controlReady}
-          onChange={(e) => setOptimisticSliderValue(parseInt(e.target.value))}
-          onMouseUp={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
-          onTouchEnd={(e) => void handleSliderCommit(parseInt(e.currentTarget.value))}
+          disabled={valueControlDisabled}
+          onChange={(e) => scheduleBrightnessValue(parseInt(e.target.value, 10))}
+          onMouseUp={(e) => scheduleBrightnessValue(parseInt(e.currentTarget.value, 10), true)}
+          onTouchEnd={(e) => scheduleBrightnessValue(parseInt(e.currentTarget.value, 10), true)}
         />
       </div>
 
@@ -974,7 +1132,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
                     type="button"
                     className={`rounded-full px-3 py-1.5 transition-colors ${visibleAdvancedMode === "color" ? "bg-indigo-500 text-white shadow-sm" : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"}`}
                     onClick={() => setAdvancedModeOverride("color")}
-                    disabled={pending || !controlReady}
+                    disabled={valueControlDisabled}
                   >
                     Color
                   </button>
@@ -982,7 +1140,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
                     type="button"
                     className={`rounded-full px-3 py-1.5 transition-colors ${visibleAdvancedMode === "temperature" ? "bg-amber-500 text-white shadow-sm" : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"}`}
                     onClick={() => setAdvancedModeOverride("temperature")}
-                    disabled={pending || !controlReady}
+                    disabled={valueControlDisabled}
                   >
                     White
                   </button>
@@ -999,7 +1157,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
                 <ColorWheel 
                     rgb={rgbValue} 
                     onChange={handleRgbCommit} 
-                    disabled={pending || !controlReady} 
+                    disabled={valueControlDisabled} 
                 />
               </div>
             )}
@@ -1031,10 +1189,10 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
                   max={temperatureRange?.max ?? 6500}
                   step={50}
                   value={toneValue}
-                  disabled={pending || !controlReady}
-                  onChange={(e) => setOptimisticTone(parseInt(e.target.value))}
-                  onMouseUp={(e) => void handleToneCommit(parseInt(e.currentTarget.value))}
-                  onTouchEnd={(e) => void handleToneCommit(parseInt(e.currentTarget.value))}
+                  disabled={valueControlDisabled}
+                  onChange={(e) => scheduleToneValue(parseInt(e.target.value, 10))}
+                  onMouseUp={(e) => scheduleToneValue(parseInt(e.currentTarget.value, 10), true)}
+                  onTouchEnd={(e) => scheduleToneValue(parseInt(e.currentTarget.value, 10), true)}
                   />
               </div>
             )}
@@ -1050,7 +1208,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
   );
 }
 
-export function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
+export const DynamicDeviceCard = memo(function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
   if (config.provider) {
     return <ExtensionCard config={config} isOnline={isOnline} />;
   }
@@ -1122,4 +1280,4 @@ export function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, 
       </div>
     </div>
   );
-}
+});

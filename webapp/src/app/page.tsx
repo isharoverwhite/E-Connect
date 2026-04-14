@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, useRef } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchDashboardDevices, fetchDevices, fetchSystemLogs, markSystemLogRead, markAllSystemLogsRead, SystemLogEntry, fetchSystemStatus } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
@@ -139,16 +139,21 @@ export default function Dashboard() {
       isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
       fetchSystemStatus().catch(() => null),
     ]);
-    setDevices(dashboardDevices);
-    setPairingRequests((pendingRequests as DeviceConfig[]) || []);
-    if (isAdmin) setSystemLogs(logsRes.entries);
-    if (statusRes) {
+
+    startTransition(() => {
+      setDevices(dashboardDevices);
+      setPairingRequests((pendingRequests as DeviceConfig[]) || []);
+      if (isAdmin) {
+        setSystemLogs(logsRes.entries);
+      }
+      if (statusRes) {
         setLatestFirmwareRevision(statusRes.latest_firmware_revision || null);
         if (statusRes.effective_timezone) {
-            setServerTimezone(statusRes.effective_timezone);
+          setServerTimezone(statusRes.effective_timezone);
         }
-    }
-    setLoading(false);
+      }
+      setLoading(false);
+    });
   }, [isAdmin]);
 
 
@@ -171,9 +176,17 @@ export default function Dashboard() {
       return;
     }
 
-    setDevices((prev) => {
-      return prev.map((device) => {
-        if (device.device_id === event.device_id) {
+    startTransition(() => {
+      setDevices((prev) => {
+        let didChange = false;
+
+        const next = prev.map((device): DeviceConfig => {
+          if (device.device_id !== event.device_id) {
+            return device;
+          }
+
+          didChange = true;
+
           if (event.type === "device_online") {
             const reportedAt =
               typeof event.payload?.reported_at === "string" ? event.payload.reported_at : null;
@@ -192,7 +205,6 @@ export default function Dashboard() {
             return {
               ...device,
               conn_status: "online",
-              runtime_state: event.payload,
               last_state: (event.payload ?? null) as DeviceConfig["last_state"],
               last_seen: reportedAt ?? device.last_seen,
             };
@@ -203,8 +215,11 @@ export default function Dashboard() {
               last_delivery: (event.payload ?? null) as DeviceConfig["last_delivery"],
             };
           }
-        }
-        return device;
+
+          return device;
+        });
+
+        return didChange ? next : prev;
       });
     });
   });
@@ -223,16 +238,20 @@ export default function Dashboard() {
         if (cancelled) {
           return;
         }
-        setDevices(dashboardDevices);
-        setPairingRequests((pendingRequests as DeviceConfig[]) || []);
-        if (isAdmin) setSystemLogs(logsRes.entries);
-        if (statusRes) {
+        startTransition(() => {
+          setDevices(dashboardDevices);
+          setPairingRequests((pendingRequests as DeviceConfig[]) || []);
+          if (isAdmin) {
+            setSystemLogs(logsRes.entries);
+          }
+          if (statusRes) {
             setLatestFirmwareRevision(statusRes.latest_firmware_revision || null);
             if (statusRes.effective_timezone) {
-                setServerTimezone(statusRes.effective_timezone);
+              setServerTimezone(statusRes.effective_timezone);
             }
-        }
-        setLoading(false);
+          }
+          setLoading(false);
+        });
       })();
     }, 50);
 
