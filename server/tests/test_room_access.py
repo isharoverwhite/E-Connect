@@ -2,7 +2,7 @@
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from unittest.mock import Mock
 
 import pytest
@@ -614,7 +614,7 @@ def test_dashboard_prefers_pending_predicted_state_before_history_commit():
         "pin": 5,
         "value": 1,
         "brightness": 250,
-        "timestamp": datetime.utcnow().timestamp(),
+        "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).timestamp(),
         "command_id": "pending-command",
         "predicted_state_history_id": None,
         "predicted_state": {
@@ -1146,7 +1146,7 @@ def test_approve_device_broadcasts_pairing_queue_refresh(monkeypatch):
         owner_id=admin["user_id"],
         auth_status=AuthStatus.pending,
         conn_status=ConnStatus.online,
-        pairing_requested_at=datetime.utcnow(),
+        pairing_requested_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     db.add(device)
     db.commit()
@@ -1202,7 +1202,7 @@ def test_reject_device_forwards_rejection_and_hides_pending_device(monkeypatch):
         owner_id=admin["user_id"],
         auth_status=AuthStatus.pending,
         conn_status=ConnStatus.online,
-        pairing_requested_at=datetime.utcnow(),
+        pairing_requested_at=datetime.now(timezone.utc).replace(tzinfo=None),
     )
     db.add(device)
     db.commit()

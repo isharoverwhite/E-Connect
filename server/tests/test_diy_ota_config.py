@@ -757,7 +757,7 @@ def test_put_device_config_creates_named_saved_config_without_pruning_build_hist
     user, room, project, device = create_test_data(db)
 
     old_job_ids: list[str] = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     for offset in range(3):
         job_id = str(uuid.uuid4())
         old_job_ids.append(job_id)
@@ -858,7 +858,7 @@ def test_list_device_config_history_returns_all_saved_configs_with_board_assignm
     user, room, project, device = create_test_data(db)
 
     snapshots = []
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     for index in range(4):
         job_id = str(uuid.uuid4())
         snapshot = {
@@ -910,7 +910,7 @@ def test_config_history_keeps_legacy_jobs_and_current_saved_config():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     legacy_job_ids: list[str] = []
     for index in range(3):
         job_id = str(uuid.uuid4())
@@ -1884,7 +1884,7 @@ def test_send_command_ota_retry_after_flash_failed_reuses_artifact(tmp_path):
     user, room, project, device = create_test_data(db)
 
     job_id = str(uuid.uuid4())
-    failed_at = datetime.utcnow()
+    failed_at = datetime.now(timezone.utc).replace(tzinfo=None)
     job = BuildJob(
         id=job_id,
         project_id=project.id,
@@ -2328,7 +2328,7 @@ def test_mqtt_state_active_pending_device_stays_waiting_for_approval():
     db = TestingSessionLocal()
     user, room, project, device = create_test_data(db)
     device.auth_status = AuthStatus.pending
-    device.pairing_requested_at = datetime.utcnow()
+    device.pairing_requested_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
 
     mgr = MQTTClientManager()
@@ -2605,7 +2605,7 @@ def test_mqtt_reconcile_ota_success():
         status=JobStatus.flashing,
         staged_project_config=project.pending_config,
     )
-    job.updated_at = datetime.utcnow() - timedelta(seconds=10)
+    job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=10)
     project.pending_build_job_id = job_id
     db.add(job)
     device.provisioning_project_id = project.id
@@ -2865,7 +2865,7 @@ def test_mqtt_reconcile_ota_mismatch_recent():
     
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
-    job.updated_at = datetime.utcnow() - timedelta(seconds=30) # under 60s
+    job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=30) # under 60s
     db.add(job)
     device.provisioning_project_id = project.id
     db.commit()
@@ -2895,7 +2895,7 @@ def test_mqtt_reconcile_ota_mismatch_stale():
     
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
-    job.updated_at = datetime.utcnow() - timedelta(seconds=90) # over 60s
+    job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=90) # over 60s
     db.add(job)
     device.provisioning_project_id = project.id
     db.commit()
@@ -2958,7 +2958,7 @@ def test_mqtt_state_recent_flashed_job_mismatch_fails_immediately():
 
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashed)
-    job.finished_at = datetime.utcnow() - timedelta(seconds=5)
+    job.finished_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=5)
     job.updated_at = job.finished_at
     db.add(job)
     device.provisioning_project_id = project.id
@@ -2989,7 +2989,7 @@ def test_mqtt_register_reconcile_ota_success():
     
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
-    job.updated_at = datetime.utcnow() - timedelta(seconds=10)
+    job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=10)
     db.add(job)
     device.provisioning_project_id = project.id
     db.commit()
@@ -3025,7 +3025,7 @@ def test_mqtt_register_reconcile_ota_mismatch_recent():
     
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
-    job.updated_at = datetime.utcnow() - timedelta(seconds=30) # under 60s
+    job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=30) # under 60s
     db.add(job)
     device.provisioning_project_id = project.id
     db.commit()
@@ -3059,7 +3059,7 @@ def test_mqtt_register_reconcile_ota_mismatch_stale():
     
     job_id = str(uuid.uuid4())
     job = BuildJob(id=job_id, project_id=project.id, status=JobStatus.flashing)
-    job.updated_at = datetime.utcnow() - timedelta(seconds=90) # over 60s
+    job.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=90) # over 60s
     db.add(job)
     device.provisioning_project_id = project.id
     db.commit()
@@ -3101,7 +3101,7 @@ def test_mqtt_register_recent_flashed_job_keeps_board_reported_pin_map_on_old_fi
         status=JobStatus.flashed,
         staged_project_config=project.pending_config,
     )
-    job.finished_at = datetime.utcnow() - timedelta(seconds=5)
+    job.finished_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=5)
     job.updated_at = job.finished_at
     project.pending_build_job_id = job_id
     db.add(job)
