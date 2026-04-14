@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Literal, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -122,8 +122,7 @@ class UserResponse(UserBase):
     user_id: int
     created_at: Optional[datetime]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ManagedUserResponse(UserResponse):
@@ -140,8 +139,7 @@ class HouseholdResponse(HouseholdBase):
     created_at: Optional[datetime]
     timezone: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class SetupResponse(BaseModel):
     user: UserResponse
@@ -196,8 +194,7 @@ class ApiKeyResponse(BaseModel):
     revoked_at: Optional[datetime] = None
     is_revoked: bool = False
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ApiKeyCreateResponse(ApiKeyResponse):
@@ -216,8 +213,7 @@ class PinConfigResponse(PinConfigCreate):
     id: int
     device_id: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- Device ---
 class DeviceBase(BaseModel):
@@ -271,8 +267,7 @@ class DeviceResponse(DeviceBase):
     updated_at: Optional[datetime] = None
     pin_configurations: List[PinConfigResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DeviceAvailabilityResponse(BaseModel):
@@ -306,8 +301,7 @@ class RoomResponse(RoomCreate):
     household_id: Optional[int] = None
     assigned_user_ids: List[int] = Field(default_factory=list)
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DeviceApprovalRequest(BaseModel):
@@ -337,8 +331,7 @@ class AutomationLogResponse(BaseModel):
     log_output: Optional[str] = None
     error_message: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class AutomationResponse(AutomationCreate):
@@ -353,8 +346,7 @@ class AutomationResponse(AutomationCreate):
     schedule_weekdays: List[str] = Field(default_factory=list)
     next_run_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class TriggerResponse(BaseModel):
     status: ExecutionStatus
@@ -378,8 +370,7 @@ class DeviceHistoryResponse(DeviceHistoryCreate):
     timestamp: datetime
     changed_by: Optional[int] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SystemLogResponse(BaseModel):
@@ -397,8 +388,7 @@ class SystemLogResponse(BaseModel):
     read_at: Optional[datetime] = None
     read_by_user_id: Optional[int] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SystemLogListResponse(BaseModel):
@@ -514,8 +504,7 @@ class DiyProjectResponse(DiyProjectBase):
     created_at: datetime
     updated_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ExtensionConfigField(BaseModel):
@@ -576,8 +565,7 @@ class ProjectDeviceUsage(BaseModel):
     room_id: Optional[int] = None
     room_name: Optional[str] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class DiyProjectUsageResponse(DiyProjectResponse):
     usage_state: Literal["unused", "in_use"]
@@ -628,8 +616,7 @@ class BuildJobResponse(BaseModel):
     ota_download_url: Optional[str] = None
     expected_firmware_version: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ConfigHistoryEntryResponse(BaseModel):
@@ -668,8 +655,7 @@ class SerialSessionResponse(BaseModel):
     created_at: datetime
     released_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 # --- Firmware (Legacy/OTA) ---
 class FirmwareResponse(BaseModel):
@@ -679,8 +665,7 @@ class FirmwareResponse(BaseModel):
     filename: str
     uploaded_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SystemInfoResponse(BaseModel):

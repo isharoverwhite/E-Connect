@@ -1932,7 +1932,7 @@ def _coerce_runtime_reported_at(value: Any) -> datetime:
                     return parsed.astimezone(timezone.utc).replace(tzinfo=None)
                 return parsed
 
-    return datetime.utcnow()
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _persist_external_runtime_state(
@@ -5342,7 +5342,7 @@ async def release_serial_lock(
         raise HTTPException(status_code=403, detail="Not authorized to unlock this port")
 
     active_lock.status = SerialSessionStatus.released
-    active_lock.released_at = datetime.utcnow()
+    active_lock.released_at = datetime.now(timezone.utc).replace(tzinfo=None)
     db.commit()
     return {"status": "unlocked", "port": port}
 
@@ -5546,7 +5546,7 @@ async def push_history(device_id: str, entry: DeviceHistoryCreate, db: Session =
         )
 
     # Update last seen
-    device.last_seen = datetime.utcnow()
+    device.last_seen = datetime.now(timezone.utc).replace(tzinfo=None)
 
     history = DeviceHistory(
         device_id=device_id,
@@ -5746,7 +5746,7 @@ async def system_backup_endpoint(db: Session = Depends(get_db), admin: User = De
     automations = db.query(Automation).all()
 
     backup_data = {
-        "timestamp": str(datetime.utcnow()),
+        "timestamp": str(datetime.now(timezone.utc).replace(tzinfo=None)),
         "users": [{"username": u.username, "layout": u.ui_layout} for u in users],
         "devices": [{"id": d.device_id, "name": d.name, "mac": d.mac_address} for d in devices],
         "automations": [{"name": a.name, "graph": serialize_automation(a)["graph"]} for a in automations]

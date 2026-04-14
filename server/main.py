@@ -551,7 +551,7 @@ async def lifespan(app: FastAPI):
     app.state.mdns_publisher = None
     app.state.mqtt_started = False
     _set_app_timezone_context(app, apply_effective_timezone_context())
-    app.state.server_started_at = datetime.utcnow()
+    app.state.server_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
     app.state.firmware_network_state = resolve_runtime_firmware_network_state()
     app.state.firmware_network_audit = None
     mqtt_manager.set_runtime_network_state(app.state.firmware_network_state)
@@ -695,7 +695,7 @@ async def lifespan(app: FastAPI):
             try:
                 record_server_shutdown(
                     db,
-                    occurred_at=datetime.utcnow(),
+                    occurred_at=datetime.now(timezone.utc).replace(tzinfo=None),
                     advertised_host=shutdown_runtime_state.get("advertised_host")
                     if isinstance(shutdown_runtime_state, dict)
                     else None,
