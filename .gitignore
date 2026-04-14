@@ -111,3 +111,4 @@ scripts/*_ps.py
 scripts/*_v.py
 scripts/cat_*.py
 AGENT*.md
+AGENTS.md
