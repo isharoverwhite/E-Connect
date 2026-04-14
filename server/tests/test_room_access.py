@@ -14,6 +14,7 @@ from sqlalchemy.pool import StaticPool
 from app.auth import create_access_token
 from app.database import Base, get_db
 from app.mqtt import mqtt_manager
+from app.services.command_ordering import command_ordering_manager
 from app.services.provisioning import build_project_firmware_identity
 from app.sql_models import (
     AccountType,
@@ -306,7 +307,11 @@ def reset_state():
     app.dependency_overrides[get_db] = override_get_db
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    mqtt_manager.pending_commands.clear()
+    command_ordering_manager.reset()
     yield
+    mqtt_manager.pending_commands.clear()
+    command_ordering_manager.reset()
     app.dependency_overrides.clear()
 
 
@@ -500,6 +505,59 @@ def test_pwm_command_persists_restore_brightness_and_reuses_it_on_power_on(monke
     ]
     assert state_calls
     assert state_calls[-1][3]["brightness"] == 250
+
+
+def test_send_command_supersedes_older_pending_command_for_same_pin(monkeypatch):
+    enqueue_mock = Mock(return_value=True)
+    monkeypatch.setattr("app.api.mqtt_manager.enqueue_command", enqueue_mock)
+
+    household, admin, _member, _observer = _seed_household(prefix="supersede")
+    admin_headers = _auth_headers(
+        admin["username"],
+        account_type=admin["account_type"],
+        household_id=household["household_id"],
+        household_role=HouseholdRole.owner.value,
+    )
+    room = _create_room(admin_headers, name="Supersede Room")
+    _insert_device(
+        device_id="device-supersede",
+        name="Realtime Dimmer",
+        room_id=room["room_id"],
+        owner_id=admin["user_id"],
+    )
+    _insert_pin_config(
+        device_id="device-supersede",
+        gpio_pin=5,
+        mode=PinMode.PWM,
+        function="light",
+        label="Realtime Dimmer",
+        extra_params={"min_value": 0, "max_value": 255},
+    )
+
+    first_response = client.post(
+        "/api/v1/device/device-supersede/command",
+        headers=admin_headers,
+        json={"kind": "action", "pin": 5, "brightness": 120},
+    )
+    assert first_response.status_code == 200, first_response.text
+    first_command_id = first_response.json()["command_id"]
+    assert first_command_id in mqtt_manager.pending_commands
+
+    second_response = client.post(
+        "/api/v1/device/device-supersede/command",
+        headers=admin_headers,
+        json={"kind": "action", "pin": 5, "brightness": 180},
+    )
+    assert second_response.status_code == 200, second_response.text
+    second_payload = second_response.json()
+    second_command_id = second_payload["command_id"]
+
+    assert first_command_id not in mqtt_manager.pending_commands
+    assert command_ordering_manager.get(first_command_id) is None
+    assert second_command_id in mqtt_manager.pending_commands
+    assert second_payload["last_state"]["brightness"] == 180
+    assert mqtt_manager.pending_commands[second_command_id]["sequence_number"] == 2
+    assert mqtt_manager.pending_commands[second_command_id]["brightness"] == 180
 
 
 def test_dashboard_prefers_pending_predicted_state_before_history_commit():

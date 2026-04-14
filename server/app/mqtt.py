@@ -35,6 +35,7 @@ from app.services.device_registration import (
 )
 from app.services.automation_runtime import process_state_event_for_automations
 from app.services.automation_devices import dispatch_external_device_automation_command
+from app.services.command_ordering import command_ordering_manager
 from app.sql_models import (
     AuthStatus,
     ConnStatus,
@@ -721,6 +722,17 @@ def _build_command_ack_resolution_payload(
     return payload
 
 
+def _pending_command_priority(item: tuple[str, dict[str, Any]]) -> tuple[int, float]:
+    _command_id, command = item
+    sequence_number = _coerce_int(command.get("sequence_number"))
+    timestamp = command.get("timestamp")
+    try:
+        numeric_timestamp = float(timestamp)
+    except (TypeError, ValueError):
+        numeric_timestamp = 0.0
+    return sequence_number if sequence_number is not None else 0, numeric_timestamp
+
+
 class MQTTClientManager:
     def __init__(self):
         self.client_id = f"econnect_server_{MQTT_NAMESPACE}_{uuid.uuid4().hex[:8]}"
@@ -767,17 +779,22 @@ class MQTTClientManager:
 
     def latest_pending_predicted_state(self, device_id: str) -> dict[str, Any] | None:
         latest_match: dict[str, Any] | None = None
-        latest_timestamp = float("-inf")
+        latest_priority = (float("-inf"), float("-inf"))
         for pending in self.pending_commands.values():
             if pending.get("device_id") != device_id:
                 continue
             predicted_state = pending.get("predicted_state")
             if not isinstance(predicted_state, dict):
                 continue
-            timestamp = float(pending.get("timestamp") or 0.0)
-            if latest_match is None or timestamp >= latest_timestamp:
+            sequence_number = _coerce_int(pending.get("sequence_number"))
+            try:
+                timestamp = float(pending.get("timestamp") or 0.0)
+            except (TypeError, ValueError):
+                timestamp = 0.0
+            priority = (float(sequence_number if sequence_number is not None else 0), timestamp)
+            if latest_match is None or priority >= latest_priority:
                 latest_match = predicted_state
-                latest_timestamp = timestamp
+                latest_priority = priority
 
         return _copy_json_value(latest_match) if isinstance(latest_match, dict) else None
 
@@ -1174,7 +1191,13 @@ class MQTTClientManager:
             if isinstance(val, bool):
                 val = 1 if val else 0
 
-            for cid, cmd in list(self.pending_commands.items()):
+            pending_items = sorted(
+                list(self.pending_commands.items()),
+                key=_pending_command_priority,
+                reverse=True,
+            )
+
+            for cid, cmd in pending_items:
                 if cmd["device_id"] == device_id and cmd.get("pin") == pin:
                     cmd_val = cmd.get("value")
                     if isinstance(cmd_val, bool):
@@ -1190,7 +1213,7 @@ class MQTTClientManager:
 
             if not matched_cmd_id:
                 pin_rows = _extract_state_pin_rows(state_payload)
-                for cid, cmd in list(self.pending_commands.items()):
+                for cid, cmd in pending_items:
                     if cmd["device_id"] != device_id:
                         continue
 
@@ -1210,6 +1233,7 @@ class MQTTClientManager:
         if matched_cmd_id:
             cmd = self.pending_commands.pop(matched_cmd_id, None)
             if cmd:
+                command_ordering_manager.complete(matched_cmd_id)
                 if applied is False:
                     status = "failed"
                     reason = "applied_false"
