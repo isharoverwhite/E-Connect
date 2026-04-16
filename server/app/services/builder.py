@@ -853,9 +853,12 @@ def generate_platformio_ini(project, project_dir: str):
     raw_pins = config_json.get("pins", [])
     seen_libs = set()
     needs_dht = False
+    has_actuator_pins = board_definition.canonical_id == "jc3827w543"
 
     for pin in raw_pins if isinstance(raw_pins, list) else []:
         mode = str(pin.get("mode")).upper()
+        if mode in {"OUTPUT", "PWM"}:
+            has_actuator_pins = True
         extra = pin.get("extra_params")
         if isinstance(extra, dict):
             if mode == "I2C":
@@ -875,6 +878,9 @@ def generate_platformio_ini(project, project_dir: str):
             "adafruit/Adafruit Unified Sensor@^1.1.14"
         ])
         build_flags.append("-D ECONNECT_HAS_DHT")
+
+    if board_definition.platform in {"espressif32", "espressif8266"} and not has_actuator_pins:
+        build_flags.append("-D ECONNECT_WIFI_SLEEP=1")
 
     build_flags_block = "\n".join(f"    {flag}" for flag in build_flags) if build_flags else ""
     board_configs_block = "\n".join(board_config_lines) + "\n" if board_config_lines else ""
