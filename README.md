@@ -298,7 +298,7 @@ Sau đó truy cập `https://localhost:3443`.
 - GitHub Actions `.github/workflows/end-user-images.yml` sẽ build ba image self-hosted (`server`, `webapp`, `mqtt`) và publish lên Docker Hub khi `main` thay đổi ở các thư mục tương ứng.
 - Workflow publish end-user image cần hai GitHub repository secrets: `DOCKERHUB_USERNAME` và `DOCKERHUB_TOKEN`.
 - `server` mặc định theo dõi release mới nhất từ repo trusted cố định `econnectrelease/firmware` mỗi 60 giây qua `FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS`; khi có bản mới, firmware-template sẽ tự được tải về `/data/firmware-template/current`.
-- Các image Docker Hub của user stack được phát hành bằng tag `latest` để Docker Compose của người dùng luôn kéo bộ stack mới nhất.
+- Các image Docker Hub được phát hành với cả tag `latest` và tag bất biến dạng `sha-<commit>`. Người dùng cuối có thể pin `mqtt_image`, `server_image`, hoặc `webapp_image` sang tag `sha-...` nếu muốn rollback hoặc khóa phiên bản cụ thể.
 - Cổng HTTPS chính cho WebUI là `3443`.
 - Lần đầu mở WebUI trên một máy mới, trình duyệt có thể cảnh báo certificate tự ký. Bạn chỉ cần chấp nhận certificate đó cho host nội bộ mà bạn đang dùng.
 
@@ -548,7 +548,7 @@ Then open `https://localhost:3443`.
 - GitHub Actions `.github/workflows/end-user-images.yml` builds the three self-hosted images (`server`, `webapp`, and `mqtt`) and publishes them to Docker Hub when `main` changes in those delivery paths.
 - The publish workflow requires two repository secrets: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
 - `server` watches the latest release from the fixed trusted repo `econnectrelease/firmware` every 60 seconds by default through `FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS` and auto-downloads fresh templates into `/data/firmware-template/current`.
-- Docker Hub releases for the end-user stack publish the `latest` tag so default Compose installs always track the newest approved stack build.
+- Docker Hub releases include both `latest` and immutable `sha-<commit>` tags. End users can pin `mqtt_image`, `server_image`, or `webapp_image` to a `sha-...` tag when they need rollback-friendly or fixed-version installs.
 - The primary HTTPS WebUI entrypoint is `:3443`.
 - Host `:8000` remains part of the self-hosted runtime because the public find website needs `/health`, `/web-assistant.js`, and `/discovery-bridge` on the user's LAN server.
 - The optional `discovery-mdns` profile publishes `econnect.local` from the same backend runtime image and expects `https_ips` to contain the real LAN IP.
