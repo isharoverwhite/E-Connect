@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.7
-
 FROM node:20-alpine AS base
 
 WORKDIR /app
@@ -8,25 +6,8 @@ RUN apk add --no-cache openssl
 
 FROM base AS deps
 
-ENV NPM_CONFIG_UPDATE_NOTIFIER=false \
-    NPM_CONFIG_FETCH_RETRIES=5 \
-    NPM_CONFIG_FETCH_RETRY_FACTOR=2 \
-    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
-    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
-    NPM_CONFIG_NETWORK_TIMEOUT=600000 \
-    NPM_CONFIG_PROGRESS=false \
-    NPM_CONFIG_REGISTRY=https://registry.npmjs.org/
-
 COPY package.json package-lock.json ./
-RUN --mount=type=cache,target=/root/.npm \
-    for attempt in 1 2 3; do \
-        npm ci --no-audit --prefer-offline && break; \
-        if [ "$attempt" -eq 3 ]; then \
-            exit 1; \
-        fi; \
-        echo "npm ci failed on attempt ${attempt}; retrying in 15 seconds..." >&2; \
-        sleep 15; \
-    done
+RUN npm ci
 
 FROM base AS check
 
