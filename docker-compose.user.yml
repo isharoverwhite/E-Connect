@@ -29,6 +29,10 @@
 #   No extra action is required.
 
 x-user-config:
+  # CI/CD can override the published image refs and exposed host ports without
+  # editing this file by setting MQTT_IMAGE/SERVER_IMAGE/WEBAPP_IMAGE and the
+  # *_PUBLIC_PORT variables below.
+  #
   # Most users only need to change these:
   # - db_root_password
   # - db_password
@@ -69,15 +73,15 @@ x-user-config:
   https_ips: &https_ips ""
 
   # Published Docker images for the end-user stack.
-  mqtt_image: &mqtt_image docker.io/ryzen30xx/econnect-mqtt:latest
-  server_image: &server_image docker.io/ryzen30xx/econnect-server:latest
-  webapp_image: &webapp_image docker.io/ryzen30xx/econnect-webapp:latest
+  mqtt_image: &mqtt_image ${MQTT_IMAGE:-docker.io/ryzen30xx/econnect-mqtt:latest}
+  server_image: &server_image ${SERVER_IMAGE:-docker.io/ryzen30xx/econnect-server:latest}
+  webapp_image: &webapp_image ${WEBAPP_IMAGE:-docker.io/ryzen30xx/econnect-webapp:latest}
 
 services:
   db:
     image: docker.io/library/mariadb:10.11
     pull_policy: always
-    container_name: e-connect-db
+    container_name: ${DB_CONTAINER_NAME:-e-connect-db}
     restart: always
     environment:
       TZ: *timezone
@@ -86,7 +90,7 @@ services:
       MYSQL_USER: *db_user
       MYSQL_PASSWORD: *db_password
     ports:
-      - "3306:3306"
+      - "${DB_PUBLIC_PORT:-3306}:3306"
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:
@@ -97,24 +101,24 @@ services:
 
   mqtt:
     image: *mqtt_image
-    pull_policy: always
-    container_name: e-connect-mqtt
+    pull_policy: ${MQTT_PULL_POLICY:-always}
+    container_name: ${MQTT_CONTAINER_NAME:-e-connect-mqtt}
     restart: always
     environment:
       TZ: *timezone
     ports:
-      - "1883:1883"
+      - "${MQTT_PUBLIC_PORT:-1883}:1883"
 
   server:
     image: *server_image
-    pull_policy: always
-    container_name: e-connect-server
+    pull_policy: ${SERVER_PULL_POLICY:-always}
+    container_name: ${SERVER_CONTAINER_NAME:-e-connect-server}
     restart: always
     ports:
       # Host port 8000 serves the redirect root, /health, /web-assistant.js,
       # and /discovery-bridge for the public find website running in the user's
       # browser, without claiming host port 80.
-      - "8000:8000"
+      - "${SERVER_PUBLIC_PORT:-8000}:8000"
     command:
       - python
       - -c
@@ -170,12 +174,12 @@ services:
 
   webapp:
     image: *webapp_image
-    pull_policy: always
-    container_name: e-connect-webapp
+    pull_policy: ${WEBAPP_PULL_POLICY:-always}
+    container_name: ${WEBAPP_CONTAINER_NAME:-e-connect-webapp}
     restart: always
     ports:
-      - "3000:3000"
-      - "3443:3443"
+      - "${WEBAPP_HTTP_PUBLIC_PORT:-3000}:3000"
+      - "${WEBAPP_HTTPS_PUBLIC_PORT:-3443}:3443"
     volumes:
       - webapp_tls:/app/.local-https
     environment:
@@ -202,8 +206,8 @@ services:
 
   extension_discovery_helper:
     image: *server_image
-    pull_policy: always
-    container_name: e-connect-extension-discovery-helper
+    pull_policy: ${HELPER_PULL_POLICY:-always}
+    container_name: ${HELPER_CONTAINER_NAME:-e-connect-extension-discovery-helper}
     restart: always
     network_mode: host
     command: ["python", "/app/scripts/yeelight_discovery_helper.py"]
@@ -215,7 +219,7 @@ services:
 
   discovery_mdns:
     image: *server_image
-    pull_policy: always
+    pull_policy: ${MDNS_PULL_POLICY:-always}
     command: ["python", "-m", "scripts.publish_mdns_alias"]
     profiles: ["discovery-mdns"]
     restart: always
