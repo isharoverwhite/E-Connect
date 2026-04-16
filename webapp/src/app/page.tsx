@@ -15,6 +15,64 @@ import DeviceScanConnectPanel from "@/components/DeviceScanConnectPanel";
 import { isSystemLogAlertEntry } from "@/lib/system-log";
 
 type CanvasLayout = { x: number; y: number; w: number | string; h: number | string };
+const DEFAULT_CARD_WIDTH = 320;
+const DEFAULT_CARD_HEIGHT = 350;
+
+function normalizeCanvasLayouts(layout: unknown): Record<string, CanvasLayout> {
+  if (!layout || typeof layout !== "object" || Array.isArray(layout)) {
+    return {};
+  }
+
+  const source = layout as Record<string, unknown>;
+  // Ignore legacy widget payloads; the desktop canvas only understands device-id keyed card bounds.
+  if (Array.isArray(source.widgets)) {
+    return {};
+  }
+
+  const normalized: Record<string, CanvasLayout> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (key.includes(":") || !value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+
+    const candidate = value as Record<string, unknown>;
+    if (
+      "deviceId" in candidate ||
+      "pin" in candidate ||
+      "type" in candidate ||
+      "label" in candidate
+    ) {
+      continue;
+    }
+
+    if (
+      typeof candidate.x !== "number" ||
+      !Number.isFinite(candidate.x) ||
+      typeof candidate.y !== "number" ||
+      !Number.isFinite(candidate.y)
+    ) {
+      continue;
+    }
+
+    const normalizedWidth =
+      typeof candidate.w === "number" && Number.isFinite(candidate.w)
+        ? Math.max(200, candidate.w)
+        : DEFAULT_CARD_WIDTH;
+    const normalizedHeight =
+      typeof candidate.h === "number" && Number.isFinite(candidate.h)
+        ? Math.max(130, candidate.h)
+        : DEFAULT_CARD_HEIGHT;
+
+    normalized[key] = {
+      x: Math.max(0, candidate.x),
+      y: Math.max(0, candidate.y),
+      w: normalizedWidth,
+      h: normalizedHeight,
+    };
+  }
+
+  return normalized;
+}
 
 export default function Dashboard() {
   const { user } = useAuth();
@@ -56,20 +114,39 @@ export default function Dashboard() {
   const [saveLayoutSuccess, setSaveLayoutSuccess] = useState(false);
 
   useEffect(() => {
-    if (user && user.ui_layout && typeof user.ui_layout === "object") {
-      setCanvasLayouts(user.ui_layout as Record<string, CanvasLayout>);
+    const serverLayouts = normalizeCanvasLayouts(user?.ui_layout);
+    if (Object.keys(serverLayouts).length > 0) {
+      setCanvasLayouts(serverLayouts);
     } else if (typeof window !== "undefined") {
       try {
         const saved = localStorage.getItem("dashboardCanvasLayout");
-        if (saved) setCanvasLayouts(JSON.parse(saved));
-      } catch {}
+        if (saved) {
+          const savedLayouts = normalizeCanvasLayouts(JSON.parse(saved));
+          setCanvasLayouts(savedLayouts);
+          if (Object.keys(savedLayouts).length === 0) {
+            localStorage.removeItem("dashboardCanvasLayout");
+          }
+        } else {
+          setCanvasLayouts({});
+        }
+      } catch {
+        setCanvasLayouts({});
+      }
+    } else {
+      setCanvasLayouts({});
     }
 
     const handleStorageChange = (e: StorageEvent) => {
       if (e.key === "dashboardCanvasLayout" && e.newValue) {
         try {
-          setCanvasLayouts(JSON.parse(e.newValue));
-        } catch {}
+          const savedLayouts = normalizeCanvasLayouts(JSON.parse(e.newValue));
+          setCanvasLayouts(savedLayouts);
+          if (Object.keys(savedLayouts).length === 0) {
+            localStorage.removeItem("dashboardCanvasLayout");
+          }
+        } catch {
+          setCanvasLayouts({});
+        }
       }
     };
     
@@ -90,13 +167,13 @@ export default function Dashboard() {
   }, []);
 
   const isMobile = windowWidth < 1024;
-  const hasCustomLayout = Object.keys(canvasLayouts).length > 0;
-  // Use canvas if we are customizing, or if we have a custom layout AND we are not on mobile
-  const shouldUseCanvas = isMounted && (isCustomizeMode || (hasCustomLayout && !isMobile));
+  const enableDesktopCanvasEditor = false;
+  // Keep desktop loads on the lightweight grid path until the drag canvas is replaced/fixed.
+  const shouldUseCanvas = enableDesktopCanvasEditor && isMounted && isCustomizeMode && !isMobile;
 
   const saveCanvasLayout = async () => {
     setIsSavingLayout(true);
-    const layout = { ...canvasLayouts };
+    const layout = normalizeCanvasLayouts(canvasLayouts);
     setCanvasLayouts(layout);
     
     // Attempt saving to DB if possible
@@ -133,14 +210,14 @@ export default function Dashboard() {
 
   const isAdmin = user?.account_type === "admin";
   const syncDashboardData = useCallback(async () => {
-    const [dashboardDevices, pendingRequests, logsRes, statusRes] = await Promise.all([
-      fetchDashboardDevices(),
-      isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
-      isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
-      fetchSystemStatus().catch(() => null),
-    ]);
+    try {
+      const [dashboardDevices, pendingRequests, logsRes, statusRes] = await Promise.all([
+        fetchDashboardDevices(),
+        isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
+        isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
+        fetchSystemStatus().catch(() => null),
+      ]);
 
-    startTransition(() => {
       setDevices(dashboardDevices);
       setPairingRequests((pendingRequests as DeviceConfig[]) || []);
       if (isAdmin) {
@@ -153,12 +230,15 @@ export default function Dashboard() {
         }
       }
       setLoading(false);
-    });
+    } catch (error) {
+      console.error("Failed to sync dashboard data:", error);
+      setLoading(false);
+    }
   }, [isAdmin]);
 
 
 
-  const { isConnected } = useWebSocket((event) => {
+  useWebSocket((event) => {
     if ((event.type === "pairing_requested" || event.type === "pairing_queue_updated" || event.type === "device_offline") && isAdmin) {
       void syncDashboardData();
       return;
@@ -226,19 +306,18 @@ export default function Dashboard() {
 
   useEffect(() => {
     let cancelled = false;
-    // Debounce the fetch slightly to prevent rapid double-fetching if WS connects instantly
     const timeoutId = window.setTimeout(() => {
       void (async () => {
-        const [dashboardDevices, pendingRequests, logsRes, statusRes] = await Promise.all([
-          fetchDashboardDevices(),
-          isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
-          isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
-          fetchSystemStatus().catch(() => null),
-        ]);
-        if (cancelled) {
-          return;
-        }
-        startTransition(() => {
+        try {
+          const [dashboardDevices, pendingRequests, logsRes, statusRes] = await Promise.all([
+            fetchDashboardDevices(),
+            isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
+            isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
+            fetchSystemStatus().catch(() => null),
+          ]);
+          if (cancelled) {
+            return;
+          }
           setDevices(dashboardDevices);
           setPairingRequests((pendingRequests as DeviceConfig[]) || []);
           if (isAdmin) {
@@ -251,7 +330,12 @@ export default function Dashboard() {
             }
           }
           setLoading(false);
-        });
+        } catch (error) {
+          console.error("Failed to load dashboard data:", error);
+          if (!cancelled) {
+            setLoading(false);
+          }
+        }
       })();
     }, 50);
 
@@ -259,7 +343,7 @@ export default function Dashboard() {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [isAdmin, isConnected]);
+  }, [isAdmin]);
 
   const isDeviceOnline = (d: DeviceConfig) => {
     return d.auth_status === "approved" && d.conn_status === "online";
@@ -272,6 +356,10 @@ export default function Dashboard() {
   const onlineCount = onlineDevices.length;
   
   const computedLayouts = useMemo(() => {
+    if (!shouldUseCanvas) {
+      return {};
+    }
+
     const computed: Record<string, CanvasLayout> = {};
 
     const getEstimatedH = (device: DeviceConfig) => {
@@ -297,14 +385,15 @@ export default function Dashboard() {
         if (!("device_id" in approvedDevices[i])) continue;
         const c = approvedDevices[i] as DeviceConfig;
         const deviceId = c.device_id;
+        const estimatedHeight = getEstimatedH(c);
         
         if (canvasLayouts[deviceId]) {
             const l = canvasLayouts[deviceId];
             computed[deviceId] = {
                 x: typeof l.x === 'number' && !Number.isNaN(l.x) ? l.x : 0,
                 y: typeof l.y === 'number' && !Number.isNaN(l.y) ? l.y : 0,
-                w: (typeof l.w === 'number' && Number.isNaN(l.w)) ? 320 : (l.w || 320),
-                h: (typeof l.h === 'number' && Number.isNaN(l.h)) ? "auto" : (l.h || "auto")
+                w: (typeof l.w === 'number' && Number.isFinite(l.w)) ? Math.max(200, l.w) : DEFAULT_CARD_WIDTH,
+                h: (typeof l.h === 'number' && Number.isFinite(l.h)) ? Math.max(estimatedHeight, l.h) : estimatedHeight
             };
         } else {
             let prevId;
@@ -328,8 +417,8 @@ export default function Dashboard() {
             let placed = false;
             let currentX = startX;
             let currentY = startY;
-            const newW = 320;
-            const newH = getEstimatedH(c);
+            const newW = DEFAULT_CARD_WIDTH;
+            const newH = estimatedHeight;
 
             // Removing the 1280px absolute cap to utilize the full flex container width
             const maxUsableWidth = windowWidth - (windowWidth < 1024 ? 0 : 256) - 48;
@@ -343,7 +432,7 @@ export default function Dashboard() {
                     for (const key in computed) {
                         const other = computed[key];
                         const otherDevice = deviceMap.get(key);
-                        const otherH = typeof other.h === 'number' ? other.h : (otherDevice ? getEstimatedH(otherDevice) : 350);
+                        const otherH = typeof other.h === 'number' ? other.h : (otherDevice ? getEstimatedH(otherDevice) : DEFAULT_CARD_HEIGHT);
                         
                         // Check if the card intersects with the current row's baseline
                         if (other.y <= currentY + 50 && other.y + otherH > currentY) {
@@ -371,8 +460,8 @@ export default function Dashboard() {
                    const otherRect = {
                        x: other.x,
                        y: other.y,
-                       w: typeof other.w === 'number' ? other.w : 320,
-                       h: typeof other.h === 'number' ? other.h : (otherDevice ? getEstimatedH(otherDevice) : 350)
+                       w: typeof other.w === 'number' ? other.w : DEFAULT_CARD_WIDTH,
+                       h: typeof other.h === 'number' ? other.h : (otherDevice ? getEstimatedH(otherDevice) : DEFAULT_CARD_HEIGHT)
                    };
                    if (doesOverlap(testRect, otherRect)) {
                        collision = otherRect;
@@ -387,11 +476,11 @@ export default function Dashboard() {
                 }
             }
             
-            computed[deviceId] = { x: currentX, y: currentY, w: newW, h: "auto" };
+            computed[deviceId] = { x: currentX, y: currentY, w: newW, h: newH };
         }
     }
     return computed;
-  }, [approvedDevices, canvasLayouts, windowWidth]);
+  }, [approvedDevices, canvasLayouts, shouldUseCanvas, windowWidth]);
   const outdatedDevices = useMemo(() => {
     if (!latestFirmwareRevision || devices.length === 0) return [];
     return devices.filter(d => !!d.firmware_revision && d.firmware_revision !== latestFirmwareRevision);
@@ -766,7 +855,12 @@ export default function Dashboard() {
                         </button>
                       </>
                     ) : (
-                      <button onClick={() => setIsCustomizeMode(true)} className="flex items-center px-3 py-1.5 border border-slate-300 dark:border-slate-600 rounded text-sm text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors bg-white dark:bg-slate-800 shadow-sm font-medium">
+                      <button
+                        type="button"
+                        disabled
+                        title="Layout customization is temporarily disabled while the desktop canvas editor is stabilized."
+                        className="flex cursor-not-allowed items-center rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-400 opacity-70 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-500"
+                      >
                         <span className="material-icons-round text-[16px] mr-1.5">tune</span> Customize
                       </button>
                     )
@@ -782,20 +876,24 @@ export default function Dashboard() {
                   <div style={{ minHeight: `${Math.max(10, ...approvedDevices.map((config) => {
                     if (!("device_id" in config)) return 0;
                     const c = config as DeviceConfig;
-                    const layout = computedLayouts[c.device_id] || { y: 0, h: 350 };
-                    return layout.y + (typeof layout.h === 'number' ? layout.h : 350);
+                    const layout = computedLayouts[c.device_id] || { y: 0, h: getCardMinHeight(c) };
+                    return layout.y + (typeof layout.h === 'number' ? layout.h : getCardMinHeight(c));
                   })) + (isCustomizeMode ? 400 : 20)}px`, minWidth: "100%", position: "relative" }}>
                     {approvedDevices.map((config) => {
                       if (!("device_id" in config)) return null;
                       const c = config as DeviceConfig;
-                      const layout = computedLayouts[c.device_id] || { x: 0, y: 0, w: 320, h: "auto" };
+                      const cardHeight = getCardMinHeight(c);
+                      const layout = computedLayouts[c.device_id] || { x: 0, y: 0, w: DEFAULT_CARD_WIDTH, h: cardHeight };
                       return (
                       <Rnd
                         key={`${c.device_id}-${layoutVersion}`}
-                        size={{ width: layout.w, height: layout.h }}
+                        size={{
+                          width: typeof layout.w === "number" ? layout.w : DEFAULT_CARD_WIDTH,
+                          height: typeof layout.h === "number" ? layout.h : cardHeight,
+                        }}
                         position={{ x: layout.x, y: layout.y }}
                         onDragStop={(e, d) => {
-                          const newRect = { x: d.x, y: d.y, w: typeof layout.w === 'number' ? layout.w : 320, h: typeof layout.h === 'number' ? layout.h : getCardMinHeight(c) };
+                          const newRect = { x: d.x, y: d.y, w: typeof layout.w === 'number' ? layout.w : DEFAULT_CARD_WIDTH, h: typeof layout.h === 'number' ? layout.h : cardHeight };
                           let hasOverlap = false;
 
                           const checkOverlap = (rect1: {x: number, y: number, w: number, h: number}, rect2: {x: number, y: number, w: number, h: number}) => {
@@ -812,8 +910,8 @@ export default function Dashboard() {
                               const otherRect = {
                                   x: bounds.x,
                                   y: bounds.y,
-                                  w: typeof bounds.w === 'number' ? bounds.w : 320,
-                                  h: typeof bounds.h === 'number' ? bounds.h : (otherDevice ? getCardMinHeight(otherDevice) : 350)
+                                  w: typeof bounds.w === 'number' ? bounds.w : DEFAULT_CARD_WIDTH,
+                                  h: typeof bounds.h === 'number' ? bounds.h : (otherDevice ? getCardMinHeight(otherDevice) : DEFAULT_CARD_HEIGHT)
                               };
                               if (checkOverlap(newRect, otherRect)) {
                                   hasOverlap = true;
@@ -830,14 +928,14 @@ export default function Dashboard() {
                         onResizeStop={(e, direction, ref, delta, position) => {
                           const parsedW = parseInt(ref.style.width, 10);
                           const parsedH = parseInt(ref.style.height, 10);
-                          const newW = Number.isNaN(parsedW) ? layout.w : parsedW;
-                          const newH = Number.isNaN(parsedH) ? layout.h : parsedH;
+                          const newW = Number.isNaN(parsedW) ? (typeof layout.w === "number" ? layout.w : DEFAULT_CARD_WIDTH) : parsedW;
+                          const newH = Number.isNaN(parsedH) ? (typeof layout.h === "number" ? layout.h : cardHeight) : parsedH;
                           
                           const newRect = {
                               x: position.x,
                               y: position.y,
-                              w: typeof newW === 'number' ? newW : 320,
-                              h: typeof newH === 'number' ? newH : getCardMinHeight(c)
+                              w: newW,
+                              h: newH
                           };
 
                           let hasOverlap = false;
@@ -855,8 +953,8 @@ export default function Dashboard() {
                               const otherRect = {
                                   x: bounds.x,
                                   y: bounds.y,
-                                  w: typeof bounds.w === 'number' ? bounds.w : 320,
-                                  h: typeof bounds.h === 'number' ? bounds.h : (otherDevice ? getCardMinHeight(otherDevice) : 350)
+                                  w: typeof bounds.w === 'number' ? bounds.w : DEFAULT_CARD_WIDTH,
+                                  h: typeof bounds.h === 'number' ? bounds.h : (otherDevice ? getCardMinHeight(otherDevice) : DEFAULT_CARD_HEIGHT)
                               };
                               if (checkOverlap(newRect, otherRect)) {
                                   hasOverlap = true;
