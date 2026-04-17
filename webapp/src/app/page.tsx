@@ -14,9 +14,19 @@ import { Rnd } from "react-rnd";
 import DeviceScanConnectPanel from "@/components/DeviceScanConnectPanel";
 import { isSystemLogAlertEntry } from "@/lib/system-log";
 
-type CanvasLayout = { x: number; y: number; w: number | string; h: number | string };
+type CanvasLayout = { x: number; y: number; w: number; h: number };
 const DEFAULT_CARD_WIDTH = 320;
 const DEFAULT_CARD_HEIGHT = 350;
+const CANVAS_GRID_STEP = 20;
+const CANVAS_COLLISION_GAP = CANVAS_GRID_STEP;
+
+function snapCanvasCoordinate(value: number) {
+  return Math.max(0, Math.round(value / CANVAS_GRID_STEP) * CANVAS_GRID_STEP);
+}
+
+function snapCanvasSize(value: number, minimum: number) {
+  return Math.max(minimum, Math.ceil(value / CANVAS_GRID_STEP) * CANVAS_GRID_STEP);
+}
 
 function normalizeCanvasLayouts(layout: unknown): Record<string, CanvasLayout> {
   if (!layout || typeof layout !== "object" || Array.isArray(layout)) {
@@ -56,22 +66,157 @@ function normalizeCanvasLayouts(layout: unknown): Record<string, CanvasLayout> {
 
     const normalizedWidth =
       typeof candidate.w === "number" && Number.isFinite(candidate.w)
-        ? Math.max(200, candidate.w)
+        ? snapCanvasSize(Math.max(200, candidate.w), 200)
         : DEFAULT_CARD_WIDTH;
     const normalizedHeight =
       typeof candidate.h === "number" && Number.isFinite(candidate.h)
-        ? Math.max(130, candidate.h)
+        ? snapCanvasSize(Math.max(130, candidate.h), 130)
         : DEFAULT_CARD_HEIGHT;
 
     normalized[key] = {
-      x: Math.max(0, candidate.x),
-      y: Math.max(0, candidate.y),
+      x: snapCanvasCoordinate(candidate.x),
+      y: snapCanvasCoordinate(candidate.y),
       w: normalizedWidth,
       h: normalizedHeight,
     };
   }
 
   return normalized;
+}
+
+function getCanvasUsableWidth(windowWidth: number): number {
+  return Math.max(DEFAULT_CARD_WIDTH, windowWidth - (windowWidth < 1024 ? 0 : 256) - 48);
+}
+
+function rectsOverlap(
+  rect1: { x: number; y: number; w: number; h: number },
+  rect2: { x: number; y: number; w: number; h: number },
+) {
+  return (
+    rect1.x < rect2.x + rect2.w + CANVAS_COLLISION_GAP &&
+    rect1.x + rect1.w + CANVAS_COLLISION_GAP > rect2.x &&
+    rect1.y < rect2.y + rect2.h + CANVAS_COLLISION_GAP &&
+    rect1.y + rect1.h + CANVAS_COLLISION_GAP > rect2.y
+  );
+}
+
+function getSortedUniqueCanvasOffsets(values: number[]) {
+  return Array.from(
+    new Set(values.filter((value) => Number.isFinite(value)).map((value) => snapCanvasCoordinate(value))),
+  ).sort((left, right) => left - right);
+}
+
+function findFirstCanvasSlot(
+  occupiedRects: CanvasLayout[],
+  width: number,
+  height: number,
+  maxUsableWidth: number,
+): CanvasLayout {
+  const nextWidth = snapCanvasSize(Math.min(width, maxUsableWidth), Math.min(200, maxUsableWidth));
+  const nextHeight = snapCanvasSize(height, height);
+  if (occupiedRects.length === 0) {
+    return { x: 0, y: 0, w: nextWidth, h: nextHeight };
+  }
+
+  const candidateRows = getSortedUniqueCanvasOffsets([
+    0,
+    ...occupiedRects.flatMap((rect) => [rect.y, rect.y + rect.h + CANVAS_COLLISION_GAP]),
+  ]);
+
+  for (const rowY of candidateRows) {
+    const rowCandidates = getSortedUniqueCanvasOffsets([
+      0,
+      ...occupiedRects
+        .filter(
+          (rect) =>
+            rowY < rect.y + rect.h + CANVAS_COLLISION_GAP &&
+            rowY + nextHeight + CANVAS_COLLISION_GAP > rect.y,
+        )
+        .map((rect) => rect.x + rect.w + CANVAS_COLLISION_GAP),
+    ]);
+
+    for (const candidateX of rowCandidates) {
+      if (candidateX + nextWidth > maxUsableWidth) {
+        continue;
+      }
+
+      const candidateRect = { x: candidateX, y: rowY, w: nextWidth, h: nextHeight };
+      if (!occupiedRects.some((rect) => rectsOverlap(candidateRect, rect))) {
+        return candidateRect;
+      }
+    }
+  }
+
+  const lowestEdge = occupiedRects.reduce((max, rect) => Math.max(max, rect.y + rect.h), 0);
+  return {
+    x: 0,
+    y: lowestEdge > 0 ? snapCanvasCoordinate(lowestEdge + CANVAS_COLLISION_GAP) : 0,
+    w: nextWidth,
+    h: nextHeight,
+  };
+}
+
+function DashboardCanvasPreviewCard({
+  config,
+  isOnline,
+}: {
+  config: DeviceConfig;
+  isOnline: boolean;
+}) {
+  const roomName = (config as DeviceConfig & { room_name?: string | null }).room_name || "Unassigned room";
+  const pinCount = config.pin_configurations.length;
+  const modeLabel = config.provider
+    ? config.provider
+    : config.mode === "portableDashboard"
+      ? "Portable dashboard"
+      : config.mode.replace("-", " ");
+
+  return (
+    <div className="flex h-full w-full flex-col rounded-xl border border-slate-300 bg-white/95 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/95">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{config.name}</div>
+          <div className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{roomName}</div>
+        </div>
+        <span
+          className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium ${
+            isOnline
+              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
+              : "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300"
+          }`}
+        >
+          <span className={`h-2 w-2 rounded-full ${isOnline ? "bg-emerald-500" : "bg-rose-500"}`} />
+          {isOnline ? "Online" : "Offline"}
+        </span>
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/80">
+          <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Controls</div>
+          <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{pinCount}</div>
+        </div>
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/80">
+          <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Source</div>
+          <div className="mt-1 truncate text-sm font-medium text-slate-900 dark:text-white">{modeLabel}</div>
+        </div>
+      </div>
+
+      <div className="mt-4 flex-1 rounded-lg border border-dashed border-slate-300 bg-slate-50/70 px-3 py-3 dark:border-slate-700 dark:bg-slate-800/40">
+        <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Editor Preview</div>
+        <div className="mt-3 space-y-2">
+          {Array.from({ length: Math.min(3, Math.max(1, pinCount || 1)) }).map((_, index) => (
+            <div
+              key={`${config.device_id}-preview-${index}`}
+              className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900/80"
+            >
+              <div className="h-2 w-24 rounded bg-slate-200 dark:bg-slate-700" />
+              <div className="h-2 w-10 rounded bg-slate-200 dark:bg-slate-700" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export default function Dashboard() {
@@ -167,13 +312,11 @@ export default function Dashboard() {
   }, []);
 
   const isMobile = windowWidth < 1024;
-  const enableDesktopCanvasEditor = false;
-  // Keep desktop loads on the lightweight grid path until the drag canvas is replaced/fixed.
-  const shouldUseCanvas = enableDesktopCanvasEditor && isMounted && isCustomizeMode && !isMobile;
+  const enableDesktopCanvasEditor = true;
 
   const saveCanvasLayout = async () => {
     setIsSavingLayout(true);
-    const layout = normalizeCanvasLayouts(canvasLayouts);
+    const layout = normalizeCanvasLayouts(persistedCanvasLayout);
     setCanvasLayouts(layout);
     
     // Attempt saving to DB if possible
@@ -354,6 +497,19 @@ export default function Dashboard() {
   const offlineDevices = approvedDevices.filter((d) => !isDeviceOnline(d));
 
   const onlineCount = onlineDevices.length;
+  const hasCustomLayout = approvedDevices.some((device) => Boolean(canvasLayouts[device.device_id]));
+  const shouldUseCanvas = enableDesktopCanvasEditor && isMounted && !isMobile && (isCustomizeMode || hasCustomLayout);
+  const canvasUsableWidth = useMemo(() => getCanvasUsableWidth(windowWidth), [windowWidth]);
+  const cardHeights = useMemo(
+    () =>
+      new Map(
+        approvedDevices.map((device) => {
+          const minHeight = getCardMinHeight(device);
+          return [device.device_id, snapCanvasSize(minHeight, minHeight)];
+        }),
+      ),
+    [approvedDevices],
+  );
   
   const computedLayouts = useMemo(() => {
     if (!shouldUseCanvas) {
@@ -361,126 +517,103 @@ export default function Dashboard() {
     }
 
     const computed: Record<string, CanvasLayout> = {};
+    const normalizedSavedLayouts = approvedDevices.reduce<Record<string, CanvasLayout>>((acc, device) => {
+      const savedLayout = canvasLayouts[device.device_id];
+      if (!savedLayout) {
+        return acc;
+      }
 
-    const getEstimatedH = (device: DeviceConfig) => {
-      return getCardMinHeight(device);
-    };
+      const estimatedHeight = cardHeights.get(device.device_id) ?? DEFAULT_CARD_HEIGHT;
+      acc[device.device_id] = {
+        x:
+          typeof savedLayout.x === "number" && !Number.isNaN(savedLayout.x)
+            ? snapCanvasCoordinate(savedLayout.x)
+            : 0,
+        y:
+          typeof savedLayout.y === "number" && !Number.isNaN(savedLayout.y)
+            ? snapCanvasCoordinate(savedLayout.y)
+            : 0,
+        w:
+          typeof savedLayout.w === "number" && Number.isFinite(savedLayout.w)
+            ? snapCanvasSize(Math.max(200, savedLayout.w), 200)
+            : DEFAULT_CARD_WIDTH,
+        h:
+          typeof savedLayout.h === "number" && Number.isFinite(savedLayout.h)
+            ? snapCanvasSize(Math.max(estimatedHeight, savedLayout.h), estimatedHeight)
+            : estimatedHeight,
+      };
+      return acc;
+    }, {});
 
-    const doesOverlap = (rect1: {x: number, y: number, w: number, h: number}, rect2: {x: number, y: number, w: number, h: number}) => {
-      const gap = 30;
-      return rect1.x < rect2.x + rect2.w + gap &&
-             rect1.x + rect1.w + gap > rect2.x &&
-             rect1.y < rect2.y + rect2.h + gap &&
-             rect1.y + rect1.h + gap > rect2.y;
-    };
-
-    const deviceMap = new Map<string, DeviceConfig>();
-    for (const d of approvedDevices) {
-      if ("device_id" in d) {
-        deviceMap.set(d.device_id, d as DeviceConfig);
+    for (const device of approvedDevices) {
+      const savedLayout = normalizedSavedLayouts[device.device_id];
+      if (savedLayout) {
+        computed[device.device_id] = savedLayout;
       }
     }
 
-    for (let i = 0; i < approvedDevices.length; i++) {
-        if (!("device_id" in approvedDevices[i])) continue;
-        const c = approvedDevices[i] as DeviceConfig;
-        const deviceId = c.device_id;
-        const estimatedHeight = getEstimatedH(c);
-        
-        if (canvasLayouts[deviceId]) {
-            const l = canvasLayouts[deviceId];
-            computed[deviceId] = {
-                x: typeof l.x === 'number' && !Number.isNaN(l.x) ? l.x : 0,
-                y: typeof l.y === 'number' && !Number.isNaN(l.y) ? l.y : 0,
-                w: (typeof l.w === 'number' && Number.isFinite(l.w)) ? Math.max(200, l.w) : DEFAULT_CARD_WIDTH,
-                h: (typeof l.h === 'number' && Number.isFinite(l.h)) ? Math.max(estimatedHeight, l.h) : estimatedHeight
-            };
-        } else {
-            let prevId;
-            for (let j = i - 1; j >= 0; j--) {
-                if ("device_id" in approvedDevices[j]) {
-                    prevId = (approvedDevices[j] as DeviceConfig).device_id;
-                    break;
-                }
-            }
-                
-            let startX = 0;
-            let startY = 0;
-            
-            if (prevId && computed[prevId]) {
-                const prev = computed[prevId];
-                const prevW = typeof prev.w === 'number' ? prev.w : 320;
-                startX = prev.x + prevW + 20;
-                startY = prev.y;
-            }
+    for (const device of approvedDevices) {
+      const deviceId = device.device_id;
+      if (computed[deviceId]) {
+        continue;
+      }
 
-            let placed = false;
-            let currentX = startX;
-            let currentY = startY;
-            const newW = DEFAULT_CARD_WIDTH;
-            const newH = estimatedHeight;
-
-            // Removing the 1280px absolute cap to utilize the full flex container width
-            const maxUsableWidth = windowWidth - (windowWidth < 1024 ? 0 : 256) - 48;
-
-            while (!placed) {
-                if (currentX + newW > maxUsableWidth && currentX > 0) {
-                    currentX = 0;
-                    
-                    // Find the maximum bottom coordinate of all cards in the current row
-                    let maxBottom = currentY;
-                    for (const key in computed) {
-                        const other = computed[key];
-                        const otherDevice = deviceMap.get(key);
-                        const otherH = typeof other.h === 'number' ? other.h : (otherDevice ? getEstimatedH(otherDevice) : DEFAULT_CARD_HEIGHT);
-                        
-                        // Check if the card intersects with the current row's baseline
-                        if (other.y <= currentY + 50 && other.y + otherH > currentY) {
-                            if (other.y + otherH > maxBottom) {
-                                maxBottom = other.y + otherH;
-                            }
-                        }
-                    }
-                    
-                    // Prevent infinite loops just in case
-                    if (maxBottom === currentY) {
-                        currentY += 50; 
-                    } else {
-                        currentY = maxBottom + 20;
-                    }
-                    continue;
-                }
-                
-                let collision = null;
-                const testRect = { x: currentX, y: currentY, w: newW, h: newH };
-                
-                for (const key in computed) {
-                   const other = computed[key];
-                   const otherDevice = deviceMap.get(key);
-                   const otherRect = {
-                       x: other.x,
-                       y: other.y,
-                       w: typeof other.w === 'number' ? other.w : DEFAULT_CARD_WIDTH,
-                       h: typeof other.h === 'number' ? other.h : (otherDevice ? getEstimatedH(otherDevice) : DEFAULT_CARD_HEIGHT)
-                   };
-                   if (doesOverlap(testRect, otherRect)) {
-                       collision = otherRect;
-                       break; // found a collision
-                   }
-                }
-                
-                if (collision) {
-                    currentX = collision.x + collision.w + 20;
-                } else {
-                    placed = true;
-                }
-            }
-            
-            computed[deviceId] = { x: currentX, y: currentY, w: newW, h: newH };
-        }
+      const estimatedHeight = cardHeights.get(deviceId) ?? DEFAULT_CARD_HEIGHT;
+      computed[deviceId] = findFirstCanvasSlot(
+        Object.values(computed),
+        DEFAULT_CARD_WIDTH,
+        estimatedHeight,
+        canvasUsableWidth,
+      );
     }
+
     return computed;
-  }, [approvedDevices, canvasLayouts, shouldUseCanvas, windowWidth]);
+  }, [approvedDevices, canvasLayouts, canvasUsableWidth, cardHeights, shouldUseCanvas]);
+  const persistedCanvasLayout = useMemo(() => {
+    if (!shouldUseCanvas) {
+      return canvasLayouts;
+    }
+
+    return approvedDevices.reduce<Record<string, CanvasLayout>>((acc, device) => {
+      const layout = computedLayouts[device.device_id];
+      if (layout) {
+        acc[device.device_id] = layout;
+      }
+      return acc;
+    }, {});
+  }, [approvedDevices, canvasLayouts, computedLayouts, shouldUseCanvas]);
+  const canvasContentHeight = useMemo(() => {
+    if (!shouldUseCanvas || approvedDevices.length === 0) {
+      return 0;
+    }
+
+    const lowestCardEdge = approvedDevices.reduce((max, config) => {
+      if (!("device_id" in config)) {
+        return max;
+      }
+
+      const c = config as DeviceConfig;
+      const fallbackHeight = cardHeights.get(c.device_id) ?? DEFAULT_CARD_HEIGHT;
+      const layout = computedLayouts[c.device_id] || { x: 0, y: 0, w: DEFAULT_CARD_WIDTH, h: fallbackHeight };
+      return Math.max(max, layout.y + layout.h);
+    }, 10);
+
+    return lowestCardEdge + (isCustomizeMode ? 400 : 20);
+  }, [approvedDevices, cardHeights, computedLayouts, isCustomizeMode, shouldUseCanvas]);
+  const hasCanvasOverlap = useCallback(
+    (deviceId: string, nextRect: CanvasLayout) => {
+      for (const [id, bounds] of Object.entries(computedLayouts)) {
+        if (id === deviceId) {
+          continue;
+        }
+        if (rectsOverlap(nextRect, bounds)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    [computedLayouts],
+  );
   const outdatedDevices = useMemo(() => {
     if (!latestFirmwareRevision || devices.length === 0) return [];
     return devices.filter(d => !!d.firmware_revision && d.firmware_revision !== latestFirmwareRevision);
@@ -857,9 +990,8 @@ export default function Dashboard() {
                     ) : (
                       <button
                         type="button"
-                        disabled
-                        title="Layout customization is temporarily disabled while the desktop canvas editor is stabilized."
-                        className="flex cursor-not-allowed items-center rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-400 opacity-70 shadow-sm dark:border-slate-600 dark:bg-slate-800 dark:text-slate-500"
+                        onClick={() => setIsCustomizeMode(true)}
+                        className="flex items-center rounded border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 shadow-sm transition-colors hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                       >
                         <span className="material-icons-round text-[16px] mr-1.5">tune</span> Customize
                       </button>
@@ -873,120 +1005,96 @@ export default function Dashboard() {
                 ) : approvedDevices.length === 0 ? (
                   <div className="py-12 text-center text-slate-400">No devices found.</div>
                 ) : shouldUseCanvas ? (
-                  <div style={{ minHeight: `${Math.max(10, ...approvedDevices.map((config) => {
-                    if (!("device_id" in config)) return 0;
-                    const c = config as DeviceConfig;
-                    const layout = computedLayouts[c.device_id] || { y: 0, h: getCardMinHeight(c) };
-                    return layout.y + (typeof layout.h === 'number' ? layout.h : getCardMinHeight(c));
-                  })) + (isCustomizeMode ? 400 : 20)}px`, minWidth: "100%", position: "relative" }}>
+                  <div style={{ minHeight: `${canvasContentHeight}px`, minWidth: "100%", position: "relative" }}>
                     {approvedDevices.map((config) => {
                       if (!("device_id" in config)) return null;
                       const c = config as DeviceConfig;
-                      const cardHeight = getCardMinHeight(c);
+                      const cardHeight = cardHeights.get(c.device_id) ?? DEFAULT_CARD_HEIGHT;
                       const layout = computedLayouts[c.device_id] || { x: 0, y: 0, w: DEFAULT_CARD_WIDTH, h: cardHeight };
+                      const cardContents = isCustomizeMode ? (
+                        <DashboardCanvasPreviewCard config={c} isOnline={isDeviceOnline(c)} />
+                      ) : (
+                        <DynamicDeviceCard config={c} isOnline={isDeviceOnline(c)} />
+                      );
+
+                      if (!isCustomizeMode) {
+                        return (
+                          <div
+                            key={c.device_id}
+                            className="absolute z-10 transition-shadow"
+                            style={{
+                              left: `${layout.x}px`,
+                              top: `${layout.y}px`,
+                              width: `${layout.w}px`,
+                              height: `${layout.h}px`,
+                            }}
+                          >
+                            <div className="h-full w-full">{cardContents}</div>
+                          </div>
+                        );
+                      }
+
                       return (
                       <Rnd
                         key={`${c.device_id}-${layoutVersion}`}
                         size={{
-                          width: typeof layout.w === "number" ? layout.w : DEFAULT_CARD_WIDTH,
-                          height: typeof layout.h === "number" ? layout.h : cardHeight,
+                          width: layout.w,
+                          height: layout.h,
                         }}
                         position={{ x: layout.x, y: layout.y }}
-                        onDragStop={(e, d) => {
-                          const newRect = { x: d.x, y: d.y, w: typeof layout.w === 'number' ? layout.w : DEFAULT_CARD_WIDTH, h: typeof layout.h === 'number' ? layout.h : cardHeight };
-                          let hasOverlap = false;
-
-                          const checkOverlap = (rect1: {x: number, y: number, w: number, h: number}, rect2: {x: number, y: number, w: number, h: number}) => {
-                            const gap = 30;
-                            return rect1.x < rect2.x + rect2.w + gap &&
-                                  rect1.x + rect1.w + gap > rect2.x &&
-                                  rect1.y < rect2.y + rect2.h + gap &&
-                                  rect1.y + rect1.h + gap > rect2.y;
-                          };
-
-                          for (const [id, bounds] of Object.entries(computedLayouts)) {
-                              if (id === c.device_id) continue;
-                              const otherDevice = approvedDevices.find((dev) => 'device_id' in dev && dev.device_id === id) as DeviceConfig;
-                              const otherRect = {
-                                  x: bounds.x,
-                                  y: bounds.y,
-                                  w: typeof bounds.w === 'number' ? bounds.w : DEFAULT_CARD_WIDTH,
-                                  h: typeof bounds.h === 'number' ? bounds.h : (otherDevice ? getCardMinHeight(otherDevice) : DEFAULT_CARD_HEIGHT)
-                              };
-                              if (checkOverlap(newRect, otherRect)) {
-                                  hasOverlap = true;
-                                  break;
-                              }
-                          }
-
-                          if (!hasOverlap) {
-                            setCanvasLayouts(prev => ({ ...prev, [c.device_id]: { ...layout, x: d.x, y: d.y } }));
+                        onDragStop={(_event, data) => {
+                          const nextX = snapCanvasCoordinate(data.x);
+                          const nextY = snapCanvasCoordinate(data.y);
+                          const newRect = { x: nextX, y: nextY, w: layout.w, h: layout.h };
+                          if (!hasCanvasOverlap(c.device_id, newRect)) {
+                            setCanvasLayouts((prev) => ({
+                              ...prev,
+                              [c.device_id]: { ...layout, x: nextX, y: nextY },
+                            }));
                           } else {
-                            setLayoutVersion(v => v + 1);
+                            setLayoutVersion((value) => value + 1);
                           }
                         }}
-                        onResizeStop={(e, direction, ref, delta, position) => {
+                        onResizeStop={(_event, _direction, ref, _delta, position) => {
                           const parsedW = parseInt(ref.style.width, 10);
                           const parsedH = parseInt(ref.style.height, 10);
-                          const newW = Number.isNaN(parsedW) ? (typeof layout.w === "number" ? layout.w : DEFAULT_CARD_WIDTH) : parsedW;
-                          const newH = Number.isNaN(parsedH) ? (typeof layout.h === "number" ? layout.h : cardHeight) : parsedH;
+                          const nextX = snapCanvasCoordinate(position.x);
+                          const nextY = snapCanvasCoordinate(position.y);
+                          const newW = Number.isNaN(parsedW) ? layout.w : snapCanvasSize(parsedW, 200);
+                          const newH = Number.isNaN(parsedH) ? layout.h : snapCanvasSize(parsedH, cardHeight);
                           
                           const newRect = {
-                              x: position.x,
-                              y: position.y,
+                              x: nextX,
+                              y: nextY,
                               w: newW,
                               h: newH
                           };
 
-                          let hasOverlap = false;
-                          const checkOverlap = (rect1: {x: number, y: number, w: number, h: number}, rect2: {x: number, y: number, w: number, h: number}) => {
-                            const gap = 30;
-                            return rect1.x < rect2.x + rect2.w + gap &&
-                                  rect1.x + rect1.w + gap > rect2.x &&
-                                  rect1.y < rect2.y + rect2.h + gap &&
-                                  rect1.y + rect1.h + gap > rect2.y;
-                          };
-
-                          for (const [id, bounds] of Object.entries(computedLayouts)) {
-                              if (id === c.device_id) continue;
-                              const otherDevice = approvedDevices.find((dev) => 'device_id' in dev && dev.device_id === id) as DeviceConfig;
-                              const otherRect = {
-                                  x: bounds.x,
-                                  y: bounds.y,
-                                  w: typeof bounds.w === 'number' ? bounds.w : DEFAULT_CARD_WIDTH,
-                                  h: typeof bounds.h === 'number' ? bounds.h : (otherDevice ? getCardMinHeight(otherDevice) : DEFAULT_CARD_HEIGHT)
-                              };
-                              if (checkOverlap(newRect, otherRect)) {
-                                  hasOverlap = true;
-                                  break;
-                              }
-                          }
-
-                          if (!hasOverlap) {
-                            setCanvasLayouts(prev => ({ 
+                          if (!hasCanvasOverlap(c.device_id, newRect)) {
+                            setCanvasLayouts((prev) => ({ 
                               ...prev, 
                               [c.device_id]: { 
-                                x: position.x, 
-                                y: position.y, 
+                                x: nextX, 
+                                y: nextY, 
                                 w: newW, 
                                 h: newH 
                               } 
                             }));
                           } else {
-                            setLayoutVersion(v => v + 1);
+                            setLayoutVersion((value) => value + 1);
                           }
                         }}
                         disableDragging={!isCustomizeMode}
                         enableResizing={isCustomizeMode}
-                        dragGrid={[20, 20]}
-                        resizeGrid={[20, 20]}
+                        dragGrid={[CANVAS_GRID_STEP, CANVAS_GRID_STEP]}
+                        resizeGrid={[CANVAS_GRID_STEP, CANVAS_GRID_STEP]}
                         minWidth={200}
-                        minHeight={getCardMinHeight(c)}
+                        minHeight={cardHeight}
                         bounds="parent"
-                        className={`transition-shadow ${isCustomizeMode ? "z-50 shadow-xl ring-2 ring-primary ring-offset-2 ring-offset-transparent cursor-move rounded-xl" : "z-10"}`}
+                        className="z-50 cursor-grab rounded-xl shadow-xl ring-2 ring-primary ring-offset-2 ring-offset-transparent transition-shadow active:cursor-grabbing"
                       >
-                        <div className={`w-full h-full ${isCustomizeMode ? 'pointer-events-none' : ''}`}>
-                          <DynamicDeviceCard config={c} isOnline={isDeviceOnline(c)} />
+                        <div className="pointer-events-none h-full w-full">
+                          {cardContents}
                         </div>
                       </Rnd>
                     );
