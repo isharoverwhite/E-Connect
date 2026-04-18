@@ -1027,7 +1027,7 @@ def test_manual_trigger_dispatches_external_device_value_action(monkeypatch, see
     assert dispatched
     assert dispatched[0][0] == external_device_id
     assert dispatched[0][1]["pin"] == 1
-    assert dispatched[0][1]["brightness"] == 200
+    assert dispatched[0][1]["value"] == 200
 
 
 def test_manual_trigger_executes_graph_and_records_log(monkeypatch, seeded_context):
@@ -1174,7 +1174,7 @@ def test_process_state_event_runs_enabled_automation_for_device_value_trigger(mo
     assert logs[0].trigger_source == "device_state"
     assert published_commands
     assert published_commands[0][0] == "dimmer-device"
-    assert published_commands[0][1]["brightness"] == 180
+    assert published_commands[0][1]["value"] == 180
 
     db = TestingSessionLocal()
     try:
@@ -1340,7 +1340,7 @@ def test_process_state_event_runs_enabled_automation_for_dht_temperature_metric(
     assert logs[0].automation_id == automation_id
     assert published_commands
     assert published_commands[0][0] == "dimmer-device"
-    assert published_commands[0][1]["brightness"] == 180
+    assert published_commands[0][1]["value"] == 180
 
 
 def test_process_state_event_uses_selected_dht_humidity_metric_for_trigger_changes(seeded_context):
@@ -1441,7 +1441,7 @@ def test_process_state_event_uses_selected_dht_humidity_metric_for_trigger_chang
     assert len(second_logs) == 1
     assert len(published_commands) == 1
     assert published_commands[0][0] == "dimmer-device"
-    assert published_commands[0][1]["brightness"] == 180
+    assert published_commands[0][1]["value"] == 180
 
 
 def test_process_state_event_runs_enabled_automation_for_on_off_trigger(monkeypatch, seeded_context):
@@ -1599,8 +1599,8 @@ def test_process_state_event_ignores_follow_up_noop_after_self_target_change(see
         published_commands.append((device_id, command))
         return True
 
-    initial_payload = {"pins": [{"pin": 13, "value": 0, "brightness": 0}]}
-    follow_up_payload = {"pins": [{"pin": 13, "value": 1, "brightness": 180}]}
+    initial_payload = {"pins": [{"pin": 13, "mode": "PWM", "value": 0, "restore_value": 180}]}
+    follow_up_payload = {"pins": [{"pin": 13, "mode": "PWM", "value": 180, "restore_value": 180}]}
 
     db = TestingSessionLocal()
     try:

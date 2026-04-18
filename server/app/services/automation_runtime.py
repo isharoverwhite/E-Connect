@@ -861,15 +861,38 @@ def _state_trigger_value_changed(
     return current_value != previous_value
 
 
+def _coerce_snapshot_number(value: object) -> float | None:
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    return None
+
+
+def _extract_pwm_off_value(snapshot: Mapping[str, Any] | None) -> float | None:
+    if not isinstance(snapshot, Mapping):
+        return None
+    if str(snapshot.get("mode") or "").upper() != PinMode.PWM.value:
+        return None
+
+    extra_params = snapshot.get("extra_params")
+    if not isinstance(extra_params, Mapping):
+        return 0.0
+
+    pwm_min = _coerce_snapshot_number(extra_params.get("min_value"))
+    pwm_max = _coerce_snapshot_number(extra_params.get("max_value"))
+    resolved_min = pwm_min if pwm_min is not None else 0.0
+    resolved_max = pwm_max if pwm_max is not None else 255.0
+    return resolved_min if resolved_min > resolved_max else 0.0
+
+
 def _extract_numeric_value(snapshot: Mapping[str, Any] | None) -> float | None:
     if not isinstance(snapshot, Mapping):
         return None
-    for key in ("brightness", "value"):
-        value = snapshot.get(key)
-        if isinstance(value, bool):
-            return 1.0 if value else 0.0
-        if isinstance(value, (int, float)):
-            return float(value)
+    for key in ("value", "brightness"):
+        value = _coerce_snapshot_number(snapshot.get(key))
+        if value is not None:
+            return value
     return None
 
 
@@ -904,10 +927,16 @@ def _extract_metric_value(snapshot: Mapping[str, Any] | None, *, metric: str | N
 def _extract_binary_value(snapshot: Mapping[str, Any] | None) -> bool | None:
     if not isinstance(snapshot, Mapping):
         return None
-    actual = _normalize_binary_state(snapshot.get("brightness"))
+    pwm_off_value = _extract_pwm_off_value(snapshot)
+    if pwm_off_value is not None:
+        numeric_value = _extract_numeric_value(snapshot)
+        if numeric_value is None:
+            return None
+        return numeric_value != pwm_off_value
+    actual = _normalize_binary_state(snapshot.get("value"))
     if actual is not None:
         return actual
-    return _normalize_binary_state(snapshot.get("value"))
+    return _normalize_binary_state(snapshot.get("brightness"))
 
 
 def _evaluate_condition_node(
@@ -924,9 +953,7 @@ def _evaluate_condition_node(
         return False, f"{node['id']}: no live state for {device_id} GPIO {pin}"
 
     if node["kind"] == "state_equals":
-        actual = _normalize_binary_state(snapshot.get("brightness"))
-        if actual is None:
-            actual = _normalize_binary_state(snapshot.get("value"))
+        actual = _extract_binary_value(snapshot)
         if actual is None:
             return False, f"{node['id']}: GPIO {pin} is not a boolean-like state"
         expected = config["expected"] == "on"
@@ -1039,7 +1066,7 @@ def _dispatch_action(
         numeric_value = config["value"]
         if float(numeric_value).is_integer():
             numeric_value = int(numeric_value)
-        command["brightness"] = numeric_value
+        command["value"] = numeric_value
         human_action = str(numeric_value)
 
     success = publish_command(device_id, command)

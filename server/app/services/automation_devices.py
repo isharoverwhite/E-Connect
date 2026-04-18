@@ -181,8 +181,11 @@ def dispatch_external_device_automation_command(
     if pin is None:
         return False
 
-    if "value" in command:
+    if pin == AUTOMATION_EXTERNAL_POWER_PIN and "value" in command:
         action_kind = "set_output"
+        raw_value = command.get("value")
+    elif pin == AUTOMATION_EXTERNAL_VALUE_PIN and "value" in command:
+        action_kind = "set_value"
         raw_value = command.get("value")
     elif "brightness" in command:
         action_kind = "set_value"

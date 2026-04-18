@@ -2100,7 +2100,7 @@ def test_mqtt_state_multi_pin_payload_acknowledges_pending_command():
             "applied": True,
             "pins": [
                 {"pin": 2, "mode": "OUTPUT", "label": "LED", "value": 1},
-                {"pin": 8, "mode": "PWM", "label": "Dimmer", "value": 0, "brightness": 0},
+                {"pin": 8, "mode": "PWM", "label": "Dimmer", "value": 0},
             ],
         }
     )
@@ -2176,8 +2176,7 @@ def test_mqtt_ack_matching_prefers_latest_pending_sequence_for_same_target(monke
     mgr.pending_commands["cmd-1"] = {
         "device_id": "device-sequenced",
         "pin": 5,
-        "value": 1,
-        "brightness": 180,
+        "value": 180,
         "timestamp": datetime.now(timezone.utc).timestamp(),
         "command_id": "cmd-1",
         "sequence_number": 1,
@@ -2185,8 +2184,7 @@ def test_mqtt_ack_matching_prefers_latest_pending_sequence_for_same_target(monke
     mgr.pending_commands["cmd-2"] = {
         "device_id": "device-sequenced",
         "pin": 5,
-        "value": 1,
-        "brightness": 180,
+        "value": 180,
         "timestamp": datetime.now(timezone.utc).timestamp(),
         "command_id": "cmd-2",
         "sequence_number": 2,
@@ -2197,7 +2195,7 @@ def test_mqtt_ack_matching_prefers_latest_pending_sequence_for_same_target(monke
 
     mgr.resolve_command_ack(
         "device-sequenced",
-        {"pin": 5, "value": 1, "brightness": 180, "applied": True},
+        {"pin": 5, "value": 180, "applied": True},
         TestingSessionLocal(),
     )
 
@@ -2703,8 +2701,8 @@ def test_dashboard_devices_filters_stale_runtime_pins_not_in_pin_configurations(
                             "function": "Quạt",
                             "label": "Living GPIO3",
                             "extra_params": {"min_value": 0, "max_value": 255, "input_type": "switch", "switch_type": "momentary"},
-                            "value": 1,
-                            "brightness": 128,
+                            "value": 128,
+                            "restore_value": 128,
                         },
                         {
                             "pin": 4,
@@ -2735,8 +2733,8 @@ def test_dashboard_devices_filters_stale_runtime_pins_not_in_pin_configurations(
     assert [row["pin"] for row in pins] == [0, 3]
     assert all(row["pin"] != 4 for row in pins)
     assert pins[0]["value"] == 5227
-    assert pins[1]["value"] == 1
-    assert pins[1]["brightness"] == 128
+    assert pins[1]["value"] == 128
+    assert pins[1]["restore_value"] == 128
 
 
 def test_mqtt_state_prunes_stale_unconfigured_pins_from_previous_snapshot():
@@ -2788,8 +2786,8 @@ def test_mqtt_state_prunes_stale_unconfigured_pins_from_previous_snapshot():
                             "function": "Quạt",
                             "label": "Living GPIO3",
                             "extra_params": {"min_value": 0, "max_value": 255, "input_type": "switch", "switch_type": "momentary"},
-                            "value": 1,
-                            "brightness": 96,
+                            "value": 96,
+                            "restore_value": 96,
                         },
                         {
                             "pin": 4,
@@ -2828,8 +2826,8 @@ def test_mqtt_state_prunes_stale_unconfigured_pins_from_previous_snapshot():
                     "function": "Quạt",
                     "label": "Living GPIO3",
                     "extra_params": {"min_value": 0, "max_value": 255, "input_type": "switch", "switch_type": "momentary"},
-                    "value": 1,
-                    "brightness": 128,
+                    "value": 128,
+                    "restore_value": 128,
                 },
             ],
         }

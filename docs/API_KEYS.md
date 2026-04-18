@@ -228,13 +228,13 @@ curl -s -X POST "$BASE/device/<device_id>/command" \
   -d '{"kind":"action","pin":5,"value":1}'
 ```
 
-### 8.4 Dimmer hoặc PWM device
+### 8.4 PWM hoặc thiết bị giá trị
 
 ```bash
 curl -s -X POST "$BASE/device/<device_id>/command" \
   -H "Authorization: Bearer $KEY" \
   -H "Content-Type: application/json" \
-  -d '{"kind":"action","pin":5,"brightness":120}'
+  -d '{"kind":"action","pin":5,"value":120}'
 ```
 
 ### 8.5 External light on/off
