@@ -4186,10 +4186,20 @@ async def send_command(
     predicted_state = None
     if command.get("action") != "ota":
         predicted_state = build_predicted_mqtt_state(previous_state_snapshot, device.pin_configurations, command)
-        if isinstance(predicted_state, dict) and "brightness" not in command:
-            target_pin = command.get("pin")
-            if predicted_state.get("pin") == target_pin and "brightness" in predicted_state:
-                command["brightness"] = predicted_state["brightness"]
+        target_pin = command.get("pin")
+        target_pin_mode = next(
+            (
+                str(
+                    getattr(getattr(pin_config, "mode", None), "value", getattr(pin_config, "mode", "")) or ""
+                ).upper()
+                for pin_config in (device.pin_configurations or [])
+                if getattr(pin_config, "gpio_pin", None) == target_pin
+            ),
+            None,
+        )
+        if isinstance(predicted_state, dict):
+            if predicted_state.get("pin") == target_pin and "value" in predicted_state:
+                command["value"] = predicted_state["value"]
             else:
                 predicted_pins = predicted_state.get("pins")
                 if isinstance(predicted_pins, list):
@@ -4197,12 +4207,17 @@ async def send_command(
                         (
                             row
                             for row in predicted_pins
-                            if isinstance(row, dict) and row.get("pin") == target_pin and "brightness" in row
+                            if isinstance(row, dict) and row.get("pin") == target_pin and "value" in row
                         ),
                         None,
                     )
                     if isinstance(matching_pin, dict):
-                        command["brightness"] = matching_pin["brightness"]
+                        command["value"] = matching_pin["value"]
+        if target_pin_mode == "PWM" and isinstance(command.get("value"), (int, float)) and not isinstance(command.get("value"), bool):
+            command["brightness"] = int(command["value"])
+        else:
+            command.pop("brightness", None)
+        command.pop("power", None)
 
     command_id = str(uuid.uuid4())
     command["command_id"] = command_id

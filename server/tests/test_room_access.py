@@ -386,7 +386,7 @@ def test_room_access_filters_devices_and_commands(monkeypatch):
     assert observer_devices.json() == []
 
 
-def test_pwm_command_persists_restore_brightness_and_reuses_it_on_power_on(monkeypatch):
+def test_pwm_command_persists_restore_value_and_reuses_it_on_power_on(monkeypatch):
     enqueue_mock = Mock(return_value=True)
     monkeypatch.setattr("app.api.mqtt_manager.enqueue_command", enqueue_mock)
     ws_mock = Mock()
@@ -422,20 +422,16 @@ def test_pwm_command_persists_restore_brightness_and_reuses_it_on_power_on(monke
             "status": "success",
             "job_id": "old-ota-job",
             "pin": 5,
-            "value": 1,
-            "brightness": 250,
-            "restore_value": 1,
-            "restore_brightness": 250,
+            "value": 250,
+            "restore_value": 250,
             "pins": [
                 {
                     "pin": 5,
                     "mode": "PWM",
                     "function": "light",
                     "label": "Dimmer",
-                    "value": 1,
-                    "brightness": 250,
-                    "restore_value": 1,
-                    "restore_brightness": 250,
+                    "value": 250,
+                    "restore_value": 250,
                     "extra_params": {"min_value": 0, "max_value": 255},
                 }
             ],
@@ -451,33 +447,32 @@ def test_pwm_command_persists_restore_brightness_and_reuses_it_on_power_on(monke
     off_payload = off_response.json()
     assert off_payload["status"] == "pending"
     assert off_payload["last_state"]["value"] == 0
-    assert off_payload["last_state"]["brightness"] == 0
-    assert off_payload["last_state"]["restore_brightness"] == 250
+    assert off_payload["last_state"]["restore_value"] == 250
     assert off_payload["last_state"]["predicted"] is True
     assert "event" not in off_payload["last_state"]
     assert "status" not in off_payload["last_state"]
     assert "job_id" not in off_payload["last_state"]
-    assert off_payload["last_state"]["pins"][0]["restore_brightness"] == 250
+    assert off_payload["last_state"]["pins"][0]["restore_value"] == 250
 
     dashboard_response = client.get("/api/v1/dashboard/devices", headers=admin_headers)
     assert dashboard_response.status_code == 200
-    assert dashboard_response.json()[0]["last_state"]["pins"][0]["restore_brightness"] == 250
+    assert dashboard_response.json()[0]["last_state"]["pins"][0]["restore_value"] == 250
     assert dashboard_response.json()[0]["last_state"]["predicted"] is True
 
     on_response = client.post(
         "/api/v1/device/device-dimmer/command",
         headers=admin_headers,
-        json={"kind": "action", "pin": 5, "value": 1},
+        json={"kind": "action", "pin": 5, "power": True},
     )
     assert on_response.status_code == 200, on_response.text
     on_payload = on_response.json()
     assert on_payload["status"] == "pending"
-    assert on_payload["last_state"]["value"] == 1
-    assert on_payload["last_state"]["brightness"] == 250
-    assert on_payload["last_state"]["restore_brightness"] == 250
+    assert on_payload["last_state"]["value"] == 250
+    assert on_payload["last_state"]["restore_value"] == 250
     assert on_payload["last_state"]["predicted"] is True
 
     last_command = enqueue_mock.call_args_list[-1].args[1]
+    assert last_command["value"] == 250
     assert last_command["brightness"] == 250
 
     db = TestingSessionLocal()
@@ -493,8 +488,8 @@ def test_pwm_command_persists_restore_brightness_and_reuses_it_on_power_on(monke
         )
         assert latest_state is not None
         latest_payload = json.loads(latest_state.payload)
-        assert latest_payload["brightness"] == 250
-        assert latest_payload["pins"][0]["restore_brightness"] == 250
+        assert latest_payload["value"] == 250
+        assert latest_payload["pins"][0]["restore_value"] == 250
     finally:
         db.close()
 
@@ -504,7 +499,7 @@ def test_pwm_command_persists_restore_brightness_and_reuses_it_on_power_on(monke
         if call.args[:3] == ("device_state", "device-dimmer", room["room_id"])
     ]
     assert state_calls
-    assert state_calls[-1][3]["brightness"] == 250
+    assert state_calls[-1][3]["value"] == 250
 
 
 def test_send_command_supersedes_older_pending_command_for_same_pin(monkeypatch):
@@ -537,7 +532,7 @@ def test_send_command_supersedes_older_pending_command_for_same_pin(monkeypatch)
     first_response = client.post(
         "/api/v1/device/device-supersede/command",
         headers=admin_headers,
-        json={"kind": "action", "pin": 5, "brightness": 120},
+        json={"kind": "action", "pin": 5, "value": 120},
     )
     assert first_response.status_code == 200, first_response.text
     first_command_id = first_response.json()["command_id"]
@@ -546,7 +541,7 @@ def test_send_command_supersedes_older_pending_command_for_same_pin(monkeypatch)
     second_response = client.post(
         "/api/v1/device/device-supersede/command",
         headers=admin_headers,
-        json={"kind": "action", "pin": 5, "brightness": 180},
+        json={"kind": "action", "pin": 5, "value": 180},
     )
     assert second_response.status_code == 200, second_response.text
     second_payload = second_response.json()
@@ -555,8 +550,9 @@ def test_send_command_supersedes_older_pending_command_for_same_pin(monkeypatch)
     assert first_command_id not in mqtt_manager.pending_commands
     assert command_ordering_manager.get(first_command_id) is None
     assert second_command_id in mqtt_manager.pending_commands
-    assert second_payload["last_state"]["brightness"] == 180
+    assert second_payload["last_state"]["value"] == 180
     assert mqtt_manager.pending_commands[second_command_id]["sequence_number"] == 2
+    assert mqtt_manager.pending_commands[second_command_id]["value"] == 180
     assert mqtt_manager.pending_commands[second_command_id]["brightness"] == 180
 
 
@@ -590,9 +586,7 @@ def test_dashboard_prefers_pending_predicted_state_before_history_commit():
             "predicted": False,
             "pin": 5,
             "value": 0,
-            "brightness": 0,
-            "restore_value": 1,
-            "restore_brightness": 250,
+            "restore_value": 250,
             "pins": [
                 {
                     "pin": 5,
@@ -600,9 +594,7 @@ def test_dashboard_prefers_pending_predicted_state_before_history_commit():
                     "function": "light",
                     "label": "Pending Predicted Dimmer",
                     "value": 0,
-                    "brightness": 0,
-                    "restore_value": 1,
-                    "restore_brightness": 250,
+                    "restore_value": 250,
                     "extra_params": {"min_value": 0, "max_value": 255},
                 }
             ],
@@ -612,8 +604,7 @@ def test_dashboard_prefers_pending_predicted_state_before_history_commit():
     mqtt_manager.pending_commands["pending-command"] = {
         "device_id": "device-pending-predicted",
         "pin": 5,
-        "value": 1,
-        "brightness": 250,
+        "value": 250,
         "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).timestamp(),
         "command_id": "pending-command",
         "predicted_state_history_id": None,
@@ -621,20 +612,16 @@ def test_dashboard_prefers_pending_predicted_state_before_history_commit():
             "kind": "action",
             "predicted": True,
             "pin": 5,
-            "value": 1,
-            "brightness": 250,
-            "restore_value": 1,
-            "restore_brightness": 250,
+            "value": 250,
+            "restore_value": 250,
             "pins": [
                 {
                     "pin": 5,
                     "mode": "PWM",
                     "function": "light",
                     "label": "Pending Predicted Dimmer",
-                    "value": 1,
-                    "brightness": 250,
-                    "restore_value": 1,
-                    "restore_brightness": 250,
+                    "value": 250,
+                    "restore_value": 250,
                     "extra_params": {"min_value": 0, "max_value": 255},
                 }
             ],
@@ -646,13 +633,12 @@ def test_dashboard_prefers_pending_predicted_state_before_history_commit():
         assert dashboard_response.status_code == 200
         payload = dashboard_response.json()[0]["last_state"]
         assert payload["predicted"] is True
-        assert payload["value"] == 1
-        assert payload["brightness"] == 250
+        assert payload["value"] == 250
     finally:
         mqtt_manager.pending_commands.pop("pending-command", None)
 
 
-def test_reported_pwm_off_state_keeps_restore_brightness(monkeypatch):
+def test_reported_pwm_off_state_keeps_restore_value(monkeypatch):
     monkeypatch.setattr("app.mqtt.SessionLocal", TestingSessionLocal)
     monkeypatch.setattr("app.mqtt.process_state_event_for_automations", lambda *args, **kwargs: None)
     monkeypatch.setattr("app.mqtt.mqtt_manager.publish_json", lambda *args, **kwargs: True)
@@ -686,20 +672,16 @@ def test_reported_pwm_off_state_keeps_restore_brightness(monkeypatch):
         payload={
             "kind": "action",
             "pin": 5,
-            "value": 1,
-            "brightness": 250,
-            "restore_value": 1,
-            "restore_brightness": 250,
+            "value": 250,
+            "restore_value": 250,
             "pins": [
                 {
                     "pin": 5,
                     "mode": "PWM",
                     "function": "light",
                     "label": "Dimmer",
-                    "value": 1,
-                    "brightness": 250,
-                    "restore_value": 1,
-                    "restore_brightness": 250,
+                    "value": 250,
+                    "restore_value": 250,
                     "extra_params": {"min_value": 0, "max_value": 255},
                 }
             ],
@@ -708,7 +690,7 @@ def test_reported_pwm_off_state_keeps_restore_brightness(monkeypatch):
 
     mqtt_manager.process_state_message(
         "device-reported-dimmer",
-        json.dumps({"kind": "action", "pin": 5, "value": 0, "brightness": 0}),
+        json.dumps({"kind": "action", "pin": 5, "value": 0}),
     )
 
     db = TestingSessionLocal()
@@ -725,9 +707,8 @@ def test_reported_pwm_off_state_keeps_restore_brightness(monkeypatch):
         assert latest_state is not None
         latest_payload = json.loads(latest_state.payload)
         assert latest_payload["value"] == 0
-        assert latest_payload["brightness"] == 0
-        assert latest_payload["restore_brightness"] == 250
-        assert latest_payload["pins"][0]["restore_brightness"] == 250
+        assert latest_payload["restore_value"] == 250
+        assert latest_payload["pins"][0]["restore_value"] == 250
     finally:
         db.close()
 
@@ -737,7 +718,7 @@ def test_reported_pwm_off_state_keeps_restore_brightness(monkeypatch):
         if call.args[:3] == ("device_state", "device-reported-dimmer", room["room_id"])
     )
     assert state_call[3]["value"] == 0
-    assert state_call[3]["pins"][0]["restore_brightness"] == 250
+    assert state_call[3]["pins"][0]["restore_value"] == 250
 
 
 def test_non_admin_cannot_create_project_delete_device_or_pair():

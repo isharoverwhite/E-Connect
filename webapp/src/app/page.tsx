@@ -4,7 +4,7 @@
 
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchDashboardDevices, fetchDevices, fetchSystemLogs, markSystemLogRead, markAllSystemLogsRead, SystemLogEntry, fetchSystemStatus } from "@/lib/api";
+import { fetchDashboardDevices, fetchDevices, fetchSystemLogs, markSystemLogRead, markAllSystemLogsRead, SystemLogEntry, fetchSystemStatus, SystemStatusResponse } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
 import Sidebar from '@/components/Sidebar';
 import { DeviceConfig } from "@/types/device";
@@ -19,6 +19,9 @@ const DEFAULT_CARD_WIDTH = 320;
 const DEFAULT_CARD_HEIGHT = 350;
 const CANVAS_GRID_STEP = 20;
 const CANVAS_COLLISION_GAP = CANVAS_GRID_STEP;
+const ADMIN_SUPPLEMENTAL_REFRESH_DEBOUNCE_MS = 750;
+
+type DashboardRefreshMode = "admin" | "full";
 
 function snapCanvasCoordinate(value: number) {
   return Math.max(0, Math.round(value / CANVAS_GRID_STEP) * CANVAS_GRID_STEP);
@@ -86,6 +89,17 @@ function normalizeCanvasLayouts(layout: unknown): Record<string, CanvasLayout> {
 
 function getCanvasUsableWidth(windowWidth: number): number {
   return Math.max(DEFAULT_CARD_WIDTH, windowWidth - (windowWidth < 1024 ? 0 : 256) - 48);
+}
+
+function mergeDashboardRefreshMode(
+  currentMode: DashboardRefreshMode | null,
+  nextMode: DashboardRefreshMode,
+): DashboardRefreshMode {
+  if (currentMode === "full" || nextMode === "full") {
+    return "full";
+  }
+
+  return "admin";
 }
 
 function rectsOverlap(
@@ -235,6 +249,10 @@ export default function Dashboard() {
   const [markingNotificationIds, setMarkingNotificationIds] = useState<Set<number>>(new Set());
   const [notificationError, setNotificationError] = useState("");
   const notificationRef = useRef<HTMLDivElement>(null);
+  const dashboardRefreshPromiseRef = useRef<Promise<void> | null>(null);
+  const queuedDashboardRefreshModeRef = useRef<DashboardRefreshMode | null>(null);
+  const adminRefreshTimeoutRef = useRef<number | null>(null);
+  const hasLoadedInitialDashboardSnapshotRef = useRef(false);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -352,38 +370,126 @@ export default function Dashboard() {
   };
 
   const isAdmin = user?.account_type === "admin";
-  const syncDashboardData = useCallback(async () => {
-    try {
-      const [dashboardDevices, pendingRequests, logsRes, statusRes] = await Promise.all([
-        fetchDashboardDevices(),
-        isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
-        isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
-        fetchSystemStatus().catch(() => null),
-      ]);
-
-      setDevices(dashboardDevices);
-      setPairingRequests((pendingRequests as DeviceConfig[]) || []);
-      if (isAdmin) {
-        setSystemLogs(logsRes.entries);
-      }
-      if (statusRes) {
-        setLatestFirmwareRevision(statusRes.latest_firmware_revision || null);
-        if (statusRes.effective_timezone) {
-          setServerTimezone(statusRes.effective_timezone);
-        }
-      }
-      setLoading(false);
-    } catch (error) {
-      console.error("Failed to sync dashboard data:", error);
-      setLoading(false);
+  const applySystemStatus = useCallback((statusRes: SystemStatusResponse | null) => {
+    if (!statusRes) {
+      return;
     }
-  }, [isAdmin]);
+
+    setLatestFirmwareRevision(statusRes.latest_firmware_revision || null);
+    if (statusRes.effective_timezone) {
+      setServerTimezone(statusRes.effective_timezone);
+    }
+  }, []);
+
+  const loadFullDashboardData = useCallback(async () => {
+    const [dashboardDevices, pendingRequests, logsRes, statusRes] = await Promise.all([
+      fetchDashboardDevices(),
+      isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
+      isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
+      fetchSystemStatus().catch(() => null),
+    ]);
+
+    setDevices(dashboardDevices);
+    setPairingRequests((pendingRequests as DeviceConfig[]) || []);
+    if (isAdmin) {
+      setSystemLogs(logsRes.entries);
+    }
+    applySystemStatus(statusRes);
+    hasLoadedInitialDashboardSnapshotRef.current = true;
+  }, [applySystemStatus, isAdmin]);
+
+  const loadAdminSupplementalData = useCallback(async () => {
+    if (!isAdmin) {
+      return;
+    }
+
+    const [pendingRequests, logsRes, statusRes] = await Promise.all([
+      fetchDevices({ authStatus: "pending" }),
+      fetchSystemLogs(undefined, 500),
+      fetchSystemStatus().catch(() => null),
+    ]);
+
+    setPairingRequests((pendingRequests as DeviceConfig[]) || []);
+    setSystemLogs(logsRes.entries);
+    applySystemStatus(statusRes);
+  }, [applySystemStatus, isAdmin]);
+
+  const runDashboardRefresh = useCallback((mode: DashboardRefreshMode) => {
+    if (mode === "full" && adminRefreshTimeoutRef.current !== null) {
+      window.clearTimeout(adminRefreshTimeoutRef.current);
+      adminRefreshTimeoutRef.current = null;
+    }
+
+    if (dashboardRefreshPromiseRef.current) {
+      queuedDashboardRefreshModeRef.current = mergeDashboardRefreshMode(
+        queuedDashboardRefreshModeRef.current,
+        mode,
+      );
+      return dashboardRefreshPromiseRef.current;
+    }
+
+    const refreshPromise = (async () => {
+      let nextMode: DashboardRefreshMode | null = mode;
+
+      // Coalesce realtime bursts so admin pages do not fan out overlapping refresh batches.
+      while (nextMode) {
+        queuedDashboardRefreshModeRef.current = null;
+
+        try {
+          if (nextMode === "full" || !isAdmin) {
+            await loadFullDashboardData();
+          } else {
+            await loadAdminSupplementalData();
+          }
+        } catch (error) {
+          console.error(
+            nextMode === "full" ? "Failed to sync dashboard data:" : "Failed to refresh admin dashboard data:",
+            error,
+          );
+        } finally {
+          setLoading(false);
+        }
+
+        nextMode = queuedDashboardRefreshModeRef.current;
+      }
+    })().finally(() => {
+      dashboardRefreshPromiseRef.current = null;
+      queuedDashboardRefreshModeRef.current = null;
+    });
+
+    dashboardRefreshPromiseRef.current = refreshPromise;
+    return refreshPromise;
+  }, [isAdmin, loadAdminSupplementalData, loadFullDashboardData]);
+
+  const scheduleAdminSupplementalRefresh = useCallback(() => {
+    if (!isAdmin) {
+      return;
+    }
+
+    if (adminRefreshTimeoutRef.current !== null) {
+      window.clearTimeout(adminRefreshTimeoutRef.current);
+    }
+
+    adminRefreshTimeoutRef.current = window.setTimeout(() => {
+      adminRefreshTimeoutRef.current = null;
+      void runDashboardRefresh("admin");
+    }, ADMIN_SUPPLEMENTAL_REFRESH_DEBOUNCE_MS);
+  }, [isAdmin, runDashboardRefresh]);
+
+  useEffect(() => {
+    return () => {
+      if (adminRefreshTimeoutRef.current !== null) {
+        window.clearTimeout(adminRefreshTimeoutRef.current);
+        adminRefreshTimeoutRef.current = null;
+      }
+    };
+  }, []);
 
 
 
   useWebSocket((event) => {
-    if ((event.type === "pairing_requested" || event.type === "pairing_queue_updated" || event.type === "device_offline") && isAdmin) {
-      void syncDashboardData();
+    if ((event.type === "pairing_requested" || event.type === "pairing_queue_updated") && isAdmin) {
+      scheduleAdminSupplementalRefresh();
       return;
     }
 
@@ -391,11 +497,16 @@ export default function Dashboard() {
       return;
     }
 
+    const hasKnownDevice = devices.some((device) => device.device_id === event.device_id);
+
     if (
       (event.type === "device_online" || event.type === "device_state") &&
-      !devices.some((device) => device.device_id === event.device_id)
+      !hasKnownDevice
     ) {
-      void syncDashboardData();
+      if (!hasLoadedInitialDashboardSnapshotRef.current) {
+        return;
+      }
+      void runDashboardRefresh("full");
       return;
     }
 
@@ -445,48 +556,25 @@ export default function Dashboard() {
         return didChange ? next : prev;
       });
     });
+
+    if (event.type === "device_offline" && isAdmin) {
+      scheduleAdminSupplementalRefresh();
+    }
   });
 
   useEffect(() => {
     let cancelled = false;
     const timeoutId = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const [dashboardDevices, pendingRequests, logsRes, statusRes] = await Promise.all([
-            fetchDashboardDevices(),
-            isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
-            isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
-            fetchSystemStatus().catch(() => null),
-          ]);
-          if (cancelled) {
-            return;
-          }
-          setDevices(dashboardDevices);
-          setPairingRequests((pendingRequests as DeviceConfig[]) || []);
-          if (isAdmin) {
-            setSystemLogs(logsRes.entries);
-          }
-          if (statusRes) {
-            setLatestFirmwareRevision(statusRes.latest_firmware_revision || null);
-            if (statusRes.effective_timezone) {
-              setServerTimezone(statusRes.effective_timezone);
-            }
-          }
-          setLoading(false);
-        } catch (error) {
-          console.error("Failed to load dashboard data:", error);
-          if (!cancelled) {
-            setLoading(false);
-          }
-        }
-      })();
+      if (!cancelled) {
+        void runDashboardRefresh("full");
+      }
     }, 50);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [isAdmin]);
+  }, [runDashboardRefresh]);
 
   const isDeviceOnline = (d: DeviceConfig) => {
     return d.auth_status === "approved" && d.conn_status === "online";

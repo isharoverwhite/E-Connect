@@ -303,11 +303,75 @@ def _pwm_on_output_value(extra_params: Mapping[str, Any] | None) -> int:
     return pwm_max
 
 
-def _clamp_pwm_brightness(extra_params: Mapping[str, Any] | None, brightness: int) -> int:
+def _clamp_pwm_value(extra_params: Mapping[str, Any] | None, value: int) -> int:
     pwm_min, pwm_max = _pwm_bounds_from_extra_params(extra_params)
     lower_bound = pwm_min if pwm_min < pwm_max else pwm_max
     upper_bound = pwm_min if pwm_min > pwm_max else pwm_max
-    return max(lower_bound, min(upper_bound, brightness))
+    return max(lower_bound, min(upper_bound, value))
+
+
+def _coerce_pwm_control_value(
+    row: Mapping[str, Any] | None,
+    *,
+    extra_params: Mapping[str, Any] | None,
+) -> int | None:
+    if not isinstance(row, Mapping):
+        return None
+
+    numeric_value = _coerce_int(row.get("value"))
+    legacy_brightness = _coerce_int(row.get("brightness"))
+
+    if legacy_brightness is not None and (numeric_value is None or numeric_value in {0, 1}):
+        return _clamp_pwm_value(extra_params, legacy_brightness)
+    if numeric_value is None:
+        return None
+    return _clamp_pwm_value(extra_params, numeric_value)
+
+
+def _coerce_pwm_restore_value(
+    row: Mapping[str, Any] | None,
+    *,
+    extra_params: Mapping[str, Any] | None,
+) -> int | None:
+    if not isinstance(row, Mapping):
+        return None
+
+    restore_value = _coerce_int(row.get("restore_value"))
+    legacy_restore_brightness = _coerce_int(row.get("restore_brightness"))
+
+    if legacy_restore_brightness is not None and (restore_value is None or restore_value in {0, 1}):
+        return _clamp_pwm_value(extra_params, legacy_restore_brightness)
+    if restore_value is None:
+        return None
+    return _clamp_pwm_value(extra_params, restore_value)
+
+
+def _extract_effective_command_value(command: Mapping[str, Any] | None) -> int | None:
+    if not isinstance(command, Mapping):
+        return None
+
+    numeric_value = _coerce_int(command.get("value"))
+    if numeric_value is not None:
+        return numeric_value
+    return _coerce_int(command.get("brightness"))
+
+
+def _extract_effective_state_value(state_row: Mapping[str, Any] | None) -> int | None:
+    if not isinstance(state_row, Mapping):
+        return None
+
+    extra_params = state_row.get("extra_params") if isinstance(state_row.get("extra_params"), Mapping) else None
+    if "brightness" in state_row:
+        return _coerce_pwm_control_value(state_row, extra_params=extra_params)
+
+    value = state_row.get("value")
+    if isinstance(value, bool):
+        return 1 if value else 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
 
 
 def _copy_state_pin_row(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -378,8 +442,7 @@ def _build_pin_row_from_config(pin_config: Any) -> dict[str, Any]:
         if active_level in (0, 1):
             row["active_level"] = active_level
     elif mode == "PWM":
-        row["value"] = 0
-        row["brightness"] = _pwm_off_output_value(extra_params)
+        row["value"] = _pwm_off_output_value(extra_params)
 
     return row
 
@@ -407,43 +470,26 @@ def _enrich_restore_fields(
     if mode == "PWM":
         extra_params = row.get("extra_params") if isinstance(row.get("extra_params"), Mapping) else {}
         off_output = _pwm_off_output_value(extra_params)
-        current_value = _coerce_int(row.get("value"))
-        current_brightness = _coerce_int(row.get("brightness"))
-        previous_restore_brightness = _coerce_int(previous_row.get("restore_brightness"))
-        previous_restore_value = _coerce_int(previous_row.get("restore_value"))
-        previous_brightness = _coerce_int(previous_row.get("brightness"))
-        previous_value = _coerce_int(previous_row.get("value"))
+        current_value = _coerce_pwm_control_value(row, extra_params=extra_params)
+        previous_restore_value = _coerce_pwm_restore_value(previous_row, extra_params=extra_params)
+        previous_value = _coerce_pwm_control_value(previous_row, extra_params=extra_params)
 
         if current_value is None:
-            if current_brightness is not None:
-                current_value = 0 if current_brightness == off_output else 1
-            else:
-                current_value = previous_value if previous_value is not None else 0
+            current_value = previous_value if previous_value is not None else off_output
 
-        if current_brightness is None:
-            if current_value == 0:
-                current_brightness = off_output
-            else:
-                remembered = previous_restore_brightness
-                if remembered is None and previous_brightness is not None and previous_brightness != off_output:
-                    remembered = previous_brightness
-                current_brightness = remembered if remembered is not None else _pwm_on_output_value(extra_params)
+        row["value"] = _clamp_pwm_value(extra_params, current_value)
 
-        row["value"] = 0 if current_value == 0 else 1
-        row["brightness"] = _clamp_pwm_brightness(extra_params, current_brightness)
-
-        if row["value"] == 0:
-            remembered_brightness = previous_restore_brightness
-            if remembered_brightness is None and previous_brightness is not None and previous_brightness != off_output:
-                remembered_brightness = previous_brightness
-            if remembered_brightness is None and row["brightness"] != off_output:
-                remembered_brightness = row["brightness"]
-            if remembered_brightness is not None:
-                row["restore_brightness"] = remembered_brightness
-            row["restore_value"] = previous_restore_value if previous_restore_value is not None else 1
+        if row["value"] == off_output:
+            remembered_value = previous_restore_value
+            if remembered_value is None and previous_value is not None and previous_value != off_output:
+                remembered_value = previous_value
+            if remembered_value is None or remembered_value == off_output:
+                remembered_value = _pwm_on_output_value(extra_params)
+            row["restore_value"] = _clamp_pwm_value(extra_params, remembered_value)
         else:
-            row["restore_brightness"] = row["brightness"]
-            row["restore_value"] = 1
+            row["restore_value"] = row["value"]
+        row.pop("brightness", None)
+        row.pop("restore_brightness", None)
         return
 
     if mode == "OUTPUT":
@@ -643,25 +689,28 @@ def build_predicted_mqtt_state(
         off_output = _pwm_off_output_value(extra_params)
         requested_value = _coerce_int(command.get("value"))
         requested_brightness = _coerce_int(command.get("brightness"))
-        remembered_brightness = _coerce_int(target_row.get("restore_brightness"))
-        current_brightness = _coerce_int(target_row.get("brightness"))
+        requested_power = command.get("power")
+        remembered_value = _coerce_pwm_restore_value(target_row, extra_params=extra_params)
+        current_value = _coerce_pwm_control_value(target_row, extra_params=extra_params)
 
-        if requested_value == 0:
-            target_row["value"] = 0
-            target_row["brightness"] = off_output
-        else:
-            if requested_brightness is None and requested_value is not None:
-                requested_brightness = remembered_brightness
-                if requested_brightness is None and current_brightness is not None and current_brightness != off_output:
-                    requested_brightness = current_brightness
-                if requested_brightness is None:
-                    requested_brightness = _pwm_on_output_value(extra_params)
+        if isinstance(requested_power, bool):
+            if not requested_power:
+                requested_value = off_output
+            elif requested_value is None and requested_brightness is None:
+                if remembered_value is not None and remembered_value != off_output:
+                    requested_value = remembered_value
+                elif current_value is not None and current_value != off_output:
+                    requested_value = current_value
+                else:
+                    requested_value = _pwm_on_output_value(extra_params)
 
-            if requested_brightness is None:
-                return None
+        if requested_value is None:
+            requested_value = requested_brightness
 
-            target_row["brightness"] = _clamp_pwm_brightness(extra_params, requested_brightness)
-            target_row["value"] = 0 if target_row["brightness"] == off_output else 1
+        if requested_value is None:
+            return None
+
+        target_row["value"] = _clamp_pwm_value(extra_params, requested_value)
     else:
         return None
 
@@ -687,18 +736,9 @@ def _extract_state_pin_rows(state_payload: dict[str, Any]) -> list[dict[str, Any
 
 
 def _state_row_matches_command(command: dict[str, Any], state_row: dict[str, Any]) -> bool:
-    command_value = _normalize_state_scalar(command.get("value"))
-    state_value = _normalize_state_scalar(state_row.get("value"))
-    command_brightness = command.get("brightness")
-    state_brightness = state_row.get("brightness")
-
-    value_matches = state_value is not None and command_value is not None and state_value == command_value
-    brightness_matches = (
-        state_brightness is not None
-        and command_brightness is not None
-        and state_brightness == command_brightness
-    )
-    return value_matches or brightness_matches
+    command_value = _extract_effective_command_value(command)
+    state_value = _extract_effective_state_value(state_row)
+    return state_value is not None and command_value is not None and state_value == command_value
 
 
 def _build_command_ack_resolution_payload(
@@ -1185,11 +1225,7 @@ class MQTTClientManager:
             matched_cmd_id = ack_cmd_id
         else:
             pin = state_payload.get("pin")
-            val = state_payload.get("value")
-            bright = state_payload.get("brightness")
-
-            if isinstance(val, bool):
-                val = 1 if val else 0
+            state_value = _extract_effective_state_value(state_payload)
 
             pending_items = sorted(
                 list(self.pending_commands.items()),
@@ -1199,15 +1235,7 @@ class MQTTClientManager:
 
             for cid, cmd in pending_items:
                 if cmd["device_id"] == device_id and cmd.get("pin") == pin:
-                    cmd_val = cmd.get("value")
-                    if isinstance(cmd_val, bool):
-                        cmd_val = 1 if cmd_val else 0
-                    cmd_bright = cmd.get("brightness")
-
-                    match_val = val is not None and cmd_val is not None and cmd_val == val
-                    match_bright = bright is not None and cmd_bright is not None and cmd_bright == bright
-
-                    if match_val or match_bright:
+                    if state_value is not None and _extract_effective_command_value(cmd) == state_value:
                         matched_cmd_id = cid
                         break
 
