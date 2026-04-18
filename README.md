@@ -6,6 +6,30 @@
 
 ---
 
+## Mở Đầu / Product Intro
+
+Tiếng Việt: **E-Connect** là nền tảng smart home `self-hosted`, `local-first` giúp bạn dựng và vận hành hệ thống IoT trong LAN mà không phụ thuộc cloud. Dự án kết hợp dashboard quản lý thiết bị, luồng onboarding và phê duyệt node DIY `ESP32/ESP8266`, lưu Wi-Fi tập trung, builder map GPIO bằng `SVG`, build firmware phía server, flash qua trình duyệt, automation graph trực quan, API key cho tích hợp ngoài và cơ chế `MQTT-first` để điều khiển nhanh, ổn định, riêng tư trên hạ tầng do chính bạn sở hữu.
+
+English: **E-Connect** is a `self-hosted`, `local-first` smart home platform for LAN-native control, DIY `ESP32/ESP8266` onboarding, centralized Wi-Fi provisioning, `SVG` GPIO mapping, server-side firmware builds, browser flashing, visual automations, API-key-based integrations, and `MQTT-first` messaging, all in a private stack you run yourself.
+
+## Phụ Lục / Appendix
+
+- [Extension Development Guide](./docs/EXTENSIONS.md)
+- [API Key User Guide](./docs/API_KEYS.md)
+- [End-user Compose Template](./deploy/user/compose.yml)
+
+## Công Nghệ / Technology
+
+| Layer | Stack |
+|---|---|
+| Frontend | `Next.js 16`, `React 19`, `Tailwind CSS 4`, `react-rnd`, `react-zoom-pan-pinch` |
+| Backend | `FastAPI`, `SQLAlchemy`, `Pydantic`, `Uvicorn`, `python-jose`, `passlib` |
+| IoT & Provisioning | `MQTT`, `Mosquitto`, `PlatformIO`, `Zeroconf/mDNS`, browser-based flash and serial tooling |
+| Data & Persistence | `MariaDB`, `PyMySQL`, durable storage for devices, configs, automations, and logs |
+| Deployment | `Docker Compose`, Docker Hub images, local HTTPS on `3443`, GitHub Actions workflows |
+
+`find_website` remains developer-hosted. The self-hosted runtime stays focused on `db`, `mqtt`, `server`, and `webapp`, while browser-based LAN discovery starts from [find.isharoverwhite.com](https://find.isharoverwhite.com).
+
 ## Tour Giao Diện / Visual Tour
 
 ### 1. First-Time Setup
@@ -60,46 +84,6 @@ English: `Settings` centralizes instance administration, including timezone, use
 ---
 
 ## Tiếng Việt
-
-### Giới thiệu
-
-**E-Connect** là nền tảng smart home `self-hosted`, `local-first`, tập trung vào:
-
-- Điều khiển thiết bị trong mạng LAN nhanh chóng và bảo mật.
-- Quản lý vòng đời thiết bị DIY dùng `ESP32` và `ESP8266`.
-- Giao tiếp ưu tiên `MQTT` cho tốc độ phản hồi tức thì.
-- Dashboard điều khiển và giám sát trạng thái trực quan, thân thiện.
-- Build firmware phía server, flash qua trình duyệt và mapping GPIO dễ dàng.
-- Automation dạng graph builder cho phép thiết lập tự động hóa kéo thả.
-- Lưu trữ dữ liệu an toàn trên hạ tầng của chính người dùng.
-
-### Ứng dụng thực tế
-
-E-Connect giúp biến các linh kiện DIY thành giải pháp nhà thông minh hoàn chỉnh thông qua Automation Builder trực quan. Một số ứng dụng phổ biến:
-
-- **Tự động hóa ánh sáng**: Kết hợp cảm biến ánh sáng và relay điều khiển đèn. Nếu hệ thống nhận diện môi trường quá tối, đèn sẽ tự động bật sáng.
-- **Điều khiển nhiệt độ, thông gió**: Dùng cảm biến nhiệt độ/độ ẩm (DHT11/DHT22) để kích hoạt quạt tự động khi phòng nóng vượt mức thiết lập (ví dụ: > 28°C).
-- **Hệ thống tưới tiêu thông minh**: Theo dõi độ ẩm đất và tự động kích hoạt máy bơm nước khi phát hiện đất khô.
-- **Cảnh báo an ninh**: Kết hợp cảm biến chuyển động hoặc cảm biến cửa để gửi thông báo tự động hoặc hú còi khi có xâm nhập lạ ban đêm.
-
-### Điểm nổi bật
-
-- **Local-first thật sự**: phần điều khiển cốt lõi vẫn hoạt động trong LAN ngay cả khi Internet không ổn định.
-- **Self-hosted gọn**: stack người dùng chỉ gồm `db`, `mqtt`, `server`, `webapp`.
-- **DIY-friendly**: có board picker, lưu Wi-Fi tập trung, pin mapping, build firmware, và đường dẫn flash.
-- **Firmware dễ cập nhật hơn**: backend theo dõi GitHub release từ repo trusted cố định [econnectrelease/firmware](https://github.com/econnectrelease/firmware), mặc định kiểm tra mỗi 60 giây và tự kéo firmware-template mới về server khi có release mới.
-- **Quản trị tập trung**: dashboard, logs, settings, automation, extensions đều nằm trong cùng giao diện.
-
-### Kiến trúc self-hosted
-
-| Thành phần | Vai trò |
-|---|---|
-| `server` | FastAPI backend cho auth, API, build firmware, WebSocket, automation, device lifecycle |
-| `webapp` | Next.js 16 + React 19 frontend cho setup, dashboard, devices, automation, settings |
-| `mqtt` | Mosquitto broker cho command/state loop |
-| `db` | MariaDB lưu user, household, device, config, automation, log |
-
-`find_website` không nằm trong stack self-hosted. Luồng chuẩn là người dùng chạy `db`, `mqtt`, `server`, `webapp` trong LAN của họ, rồi mở [find.isharoverwhite.com](https://find.isharoverwhite.com) từ một thiết bị cùng LAN để browser của chính họ scan ra server vừa cài. Mã nguồn của public finder hiện được tách riêng tại [econnectrelease/findwebsite](https://github.com/econnectrelease/findwebsite).
 
 ### Chạy Nhanh Theo Kiểu Copy & Run
 
@@ -274,12 +258,6 @@ x-user-config:
 
 Phần `mqtt_image`, `server_image`, `webapp_image` thường không cần đổi, trừ khi bạn muốn pin sang tag image khác.
 
-### Hướng dẫn phát triển Extension (Developer Docs)
-
-E-Connect hỗ trợ mở rộng nền tảng thông qua hệ thống **Extensions** linh hoạt. Các nhà phát triển có thể tìm hiểu thêm về kiến trúc và cách xây dựng extension tại tài liệu sau:
-
-👉 **[Xem Hướng dẫn phát triển Extension](./docs/EXTENSIONS.md)**
-
 ### Build từ source
 
 Nếu bạn muốn chạy trực tiếp từ mã nguồn thay vì image public:
@@ -309,46 +287,6 @@ Mã nguồn và tài sản của repository hiện được phân phối dưới
 ---
 
 ## English
-
-### Overview
-
-**E-Connect** is a `self-hosted`, `local-first` smart home platform prioritizing speed, privacy, and DIY experiences. Core capabilities include:
-
-- Fast and secure LAN-native device control.
-- Seamless DIY ESP32 / ESP8266 lifecycle onboarding.
-- MQTT-first messaging for instant responsivity.
-- Clean, dashboard-driven operations for device monitoring.
-- Server-side firmware builds, browser flashing, and visual GPIO mapping.
-- Visual, drag-and-drop graph builders for complex automations.
-- Durable state storage strictly isolated on user-owned infrastructure.
-
-### Real-life Applications
-
-The core objective of E-Connect is turning DIY modules into functional, autonomous home solutions via the intuitive Automation Builder. Common use cases:
-
-- **Smart Lighting**: Combine a light sensor with a relay. The system can evaluate ambient light and automatically turn on room lights when it gets too dark.
-- **Automated Climate/Fan Control**: Utilize DHT11/DHT22 temperature & humidity sensors. Trigger a fan or AC switch immediately if the room temperature surpasses a certain point (e.g., > 28°C).
-- **Smart Irrigation**: Track soil moisture levels and trigger water pumps automatically when your plants need hydration.
-- **Security Alerts**: Connect motion or door sensors to push notifications or sirens, establishing a capable night-time security perimeter.
-
-### Highlights
-
-- **Real local-first behavior**: core control stays on the LAN.
-- **Compact self-hosted stack**: end users run only `db`, `mqtt`, `server`, and `webapp`.
-- **DIY provisioning flow**: board selection, saved Wi-Fi credentials, pin mapping, server builds, and flash-ready workflows.
-- **Faster firmware iteration**: the backend tracks GitHub releases from the fixed trusted repository [econnectrelease/firmware](https://github.com/econnectrelease/firmware), checks every 60 seconds by default, and auto-installs the latest firmware template onto the server.
-- **Single admin surface**: dashboard, logs, settings, devices, automation, and extensions live in one product.
-
-### Self-hosted architecture
-
-| Component | Responsibility |
-|---|---|
-| `server` | FastAPI backend for auth, APIs, firmware builds, WebSockets, automation, and device lifecycle |
-| `webapp` | Next.js 16 + React 19 frontend for setup, dashboard, devices, automation, and settings |
-| `mqtt` | Mosquitto broker for command/state transport |
-| `db` | MariaDB for users, households, devices, configs, automations, and logs |
-
-`find_website` is not part of the self-hosted stack. The normal topology is that users run only `db`, `mqtt`, `server`, and `webapp` on their own LAN, then open [find.isharoverwhite.com](https://find.isharoverwhite.com) from a device on that same LAN so their own browser can discover the server they just installed. The public finder source now lives in its own repository at [econnectrelease/findwebsite](https://github.com/econnectrelease/findwebsite).
 
 ### Copy And Run Quick Start
 
@@ -523,12 +461,6 @@ x-user-config:
 ```
 
 The `mqtt_image`, `server_image`, and `webapp_image` fields usually do not need to be changed unless you want to pin a different image tag.
-
-### Extension Development Guide (Developer Docs)
-
-E-Connect is highly extensible via its **Extensions** system. Developers can learn more about building custom logic, widgets, and API integrations in our dedicated documentation:
-
-👉 **[Read the Extension Development Guide](./docs/EXTENSIONS.md)**
 
 ### Run From Source
 
