@@ -110,5 +110,7 @@ scripts/find_*.py
 scripts/*_ps.py
 scripts/*_v.py
 scripts/cat_*.py
-AGENT*.md
-AGENTS.md
+
+# Raycast extension local dependencies and build outputs
+/Raycast extensions/node_modules/
+/Raycast extensions/dist/
