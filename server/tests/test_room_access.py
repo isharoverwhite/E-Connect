@@ -1,6 +1,7 @@
 # Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
 
 import json
+import time
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import Mock
@@ -36,6 +37,25 @@ from app.sql_models import (
     WifiCredential,
 )
 from main import app
+
+
+def _wait_for_mqtt_state_persistence(timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        queues = list(getattr(mqtt_manager, "_state_persistence_messages", []))
+        if not queues or all(q.unfinished_tasks == 0 for q in queues):
+            mqtt_manager._stop_state_persistence_workers()
+            return
+        time.sleep(0.01)
+    raise AssertionError("Timed out waiting for MQTT state persistence")
+
+
+def _reset_mqtt_runtime_state() -> None:
+    mqtt_manager.stop()
+    mqtt_manager.pending_commands.clear()
+    mqtt_manager._latest_state_cache.clear()
+    mqtt_manager._latest_device_runtime_cache.clear()
+    mqtt_manager._latest_state_sequence = 0
 
 
 SQLALCHEMY_DATABASE_URL = "sqlite://"
@@ -307,16 +327,16 @@ def reset_state():
     app.dependency_overrides[get_db] = override_get_db
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
-    mqtt_manager.pending_commands.clear()
+    _reset_mqtt_runtime_state()
     command_ordering_manager.reset()
     yield
-    mqtt_manager.pending_commands.clear()
+    _reset_mqtt_runtime_state()
     command_ordering_manager.reset()
     app.dependency_overrides.clear()
 
 
 def test_room_access_filters_devices_and_commands(monkeypatch):
-    monkeypatch.setattr("app.api.mqtt_manager.enqueue_command", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("app.api.mqtt_manager.publish_command", lambda *_args, **_kwargs: True)
 
     household, admin, member, observer = _seed_household()
     admin_headers = _auth_headers(
@@ -387,8 +407,8 @@ def test_room_access_filters_devices_and_commands(monkeypatch):
 
 
 def test_pwm_command_persists_restore_value_and_reuses_it_on_power_on(monkeypatch):
-    enqueue_mock = Mock(return_value=True)
-    monkeypatch.setattr("app.api.mqtt_manager.enqueue_command", enqueue_mock)
+    publish_mock = Mock(return_value=True)
+    monkeypatch.setattr("app.api.mqtt_manager.publish_command", publish_mock)
     ws_mock = Mock()
     monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", ws_mock)
 
@@ -471,7 +491,7 @@ def test_pwm_command_persists_restore_value_and_reuses_it_on_power_on(monkeypatc
     assert on_payload["last_state"]["restore_value"] == 250
     assert on_payload["last_state"]["predicted"] is True
 
-    last_command = enqueue_mock.call_args_list[-1].args[1]
+    last_command = publish_mock.call_args_list[-1].args[1]
     assert last_command["value"] == 250
     assert last_command["brightness"] == 250
 
@@ -503,8 +523,8 @@ def test_pwm_command_persists_restore_value_and_reuses_it_on_power_on(monkeypatc
 
 
 def test_send_command_supersedes_older_pending_command_for_same_pin(monkeypatch):
-    enqueue_mock = Mock(return_value=True)
-    monkeypatch.setattr("app.api.mqtt_manager.enqueue_command", enqueue_mock)
+    publish_mock = Mock(return_value=True)
+    monkeypatch.setattr("app.api.mqtt_manager.publish_command", publish_mock)
 
     household, admin, _member, _observer = _seed_household(prefix="supersede")
     admin_headers = _auth_headers(
@@ -692,6 +712,7 @@ def test_reported_pwm_off_state_keeps_restore_value(monkeypatch):
         "device-reported-dimmer",
         json.dumps({"kind": "action", "pin": 5, "value": 0}),
     )
+    _wait_for_mqtt_state_persistence()
 
     db = TestingSessionLocal()
     try:

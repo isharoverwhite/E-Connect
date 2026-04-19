@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 import hashlib
 import json
 import os
+import time
 import uuid
 from zoneinfo import ZoneInfo
 
@@ -46,6 +47,26 @@ LAN_BASE_URL = "http://192.168.1.25:3000"
 client = TestClient(app, base_url=LAN_BASE_URL)
 
 
+def _wait_for_mqtt_state_persistence(manager, timeout: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        queues = list(getattr(manager, "_state_persistence_messages", []))
+        if not queues or all(q.unfinished_tasks == 0 for q in queues):
+            if hasattr(manager, "_stop_state_persistence_workers"):
+                manager._stop_state_persistence_workers()
+            return
+        time.sleep(0.01)
+    raise AssertionError("Timed out waiting for MQTT state persistence")
+
+
+def _reset_mqtt_runtime_state(manager) -> None:
+    manager.stop()
+    manager.pending_commands.clear()
+    manager._latest_state_cache.clear()
+    manager._latest_device_runtime_cache.clear()
+    manager._latest_state_sequence = 0
+
+
 def _write_test_artifact(tmp_path, job_id: str) -> str:
     artifact_path = tmp_path / f"{job_id}.bin"
     artifact_path.write_bytes(b"test-firmware-image")
@@ -60,11 +81,11 @@ def setup_db():
     close_all_sessions()
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
-    mqtt_manager.pending_commands.clear()
+    _reset_mqtt_runtime_state(mqtt_manager)
     command_ordering_manager.reset()
     yield
     close_all_sessions()
-    mqtt_manager.pending_commands.clear()
+    _reset_mqtt_runtime_state(mqtt_manager)
     command_ordering_manager.reset()
 
 def create_test_data(db):
@@ -1988,6 +2009,7 @@ def test_mqtt_process_ota_status(tmp_path, monkeypatch):
     # Hack the db session in MQTT manager just for this test
     with patch('app.mqtt.SessionLocal', return_value=db_mock):
         mgr.process_state_message(device.device_id, payload_success)
+    _wait_for_mqtt_state_persistence(mgr)
     
     db.refresh(job)
     db.refresh(project)
@@ -2012,6 +2034,7 @@ def test_mqtt_process_ota_status(tmp_path, monkeypatch):
     payload_fail = json.dumps({"event": "ota_status", "job_id": job2_id, "status": "failed", "message": "HTTP error"})
     with patch('app.mqtt.SessionLocal', return_value=db_mock):
         mgr.process_state_message(device.device_id, payload_fail)
+    _wait_for_mqtt_state_persistence(mgr)
 
     db.refresh(job2)
     assert job2.status == JobStatus.flash_failed
@@ -2061,6 +2084,7 @@ def test_mqtt_state_ota_status_success_promotes_pending_config_when_device_alrea
     payload_success = json.dumps({"event": "ota_status", "job_id": job_id, "status": "success"})
     with patch('app.mqtt.SessionLocal', return_value=db_mock):
         mgr.process_state_message(device.device_id, payload_success)
+    _wait_for_mqtt_state_persistence(mgr)
 
     db.refresh(job)
     db.refresh(project)
@@ -2108,6 +2132,7 @@ def test_mqtt_state_multi_pin_payload_acknowledges_pending_command():
     with patch("app.mqtt.SessionLocal", return_value=db_mock), \
          patch("app.mqtt.ws_manager.broadcast_device_event_sync") as broadcast_sync:
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
 
     assert "cmd-1" not in mgr.pending_commands
     broadcast_sync.assert_any_call(
@@ -2154,6 +2179,7 @@ def test_mqtt_state_command_id_acknowledges_pending_command_without_row_match():
     with patch("app.mqtt.SessionLocal", return_value=db_mock), \
          patch("app.mqtt.ws_manager.broadcast_device_event_sync") as broadcast_sync:
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
 
     assert "cmd-1" not in mgr.pending_commands
     broadcast_sync.assert_any_call(
@@ -2226,6 +2252,7 @@ def test_mqtt_state_unknown_device_requests_repair():
     payload = json.dumps({"kind": "state", "device_id": "missing-device"})
     with patch('app.mqtt.SessionLocal', return_value=db_mock):
         mgr.process_state_message("missing-device", payload)
+    _wait_for_mqtt_state_persistence(mgr)
 
     mgr.publish_json.assert_called_once()
     topic, ack_payload = mgr.publish_json.call_args.args[:2]
@@ -2267,6 +2294,7 @@ def test_mqtt_state_automation_dispatch_uses_enqueue_command():
         *,
         device_id,
         state_payload,
+        previous_state_payload=None,
         publish_command,
         triggered_at=None,
     ):
@@ -2284,6 +2312,7 @@ def test_mqtt_state_automation_dispatch_uses_enqueue_command():
             side_effect=fake_process_state_event_for_automations,
         ):
             mgr.process_state_message(device.device_id, payload)
+            _wait_for_mqtt_state_persistence(mgr)
 
     mgr.publish_json.assert_called_once_with(
         mgr.command_topic(device.device_id),
@@ -2310,6 +2339,7 @@ def test_mqtt_state_hidden_pending_device_requests_repair():
     payload = json.dumps({"kind": "state", "device_id": device.device_id})
     with patch('app.mqtt.SessionLocal', return_value=db_mock):
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
 
     mgr.publish_json.assert_called_once()
     topic, ack_payload = mgr.publish_json.call_args.args[:2]
@@ -2338,6 +2368,7 @@ def test_mqtt_state_active_pending_device_stays_waiting_for_approval():
     payload = json.dumps({"kind": "state", "device_id": device.device_id})
     with patch('app.mqtt.SessionLocal', return_value=db_mock):
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
 
     mgr.publish_json.assert_called_once()
     topic, ack_payload = mgr.publish_json.call_args.args[:2]
@@ -2386,6 +2417,7 @@ def test_mqtt_state_firmware_network_mismatch_requires_manual_reflash():
     )
     with patch("app.mqtt.SessionLocal", return_value=db_mock):
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
 
     mgr.publish_json.assert_called_once()
     topic, ack_payload = mgr.publish_json.call_args.args[:2]
@@ -2415,6 +2447,7 @@ def test_mqtt_state_rejected_device_reports_pairing_rejected():
     payload = json.dumps({"kind": "state", "device_id": device.device_id})
     with patch('app.mqtt.SessionLocal', return_value=db_mock):
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
 
     mgr.publish_json.assert_called_once()
     topic, ack_payload = mgr.publish_json.call_args.args[:2]
@@ -2618,6 +2651,7 @@ def test_mqtt_reconcile_ota_success():
     
     with patch('app.mqtt.SessionLocal', return_value=db_mock):
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
         
     db.refresh(job)
     db.refresh(project)
@@ -2649,6 +2683,7 @@ def test_mqtt_state_persists_reported_firmware_revision():
 
     with patch("app.mqtt.SessionLocal", return_value=db_mock):
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
 
     db.refresh(device)
     assert device.firmware_revision == "1.0.0"
@@ -2835,6 +2870,7 @@ def test_mqtt_state_prunes_stale_unconfigured_pins_from_previous_snapshot():
 
     with patch("app.mqtt.SessionLocal", return_value=db_mock):
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
 
     latest = (
         db.query(DeviceHistory)
@@ -2876,6 +2912,7 @@ def test_mqtt_reconcile_ota_mismatch_recent():
     
     with patch('app.mqtt.SessionLocal', return_value=db_mock):
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
         
     db.refresh(job)
     # Should still be flashing because it hasn't been 60 seconds
@@ -2906,6 +2943,7 @@ def test_mqtt_reconcile_ota_mismatch_stale():
     
     with patch('app.mqtt.SessionLocal', return_value=db_mock):
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
         
     db.refresh(job)
     # Should be rolled back to flash_failed because 90s > 60s threshold
@@ -2939,6 +2977,7 @@ def test_mqtt_reconcile_ota_mismatch_stale_with_local_db_timestamp(monkeypatch):
 
     with patch('app.mqtt.SessionLocal', return_value=db_mock):
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
 
     db.refresh(job)
     assert job.status == JobStatus.flash_failed
@@ -2970,6 +3009,7 @@ def test_mqtt_state_recent_flashed_job_mismatch_fails_immediately():
 
     with patch('app.mqtt.SessionLocal', return_value=db_mock):
         mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
 
     db.refresh(job)
     assert job.status == JobStatus.flash_failed

@@ -7,6 +7,11 @@ import logging
 import os
 import uuid
 import copy
+import queue
+import threading
+import zlib
+from collections.abc import Iterator, MutableMapping
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
@@ -64,10 +69,121 @@ OTA_FLASHING_RECONCILIATION_TIMEOUT = timedelta(
 OTA_RECENT_FLASH_CONFIRMATION_WINDOW = timedelta(
     seconds=max(120, int(os.getenv("OTA_RECENT_FLASH_CONFIRMATION_WINDOW_SECONDS", "180")))
 )
+_PENDING_COMMAND_MISSING = object()
+_STATE_PERSISTENCE_RETRY_DELAY_SECONDS = 0.5
+
+
+@dataclass(frozen=True)
+class _InboundMQTTMessage:
+    topic_kind: str
+    device_id: str
+    payload_str: str
+    mqtt_callback_entered_at: str
+    mqtt_callback_enqueued_at: str
+    state_worker_index: int | None = None
+    state_queue_depth_at_enqueue: int | None = None
+    state_pending_device_count_at_enqueue: int | None = None
+
+
+@dataclass(frozen=True)
+class _QueuedInboundStateDevice:
+    device_id: str
+
+
+@dataclass(frozen=True)
+class _StatePersistenceJob:
+    device_id: str
+    state_sequence: int
+    observed_at: datetime
+    state_history_payload: dict[str, Any]
+    session_factory: Any | None = None
+    previous_state_payload: dict[str, Any] | None = None
+    enriched_state_payload: dict[str, Any] | None = None
+    was_offline: bool = False
+    device_name: str | None = None
+    previous_firmware_version: str | None = None
+    previous_firmware_revision: str | None = None
+    reported_firmware_version: str | None = None
+    reported_firmware_revision: str | None = None
+    reported_ip_address: str | None = None
+    command_failure_payload: dict[str, Any] | None = None
+    ota_status_job_id: str | None = None
+    ota_status: str | None = None
+    ota_status_message: str | None = None
+
+
+def _iso_utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _default_inbound_worker_count() -> int:
+    configured = os.getenv("MQTT_INBOUND_WORKER_COUNT")
+    if configured is not None:
+        try:
+            worker_count = int(configured)
+        except ValueError:
+            worker_count = 0
+        if worker_count > 0:
+            return worker_count
+        logger.warning(
+            "Invalid MQTT_INBOUND_WORKER_COUNT=%r; using CPU-based default instead.",
+            configured,
+        )
+
+    cpu_count = os.cpu_count() or 2
+    return max(2, min(8, cpu_count))
 
 
 def _utcnow_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class _ThreadSafePendingCommandStore(MutableMapping[str, dict[str, Any]]):
+    def __init__(self) -> None:
+        self._data: dict[str, dict[str, Any]] = {}
+        self._lock = threading.RLock()
+
+    def __getitem__(self, key: str) -> dict[str, Any]:
+        with self._lock:
+            return self._data[key]
+
+    def __setitem__(self, key: str, value: dict[str, Any]) -> None:
+        with self._lock:
+            self._data[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        with self._lock:
+            del self._data[key]
+
+    def __iter__(self) -> Iterator[str]:
+        with self._lock:
+            return iter(list(self._data.keys()))
+
+    def __len__(self) -> int:
+        with self._lock:
+            return len(self._data)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._data.clear()
+
+    def get(self, key: str, default: Any = None) -> dict[str, Any] | Any:
+        with self._lock:
+            return self._data.get(key, default)
+
+    def pop(self, key: str, default: Any = _PENDING_COMMAND_MISSING) -> dict[str, Any] | Any:
+        with self._lock:
+            if default is _PENDING_COMMAND_MISSING:
+                return self._data.pop(key)
+            return self._data.pop(key, default)
+
+    def items(self):
+        with self._lock:
+            return list(self._data.items())
+
+    def values(self):
+        with self._lock:
+            return list(self._data.values())
 
 
 def _job_reference_time(job, *, reference_time: datetime | None = None) -> datetime:
@@ -282,6 +398,60 @@ def _coerce_pin_mode(pin_config: Any) -> str | None:
 
 def _copy_json_value(value: Any) -> Any:
     return copy.deepcopy(value)
+
+
+def _copy_latency_trace(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        return {}
+    copied = _copy_json_value(value)
+    return copied if isinstance(copied, dict) else {}
+
+
+def _is_online_conn_status(value: Any) -> bool:
+    if value == ConnStatus.online:
+        return True
+    if hasattr(value, "value"):
+        value = value.value
+    return str(value).strip().lower() == ConnStatus.online.value
+
+
+def _server_latency_trace(value: dict[str, Any]) -> dict[str, Any]:
+    server = value.get("server")
+    if not isinstance(server, dict):
+        server = {}
+        value["server"] = server
+    return server
+
+
+def _state_payload_latency_trace(
+    state_payload: Mapping[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(state_payload, Mapping):
+        return None
+    trace = state_payload.get("latency_trace")
+    return trace if isinstance(trace, dict) else None
+
+
+def _stamp_server_latency_trace(
+    trace: dict[str, Any] | None,
+    **fields: Any,
+) -> dict[str, Any] | None:
+    if not isinstance(trace, dict):
+        return None
+
+    server_trace = _server_latency_trace(trace)
+    for key, value in fields.items():
+        if value is None:
+            continue
+        server_trace[key] = value
+    return server_trace
+
+
+def _stamp_state_payload_server_trace(
+    state_payload: Mapping[str, Any] | None,
+    **fields: Any,
+) -> dict[str, Any] | None:
+    return _stamp_server_latency_trace(_state_payload_latency_trace(state_payload), **fields)
 
 
 def _pwm_bounds_from_extra_params(extra_params: Mapping[str, Any] | None) -> tuple[int, int]:
@@ -598,6 +768,12 @@ def sanitize_physical_device_state_payload(
 
 
 def load_latest_device_state_payload(db: Session, device_id: str) -> tuple[DeviceHistory | None, dict[str, Any] | None]:
+    manager = globals().get("mqtt_manager")
+    if isinstance(manager, MQTTClientManager):
+        cached_state = manager.latest_reported_state(device_id)
+        if isinstance(cached_state, dict):
+            return None, cached_state
+
     latest_state = (
         db.query(DeviceHistory)
         .filter(
@@ -784,8 +960,521 @@ class MQTTClientManager:
         self.client.on_message = self.on_message
         self.client.on_disconnect = self.on_disconnect
         self.connected = False
-        self.pending_commands = {}
+        self.pending_commands: MutableMapping[str, dict[str, Any]] = _ThreadSafePendingCommandStore()
         self.runtime_network_state: dict[str, object] | None = None
+        self._inbound_worker_count = _default_inbound_worker_count()
+        self._state_persistence_worker_count = self._inbound_worker_count
+        self._inbound_messages: list[queue.Queue[_InboundMQTTMessage | _QueuedInboundStateDevice | None]] = []
+        self._inbound_workers: list[threading.Thread] = []
+        self._pending_state_messages: list[dict[str, _InboundMQTTMessage]] = []
+        self._pending_state_locks: list[threading.Lock] = []
+        self._queued_state_devices: list[set[str]] = []
+        self._inbound_worker_stop = threading.Event()
+        self._inbound_worker_lock = threading.Lock()
+        self._state_persistence_messages: list[queue.Queue[_StatePersistenceJob | None]] = []
+        self._state_persistence_workers: list[threading.Thread] = []
+        self._state_persistence_worker_stop = threading.Event()
+        self._state_persistence_worker_lock = threading.Lock()
+        self._latest_state_cache: dict[str, tuple[int, dict[str, Any]]] = {}
+        self._latest_device_runtime_cache: dict[str, tuple[int, dict[str, Any]]] = {}
+        self._latest_state_cache_lock = threading.RLock()
+        self._latest_state_sequence = 0
+
+    def _inbound_worker_slot(self, device_id: str) -> int:
+        if self._inbound_worker_count <= 1:
+            return 0
+        return zlib.crc32(device_id.encode("utf-8")) % self._inbound_worker_count
+
+    def _state_persistence_worker_slot(self, device_id: str) -> int:
+        if self._state_persistence_worker_count <= 1:
+            return 0
+        return zlib.crc32(device_id.encode("utf-8")) % self._state_persistence_worker_count
+
+    def _next_state_sequence(self) -> int:
+        with self._latest_state_cache_lock:
+            self._latest_state_sequence += 1
+            return self._latest_state_sequence
+
+    def latest_reported_state(self, device_id: str) -> dict[str, Any] | None:
+        with self._latest_state_cache_lock:
+            cached_state = self._latest_state_cache.get(device_id)
+            if cached_state is None:
+                return None
+            return _copy_json_value(cached_state[1])
+
+    def latest_device_runtime_metadata(self, device_id: str) -> dict[str, Any] | None:
+        with self._latest_state_cache_lock:
+            cached_runtime = self._latest_device_runtime_cache.get(device_id)
+            if cached_runtime is None:
+                return None
+            return _copy_json_value(cached_runtime[1])
+
+    def _remember_latest_reported_state(
+        self,
+        device_id: str,
+        state_payload: Mapping[str, Any] | None,
+        *,
+        state_sequence: int,
+    ) -> None:
+        if not isinstance(state_payload, Mapping):
+            return
+
+        copied_state = _copy_json_value(state_payload)
+        if not isinstance(copied_state, dict):
+            return
+
+        with self._latest_state_cache_lock:
+            cached_state = self._latest_state_cache.get(device_id)
+            if cached_state is not None and cached_state[0] > state_sequence:
+                return
+            self._latest_state_cache[device_id] = (state_sequence, copied_state)
+
+    def _remember_latest_device_runtime_metadata(
+        self,
+        device_id: str,
+        runtime_metadata: Mapping[str, Any] | None,
+        *,
+        state_sequence: int,
+    ) -> None:
+        if not isinstance(runtime_metadata, Mapping):
+            return
+
+        copied_metadata = _copy_json_value(runtime_metadata)
+        if not isinstance(copied_metadata, dict):
+            return
+
+        with self._latest_state_cache_lock:
+            cached_runtime = self._latest_device_runtime_cache.get(device_id)
+            if cached_runtime is not None and cached_runtime[0] > state_sequence:
+                return
+            self._latest_device_runtime_cache[device_id] = (state_sequence, copied_metadata)
+
+    def _start_state_persistence_workers(self) -> None:
+        with self._state_persistence_worker_lock:
+            if any(worker.is_alive() for worker in self._state_persistence_workers):
+                return
+
+            self._state_persistence_worker_stop.clear()
+            self._state_persistence_messages = [
+                queue.Queue() for _ in range(self._state_persistence_worker_count)
+            ]
+            self._state_persistence_workers = []
+            for worker_index in range(self._state_persistence_worker_count):
+                worker = threading.Thread(
+                    target=self._run_state_persistence_worker,
+                    args=(worker_index,),
+                    name=f"{self.client_id}_state_persistence_{worker_index}",
+                    daemon=True,
+                )
+                worker.start()
+                self._state_persistence_workers.append(worker)
+
+    def _stop_state_persistence_workers(self) -> None:
+        with self._state_persistence_worker_lock:
+            workers = list(self._state_persistence_workers)
+            queues = list(self._state_persistence_messages)
+            if not workers:
+                return
+
+            self._state_persistence_worker_stop.set()
+            self._state_persistence_workers = []
+            self._state_persistence_messages = []
+
+        for persistence_queue in queues:
+            persistence_queue.put(None)
+
+        for worker in workers:
+            if worker.is_alive():
+                worker.join(timeout=2.0)
+
+    def _enqueue_state_persistence_job(self, job: _StatePersistenceJob) -> None:
+        if len(self._state_persistence_messages) != self._state_persistence_worker_count:
+            self._start_state_persistence_workers()
+        worker_index = self._state_persistence_worker_slot(job.device_id)
+        self._state_persistence_messages[worker_index].put(job)
+
+    def _start_inbound_worker(self) -> None:
+        with self._inbound_worker_lock:
+            if any(worker.is_alive() for worker in self._inbound_workers):
+                return
+
+            self._inbound_worker_stop.clear()
+            self._inbound_messages = [
+                queue.Queue() for _ in range(self._inbound_worker_count)
+            ]
+            self._pending_state_messages = [
+                {} for _ in range(self._inbound_worker_count)
+            ]
+            self._pending_state_locks = [
+                threading.Lock() for _ in range(self._inbound_worker_count)
+            ]
+            self._queued_state_devices = [
+                set() for _ in range(self._inbound_worker_count)
+            ]
+            self._inbound_workers = []
+            for worker_index in range(self._inbound_worker_count):
+                worker = threading.Thread(
+                    target=self._run_inbound_worker,
+                    args=(worker_index,),
+                    name=f"{self.client_id}_inbound_worker_{worker_index}",
+                    daemon=True,
+                )
+                worker.start()
+                self._inbound_workers.append(worker)
+
+    def _stop_inbound_worker(self) -> None:
+        with self._inbound_worker_lock:
+            workers = list(self._inbound_workers)
+            queues = list(self._inbound_messages)
+            if not workers:
+                return
+
+            self._inbound_worker_stop.set()
+            self._inbound_workers = []
+            self._inbound_messages = []
+            self._pending_state_messages = []
+            self._pending_state_locks = []
+            self._queued_state_devices = []
+
+        for inbound_queue in queues:
+            inbound_queue.put(None)
+
+        for worker in workers:
+            if worker.is_alive():
+                worker.join(timeout=2.0)
+
+    def _enqueue_state_message(self, message: _InboundMQTTMessage) -> None:
+        worker_index = self._inbound_worker_slot(message.device_id)
+        inbound_queue = self._inbound_messages[worker_index]
+        queue_depth_before_enqueue = inbound_queue.qsize()
+        queue_device = False
+        with self._pending_state_locks[worker_index]:
+            is_already_queued = message.device_id in self._queued_state_devices[worker_index]
+            message = replace(
+                message,
+                state_worker_index=worker_index,
+                state_queue_depth_at_enqueue=queue_depth_before_enqueue + (0 if is_already_queued else 1),
+                state_pending_device_count_at_enqueue=(
+                    len(self._queued_state_devices[worker_index]) + (0 if is_already_queued else 1)
+                ),
+            )
+            self._pending_state_messages[worker_index][message.device_id] = message
+            if not is_already_queued:
+                self._queued_state_devices[worker_index].add(message.device_id)
+                queue_device = True
+
+        if queue_device:
+            inbound_queue.put(
+                _QueuedInboundStateDevice(device_id=message.device_id)
+            )
+
+    def _take_pending_state_message(
+        self,
+        worker_index: int,
+        device_id: str,
+    ) -> _InboundMQTTMessage | None:
+        with self._pending_state_locks[worker_index]:
+            message = self._pending_state_messages[worker_index].pop(device_id, None)
+            self._queued_state_devices[worker_index].discard(device_id)
+            return message
+
+    def _requeue_pending_state_message(self, worker_index: int, device_id: str) -> None:
+        queue_device = False
+        with self._pending_state_locks[worker_index]:
+            if (
+                device_id in self._pending_state_messages[worker_index]
+                and device_id not in self._queued_state_devices[worker_index]
+            ):
+                self._queued_state_devices[worker_index].add(device_id)
+                queue_device = True
+
+        if queue_device:
+            self._inbound_messages[worker_index].put(
+                _QueuedInboundStateDevice(device_id=device_id)
+            )
+
+    def _run_inbound_worker(self, worker_index: int) -> None:
+        inbound_queue = self._inbound_messages[worker_index]
+        while not self._inbound_worker_stop.is_set():
+            item = inbound_queue.get()
+            try:
+                if item is None:
+                    return
+
+                state_worker_started_at = _iso_utc_now()
+                state_queue_depth_at_worker_start = inbound_queue.qsize()
+                if isinstance(item, _QueuedInboundStateDevice):
+                    with self._pending_state_locks[worker_index]:
+                        state_pending_device_count_at_worker_start = len(
+                            self._queued_state_devices[worker_index]
+                        )
+                    state_message = self._take_pending_state_message(
+                        worker_index,
+                        item.device_id,
+                    )
+                    if state_message is None:
+                        continue
+                    self.process_state_message(
+                        state_message.device_id,
+                        state_message.payload_str,
+                        mqtt_callback_entered_at=state_message.mqtt_callback_entered_at,
+                        mqtt_callback_enqueued_at=state_message.mqtt_callback_enqueued_at,
+                        state_worker_started_at=state_worker_started_at,
+                        state_worker_index=state_message.state_worker_index,
+                        state_queue_depth_at_enqueue=state_message.state_queue_depth_at_enqueue,
+                        state_pending_device_count_at_enqueue=state_message.state_pending_device_count_at_enqueue,
+                        state_queue_depth_at_worker_start=state_queue_depth_at_worker_start,
+                        state_pending_device_count_at_worker_start=state_pending_device_count_at_worker_start,
+                    )
+                    self._requeue_pending_state_message(worker_index, item.device_id)
+                elif item.topic_kind == "state":
+                    self.process_state_message(
+                        item.device_id,
+                        item.payload_str,
+                        mqtt_callback_entered_at=item.mqtt_callback_entered_at,
+                        mqtt_callback_enqueued_at=item.mqtt_callback_enqueued_at,
+                        state_worker_started_at=state_worker_started_at,
+                        state_worker_index=item.state_worker_index if item.state_worker_index is not None else worker_index,
+                        state_queue_depth_at_enqueue=item.state_queue_depth_at_enqueue,
+                        state_pending_device_count_at_enqueue=item.state_pending_device_count_at_enqueue,
+                        state_queue_depth_at_worker_start=state_queue_depth_at_worker_start,
+                        state_pending_device_count_at_worker_start=None,
+                    )
+                elif item.topic_kind == "register":
+                    self.process_registration_message(item.device_id, item.payload_str)
+            except Exception:
+                logger.exception("Error processing queued MQTT %s message for %s", getattr(item, "topic_kind", "unknown"), getattr(item, "device_id", "unknown"))
+            finally:
+                inbound_queue.task_done()
+
+    def _persist_state_job(self, job: _StatePersistenceJob) -> None:
+        session_factory = job.session_factory if callable(job.session_factory) else SessionLocal
+        db = session_factory()
+        try:
+            device = db.query(Device).filter(Device.device_id == job.device_id).first()
+            if device is None:
+                logger.warning("Skipping persistence for missing device %s", job.device_id)
+                return
+
+            persisted_previous_version = device.firmware_version
+            persisted_previous_revision = device.firmware_revision
+            device.conn_status = ConnStatus.online
+            device.last_seen = job.observed_at
+            if isinstance(job.reported_ip_address, str) and job.reported_ip_address.strip():
+                device.ip_address = job.reported_ip_address.strip()
+            if isinstance(job.reported_firmware_revision, str) and job.reported_firmware_revision.strip():
+                device.firmware_revision = job.reported_firmware_revision.strip()
+            if isinstance(job.reported_firmware_version, str) and job.reported_firmware_version.strip():
+                device.firmware_version = job.reported_firmware_version.strip()
+                _reconcile_ota_jobs(db, device, device.firmware_version)
+
+            if isinstance(job.command_failure_payload, Mapping):
+                db.add(
+                    DeviceHistory(
+                        device_id=job.device_id,
+                        event_type=EventType.command_failed,
+                        payload=json.dumps(_copy_json_value(job.command_failure_payload)),
+                    )
+                )
+
+            if job.was_offline:
+                db.add(
+                    DeviceHistory(
+                        device_id=job.device_id,
+                        event_type=EventType.online,
+                        payload=json.dumps(
+                            {
+                                "reason": "mqtt_state",
+                                "reported_at": job.observed_at.isoformat(),
+                            }
+                        ),
+                    )
+                )
+                create_system_log(
+                    db,
+                    occurred_at=job.observed_at,
+                    severity=SystemLogSeverity.info,
+                    category=SystemLogCategory.connectivity,
+                    event_code="device_online",
+                    message=f'Device "{job.device_name or device.name}" is back online.',
+                    device_id=device.device_id,
+                    firmware_version=device.firmware_version,
+                    firmware_revision=device.firmware_revision,
+                    details={
+                        "reason": "mqtt_state",
+                        "reported_at": job.observed_at.isoformat(),
+                    },
+                )
+
+            firmware_changed = (
+                device.firmware_version != persisted_previous_version
+                or device.firmware_revision != persisted_previous_revision
+            )
+            if firmware_changed and (device.firmware_version or device.firmware_revision):
+                create_system_log(
+                    db,
+                    occurred_at=job.observed_at,
+                    severity=SystemLogSeverity.info,
+                    category=SystemLogCategory.firmware,
+                    event_code="device_firmware_reported",
+                    message=f'Device "{job.device_name or device.name}" reported firmware metadata.',
+                    device_id=device.device_id,
+                    firmware_version=device.firmware_version,
+                    firmware_revision=device.firmware_revision,
+                    details={
+                        "previous_firmware_version": persisted_previous_version,
+                        "next_firmware_version": device.firmware_version,
+                        "previous_firmware_revision": persisted_previous_revision,
+                        "next_firmware_revision": device.firmware_revision,
+                        "ip_address": device.ip_address,
+                    },
+                )
+
+            state_history_payload = _copy_json_value(job.state_history_payload)
+            if not isinstance(state_history_payload, dict):
+                state_history_payload = {}
+
+            _stamp_state_payload_server_trace(
+                state_history_payload,
+                post_broadcast_work_started_at=_iso_utc_now(),
+            )
+
+            if isinstance(job.enriched_state_payload, dict):
+                _stamp_state_payload_server_trace(
+                    state_history_payload,
+                    automation_started_at=_iso_utc_now(),
+                )
+                try:
+                    def dispatch_command(target_device_id: str, command: dict[str, Any]) -> bool:
+                        physical_device = db.query(Device).filter(Device.device_id == target_device_id).first()
+                        if physical_device is not None:
+                            return self.enqueue_command(target_device_id, command)
+
+                        def on_state_change(
+                            changed_device_id: str,
+                            current_payload: dict[str, Any],
+                            previous_payload: dict[str, Any] | None,
+                        ) -> None:
+                            process_state_event_for_automations(
+                                db,
+                                device_id=changed_device_id,
+                                state_payload=current_payload,
+                                previous_state_payload=previous_payload,
+                                publish_command=dispatch_command,
+                                triggered_at=job.observed_at,
+                            )
+
+                        return dispatch_external_device_automation_command(
+                            db,
+                            device_id=target_device_id,
+                            command=command,
+                            on_state_change=on_state_change,
+                        )
+
+                    process_state_event_for_automations(
+                        db,
+                        device_id=job.device_id,
+                        state_payload=job.enriched_state_payload,
+                        previous_state_payload=job.previous_state_payload,
+                        publish_command=dispatch_command,
+                        triggered_at=job.observed_at,
+                    )
+                except Exception:
+                    logger.exception("Automation graph evaluation failed for MQTT state %s", job.device_id)
+                finally:
+                    _stamp_state_payload_server_trace(
+                        state_history_payload,
+                        automation_completed_at=_iso_utc_now(),
+                    )
+
+            if job.ota_status_job_id and job.ota_status:
+                from app.sql_models import BuildJob
+
+                ota_job = db.query(BuildJob).filter(BuildJob.id == job.ota_status_job_id).first()
+                if ota_job is not None:
+                    ota_event_time = _utcnow_naive()
+                    if job.ota_status == "success":
+                        ota_job.status = JobStatus.flashed
+                        ota_job.error_message = None
+                    elif job.ota_status == "failed":
+                        _mark_ota_job_failed(
+                            ota_job,
+                            now=ota_event_time,
+                            message=job.ota_status_message or "OTA status reported failure.",
+                        )
+
+                    if job.ota_status == "success":
+                        ota_job.finished_at = ota_event_time
+                        ota_job.updated_at = ota_event_time
+                        cleanup_job_build_outputs(ota_job.id)
+                        if device.firmware_version:
+                            _reconcile_ota_jobs(db, device, device.firmware_version)
+
+                _stamp_state_payload_server_trace(
+                    state_history_payload,
+                    ota_tail_completed_at=_iso_utc_now(),
+                )
+
+            state_history_entry = DeviceHistory(
+                device_id=job.device_id,
+                event_type=EventType.state_change,
+                payload=json.dumps(state_history_payload),
+            )
+            db.add(state_history_entry)
+            db.commit()
+
+            worker_completed_at = _iso_utc_now()
+            _stamp_state_payload_server_trace(
+                state_history_payload,
+                db_commit_completed_at=worker_completed_at,
+                state_commit_completed_at=worker_completed_at,
+                state_worker_completed_at=worker_completed_at,
+            )
+            state_history_entry.payload = json.dumps(state_history_payload)
+            db.commit()
+            self._remember_latest_reported_state(
+                job.device_id,
+                state_history_payload,
+                state_sequence=job.state_sequence,
+            )
+            self._remember_latest_device_runtime_metadata(
+                job.device_id,
+                {
+                    "conn_status": ConnStatus.online,
+                    "last_seen": job.observed_at,
+                    "ip_address": device.ip_address,
+                    "firmware_version": device.firmware_version,
+                    "firmware_revision": device.firmware_revision,
+                },
+                state_sequence=job.state_sequence,
+            )
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
+
+    def _run_state_persistence_worker(self, worker_index: int) -> None:
+        persistence_queue = self._state_persistence_messages[worker_index]
+        while not self._state_persistence_worker_stop.is_set():
+            item = persistence_queue.get()
+            try:
+                if item is None:
+                    return
+
+                while not self._state_persistence_worker_stop.is_set():
+                    try:
+                        self._persist_state_job(item)
+                        break
+                    except Exception:
+                        logger.exception(
+                            "Error persisting MQTT state tail for %s; retrying in background.",
+                            item.device_id,
+                        )
+                        if self._state_persistence_worker_stop.wait(_STATE_PERSISTENCE_RETRY_DELAY_SECONDS):
+                            return
+            finally:
+                persistence_queue.task_done()
 
     def start(self):
         try:
@@ -795,6 +1484,8 @@ class MQTTClientManager:
                 MQTT_PORT,
                 MQTT_NAMESPACE,
             )
+            self._start_inbound_worker()
+            self._start_state_persistence_workers()
             self.client.connect(MQTT_BROKER, MQTT_PORT, 60)
             self.client.loop_start()
         except Exception as exc:
@@ -804,6 +1495,8 @@ class MQTTClientManager:
         if self.connected:
             self.client.loop_stop()
             self.client.disconnect()
+        self._stop_inbound_worker()
+        self._stop_state_persistence_workers()
 
     def set_runtime_network_state(self, runtime_state: dict[str, object] | None) -> None:
         self.runtime_network_state = runtime_state if isinstance(runtime_state, dict) else None
@@ -914,6 +1607,7 @@ class MQTTClientManager:
             )
 
     def on_message(self, client, userdata, msg):
+        callback_entered_at = _iso_utc_now()
         try:
             topic_parts = msg.topic.split("/")
             if len(topic_parts) < 5 or topic_parts[0] != "econnect":
@@ -923,16 +1617,150 @@ class MQTTClientManager:
             topic_kind = topic_parts[4]
             payload_str = msg.payload.decode("utf-8")
 
-            if topic_kind == "state":
-                self.process_state_message(device_id, payload_str)
+            if topic_kind not in {"state", "register"}:
                 return
 
-            if topic_kind == "register":
-                self.process_registration_message(device_id, payload_str)
+            self._start_inbound_worker()
+            self._start_state_persistence_workers()
+            inbound_message = _InboundMQTTMessage(
+                topic_kind=topic_kind,
+                device_id=device_id,
+                payload_str=payload_str,
+                mqtt_callback_entered_at=callback_entered_at,
+                mqtt_callback_enqueued_at=_iso_utc_now(),
+            )
+            if topic_kind == "state":
+                self._enqueue_state_message(inbound_message)
+            else:
+                self._inbound_messages[self._inbound_worker_slot(device_id)].put(
+                    inbound_message
+                )
         except Exception as exc:
-            logger.error("Error processing MQTT message: %s", exc)
+            logger.error("Error queueing MQTT message: %s", exc)
 
-    def process_state_message(self, device_id: str, payload_str: str) -> None:
+    def _find_pending_command_id(self, device_id: str, state_payload: Mapping[str, Any] | None) -> str | None:
+        if not isinstance(state_payload, Mapping):
+            return None
+
+        ack_cmd_id = state_payload.get("command_id")
+        if ack_cmd_id and ack_cmd_id in self.pending_commands:
+            return str(ack_cmd_id)
+
+        pin = state_payload.get("pin")
+        state_value = _extract_effective_state_value(state_payload)
+
+        pending_items = sorted(
+            list(self.pending_commands.items()),
+            key=_pending_command_priority,
+            reverse=True,
+        )
+
+        for cid, cmd in pending_items:
+            if cmd["device_id"] == device_id and cmd.get("pin") == pin:
+                if state_value is not None and _extract_effective_command_value(cmd) == state_value:
+                    return cid
+
+        pin_rows = _extract_state_pin_rows(dict(state_payload))
+        for cid, cmd in pending_items:
+            if cmd["device_id"] != device_id:
+                continue
+
+            state_row = next(
+                (
+                    row
+                    for row in pin_rows
+                    if row.get("pin") == cmd.get("pin")
+                    and _state_row_matches_command(cmd, row)
+                ),
+                None,
+            )
+            if state_row:
+                return cid
+
+        return None
+
+    def _pending_command_latency_trace(self, command: Mapping[str, Any] | None) -> dict[str, Any]:
+        if not isinstance(command, Mapping):
+            return {}
+        return _copy_latency_trace(command.get("latency_trace"))
+
+    def _attach_state_latency_trace(
+        self,
+        state_payload: dict[str, Any],
+        raw_state_payload: Mapping[str, Any] | None,
+        pending_command: Mapping[str, Any] | None,
+        *,
+        mqtt_callback_entered_at: str | None,
+        mqtt_callback_enqueued_at: str | None,
+        state_worker_started_at: str | None,
+        state_worker_index: int | None,
+        state_queue_depth_at_enqueue: int | None,
+        state_pending_device_count_at_enqueue: int | None,
+        state_queue_depth_at_worker_start: int | None,
+        state_pending_device_count_at_worker_start: int | None,
+    ) -> None:
+        trace = _copy_latency_trace(
+            raw_state_payload.get("latency_trace")
+            if isinstance(raw_state_payload, Mapping)
+            else None
+        )
+        pending_trace = self._pending_command_latency_trace(pending_command)
+        has_trace_source = bool(
+            trace
+            or pending_trace
+            or mqtt_callback_entered_at
+            or mqtt_callback_enqueued_at
+            or state_worker_started_at
+            or state_worker_index is not None
+            or state_queue_depth_at_enqueue is not None
+            or state_pending_device_count_at_enqueue is not None
+            or state_queue_depth_at_worker_start is not None
+            or state_pending_device_count_at_worker_start is not None
+        )
+        if not has_trace_source:
+            return
+
+        pending_server_trace = (
+            pending_trace.get("server")
+            if isinstance(pending_trace.get("server"), Mapping)
+            else None
+        )
+        if isinstance(pending_server_trace, Mapping):
+            trace["server"] = {
+                **_copy_json_value(pending_server_trace),
+                **(_copy_json_value(trace.get("server")) if isinstance(trace.get("server"), Mapping) else {}),
+            }
+
+        if isinstance(raw_state_payload, Mapping) and isinstance(raw_state_payload.get("board_timing"), Mapping):
+            trace["board"] = _copy_json_value(raw_state_payload["board_timing"])
+
+        _stamp_server_latency_trace(
+            trace,
+            mqtt_callback_entered_at=mqtt_callback_entered_at,
+            mqtt_callback_enqueued_at=mqtt_callback_enqueued_at,
+            state_worker_started_at=state_worker_started_at,
+            state_worker_index=state_worker_index,
+            state_queue_depth_at_enqueue=state_queue_depth_at_enqueue,
+            state_pending_device_count_at_enqueue=state_pending_device_count_at_enqueue,
+            state_queue_depth_at_worker_start=state_queue_depth_at_worker_start,
+            state_pending_device_count_at_worker_start=state_pending_device_count_at_worker_start,
+        )
+        state_payload["latency_trace"] = trace
+
+    def process_state_message(
+        self,
+        device_id: str,
+        payload_str: str,
+        *,
+        mqtt_callback_entered_at: str | None = None,
+        mqtt_callback_enqueued_at: str | None = None,
+        state_worker_started_at: str | None = None,
+        state_worker_index: int | None = None,
+        state_queue_depth_at_enqueue: int | None = None,
+        state_pending_device_count_at_enqueue: int | None = None,
+        state_queue_depth_at_worker_start: int | None = None,
+        state_pending_device_count_at_worker_start: int | None = None,
+    ) -> None:
         payload_json: dict[str, Any] | None = None
         try:
             decoded = json.loads(payload_str)
@@ -1016,26 +1844,31 @@ class MQTTClientManager:
                 return
 
             observed_at = datetime.now(timezone.utc)
-            was_offline = device.conn_status != ConnStatus.online
-            previous_revision = device.firmware_revision
-            previous_version = device.firmware_version
+            runtime_metadata = self.latest_device_runtime_metadata(device.device_id) or {}
+            previous_revision = runtime_metadata.get("firmware_revision", device.firmware_revision)
+            previous_version = runtime_metadata.get("firmware_version", device.firmware_version)
+            previous_ip_address = runtime_metadata.get("ip_address", device.ip_address)
+            was_offline = not _is_online_conn_status(
+                runtime_metadata.get("conn_status", device.conn_status)
+            )
             _latest_state_record, previous_state = load_latest_device_state_payload(db, device.device_id)
-            device.conn_status = ConnStatus.online
-            device.last_seen = observed_at
             enriched_state_payload: dict[str, Any] | None = None
+            command_failure_payload: dict[str, Any] | None = None
+            reported_ip_address: str | None = None
+            reported_firmware_revision: str | None = None
+            reported_firmware_version: str | None = None
             if isinstance(payload_json, dict):
                 reported_ip = payload_json.get("ip_address")
                 if isinstance(reported_ip, str) and reported_ip.strip():
-                    device.ip_address = reported_ip.strip()
+                    reported_ip_address = reported_ip.strip()
 
                 reported_revision = payload_json.get("firmware_revision")
                 if isinstance(reported_revision, str) and reported_revision.strip():
-                    device.firmware_revision = reported_revision.strip()
+                    reported_firmware_revision = reported_revision.strip()
 
                 reported_fw = payload_json.get("firmware_version")
                 if isinstance(reported_fw, str) and reported_fw.strip():
-                    device.firmware_version = reported_fw.strip()
-                    _reconcile_ota_jobs(db, device, device.firmware_version)
+                    reported_firmware_version = reported_fw.strip()
 
                 enriched_state_payload = enrich_reported_mqtt_state(
                     previous_state,
@@ -1045,29 +1878,39 @@ class MQTTClientManager:
                         "reported_at": observed_at.isoformat(),
                     },
                 )
-                self.resolve_command_ack(
+                ack_resolution_payload = _build_command_ack_resolution_payload(
+                    enriched_state_payload,
+                    payload_json,
+                )
+                matched_command_id = self._find_pending_command_id(device_id, ack_resolution_payload)
+                pending_command = (
+                    self.pending_commands.get(matched_command_id)
+                    if matched_command_id is not None
+                    else None
+                )
+                self._attach_state_latency_trace(
+                    enriched_state_payload,
+                    payload_json,
+                    pending_command,
+                    mqtt_callback_entered_at=mqtt_callback_entered_at,
+                    mqtt_callback_enqueued_at=mqtt_callback_enqueued_at,
+                    state_worker_started_at=state_worker_started_at,
+                    state_worker_index=state_worker_index,
+                    state_queue_depth_at_enqueue=state_queue_depth_at_enqueue,
+                    state_pending_device_count_at_enqueue=state_pending_device_count_at_enqueue,
+                    state_queue_depth_at_worker_start=state_queue_depth_at_worker_start,
+                    state_pending_device_count_at_worker_start=state_pending_device_count_at_worker_start,
+                )
+                ack_resolution_payload["latency_trace"] = _copy_json_value(
+                    enriched_state_payload.get("latency_trace")
+                )
+                command_failure_payload = self.resolve_command_ack(
                     device_id,
-                    _build_command_ack_resolution_payload(
-                        enriched_state_payload,
-                        payload_json,
-                    ),
-                    db,
+                    ack_resolution_payload,
+                    matched_command_id=matched_command_id,
                 )
 
             if was_offline:
-                db.add(
-                    DeviceHistory(
-                        device_id=device_id,
-                        event_type=EventType.online,
-                        payload=json.dumps(
-                            {
-                                "reason": "mqtt_state",
-                                "reported_at": observed_at.isoformat(),
-                            }
-                        ),
-                    )
-                )
-
                 try:
                     ws_manager.broadcast_device_event_sync(
                         "device_online",
@@ -1081,182 +1924,115 @@ class MQTTClientManager:
                 except Exception:
                     pass
 
-                create_system_log(
-                    db,
-                    occurred_at=observed_at,
-                    severity=SystemLogSeverity.info,
-                    category=SystemLogCategory.connectivity,
-                    event_code="device_online",
-                    message=f'Device "{device.name}" is back online.',
-                    device_id=device.device_id,
-                    firmware_version=device.firmware_version,
-                    firmware_revision=device.firmware_revision,
-                    details={
-                        "reason": "mqtt_state",
-                        "reported_at": observed_at.isoformat(),
-                    },
-                )
-
-            firmware_changed = (
-                device.firmware_version != previous_version
-                or device.firmware_revision != previous_revision
+            state_history_payload = _copy_json_value(
+                enriched_state_payload if isinstance(enriched_state_payload, dict) else payload_json or {}
             )
-            if firmware_changed and (device.firmware_version or device.firmware_revision):
-                create_system_log(
-                    db,
-                    occurred_at=observed_at,
-                    severity=SystemLogSeverity.info,
-                    category=SystemLogCategory.firmware,
-                    event_code="device_firmware_reported",
-                    message=f'Device "{device.name}" reported firmware metadata.',
-                    device_id=device.device_id,
-                    firmware_version=device.firmware_version,
-                    firmware_revision=device.firmware_revision,
-                    details={
-                        "previous_firmware_version": previous_version,
-                        "next_firmware_version": device.firmware_version,
-                        "previous_firmware_revision": previous_revision,
-                        "next_firmware_revision": device.firmware_revision,
-                        "ip_address": device.ip_address,
-                    },
-                )
-
-            db.add(
-                DeviceHistory(
-                    device_id=device_id,
-                    event_type=EventType.state_change,
-                    payload=json.dumps(enriched_state_payload if isinstance(enriched_state_payload, dict) else payload_json or {}),
-                )
+            if not isinstance(state_history_payload, dict):
+                state_history_payload = {}
+            _stamp_state_payload_server_trace(
+                state_history_payload,
+                state_history_recorded_at=_iso_utc_now(),
             )
-
+            _stamp_state_payload_server_trace(
+                state_history_payload,
+                device_state_broadcast_at=_iso_utc_now(),
+            )
+            broadcast_payload = _copy_json_value(state_history_payload)
+            if not isinstance(broadcast_payload, dict):
+                broadcast_payload = {
+                    **(payload_json or {}),
+                    "reported_at": observed_at.isoformat(),
+                }
             try:
                 ws_manager.broadcast_device_event_sync(
                     "device_state",
                     device_id,
                     device.room_id,
-                    enriched_state_payload if isinstance(enriched_state_payload, dict) else {
-                        **(payload_json or {}),
-                        "reported_at": observed_at.isoformat(),
-                    },
+                    broadcast_payload if isinstance(broadcast_payload, dict) else {},
                 )
             except Exception:
                 pass
 
-            if isinstance(enriched_state_payload, dict):
-                try:
-                    import time
-                    start_time = time.perf_counter()
-                    def dispatch_command(target_device_id: str, command: dict[str, Any]) -> bool:
-                        physical_device = db.query(Device).filter(Device.device_id == target_device_id).first()
-                        if physical_device is not None:
-                            return self.enqueue_command(target_device_id, command)
+            state_sequence = self._next_state_sequence()
+            self._remember_latest_reported_state(
+                device_id,
+                broadcast_payload,
+                state_sequence=state_sequence,
+            )
+            self._remember_latest_device_runtime_metadata(
+                device_id,
+                {
+                    "conn_status": ConnStatus.online,
+                    "last_seen": observed_at,
+                    "ip_address": reported_ip_address or previous_ip_address,
+                    "firmware_version": reported_firmware_version or previous_version,
+                    "firmware_revision": reported_firmware_revision or previous_revision,
+                },
+                state_sequence=state_sequence,
+            )
 
-                        def on_state_change(
-                            changed_device_id: str,
-                            current_payload: dict[str, Any],
-                            previous_payload: dict[str, Any] | None,
-                        ) -> None:
-                            process_state_event_for_automations(
-                                db,
-                                device_id=changed_device_id,
-                                state_payload=current_payload,
-                                previous_state_payload=previous_payload,
-                                publish_command=dispatch_command,
-                                triggered_at=observed_at,
-                            )
+            handled_ota_tail = isinstance(payload_json, dict) and payload_json.get("event") == "ota_status"
+            ota_status_job_id = str(payload_json.get("job_id")) if handled_ota_tail and payload_json.get("job_id") else None
+            ota_status = str(payload_json.get("status")) if handled_ota_tail and payload_json.get("status") else None
+            ota_status_message = (
+                payload_json.get("message")
+                if handled_ota_tail and isinstance(payload_json.get("message"), str)
+                else None
+            )
 
-                        return dispatch_external_device_automation_command(
-                            db,
-                            device_id=target_device_id,
-                            command=command,
-                            on_state_change=on_state_change,
-                        )
-
-                    process_state_event_for_automations(
-                        db,
-                        device_id=device_id,
-                        state_payload=enriched_state_payload,
-                        publish_command=dispatch_command,
-                        triggered_at=observed_at,
-                    )
-                    end_time = time.perf_counter()
-                    logger.debug(f"Automation execution took {(end_time - start_time) * 1000:.2f}ms for device {device_id}")
-                except Exception:
-                    logger.exception("Automation graph evaluation failed for MQTT state %s", device_id)
-
-            # Check if this is an OTA status report from the device
-            if isinstance(payload_json, dict) and payload_json.get("event") == "ota_status":
-                from app.sql_models import BuildJob, JobStatus
-                job_id = payload_json.get("job_id")
-                ota_status = payload_json.get("status")
-
-                if job_id and ota_status:
-                    job = db.query(BuildJob).filter(BuildJob.id == job_id).first()
-                    if job:
-                        ota_event_time = _utcnow_naive()
-                        if ota_status == "success":
-                            job.status = JobStatus.flashed
-                            job.error_message = None
-                        elif ota_status == "failed":
-                            _mark_ota_job_failed(
-                                job,
-                                now=ota_event_time,
-                                message=payload_json.get("message") or "OTA status reported failure.",
-                            )
-
-                        if ota_status == "success":
-                            job.finished_at = ota_event_time
-                            job.updated_at = ota_event_time
-                            cleanup_job_build_outputs(job.id)
-                            if device.firmware_version:
-                                _reconcile_ota_jobs(db, device, device.firmware_version)
-                        db.commit()
-
-            db.commit()
+            self._enqueue_state_persistence_job(
+                _StatePersistenceJob(
+                    device_id=device_id,
+                    state_sequence=state_sequence,
+                    observed_at=observed_at,
+                    state_history_payload=state_history_payload,
+                    session_factory=SessionLocal,
+                    previous_state_payload=(
+                        _copy_json_value(previous_state)
+                        if isinstance(previous_state, dict)
+                        else None
+                    ),
+                    enriched_state_payload=(
+                        _copy_json_value(enriched_state_payload)
+                        if isinstance(enriched_state_payload, dict)
+                        else None
+                    ),
+                    was_offline=was_offline,
+                    device_name=device.name,
+                    previous_firmware_version=(
+                        str(previous_version)
+                        if isinstance(previous_version, str) and previous_version.strip()
+                        else None
+                    ),
+                    previous_firmware_revision=(
+                        str(previous_revision)
+                        if isinstance(previous_revision, str) and previous_revision.strip()
+                        else None
+                    ),
+                    reported_firmware_version=reported_firmware_version,
+                    reported_firmware_revision=reported_firmware_revision,
+                    reported_ip_address=reported_ip_address,
+                    command_failure_payload=command_failure_payload,
+                    ota_status_job_id=ota_status_job_id,
+                    ota_status=ota_status,
+                    ota_status_message=ota_status_message,
+                )
+            )
         finally:
             db.close()
 
-    def resolve_command_ack(self, device_id: str, state_payload: dict, db: Session) -> None:
-        ack_cmd_id = state_payload.get("command_id")
+    def resolve_command_ack(
+        self,
+        device_id: str,
+        state_payload: dict,
+        db: Session | None = None,
+        *,
+        matched_command_id: str | None = None,
+    ) -> dict[str, Any] | None:
         applied = state_payload.get("applied", True)
 
-        matched_cmd_id = None
-        if ack_cmd_id and ack_cmd_id in self.pending_commands:
-            matched_cmd_id = ack_cmd_id
-        else:
-            pin = state_payload.get("pin")
-            state_value = _extract_effective_state_value(state_payload)
-
-            pending_items = sorted(
-                list(self.pending_commands.items()),
-                key=_pending_command_priority,
-                reverse=True,
-            )
-
-            for cid, cmd in pending_items:
-                if cmd["device_id"] == device_id and cmd.get("pin") == pin:
-                    if state_value is not None and _extract_effective_command_value(cmd) == state_value:
-                        matched_cmd_id = cid
-                        break
-
-            if not matched_cmd_id:
-                pin_rows = _extract_state_pin_rows(state_payload)
-                for cid, cmd in pending_items:
-                    if cmd["device_id"] != device_id:
-                        continue
-
-                    state_row = next(
-                        (
-                            row
-                            for row in pin_rows
-                            if row.get("pin") == cmd.get("pin")
-                            and _state_row_matches_command(cmd, row)
-                        ),
-                        None,
-                    )
-                    if state_row:
-                        matched_cmd_id = cid
-                        break
+        matched_cmd_id = matched_command_id or self._find_pending_command_id(device_id, state_payload)
+        command_failure_payload: dict[str, Any] | None = None
 
         if matched_cmd_id:
             cmd = self.pending_commands.pop(matched_cmd_id, None)
@@ -1272,27 +2048,63 @@ class MQTTClientManager:
                     event_type = EventType.state_change
 
                 if status == "failed":
-                    db.add(
-                        DeviceHistory(
-                            device_id=device_id,
-                            event_type=event_type,
-                            payload=json.dumps({"command_id": matched_cmd_id, "reason": reason})
+                    command_failure_payload = {
+                        "command_id": matched_cmd_id,
+                        "reason": reason,
+                    }
+                    if db is not None:
+                        db.add(
+                            DeviceHistory(
+                                device_id=device_id,
+                                event_type=event_type,
+                                payload=json.dumps(command_failure_payload)
+                            )
                         )
-                    )
 
                 try:
+                    delivery_payload: dict[str, Any] = {
+                        "command_id": matched_cmd_id,
+                        "status": status,
+                        "reason": reason,
+                    }
+                    latency_trace = self._pending_command_latency_trace(cmd)
+                    state_latency_trace = _copy_latency_trace(state_payload.get("latency_trace"))
+                    if state_latency_trace:
+                        latency_trace = {
+                            **state_latency_trace,
+                            **latency_trace,
+                        }
+                        state_server_trace = (
+                            state_latency_trace.get("server")
+                            if isinstance(state_latency_trace.get("server"), Mapping)
+                            else {}
+                        )
+                        pending_server_trace = (
+                            latency_trace.get("server")
+                            if isinstance(latency_trace.get("server"), Mapping)
+                            else {}
+                        )
+                        latency_trace["server"] = {
+                            **_copy_json_value(state_server_trace),
+                            **_copy_json_value(pending_server_trace),
+                        }
+                    if latency_trace:
+                        server_trace = _server_latency_trace(latency_trace)
+                        command_acknowledged_at = _iso_utc_now()
+                        server_trace["command_acknowledged_at"] = command_acknowledged_at
+                        server_trace["command_delivery_broadcast_at"] = command_acknowledged_at
+                        delivery_payload["latency_trace"] = latency_trace
+
                     ws_manager.broadcast_device_event_sync(
                         "command_delivery",
                         device_id,
                         None,
-                        {
-                            "command_id": matched_cmd_id,
-                            "status": status,
-                            "reason": reason
-                        }
+                        delivery_payload,
                     )
                 except Exception:
                     pass
+
+        return command_failure_payload
 
     def process_registration_message(self, device_id: str, payload_str: str) -> dict[str, Any]:
         ack_topic = self.registration_ack_topic(device_id)
@@ -1418,37 +2230,78 @@ class MQTTClientManager:
         *,
         qos: int = 1,
         wait_for_publish: bool = True,
+        latency_trace: dict[str, Any] | None = None,
     ) -> bool:
         if not self.connected:
             logger.error("Cannot publish to %s: MQTT client is not connected.", topic)
+            if latency_trace is not None:
+                latency_trace["mqtt_publish_failed_at"] = _iso_utc_now()
+                latency_trace["mqtt_publish_error"] = "mqtt_client_disconnected"
             return False
 
         try:
             payload_str = json.dumps(payload)
+            if latency_trace is not None:
+                latency_trace["paho_publish_requested_at"] = _iso_utc_now()
             info = self.client.publish(topic, payload_str, qos=qos)
+            if latency_trace is not None:
+                latency_trace["paho_publish_enqueued_at"] = _iso_utc_now()
+                latency_trace["paho_publish_rc"] = int(info.rc)
             if not wait_for_publish:
                 return info.rc == mqtt.MQTT_ERR_SUCCESS
 
             info.wait_for_publish(timeout=2.0)
             if info.is_published():
+                if latency_trace is not None:
+                    published_at = _iso_utc_now()
+                    latency_trace["paho_publish_flushed_at"] = published_at
+                    latency_trace["mqtt_publish_completed_at"] = published_at
                 return True
 
             logger.error("Publish timeout for topic %s", topic)
+            if latency_trace is not None:
+                latency_trace["mqtt_publish_timeout_at"] = _iso_utc_now()
             return False
         except Exception as exc:
             logger.error("Exception publishing to %s: %s", topic, exc)
+            if latency_trace is not None:
+                latency_trace["mqtt_publish_failed_at"] = _iso_utc_now()
+                latency_trace["mqtt_publish_error"] = type(exc).__name__
             return False
 
-    def publish_command(self, device_id: str, payload: dict[str, Any]) -> bool:
-        return self.publish_json(self.command_topic(device_id), payload)
+    def publish_command(
+        self,
+        device_id: str,
+        payload: dict[str, Any],
+        *,
+        latency_trace: dict[str, Any] | None = None,
+    ) -> bool:
+        kwargs: dict[str, Any] = {}
+        if latency_trace is not None:
+            kwargs["latency_trace"] = latency_trace
+        return self.publish_json(
+            self.command_topic(device_id),
+            payload,
+            **kwargs,
+        )
 
-    def enqueue_command(self, device_id: str, payload: dict[str, Any]) -> bool:
+    def enqueue_command(
+        self,
+        device_id: str,
+        payload: dict[str, Any],
+        *,
+        latency_trace: dict[str, Any] | None = None,
+    ) -> bool:
         # Automation paths only need broker enqueue confirmation here. Device-level
         # acknowledgement is handled later via state updates rather than publish blocking.
+        kwargs: dict[str, Any] = {}
+        if latency_trace is not None:
+            kwargs["latency_trace"] = latency_trace
         return self.publish_json(
             self.command_topic(device_id),
             payload,
             wait_for_publish=False,
+            **kwargs,
         )
 
 

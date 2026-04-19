@@ -4070,6 +4070,7 @@ async def send_command(
     Send a command to the device via MQTT and record the publish result.
     """
     command = dict(command or {})
+    api_received_at = datetime.now(timezone.utc).isoformat()
     supplied_password = command.pop("password", None)
     current_user_id = current_user.user_id
 
@@ -4221,14 +4222,59 @@ async def send_command(
 
     command_id = str(uuid.uuid4())
     command["command_id"] = command_id
+    server_latency_trace: dict[str, Any] = {
+        "api_received_at": api_received_at,
+        "command_requested_at": api_received_at,
+    }
+    command_latency_trace: dict[str, Any] = {"server": server_latency_trace}
 
-    # Publish via MQTT
-    publish_command = (
-        mqtt_manager.publish_command
-        if command.get("action") == "ota"
-        else mqtt_manager.enqueue_command
-    )
-    success = publish_command(device_id, command)
+    ordering_ticket = None
+    if command.get("action") != "ota":
+        scope_key = _build_mqtt_command_scope_key(device_id, command)
+        if scope_key:
+            ordering_ticket = command_ordering_manager.activate(
+                command_id=command_id,
+                device_id=device_id,
+                scope_key=scope_key,
+            )
+            removed_superseded_prediction = _drop_superseded_mqtt_command(
+                db,
+                ordering_ticket.superseded_command_id,
+            )
+            if removed_superseded_prediction:
+                db.commit()
+
+        if isinstance(predicted_state, dict):
+            predicted_state["latency_trace"] = copy.deepcopy(command_latency_trace)
+
+        mqtt_manager.pending_commands[command_id] = {
+            "device_id": device_id,
+            "pin": command.get("pin"),
+            "value": command.get("value"),
+            "brightness": command.get("brightness"),
+            "timestamp": datetime.now(timezone.utc).timestamp(),
+            "command_id": command_id,
+            "predicted_state_history_id": None,
+            "predicted_state": copy.deepcopy(predicted_state) if isinstance(predicted_state, dict) else None,
+            "command_scope": ordering_ticket.scope_key if ordering_ticket is not None else None,
+            "sequence_number": ordering_ticket.sequence_number if ordering_ticket is not None else 0,
+            "latency_trace": copy.deepcopy(command_latency_trace),
+        }
+
+    if command.get("action") == "ota":
+        success = mqtt_manager.publish_command(device_id, command)
+    else:
+        success = mqtt_manager.publish_command(
+            device_id,
+            command,
+            latency_trace=server_latency_trace,
+        )
+
+    if command.get("action") != "ota":
+        if isinstance(predicted_state, dict):
+            predicted_state["latency_trace"] = copy.deepcopy(command_latency_trace)
+        if command_id in mqtt_manager.pending_commands:
+            mqtt_manager.pending_commands[command_id]["latency_trace"] = copy.deepcopy(command_latency_trace)
 
     # If the OTA publish failed entirely, revert the job out of flashing
     if not success and ota_job and ota_job.status == JobStatus.flashing:
@@ -4253,34 +4299,9 @@ async def send_command(
         if not success:
             return {"status": "failed", "message": "Failed to publish to MQTT broker"}
     else:
-        if success:
-            ordering_ticket = None
-            scope_key = _build_mqtt_command_scope_key(device_id, command)
-            if scope_key:
-                ordering_ticket = command_ordering_manager.activate(
-                    command_id=command_id,
-                    device_id=device_id,
-                    scope_key=scope_key,
-                )
-                removed_superseded_prediction = _drop_superseded_mqtt_command(
-                    db,
-                    ordering_ticket.superseded_command_id,
-                )
-                if removed_superseded_prediction:
-                    db.commit()
-
-            mqtt_manager.pending_commands[command_id] = {
-                "device_id": device_id,
-                "pin": command.get("pin"),
-                "value": command.get("value"),
-                "brightness": command.get("brightness"),
-                "timestamp": datetime.now(timezone.utc).timestamp(),
-                "command_id": command_id,
-                "predicted_state_history_id": None,
-                "predicted_state": copy.deepcopy(predicted_state) if isinstance(predicted_state, dict) else None,
-                "command_scope": ordering_ticket.scope_key if ordering_ticket is not None else None,
-                "sequence_number": ordering_ticket.sequence_number if ordering_ticket is not None else 0,
-            }
+        if not success:
+            mqtt_manager.pending_commands.pop(command_id, None)
+            command_ordering_manager.complete(command_id)
 
         background_tasks.add_task(
             _persist_mqtt_command_artifacts_task,
