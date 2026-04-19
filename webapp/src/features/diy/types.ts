@@ -34,38 +34,7 @@ export interface PinMapping {
     } | null;
 }
 
-export interface PortableDashboardCardPin {
-    gpio_pin: number;
-    mode: PinMode;
-    function?: string;
-    label?: string;
-    extra_params?: PinMapping["extra_params"];
-}
 
-export interface PortableDashboardCardLayout {
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-}
-
-export interface PortableDashboardCard {
-    device_id: string;
-    name: string;
-    room_name?: string | null;
-    mode?: string;
-    provider?: string;
-    layout: PortableDashboardCardLayout;
-    pins: PortableDashboardCardPin[];
-}
-
-export interface PortableDashboardConfig {
-    variant: "jc3827w543-ctp";
-    width: number;
-    height: number;
-    sidebar_width: number;
-    cards: PortableDashboardCard[];
-}
 
 export type FlashSource = "server" | "demo";
 
@@ -119,93 +88,7 @@ export interface ServerBuildState {
     errorMessage: string | null;
 }
 
-export function sanitizePortableDashboard(input: unknown): PortableDashboardConfig {
-    const fallback: PortableDashboardConfig = {
-        variant: "jc3827w543-ctp",
-        width: 480,
-        height: 272,
-        sidebar_width: 72,
-        cards: [],
-    };
 
-    if (!input || typeof input !== "object") {
-        return fallback;
-    }
-
-    const candidate = input as Record<string, unknown>;
-    const rawCards = Array.isArray(candidate.cards) ? candidate.cards : [];
-    const cards: PortableDashboardCard[] = [];
-
-    for (const rawCard of rawCards) {
-        if (!rawCard || typeof rawCard !== "object") {
-            continue;
-        }
-
-        const card = rawCard as Record<string, unknown>;
-        const deviceId = typeof card.device_id === "string" ? card.device_id.trim() : "";
-        if (!deviceId) {
-            continue;
-        }
-
-        const rawLayout = card.layout;
-        const layoutRecord =
-            rawLayout && typeof rawLayout === "object" ? (rawLayout as Record<string, unknown>) : {};
-        const layout: PortableDashboardCardLayout = {
-            x: typeof layoutRecord.x === "number" ? layoutRecord.x : 24,
-            y: typeof layoutRecord.y === "number" ? layoutRecord.y : 24,
-            w: typeof layoutRecord.w === "number" ? layoutRecord.w : 196,
-            h: typeof layoutRecord.h === "number" ? layoutRecord.h : 120,
-        };
-
-        const rawPins = Array.isArray(card.pins) ? card.pins : [];
-        const pins: PortableDashboardCardPin[] = rawPins
-            .filter((pin): pin is Record<string, unknown> => Boolean(pin) && typeof pin === "object")
-            .map((pin) => {
-                const mode = typeof pin.mode === "string" ? pin.mode : "OUTPUT";
-                const nextPin: PortableDashboardCardPin = {
-                    gpio_pin:
-                        typeof pin.gpio_pin === "number"
-                            ? pin.gpio_pin
-                            : typeof pin.gpio === "number"
-                                ? pin.gpio
-                                : -1,
-                    mode: mode as PinMode,
-                };
-
-                if (typeof pin.function === "string" && pin.function.trim()) {
-                    nextPin.function = pin.function.trim();
-                }
-                if (typeof pin.label === "string" && pin.label.trim()) {
-                    nextPin.label = pin.label.trim();
-                }
-                if (pin.extra_params && typeof pin.extra_params === "object") {
-                    nextPin.extra_params = pin.extra_params as PinMapping["extra_params"];
-                }
-
-                return nextPin;
-            })
-            .filter((pin) => pin.gpio_pin >= 0);
-
-        cards.push({
-            device_id: deviceId,
-            name: typeof card.name === "string" && card.name.trim() ? card.name.trim() : deviceId,
-            room_name: typeof card.room_name === "string" ? card.room_name : null,
-            mode: typeof card.mode === "string" ? card.mode : undefined,
-            provider: typeof card.provider === "string" ? card.provider : undefined,
-            layout,
-            pins,
-        });
-    }
-
-    return {
-        variant: "jc3827w543-ctp",
-        width: typeof candidate.width === "number" ? candidate.width : fallback.width,
-        height: typeof candidate.height === "number" ? candidate.height : fallback.height,
-        sidebar_width:
-            typeof candidate.sidebar_width === "number" ? candidate.sidebar_width : fallback.sidebar_width,
-        cards,
-    };
-}
 
 export const MODE_ORDER: PinMode[] = ["OUTPUT", "PWM", "INPUT", "ADC", "I2C"];
 export const MODE_BADGE_STYLES: Record<PinMode, string> = {

@@ -21,11 +21,11 @@ export function validatePinMappings(
   const usedLabels = new Map<string, number>();
   let i2cPins = 0;
 
-  if (board.id !== "jc3827w543" && options.requireWifiCredentials && !options.hasWifiCredential) {
+  if (options.requireWifiCredentials && !options.hasWifiCredential) {
     errors.push("Select a saved Wi-Fi credential before building or flashing firmware.");
   }
 
-  if (pins.length === 0 && board.id !== "jc3827w543") {
+  if (pins.length === 0) {
     errors.push("Map at least one GPIO before generating config or flashing firmware.");
   }
 

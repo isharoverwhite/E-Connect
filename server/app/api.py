@@ -3841,7 +3841,7 @@ async def update_device_config(
         ),
         config_payload=current_config if allow_legacy_wifi_fallback else None,
         create_from_legacy=allow_legacy_wifi_fallback,
-        required=not allow_empty_draft_save and board_definition.canonical_id != "jc3827w543",
+        required=not allow_empty_draft_save,
         missing_message="Select a Wi-Fi credential before updating this board config.",
     )
     current_config = _stamp_wifi_credential_config(current_config, wifi_credential)
@@ -4566,14 +4566,13 @@ async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(ge
         raise HTTPException(status_code=400, detail={"error": "validation", "message": str(e)})
 
     room = _get_room_in_household_or_404(db, current_user, project.room_id)
-    wifi_credential_required = board_definition.canonical_id != "jc3827w543"
     wifi_credential = _resolve_wifi_credential_for_payload(
         db,
         current_user,
         requested_credential_id=project.wifi_credential_id,
         config_payload=project.config,
         create_from_legacy=True,
-        required=wifi_credential_required,
+        required=True,
         missing_message="Select a Wi-Fi credential before creating a device project.",
     )
     project_id = str(uuid.uuid4())
@@ -4987,7 +4986,7 @@ async def update_diy_project(project_id: str, project_update: DiyProjectCreate, 
         existing_credential_id=project.wifi_credential_id,
         config_payload=project_update.config,
         create_from_legacy=True,
-        required=board_definition.canonical_id != "jc3827w543",
+        required=True,
         missing_message="Select a Wi-Fi credential before saving the device project.",
     )
     project.name = project_name

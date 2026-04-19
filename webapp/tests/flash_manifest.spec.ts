@@ -5,11 +5,11 @@ import { expect, test } from "@playwright/test";
 import { getBoardProfile } from "../src/features/diy/board-profiles";
 import { buildFlashManifest } from "../src/features/diy/flash-manifest";
 
-test("jc3827 server manifest uses the repo-approved full bundle offsets", () => {
-  const board = getBoardProfile("jc3827w543");
+test("esp32-s3 server manifest uses the standard full bundle offsets", () => {
+  const board = getBoardProfile("esp32-s3-devkitc-1");
   const manifest = buildFlashManifest({
     board,
-    projectName: "Control Panel",
+    projectName: "ESP32-S3",
     flashSource: "server",
     serverArtifactUrls: {
       firmware: "blob:firmware",
@@ -50,7 +50,7 @@ test("server manifest keeps single-binary ESP8266 flashes at offset zero", () =>
   ]);
 });
 
-test("non-JC ESP32 server manifest uses the full bundle offsets", () => {
+test("esp32-c3 server manifest uses the full bundle offsets", () => {
   const board = getBoardProfile("esp32-c3-devkitm-1");
   const manifest = buildFlashManifest({
     board,

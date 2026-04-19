@@ -3,7 +3,7 @@
 export type PinMode = "INPUT" | "OUTPUT" | "PWM" | "ADC" | "I2C";
 export type AuthStatus = "pending" | "approved" | "rejected";
 export type ConnStatus = "online" | "offline";
-export type DeviceMode = "no-code" | "library" | "portableDashboard";
+export type DeviceMode = "no-code" | "library";
 
 export interface PinExtraParams {
     active_level?: 0 | 1;

@@ -13,8 +13,7 @@ export type ChipFamily =
   | "ESP32-C61"
   | "ESP32-H2"
   | "ESP32-P4"
-  | "ESP8266"
-  | "JC3827W543";
+  | "ESP8266";
 
 export interface BoardPin {
   id: string;
@@ -217,17 +216,6 @@ export const BOARD_FAMILIES: BoardFamilyInfo[] = [
       wireless: "None (External)",
     },
   },
-  {
-    id: "JC3827W543",
-    title: "JC3827W543",
-    subtitle: "4.3-inch Smart Display Control Gateway.",
-    accent: "from-rose-500 to-red-500",
-    specs: {
-      core: "Dual-core Xtensa® LX7 (ESP32-S3)",
-      clock: "240 MHz",
-      wireless: "Wi-Fi 4, BLE 5.0",
-    },
-  },
 ];
 
 const classicEsp32Left = [
@@ -309,36 +297,6 @@ const esp32S3Right = [
   pin(21, "GPIO21", "right", IO_ADC),
   pin(47, "GPIO47", "right", IO),
   pin(48, "GPIO48", "right", IO, { note: "RGB LED on many compact S3 boards." }),
-];
-
-const jc3827Left = [
-  pin(0, "BOOT / On-board Key", "left", INPUT_ONLY, {
-    inputOnly: true,
-    bootSensitive: true,
-    note: "Shared with the boot key and LCD TE. Map only as an input.",
-  }),
-  pin(5, "GPIO5 / JUMP", "left", IO, { note: "Free jump pin on the CTP C variant." }),
-  pin(6, "GPIO6 / JUMP", "left", IO, { note: "Free jump pin on the CTP C variant." }),
-  pin(7, "GPIO7 / JUMP", "left", IO, { note: "Free jump pin on the CTP C variant." }),
-  pin(9, "GPIO9 / JUMP", "left", IO, { note: "Free jump pin on the CTP C variant." }),
-  pin(14, "GPIO14 / JUMP", "left", IO, { note: "Free jump pin on the CTP C variant." }),
-  pin(15, "GPIO15 / JUMP", "left", IO, { note: "Free jump pin on the CTP C variant." }),
-];
-
-const jc3827Right = [
-  pin(16, "GPIO16 / JUMP", "right", IO, { note: "Free jump pin on the CTP C variant." }),
-  pin(17, "GPIO17 / UART", "right", IO, {
-    note: "Usable, but keep clear while troubleshooting serial flashing.",
-  }),
-  pin(18, "GPIO18 / UART", "right", IO, {
-    note: "Usable, but keep clear while troubleshooting serial flashing.",
-  }),
-  pin(36, "GPIO36 / JUMP", "right", IO, { note: "Free jump pin on the CTP C variant." }),
-  pin(37, "GPIO37 / JUMP", "right", IO, { note: "Free jump pin on the CTP C variant." }),
-  pin(46, "GPIO46 / JUMP", "right", INPUT_ONLY, {
-    inputOnly: true,
-    note: "Input-only auxiliary jump pin.",
-  }),
 ];
 
 const esp32C2Left = [
@@ -798,24 +756,6 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32S3Left.slice(0, 7),
     rightPins: esp32S3Right.slice(0, 7),
-  },
-  {
-    id: "jc3827w543",
-    name: "JC3827W543 (4.3-inch Smart Display)",
-    family: "JC3827W543",
-    chipLabel: "ESP32-S3-WROOM-1",
-    description: "JC3827W543 CTP (board C) control gateway with a 480x272 capacitive touch dashboard.",
-    layoutLabel: "Custom Display Gateway",
-    serialBridge: "Native USB CDC",
-    warnings: [
-      "Only the CTP / board C variant is supported in this project.",
-      "Display, touch, SD, USB, and backlight lines stay reserved. Only the exposed jump pins are user-mappable.",
-    ],
-    leftPins: jc3827Left,
-    rightPins: jc3827Right,
-    defaultCpuMhz: 240,
-    defaultFlashSize: "4MB",
-    defaultPsram: "8MB",
   },
   {
     id: "esp32-c2-reference",

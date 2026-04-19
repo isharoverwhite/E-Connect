@@ -181,9 +181,7 @@ function DashboardCanvasPreviewCard({
   const pinCount = config.pin_configurations.length;
   const modeLabel = config.provider
     ? config.provider
-    : config.mode === "portableDashboard"
-      ? "Portable dashboard"
-      : config.mode.replace("-", " ");
+    : config.mode.replace("-", " ");
 
   return (
     <div className="flex h-full w-full flex-col rounded-xl border border-slate-300 bg-white/95 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/95">
