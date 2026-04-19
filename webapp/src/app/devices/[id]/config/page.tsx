@@ -330,6 +330,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   const [saveMode, setSaveMode] = useState<"update" | "clone">("update");
   const [isNewConfigDraft, setIsNewConfigDraft] = useState(false);
   const confirmFormRef = useRef<HTMLFormElement | null>(null);
+  const otaRequestInFlightRef = useRef(false);
   const saveShortcutStateRef = useRef({
     confirmModalOpen: false,
     hasChanges: false,
@@ -604,6 +605,9 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
         setJobStatus(snapshot.status);
         setJobError(snapshot.error_message?.trim() || null);
         setExpectedFirmwareVersion(snapshot.expected_firmware_version?.trim() || null);
+        if (snapshot.status === "flashing" || snapshot.status === "flashed") {
+          setOtaActionError(null);
+        }
         setConfigHistory((current) =>
           current.map((entry) =>
             entry.id === jobId
@@ -1286,10 +1290,11 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
   };
 
   const handleInitiateOta = async () => {
-    if (!device || !jobId) {
+    if (!device || !jobId || otaRequestInFlightRef.current) {
       return;
     }
 
+    otaRequestInFlightRef.current = true;
     setSendingOta(true);
     setJobError(null);
     setOtaActionError(null);
@@ -1326,7 +1331,36 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
       });
 
       if (commandResult.status === "failed") {
-        throw new Error(commandResult.message || "Failed to publish OTA command");
+        const message = commandResult.message || "Failed to publish OTA command";
+        const nextSnapshot = await fetchBuildJob(jobId);
+        setJobStatus(nextSnapshot.status);
+        setJobError(nextSnapshot.error_message?.trim() || null);
+        setExpectedFirmwareVersion(nextSnapshot.expected_firmware_version?.trim() || null);
+        setConfigHistory((current) =>
+          current.map((entry) =>
+            entry.id === jobId
+              ? {
+                ...entry,
+                status: nextSnapshot.status,
+                error_message: nextSnapshot.error_message?.trim() || null,
+                expected_firmware_version: nextSnapshot.expected_firmware_version?.trim() || null,
+                config:
+                  nextSnapshot.staged_project_config && typeof nextSnapshot.staged_project_config === "object"
+                    ? nextSnapshot.staged_project_config
+                    : entry.config,
+              }
+              : entry,
+          ),
+        );
+        if (nextSnapshot.status === "flashing" || nextSnapshot.status === "flashed") {
+          setStatusMessage(
+            nextSnapshot.status === "flashed"
+              ? "OTA finished. Waiting for the board to reconnect..."
+              : "OTA command sent. Keep the board powered and on the same network until flashing completes.",
+          );
+          return;
+        }
+        throw new Error(message);
       }
 
       setOtaPassword("");
@@ -1337,6 +1371,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
     } catch (otaError) {
       setOtaActionError(getErrorMessage(otaError));
     } finally {
+      otaRequestInFlightRef.current = false;
       setSendingOta(false);
     }
   };

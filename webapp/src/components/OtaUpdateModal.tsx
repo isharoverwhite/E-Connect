@@ -18,6 +18,7 @@ export function OtaUpdateModal({ device, otaState, onClose }: OtaUpdateModalProp
     expectedFirmwareVersion,
     otaModalOpen,
     setOtaModalOpen,
+    sendingOta,
     otaPassword,
     setOtaPassword,
     otaActionError,
@@ -222,6 +223,7 @@ export function OtaUpdateModal({ device, otaState, onClose }: OtaUpdateModalProp
                   <input
                     autoComplete="current-password"
                     className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                    disabled={sendingOta}
                     onChange={(event) => {
                       setOtaPassword(event.target.value);
                       if (otaActionError) {
@@ -233,11 +235,11 @@ export function OtaUpdateModal({ device, otaState, onClose }: OtaUpdateModalProp
                     value={otaPassword}
                   />
                   <button
-                    disabled={otaPassword.length < 8}
+                    disabled={sendingOta || otaPassword.length < 8}
                     className="shrink-0 rounded-2xl bg-blue-600 px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
                     type="submit"
                   >
-                    Install OTA
+                    {sendingOta ? "Sending OTA..." : "Install OTA"}
                   </button>
                 </div>
               </label>
