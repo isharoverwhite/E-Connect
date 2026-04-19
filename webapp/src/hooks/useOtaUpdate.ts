@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { API_URL, sendDeviceCommand } from "@/lib/api";
 import { getToken } from "@/lib/auth";
 import type { DeviceConfig } from "@/types/device";
@@ -129,6 +129,7 @@ export function useOtaUpdate({ device, onDeviceUpdated, fetchDeviceFn, onBuildJo
   const [boardOnlineAfterOta, setBoardOnlineAfterOta] = useState(false);
   const [otaStartingFirmwareVersion, setOtaStartingFirmwareVersion] = useState<string | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const otaRequestInFlightRef = useRef(false);
 
   // Poll Build Job
   useEffect(() => {
@@ -149,6 +150,9 @@ export function useOtaUpdate({ device, onDeviceUpdated, fetchDeviceFn, onBuildJo
         setJobStatus(snapshot.status);
         setJobError(snapshot.error_message?.trim() || null);
         setExpectedFirmwareVersion(snapshot.expected_firmware_version?.trim() || null);
+        if (snapshot.status === "flashing" || snapshot.status === "flashed") {
+          setOtaActionError(null);
+        }
         
         onBuildJobUpdate?.(snapshot);
 
@@ -301,10 +305,11 @@ export function useOtaUpdate({ device, onDeviceUpdated, fetchDeviceFn, onBuildJo
   }, [boardOnlineAfterOta, device, expectedFirmwareVersion, jobStatus, otaModalOpen]);
 
   const handleInitiateOta = async () => {
-    if (!device || !jobId) {
+    if (!device || !jobId || otaRequestInFlightRef.current) {
       return;
     }
 
+    otaRequestInFlightRef.current = true;
     setSendingOta(true);
     setJobError(null);
     setOtaActionError(null);
@@ -341,7 +346,21 @@ export function useOtaUpdate({ device, onDeviceUpdated, fetchDeviceFn, onBuildJo
       });
 
       if (commandResult.status === "failed") {
-        throw new Error(commandResult.message || "Failed to publish OTA command");
+        const message = commandResult.message || "Failed to publish OTA command";
+        const nextSnapshot = await fetchBuildJob(jobId);
+        setJobStatus(nextSnapshot.status);
+        setJobError(nextSnapshot.error_message?.trim() || null);
+        setExpectedFirmwareVersion(nextSnapshot.expected_firmware_version?.trim() || null);
+        onBuildJobUpdate?.(nextSnapshot);
+        if (nextSnapshot.status === "flashing" || nextSnapshot.status === "flashed") {
+          setStatusMessage(
+            nextSnapshot.status === "flashed"
+              ? "OTA finished. Waiting for the board to reconnect..."
+              : "OTA command sent. Keep the board powered and on the same network until flashing completes.",
+          );
+          return;
+        }
+        throw new Error(message);
       }
 
       setOtaPassword("");
@@ -352,6 +371,7 @@ export function useOtaUpdate({ device, onDeviceUpdated, fetchDeviceFn, onBuildJo
     } catch (otaError) {
       setOtaActionError(otaError instanceof Error ? otaError.message : String(otaError));
     } finally {
+      otaRequestInFlightRef.current = false;
       setSendingOta(false);
     }
   };
