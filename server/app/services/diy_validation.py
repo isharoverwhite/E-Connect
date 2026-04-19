@@ -168,26 +168,6 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
             48: _pin_rule(IO),
         },
     ),
-    "jc3827w543": BoardDefinition(
-        canonical_id="jc3827w543",
-        platformio_board="jc3827w543",
-        platform="espressif32",
-        pins={
-            0: _pin_rule(INPUT_ONLY, boot_sensitive=True),
-            5: _pin_rule(IO),
-            6: _pin_rule(IO),
-            7: _pin_rule(IO),
-            9: _pin_rule(IO),
-            14: _pin_rule(IO),
-            15: _pin_rule(IO),
-            16: _pin_rule(IO),
-            17: _pin_rule(IO),
-            18: _pin_rule(IO),
-            36: _pin_rule(IO),
-            37: _pin_rule(IO),
-            46: _pin_rule(INPUT_ONLY),
-        },
-    ),
     "esp32-c2": BoardDefinition(
         canonical_id="esp32-c2",
         platformio_board="esp32-c2-devkitm-1",
@@ -281,7 +261,6 @@ BOARD_ALIASES = {
     "esp-12f": "esp12e",
     "esp12e": "esp12e",
     "esp12f": "esp12e",
-    "jc3827w543": "jc3827w543",
 }
 
 
@@ -305,17 +284,15 @@ def resolve_board_definition(board_profile: str) -> BoardDefinition:
         return BOARD_DEFINITIONS["esp12e"]
     if "esp8266" in normalized or "nodemcu" in normalized:
         return BOARD_DEFINITIONS["nodemcuv2"]
-    if "jc3827w543" in normalized:
-        return BOARD_DEFINITIONS["jc3827w543"]
-    if "c3" in normalized:
-        return BOARD_DEFINITIONS["esp32-c3"]
-    if "s3" in normalized:
-        return BOARD_DEFINITIONS["esp32-s3"]
-    if "s2" in normalized:
-        return BOARD_DEFINITIONS["esp32-s2"]
-    if "c2" in normalized:
-        return BOARD_DEFINITIONS["esp32-c2"]
-    if "esp32" in normalized:
+    if normalized.startswith("esp32"):
+        if "c3" in normalized:
+            return BOARD_DEFINITIONS["esp32-c3"]
+        if "s3" in normalized:
+            return BOARD_DEFINITIONS["esp32-s3"]
+        if "s2" in normalized:
+            return BOARD_DEFINITIONS["esp32-s2"]
+        if "c2" in normalized:
+            return BOARD_DEFINITIONS["esp32-c2"]
         return BOARD_DEFINITIONS["esp32"]
 
     raise ValueError(f"Unsupported board profile: {board_profile}")
@@ -328,7 +305,7 @@ def validate_diy_config(board_profile: str, config: dict[str, Any] | None) -> tu
         return board, ["Invalid config: missing project configuration"], []
 
     pins = config.get("pins", [])
-    if board.canonical_id != "jc3827w543" and (not isinstance(pins, list) or not pins):
+    if not isinstance(pins, list) or not pins:
         return board, ["Invalid config: missing pins"], []
 
     errors: list[str] = []
@@ -336,16 +313,15 @@ def validate_diy_config(board_profile: str, config: dict[str, Any] | None) -> tu
     used_pins: set[int] = set()
     i2c_role_counts = {"SDA": 0, "SCL": 0}
 
-    if board.canonical_id != "jc3827w543":
-        wifi_credential_id = config.get("wifi_credential_id")
-        wifi_ssid = config.get("wifi_ssid")
-        wifi_password = config.get("wifi_password")
-        has_wifi_credential = isinstance(wifi_credential_id, int) and wifi_credential_id > 0
-        if not has_wifi_credential:
-            if not isinstance(wifi_ssid, str) or not wifi_ssid.strip():
-                errors.append("Invalid config: wifi_ssid is required before building firmware")
-            if not isinstance(wifi_password, str) or not wifi_password.strip():
-                errors.append("Invalid config: wifi_password is required before building firmware")
+    wifi_credential_id = config.get("wifi_credential_id")
+    wifi_ssid = config.get("wifi_ssid")
+    wifi_password = config.get("wifi_password")
+    has_wifi_credential = isinstance(wifi_credential_id, int) and wifi_credential_id > 0
+    if not has_wifi_credential:
+        if not isinstance(wifi_ssid, str) or not wifi_ssid.strip():
+            errors.append("Invalid config: wifi_ssid is required before building firmware")
+        if not isinstance(wifi_password, str) or not wifi_password.strip():
+            errors.append("Invalid config: wifi_password is required before building firmware")
 
     for index, pin in enumerate(pins, start=1):
         if not isinstance(pin, dict):

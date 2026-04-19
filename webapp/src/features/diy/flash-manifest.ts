@@ -41,10 +41,6 @@ export function getFullBundleBootloaderOffset(board: BoardProfile) {
   }
 }
 
-function normalizeChipFamily(board: BoardProfile) {
-  return board.family === "JC3827W543" ? "ESP32-S3" : board.family;
-}
-
 export function buildFlashManifest({
   board,
   projectName,
@@ -87,7 +83,7 @@ export function buildFlashManifest({
       new_install_improv_wait_time: 0,
       builds: [
         {
-          chipFamily: normalizeChipFamily(board),
+          chipFamily: board.family,
           improv: false,
           parts: serverParts,
         },
@@ -106,7 +102,7 @@ export function buildFlashManifest({
       new_install_improv_wait_time: 0,
       builds: [
         {
-          chipFamily: normalizeChipFamily(board),
+          chipFamily: board.family,
           improv: false,
           parts: board.demoFirmware.parts.map((part) => ({
             path: part.path,

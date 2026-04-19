@@ -29,7 +29,6 @@ class ConnStatus(str, Enum):
 class DeviceMode(str, Enum):
     no_code = "no-code"
     library = "library"
-    portableDashboard = "portableDashboard"
 
 class PinMode(str, Enum):
     INPUT = "INPUT"

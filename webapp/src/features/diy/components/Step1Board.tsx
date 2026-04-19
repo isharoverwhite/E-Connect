@@ -19,7 +19,6 @@ const BOARD_IMAGE_MAP: Record<ChipFamily, string> = {
     "ESP32-H2": "/boards/esp32-h2.png",
     "ESP32-P4": "/boards/esp32-p4.png",
     "ESP8266": "/boards/esp8266.png",
-    "JC3827W543": "/boards/jc3827w543.jpg",
 };
 
 interface Step1BoardProps {
@@ -93,9 +92,6 @@ export function Step1Board({
     const defaultCpu = board.defaultCpuMhz || (board.family.includes("C2") ? 120 : board.family.includes("H2") ? 96 : board.family.includes("C3") || board.family.includes("C6") ? 160 : 240);
     const defaultFlash = board.defaultFlashSize || "4MB";
     const defaultPsram = board.defaultPsram || "None";
-    const isMasterBoard = board.id === "jc3827w543";
-    const boardNeedsServerWifi = !isMasterBoard;
-    const boardNeedsRoom = !isMasterBoard;
 
     const [projectNameTouched, setProjectNameTouched] = useState(false);
 
@@ -133,10 +129,10 @@ export function Step1Board({
     }, [board.family, board.defaultPsram]);
     
     useEffect(() => {
-        if (boardNeedsServerWifi && !wifiCredentialsLoading && wifiCredentials.length > 0 && selectedWifiCredentialId === null) {
+        if (!wifiCredentialsLoading && wifiCredentials.length > 0 && selectedWifiCredentialId === null) {
             setSelectedWifiCredentialId(wifiCredentials[0].id);
         }
-    }, [boardNeedsServerWifi, wifiCredentialsLoading, wifiCredentials, selectedWifiCredentialId, setSelectedWifiCredentialId]);
+    }, [wifiCredentialsLoading, wifiCredentials, selectedWifiCredentialId, setSelectedWifiCredentialId]);
 
     // Ensure selected values are within valid options when board changes
     useEffect(() => {
@@ -188,9 +184,7 @@ export function Step1Board({
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
                 <div
                     className={`flex flex-col gap-4 rounded-2xl border p-5 transition-colors ${
-                        !boardNeedsServerWifi
-                            ? "border-slate-200 bg-slate-50/50 dark:border-slate-800/50 dark:bg-slate-900/30"
-                            : boardNeedsServerWifi && !wifiCredentialsLoading && wifiCredentials.length === 0
+                        !wifiCredentialsLoading && wifiCredentials.length === 0
                             ? "border-amber-300 bg-amber-50 dark:border-amber-500/30 dark:bg-amber-500/10"
                             : "border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark dark:border-slate-800 dark:bg-slate-900/50"
                     }`}
@@ -199,34 +193,25 @@ export function Step1Board({
                         <label
                             htmlFor="diy-wifi-credential-id"
                             className={`block text-sm font-bold uppercase tracking-wider ${
-                                boardNeedsServerWifi && !wifiCredentialsLoading && wifiCredentials.length === 0
+                                !wifiCredentialsLoading && wifiCredentials.length === 0
                                     ? "text-amber-700 dark:text-amber-400"
                                     : "text-slate-700 dark:text-slate-300"
                             }`}
                         >
-                            {boardNeedsServerWifi ? "Wi-Fi Network (Required for initial boot)" : "On-device Wi-Fi Setup"}
+                            Wi-Fi Network (Required for initial boot)
                         </label>
                         <p
                             className={`mt-2 text-sm ${
-                                boardNeedsServerWifi && !wifiCredentialsLoading && wifiCredentials.length === 0
+                                !wifiCredentialsLoading && wifiCredentials.length === 0
                                     ? "text-amber-700 dark:text-amber-300/80"
                                     : "text-slate-500 dark:text-slate-400"
                             }`}
                         >
-                            {boardNeedsServerWifi
-                                ? "Select one of the admin-managed Wi-Fi credentials saved in Settings. The builder keeps the selected network with this project so rebuilds stay consistent."
-                                : "The Master board scans for Wi-Fi and connects via its own touch screen. No credentials will be hardcoded in firmware."}
+                            Select one of the admin-managed Wi-Fi credentials saved in Settings. The builder keeps the selected network with this project so rebuilds stay consistent.
                         </p>
                     </div>
 
-                    {!boardNeedsServerWifi ? (
-                        <select
-                            disabled
-                            className="w-full rounded-xl border-2 border-slate-200 bg-slate-100 px-4 py-3 text-lg text-slate-500 outline-none dark:border-slate-800 dark:bg-slate-800/30 dark:text-slate-500 opacity-70 cursor-not-allowed"
-                        >
-                            <option>Configured on device screen</option>
-                        </select>
-                    ) : !wifiCredentialsLoading && wifiCredentials.length === 0 ? (
+                    {!wifiCredentialsLoading && wifiCredentials.length === 0 ? (
                         <Link 
                             href="/settings"
                             className="flex flex-col items-center justify-center rounded-xl border border-dashed border-amber-400 bg-white/50 dark:border-amber-500/50 dark:bg-slate-900/50 px-6 py-6 text-center hover:bg-white dark:hover:bg-slate-800 transition-colors"
@@ -267,72 +252,55 @@ export function Step1Board({
                     ) : null}
                 </div>
 
-                <div className={`flex flex-col gap-4 rounded-2xl border p-5 transition-colors ${
-                    !boardNeedsRoom 
-                        ? "border-slate-200 bg-slate-50/50 dark:border-slate-800/50 dark:bg-slate-900/30"
-                        : "border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark dark:border-slate-800 dark:bg-slate-900/50"
-                }`}>
+                <div className={`flex flex-col gap-4 rounded-2xl border p-5 transition-colors border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark dark:border-slate-800 dark:bg-slate-900/50`}>
                     <div>
                         <label
                             htmlFor="diy-room-id"
                             className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider"
                         >
-                            {boardNeedsRoom ? "Device Room" : "Master Hub (Global)"}
+                            Device Room
                         </label>
                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                            {boardNeedsRoom 
-                                ? "New devices must be assigned to a room before the server build can be approved and paired."
-                                : "The Master board acts globally and does not need to be assigned to a specific room."}
+                            New devices must be assigned to a room before the server build can be approved and paired.
                         </p>
                     </div>
 
-                    {!boardNeedsRoom ? (
-                        <select
-                            disabled
-                            className="w-full rounded-xl border-2 border-slate-200 bg-slate-100 px-4 py-3 text-lg text-slate-500 outline-none dark:border-slate-800 dark:bg-slate-800/30 dark:text-slate-500 opacity-70 cursor-not-allowed"
+                    <select
+                        id="diy-room-id"
+                        value={selectedRoomId ?? ""}
+                        onChange={(event) => setSelectedRoomId(event.target.value ? Number(event.target.value) : null)}
+                        className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                        disabled={roomsLoading}
+                    >
+                        <option value="">{roomsLoading ? "Loading rooms..." : "Select a room"}</option>
+                        {rooms.map((room) => (
+                            <option key={room.room_id} value={room.room_id}>
+                                {room.name}
+                            </option>
+                        ))}
+                    </select>
+
+                    <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                        <input
+                            type="text"
+                            value={newRoomName}
+                            onChange={(event) => setNewRoomName(event.target.value)}
+                            className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-base text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                            placeholder="Create a new room here"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => void onCreateRoom()}
+                            disabled={creatingRoom || !newRoomName.trim()}
+                            className="rounded-xl bg-primary px-5 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            <option>No room required</option>
-                        </select>
-                    ) : (
-                        <>
-                            <select
-                                id="diy-room-id"
-                                value={selectedRoomId ?? ""}
-                                onChange={(event) => setSelectedRoomId(event.target.value ? Number(event.target.value) : null)}
-                                className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
-                                disabled={roomsLoading}
-                            >
-                                <option value="">{roomsLoading ? "Loading rooms..." : "Select a room"}</option>
-                                {rooms.map((room) => (
-                                    <option key={room.room_id} value={room.room_id}>
-                                        {room.name}
-                                    </option>
-                                ))}
-                            </select>
+                            {creatingRoom ? "Creating..." : "Create room"}
+                        </button>
+                    </div>
 
-                            <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-                                <input
-                                    type="text"
-                                    value={newRoomName}
-                                    onChange={(event) => setNewRoomName(event.target.value)}
-                                    className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-base text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
-                                    placeholder="Create a new room here"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => void onCreateRoom()}
-                                    disabled={creatingRoom || !newRoomName.trim()}
-                                    className="rounded-xl bg-primary px-5 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-                                >
-                                    {creatingRoom ? "Creating..." : "Create room"}
-                                </button>
-                            </div>
-
-                            {roomError ? (
-                                <p className="text-sm text-rose-600 dark:text-rose-300">{roomError}</p>
-                            ) : null}
-                        </>
-                    )}
+                    {roomError ? (
+                        <p className="text-sm text-rose-600 dark:text-rose-300">{roomError}</p>
+                    ) : null}
                 </div>
             </div>
 
@@ -485,7 +453,7 @@ export function Step1Board({
                     </button>
                     <button
                         onClick={onNext}
-                        disabled={!projectName.trim() || (boardNeedsRoom && !selectedRoomId) || (boardNeedsServerWifi && !selectedWifiCredentialId)}
+                        disabled={!projectName.trim() || !selectedRoomId || !selectedWifiCredentialId}
                         className="flex-1 md:flex-none px-8 py-3 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                         <span>Next: Choose Config</span>

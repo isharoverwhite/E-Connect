@@ -813,23 +813,12 @@ def generate_platformio_ini(project, project_dir: str):
             "-D ARDUINO_USB_MODE=1",
             "-D ARDUINO_USB_CDC_ON_BOOT=1",
         ])
-    if board_definition.canonical_id == "jc3827w543":
-        build_flags.extend([
-            "-D BOARD_JC3827W543=1",
-            "-D LV_CONF_SKIP=1",
-            "-I src/display_ui",
-        ])
-
     board_config_lines = []
 
     if isinstance(cpu_mhz, int) and cpu_mhz > 0:
         board_config_lines.append(f"board_build.f_cpu = {cpu_mhz}000000L")
         
-    if (
-        board_definition.canonical_id != "jc3827w543"
-        and isinstance(flash_size, str)
-        and flash_size.upper().endswith("MB")
-    ):
+    if isinstance(flash_size, str) and flash_size.upper().endswith("MB"):
         board_config_lines.append(f"board_upload.flash_size = {flash_size.upper()}")
         
     if isinstance(psram_size, str):
@@ -842,18 +831,11 @@ def generate_platformio_ini(project, project_dir: str):
         "knolleary/PubSubClient@^2.8",
         "bblanchon/ArduinoJson@^6.21.3",
     ]
-    if board_definition.canonical_id == "jc3827w543":
-        lib_deps.extend([
-            "lovyan03/LovyanGFX@^1.1.12",
-            "lvgl/lvgl@^9.1.0",
-            "TAMC_GT911",
-        ])
-
     # Add dynamic I2C and DHT library dependencies
     raw_pins = config_json.get("pins", [])
     seen_libs = set()
     needs_dht = False
-    has_actuator_pins = board_definition.canonical_id == "jc3827w543"
+    has_actuator_pins = False
 
     for pin in raw_pins if isinstance(raw_pins, list) else []:
         mode = str(pin.get("mode")).upper()
@@ -1094,9 +1076,6 @@ def write_generated_firmware_config(
     project_name = str(config_json.get("project_name") or project.name or "E-Connect Node").strip()
     firmware_version = build_job_firmware_version(job_id)
     wifi_ssid, wifi_password = _resolve_project_wifi_credentials(project, config_json=config_json)
-    if board_definition.canonical_id == "jc3827w543":
-        wifi_ssid = ""
-        wifi_password = ""
     mqtt_broker = _resolve_mqtt_broker(config_json)
     mqtt_port = _resolve_mqtt_port(config_json)
     mqtt_namespace = str(os.getenv("FIRMWARE_MQTT_NAMESPACE", os.getenv("MQTT_NAMESPACE", "local")))
@@ -1160,13 +1139,6 @@ def write_generated_firmware_config(
         api_base_url_block = f'#define API_BASE_URL "{_escape_c_string(api_base_url)}"\n'
 
     pin_rows_block = ",\n".join(pin_rows)
-    portable_dashboard_json = ""
-    if board_definition.canonical_id == "jc3827w543":
-        portable_dashboard_json = json.dumps(
-            config_json.get("portable_dashboard") or {},
-            separators=(",", ":"),
-            ensure_ascii=False,
-        )
 
     header_content = f"""#pragma once
 
@@ -1199,7 +1171,6 @@ struct EConnectPinConfig {{
 #define MQTT_BROKER "{_escape_c_string(mqtt_broker)}"
 #define MQTT_PORT {mqtt_port}
 #define MQTT_NAMESPACE "{_escape_c_string(mqtt_namespace)}"
-#define ECONNECT_PORTABLE_DASHBOARD_JSON "{_escape_c_string(portable_dashboard_json)}"
 {api_base_url_block}static const EConnectPinConfig ECONNECT_PIN_CONFIGS[] = {{
 {pin_rows_block}
 }};

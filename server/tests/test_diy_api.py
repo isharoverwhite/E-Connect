@@ -290,55 +290,6 @@ def test_create_project_creates_and_links_wifi_credential_from_legacy_payload():
     assert credential.password == "BuilderPass123"
 
 
-def test_create_jc3827_project_allows_board_local_wifi_flow():
-    db = TestingSessionLocal()
-    _user, room = create_test_user(db, username="jc3827-admin")
-    token = get_token(username="jc3827-admin")
-
-    response = client.post(
-        "/api/v1/diy/projects",
-        json={
-            "name": "Portable Control Board",
-            "board_profile": "jc3827w543",
-            "room_id": room.room_id,
-            "wifi_credential_id": None,
-            "config": {
-                "project_name": "Portable Control Board",
-                "pins": [{"gpio_pin": 5, "mode": "OUTPUT", "label": "Jump Relay"}],
-                "portable_dashboard": {
-                    "variant": "jc3827w543-ctp",
-                    "width": 480,
-                    "height": 272,
-                    "sidebar_width": 72,
-                    "cards": [],
-                },
-            },
-        },
-        headers={"Authorization": f"Bearer {token}"},
-    )
-
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["wifi_credential_id"] is None
-    assert payload["config"]["wifi_credential_id"] is None
-    assert payload["config"]["portable_dashboard"]["variant"] == "jc3827w543-ctp"
-
-
-def test_jc3827_validation_rejects_internal_or_unsupported_pins():
-    _board, errors, warnings = validate_diy_config(
-        "jc3827w543",
-        {"pins": [{"gpio_pin": 4, "mode": "OUTPUT", "label": "Touch SCL"}]},
-    )
-    assert any("GPIO 4 is not supported" in error for error in errors)
-    assert warnings == []
-
-    _board, errors, _warnings = validate_diy_config(
-        "jc3827w543",
-        {"pins": [{"gpio_pin": 0, "mode": "OUTPUT", "label": "Boot Button"}]},
-    )
-    assert any("GPIO 0 does not support mode OUTPUT" in error for error in errors)
-
-
 def test_delete_wifi_credential_conflicts_when_in_use_by_project():
     db = TestingSessionLocal()
     _user, room = create_test_user(db, username="wifi-delete-conflict")
@@ -1202,30 +1153,6 @@ def test_builder_generates_esp8266_platformio_ini(tmp_path):
     assert "ARDUINO_USB_MODE" not in content
 
 
-def test_builder_generates_jc3827_platformio_ini_with_repo_board_profile(tmp_path):
-    from app.services.builder import generate_platformio_ini
-
-    class MockProject:
-        def __init__(self, config, board_profile):
-            self.config = config
-            self.board_profile = board_profile
-
-    project = MockProject(
-        config={
-            "pins": [],
-        },
-        board_profile="jc3827w543",
-    )
-
-    generate_platformio_ini(project, str(tmp_path))
-
-    content = (tmp_path / "platformio.ini").read_text()
-    assert "[env:jc3827w543]" in content
-    assert "board = jc3827w543" in content
-    assert "-D BOARD_JC3827W543=1" in content
-    assert "-D LV_CONF_SKIP=1" in content
-    assert "board_build.flash_mode" not in content
-
 def test_collect_build_outputs_supports_esp8266_firmware_only(tmp_path):
     from app.services.builder import collect_build_outputs
 
@@ -1259,36 +1186,6 @@ def test_collect_build_outputs_includes_full_bundle_for_non_jc_esp32(tmp_path, m
     monkeypatch.setattr(builder, "PLATFORMIO_CORE_DIR", str(fake_core_dir))
 
     outputs = builder.collect_build_outputs(str(tmp_path), "esp32-c3-devkitm-1")
-
-    assert outputs == {
-        "firmware": str(firmware_path),
-        "bootloader": str(bootloader_path),
-        "partitions": str(partitions_path),
-        "boot_app0": str(boot_app0_path),
-    }
-
-
-def test_collect_build_outputs_includes_boot_app0_for_jc3827_full_bundle(tmp_path, monkeypatch):
-    import app.services.builder as builder
-
-    build_dir = tmp_path / ".pio" / "build" / "jc3827w543"
-    build_dir.mkdir(parents=True)
-
-    firmware_path = build_dir / "firmware.bin"
-    bootloader_path = build_dir / "bootloader.bin"
-    partitions_path = build_dir / "partitions.bin"
-    firmware_path.write_bytes(b"esp32-firmware")
-    bootloader_path.write_bytes(b"bootloader")
-    partitions_path.write_bytes(b"partitions")
-
-    fake_core_dir = tmp_path / ".platformio-core"
-    boot_app0_path = fake_core_dir / "packages" / "framework-arduinoespressif32" / "tools" / "partitions" / "boot_app0.bin"
-    boot_app0_path.parent.mkdir(parents=True)
-    boot_app0_path.write_bytes(b"boot-app0")
-
-    monkeypatch.setattr(builder, "PLATFORMIO_CORE_DIR", str(fake_core_dir))
-
-    outputs = builder.collect_build_outputs(str(tmp_path), "jc3827w543")
 
     assert outputs == {
         "firmware": str(firmware_path),

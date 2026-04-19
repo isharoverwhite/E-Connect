@@ -22,17 +22,14 @@ import {
   type BuildJobStatus,
   type FlashSource,
   type PinMapping,
-  type PortableDashboardConfig,
   type ProjectSyncState,
   type ServerBuildState,
   type ValidationResult,
-  sanitizePortableDashboard,
   sanitizePins,
 } from "@/features/diy/types";
 import { Step1Board } from "@/features/diy/components/Step1Board";
 import { Step2Configs, type SavedBoardConfigOption } from "@/features/diy/components/Step2Configs";
 import { Step2Pins } from "@/features/diy/components/Step2Pins";
-import { Step2Canvas } from "@/features/diy/components/Step2Canvas";
 import { Step3Validate } from "@/features/diy/components/Step3Validate";
 import { Step4Flash } from "@/features/diy/components/Step4Flash";
 import { boardRequiresFullFlashBundle, buildFlashManifest } from "@/features/diy/flash-manifest";
@@ -227,8 +224,7 @@ function buildConfigKey({
   flashSize,
   psramSize,
   networkTargetKey,
-  portableDashboard,
-}: {
+  }: {
   boardId: string;
   projectName: string;
   roomId: number | null;
@@ -239,14 +235,12 @@ function buildConfigKey({
   flashSize: string | null;
   psramSize: string | null;
   networkTargetKey: string;
-  portableDashboard: PortableDashboardConfig | null;
-}) {
+  }) {
   return JSON.stringify({
     boardId,
     cpuMhz,
     flashSize,
     networkTargetKey,
-    portableDashboard,
     psramSize,
     projectName: projectName.trim(),
     roomId,
@@ -275,8 +269,7 @@ function createProjectPayload({
   cpuMhz,
   flashSize,
   psramSize,
-  portableDashboard,
-}: {
+  }: {
   board: BoardProfile;
   projectName: string;
   roomId: number | null;
@@ -289,10 +282,8 @@ function createProjectPayload({
   cpuMhz: number | null;
   flashSize: string | null;
   psramSize: string | null;
-  portableDashboard: PortableDashboardConfig | null;
-}) {
+  }) {
   const normalizedProjectName = projectName.trim();
-  const usesBoardLocalWifi = board.id === "jc3827w543";
   const config: Record<string, unknown> = {
     schema_version: 1,
     project_name: normalizedProjectName,
@@ -306,7 +297,7 @@ function createProjectPayload({
     cpu_mhz: cpuMhz,
     flash_size: flashSize,
     psram_size: psramSize,
-    wifi_credential_id: usesBoardLocalWifi ? null : wifiCredentialId,
+    wifi_credential_id: wifiCredentialId,
     pins: pins.map((mapping) => ({
       gpio_pin: mapping.gpio_pin,
       mode: mapping.mode,
@@ -315,12 +306,6 @@ function createProjectPayload({
       extra_params: mapping.extra_params ?? undefined,
     })),
   };
-
-  if (board.id === "jc3827w543" && portableDashboard) {
-    config.device_mode = "portableDashboard";
-    config.wifi_provisioning = "device_scan";
-    config.portable_dashboard = sanitizePortableDashboard(portableDashboard);
-  }
 
   if (buildJobId && buildKey) {
     config.latest_build_job_id = buildJobId;
@@ -331,7 +316,7 @@ function createProjectPayload({
     name: normalizedProjectName,
     board_profile: board.id,
     room_id: roomId,
-    wifi_credential_id: usesBoardLocalWifi ? null : wifiCredentialId,
+    wifi_credential_id: wifiCredentialId,
     config,
   };
 }
@@ -386,9 +371,6 @@ export default function DIYBuilderPage() {
   const [flashSize, setFlashSize] = useState<string | null>(null);
   const [psramSize, setPsramSize] = useState<string | null>(null);
   const [pins, setPins] = useState<PinMapping[]>([]);
-  const [portableDashboard, setPortableDashboard] = useState<PortableDashboardConfig>(() =>
-    sanitizePortableDashboard(null),
-  );
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [flashSource, setFlashSource] = useState<FlashSource>("server");
   const [manifestUrl, setManifestUrl] = useState<string | null>(null);
@@ -431,7 +413,7 @@ export default function DIYBuilderPage() {
     [selectedWifiCredentialId, wifiCredentials],
   );
   const validation = validatePinMappings(board, pins, {
-    requireWifiCredentials: board.id !== "jc3827w543",
+    requireWifiCredentials: true,
     hasWifiCredential: selectedWifiCredentialId !== null,
   });
   const fallbackFirmwareTargetKey = useMemo(() => {
@@ -460,20 +442,17 @@ export default function DIYBuilderPage() {
         boardId: board.id,
         projectName,
         roomId,
-        wifiCredentialId: board.id === "jc3827w543" ? null : selectedWifiCredentialId,
-        wifiCredentialVersion:
-          board.id === "jc3827w543" ? null : selectedWifiCredential?.updated_at ?? null,
+        wifiCredentialId: selectedWifiCredentialId,
+        wifiCredentialVersion: selectedWifiCredential?.updated_at ?? null,
         pins,
         cpuMhz,
         flashSize,
         psramSize,
         networkTargetKey: currentFirmwareTargetKey,
-        portableDashboard: board.id === "jc3827w543" ? portableDashboard : null,
       }),
     [
       board.id,
       currentFirmwareTargetKey,
-      portableDashboard,
       selectedWifiCredential?.updated_at,
       selectedWifiCredentialId,
       pins,
@@ -525,7 +504,6 @@ export default function DIYBuilderPage() {
         cpuMhz,
         flashSize,
         psramSize,
-        portableDashboard: board.id === "jc3827w543" ? portableDashboard : null,
       }),
     [
       activeBuildJobId,
@@ -533,7 +511,6 @@ export default function DIYBuilderPage() {
       board,
       flashSource,
       pins,
-      portableDashboard,
       projectName,
       roomId,
       selectedWifiCredentialId,
@@ -767,7 +744,7 @@ export default function DIYBuilderPage() {
       return null;
     }
 
-    if (board.id !== "jc3827w543" && !selectedWifiCredentialId) {
+    if (!selectedWifiCredentialId) {
       setProjectSyncState("idle");
       setProjectSyncMessage("Select a saved Wi-Fi credential before syncing this device project to the server.");
       return null;
@@ -1167,7 +1144,6 @@ export default function DIYBuilderPage() {
     const nextCpuMhz = typeof config.cpu_mhz === "number" ? config.cpu_mhz : null;
     const nextFlashSize = typeof config.flash_size === "string" ? config.flash_size : null;
     const nextPsramSize = typeof config.psram_size === "string" ? config.psram_size : null;
-    const nextPortableDashboard = sanitizePortableDashboard(config.portable_dashboard);
     const nextProjectName =
       typeof config.project_name === "string" && config.project_name.trim()
         ? config.project_name
@@ -1199,7 +1175,6 @@ export default function DIYBuilderPage() {
     setFamily(nextBoard.family);
     setBoardId(nextBoard.id);
     setPins(nextPins);
-    setPortableDashboard(nextPortableDashboard);
     setSelectedPinId(null);
     setCpuMhz(nextCpuMhz);
     setFlashSize(nextFlashSize);
@@ -1246,7 +1221,6 @@ export default function DIYBuilderPage() {
           cpuMhz: nextCpuMhz,
           flashSize: nextFlashSize,
           psramSize: nextPsramSize,
-          portableDashboard: nextBoard.id === "jc3827w543" ? nextPortableDashboard : null,
         }),
       );
       lastSavedPayloadRef.current = shouldRewriteFlashSource ? null : normalizedPayload;
@@ -1803,15 +1777,13 @@ export default function DIYBuilderPage() {
         boardId: board.id,
         projectName,
         roomId,
-        wifiCredentialId: board.id === "jc3827w543" ? null : selectedWifiCredentialId,
-        wifiCredentialVersion:
-          board.id === "jc3827w543" ? null : selectedWifiCredential?.updated_at ?? null,
+        wifiCredentialId: selectedWifiCredentialId,
+        wifiCredentialVersion: selectedWifiCredential?.updated_at ?? null,
         pins,
         cpuMhz,
         flashSize,
         psramSize,
         networkTargetKey: buildTargetKey,
-        portableDashboard: board.id === "jc3827w543" ? portableDashboard : null,
       });
       const response = await fetch(
         `${API_URL}/diy/build?project_id=${encodeURIComponent(ensuredProjectId)}`,
@@ -1858,7 +1830,6 @@ export default function DIYBuilderPage() {
             cpuMhz,
             flashSize,
             psramSize,
-            portableDashboard: board.id === "jc3827w543" ? portableDashboard : null,
           }),
         ),
       );
@@ -1920,7 +1891,6 @@ export default function DIYBuilderPage() {
     setFamily(nextBoard.family);
     setBoardId(nextBoard.id);
     setPins([]);
-    setPortableDashboard(sanitizePortableDashboard(null));
     setSelectedPinId(null);
     setFlashSource("server");
     setServerBuild(createEmptyBuildState());
@@ -2139,24 +2109,7 @@ export default function DIYBuilderPage() {
           />
         )}
 
-        {currentStep === 3 && board.id === "jc3827w543" ? (
-          <Step2Canvas
-            board={board}
-            boardPins={boardPins}
-            pins={pins}
-            setPins={setPins}
-            portableDashboard={portableDashboard}
-            setPortableDashboard={setPortableDashboard}
-            selectedPinId={selectedPinId}
-            setSelectedPinId={setSelectedPinId}
-            projectName={projectName}
-            configBusy={configBusy}
-            projectSyncState={projectSyncState}
-            onExportConfig={generateConfig}
-            onBack={() => setCurrentStep(2)}
-            onNext={() => setCurrentStep(4)}
-          />
-        ) : currentStep === 3 && (
+        {currentStep === 3 && (
           <Step2Pins
             board={board}
             boardPins={boardPins}
@@ -2298,9 +2251,7 @@ function getFlashLockedReason({
     }
 
     if (boardRequiresFullFlashBundle(board) && !serverBuildHasFullBundle) {
-      return board.id === "jc3827w543"
-        ? "JC3827W543 requires the full server bundle (bootloader, partition table, boot data, firmware). Wait for all artifacts before flashing."
-        : "ESP32-family server builds require the full flash bundle (bootloader, partition table, boot data, firmware). Wait for all artifacts before flashing.";
+      return "ESP32-family server builds require the full flash bundle (bootloader, partition table, boot data, firmware). Wait for all artifacts before flashing.";
     }
 
     if (eraseFirst && !serverBuildHasFullBundle) {

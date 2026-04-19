@@ -1276,34 +1276,6 @@ export const DynamicDeviceCard = memo(function DynamicDeviceCard({ config, isOnl
     return <ExtensionCard config={config} isOnline={isOnline} />;
   }
 
-  if (config.mode === 'portableDashboard') {
-    return (
-      <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-slate-200 dark:border-slate-700 p-5 shadow-sm hover:shadow-md transition-shadow relative overflow-y-auto w-full h-full flex flex-col pointer-events-auto">
-        <div className="absolute top-0 right-0">
-          <div className="bg-blue-500 text-white text-[10px] px-2 py-1 rounded-bl-lg rounded-tr text-xs font-bold flex items-center shadow-sm z-20">
-            <span className="material-icons-round text-[14px] mr-1">touch_app</span> DASHBOARD
-          </div>
-        </div>
-        <div className="flex justify-between items-start mb-4 mt-2">
-          <div className="flex-1 min-w-0 pr-4">
-            <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
-            <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Chưa gán phòng'}>{config.room_name || 'Chưa gán phòng'}</p>
-          </div>
-          <span className="flex items-center text-xs text-slate-500 flex-shrink-0">
-            <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'} mr-1`}></span>
-            {isOnline ? 'Online' : 'Offline'}
-          </span>
-        </div>
-        
-        <div className="flex flex-col mt-auto pb-2 items-center justify-center text-center opacity-70">
-           <span className="material-icons-round text-3xl mb-2 text-slate-400">important_devices</span>
-           <p className="text-xs text-slate-500">Standalone controller</p>
-           <p className="text-[10px] text-slate-400 mt-1">Configured via device screen</p>
-        </div>
-      </div>
-    );
-  }
-
   const activePinConfigurations = getActivePinConfigurations(config);
   
   const displayPins = [];
