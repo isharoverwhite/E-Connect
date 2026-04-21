@@ -9,7 +9,7 @@ import { useAuth } from "@/components/AuthProvider";
 import Sidebar from '@/components/Sidebar';
 import { DeviceConfig } from "@/types/device";
 import { useWebSocket } from "@/hooks/useWebSocket";
-import { DynamicDeviceCard, getCardMinHeight } from "@/components/DeviceCard";
+import { DynamicDeviceCard, getCardMinHeight, getCardMinWidth } from "@/components/DeviceCard";
 import { Rnd } from "react-rnd";
 import DeviceScanConnectPanel from "@/components/DeviceScanConnectPanel";
 import { isSystemLogAlertEntry } from "@/lib/system-log";
@@ -184,7 +184,7 @@ function DashboardCanvasPreviewCard({
     : config.mode.replace("-", " ");
 
   return (
-    <div className="flex h-full w-full flex-col rounded-xl border border-slate-300 bg-white/95 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/95">
+    <div className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-slate-300 bg-white/95 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/95">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{config.name}</div>
@@ -213,9 +213,9 @@ function DashboardCanvasPreviewCard({
         </div>
       </div>
 
-      <div className="mt-4 flex-1 rounded-lg border border-dashed border-slate-300 bg-slate-50/70 px-3 py-3 dark:border-slate-700 dark:bg-slate-800/40">
-        <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Editor Preview</div>
-        <div className="mt-3 space-y-2">
+      <div className="mt-4 flex flex-1 flex-col overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50/70 px-3 py-3 dark:border-slate-700 dark:bg-slate-800/40">
+        <div className="text-[11px] flex-none uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Editor Preview</div>
+        <div className="mt-3 flex-1 overflow-y-auto min-h-0 space-y-2 pr-1 custom-scrollbar">
           {Array.from({ length: Math.min(3, Math.max(1, pinCount || 1)) }).map((_, index) => (
             <div
               key={`${config.device_id}-preview-${index}`}
@@ -596,6 +596,17 @@ export default function Dashboard() {
       ),
     [approvedDevices],
   );
+
+  const cardWidths = useMemo(
+    () =>
+      new Map(
+        approvedDevices.map((device) => {
+          const minWidth = getCardMinWidth(device);
+          return [device.device_id, snapCanvasSize(minWidth, minWidth)];
+        }),
+      ),
+    [approvedDevices],
+  );
   
   const computedLayouts = useMemo(() => {
     if (!shouldUseCanvas) {
@@ -610,6 +621,7 @@ export default function Dashboard() {
       }
 
       const estimatedHeight = cardHeights.get(device.device_id) ?? DEFAULT_CARD_HEIGHT;
+      const estimatedWidth = cardWidths.get(device.device_id) ?? DEFAULT_CARD_WIDTH;
       acc[device.device_id] = {
         x:
           typeof savedLayout.x === "number" && !Number.isNaN(savedLayout.x)
@@ -621,8 +633,8 @@ export default function Dashboard() {
             : 0,
         w:
           typeof savedLayout.w === "number" && Number.isFinite(savedLayout.w)
-            ? snapCanvasSize(Math.max(200, savedLayout.w), 200)
-            : DEFAULT_CARD_WIDTH,
+            ? snapCanvasSize(Math.max(estimatedWidth, savedLayout.w), estimatedWidth)
+            : estimatedWidth,
         h:
           typeof savedLayout.h === "number" && Number.isFinite(savedLayout.h)
             ? snapCanvasSize(Math.max(estimatedHeight, savedLayout.h), estimatedHeight)
@@ -645,16 +657,17 @@ export default function Dashboard() {
       }
 
       const estimatedHeight = cardHeights.get(deviceId) ?? DEFAULT_CARD_HEIGHT;
+      const estimatedWidth = cardWidths.get(deviceId) ?? DEFAULT_CARD_WIDTH;
       computed[deviceId] = findFirstCanvasSlot(
         Object.values(computed),
-        DEFAULT_CARD_WIDTH,
+        estimatedWidth,
         estimatedHeight,
         canvasUsableWidth,
       );
     }
 
     return computed;
-  }, [approvedDevices, canvasLayouts, canvasUsableWidth, cardHeights, shouldUseCanvas]);
+  }, [approvedDevices, canvasLayouts, canvasUsableWidth, cardHeights, cardWidths, shouldUseCanvas]);
   const persistedCanvasLayout = useMemo(() => {
     if (!shouldUseCanvas) {
       return canvasLayouts;
@@ -680,12 +693,13 @@ export default function Dashboard() {
 
       const c = config as DeviceConfig;
       const fallbackHeight = cardHeights.get(c.device_id) ?? DEFAULT_CARD_HEIGHT;
-      const layout = computedLayouts[c.device_id] || { x: 0, y: 0, w: DEFAULT_CARD_WIDTH, h: fallbackHeight };
+      const fallbackWidth = cardWidths.get(c.device_id) ?? DEFAULT_CARD_WIDTH;
+      const layout = computedLayouts[c.device_id] || { x: 0, y: 0, w: fallbackWidth, h: fallbackHeight };
       return Math.max(max, layout.y + layout.h);
     }, 10);
 
     return lowestCardEdge + (isCustomizeMode ? 400 : 20);
-  }, [approvedDevices, cardHeights, computedLayouts, isCustomizeMode, shouldUseCanvas]);
+  }, [approvedDevices, cardHeights, cardWidths, computedLayouts, isCustomizeMode, shouldUseCanvas]);
   const hasCanvasOverlap = useCallback(
     (deviceId: string, nextRect: CanvasLayout) => {
       for (const [id, bounds] of Object.entries(computedLayouts)) {
@@ -1096,7 +1110,8 @@ export default function Dashboard() {
                       if (!("device_id" in config)) return null;
                       const c = config as DeviceConfig;
                       const cardHeight = cardHeights.get(c.device_id) ?? DEFAULT_CARD_HEIGHT;
-                      const layout = computedLayouts[c.device_id] || { x: 0, y: 0, w: DEFAULT_CARD_WIDTH, h: cardHeight };
+                      const cardWidth = cardWidths.get(c.device_id) ?? DEFAULT_CARD_WIDTH;
+                      const layout = computedLayouts[c.device_id] || { x: 0, y: 0, w: cardWidth, h: cardHeight };
                       const cardContents = isCustomizeMode ? (
                         <DashboardCanvasPreviewCard config={c} isOnline={isDeviceOnline(c)} />
                       ) : (
@@ -1107,7 +1122,7 @@ export default function Dashboard() {
                         return (
                           <div
                             key={c.device_id}
-                            className="absolute z-10 transition-shadow"
+                            className="absolute transition-shadow"
                             style={{
                               left: `${layout.x}px`,
                               top: `${layout.y}px`,
@@ -1146,8 +1161,8 @@ export default function Dashboard() {
                           const parsedH = parseInt(ref.style.height, 10);
                           const nextX = snapCanvasCoordinate(position.x);
                           const nextY = snapCanvasCoordinate(position.y);
-                          const newW = Number.isNaN(parsedW) ? layout.w : snapCanvasSize(parsedW, 200);
-                          const newH = Number.isNaN(parsedH) ? layout.h : snapCanvasSize(parsedH, cardHeight);
+                          const newW = Number.isNaN(parsedW) ? layout.w : snapCanvasSize(Math.max(parsedW, cardWidth), cardWidth);
+                          const newH = Number.isNaN(parsedH) ? layout.h : snapCanvasSize(Math.max(parsedH, cardHeight), cardHeight);
                           
                           const newRect = {
                               x: nextX,
@@ -1174,7 +1189,7 @@ export default function Dashboard() {
                         enableResizing={isCustomizeMode}
                         dragGrid={[CANVAS_GRID_STEP, CANVAS_GRID_STEP]}
                         resizeGrid={[CANVAS_GRID_STEP, CANVAS_GRID_STEP]}
-                        minWidth={200}
+                        minWidth={cardWidth}
                         minHeight={cardHeight}
                         bounds="parent"
                         className="z-50 cursor-grab rounded-xl shadow-xl ring-2 ring-primary ring-offset-2 ring-offset-transparent transition-shadow active:cursor-grabbing"

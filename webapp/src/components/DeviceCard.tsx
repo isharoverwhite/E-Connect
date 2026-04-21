@@ -6,8 +6,8 @@ import { getActivePinConfigurations, getStatePins as readStatePins } from "@/lib
 import { DeviceConfig, DeviceStatePin, DeviceStateSnapshot, PinConfig } from "@/types/device";
 
 export const getCardMinHeight = (config: DeviceConfig) => {
-  if (config.provider) {
-    return 450; // Extension Card
+  if (config.provider || config.is_external || config.installed_extension_id) {
+    return 200; // Extension Card needs more height to fit Title, Slider, Tune button cleanly without clipping, matching standard layout nicely.
   }
   
   const pins = getActivePinConfigurations(config);
@@ -31,6 +31,13 @@ export const getCardMinHeight = (config: DeviceConfig) => {
     }
   }
   return Math.ceil(h * 1.05);
+};
+
+export const getCardMinWidth = (config: DeviceConfig) => {
+  if (config.provider || config.is_external || config.installed_extension_id) {
+    return 320; // Extension cards match standard card width to provide a consistent look, color wheel fits perfectly in this space.
+  }
+  return 320; // Default standard card width
 };
 
 export function DeviceToggle({
@@ -750,6 +757,10 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   return [Math.round(255 * f(0)), Math.round(255 * f(8)), Math.round(255 * f(4))];
 }
 
+function rgbToHex(r: number, g: number, b: number): string {
+  return "#" + (1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1).toUpperCase();
+}
+
 function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
   r /= 255;
   g /= 255;
@@ -1099,7 +1110,10 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
   };
 
   return (
-    <div className={`bg-surface-light dark:bg-surface-dark rounded-xl border border-indigo-100 dark:border-indigo-900/50 p-5 shadow-sm hover:shadow-md transition-all relative w-full flex flex-col ${isExpanded ? 'h-auto z-10' : 'h-full'}`}>
+    <div 
+      style={{ zIndex: isExpanded ? 50 : 10 }}
+      className={`bg-surface-light dark:bg-surface-dark rounded-xl border border-indigo-100 dark:border-indigo-900/50 p-5 shadow-sm hover:shadow-md transition-all duration-300 relative w-full flex flex-col min-h-full h-auto ${isExpanded ? 'shadow-xl ring-1 ring-black/5 dark:ring-white/10' : 'overflow-hidden'}`}
+    >
       <div className="absolute top-2 right-2">
          {/* Removed the 'EXT' text which was overlapping, kept a subtle extension icon */}
          <div className="text-indigo-400 dark:text-indigo-600/50 p-1 flex items-center justify-center rounded-full bg-indigo-50 dark:bg-indigo-900/20" title="Extension integration">
@@ -1125,7 +1139,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
       </div>
       
       {/* Name and Room */}
-      <div className="flex justify-between items-start mb-5">
+      <div className="flex justify-between items-start mb-3">
         <div className="flex-1 min-w-0 pr-4">
           <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
           <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Chưa gán phòng'}>{config.room_name || 'Chưa gán phòng'}</p>
@@ -1185,9 +1199,9 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
       )}
 
       {/* Expanded Advanced Controls */}
-      <div className={`grid transition-all duration-300 ease-in-out ${isExpanded && hasAdvanced ? 'grid-rows-[1fr] opacity-100 mt-4' : 'grid-rows-[0fr] opacity-0'}`}>
-        <div className="overflow-hidden">
-          <div className="flex flex-col gap-6 pt-4 border-t border-slate-100 dark:border-slate-800">
+      <div className={`grid transition-all duration-300 ease-in-out ${isExpanded && hasAdvanced ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
+        <div className="overflow-hidden min-h-0">
+          <div className="flex flex-col gap-6 pt-4 border-t border-slate-100 dark:border-slate-800 mt-4">
             {supportsRgb && supportsTone ? (
               <div className="flex justify-center">
                 <div className="inline-flex items-center rounded-full bg-slate-100 p-1 text-xs font-medium dark:bg-slate-800">
@@ -1215,7 +1229,15 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
             {supportsRgb && visibleAdvancedMode === "color" && (
               <div className="flex flex-col items-center">
                 <div className="flex justify-between items-center w-full mb-3">
-                   <label className="text-xs font-medium text-slate-500 dark:text-slate-400">Color</label>
+                   <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                     Color
+                     <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm">
+                       <div className="w-5 h-5 rounded-full shadow-sm border border-slate-200 dark:border-slate-700" style={{ backgroundColor: `rgb(${rgbValue[0]}, ${rgbValue[1]}, ${rgbValue[2]})` }} />
+                       <span className="text-[10px] uppercase font-mono tracking-wider font-bold text-slate-600 dark:text-slate-300">
+                         {rgbToHex(rgbValue[0], rgbValue[1], rgbValue[2])}
+                       </span>
+                     </div>
+                   </label>
                 </div>
                 <ColorWheel 
                     rgb={rgbValue} 
@@ -1261,11 +1283,6 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
             )}
           </div>
         </div>
-      </div>
-      
-      {/* Footer Info */}
-      <div className={`flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 ${isExpanded ? 'mt-4 pt-4' : 'mt-auto pt-3'} border-t border-slate-100 dark:border-slate-800`}>
-        <span className="flex items-center text-indigo-600 dark:text-indigo-400 font-medium">Source: {config.provider}</span>
       </div>
     </div>
   );
