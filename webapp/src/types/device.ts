@@ -64,9 +64,11 @@ export interface DeviceStateSnapshot {
     pin?: number;
     value?: number | boolean;
     applied?: boolean;
+    power?: string;
     firmware_revision?: string;
     firmware_version?: string;
     brightness?: number;
+    speed?: number;
     temperature?: number;
     humidity?: number;
     restore_value?: number | boolean;
@@ -80,6 +82,7 @@ export interface DeviceStateSnapshot {
     color_mode?: number;
     capabilities?: string[];
     ip_address?: string;
+    reported_at?: string;
     trend?: string;
     unit?: string;
     pins?: DeviceStatePin[];
@@ -89,6 +92,7 @@ export interface DeviceConfig extends DeviceAvailabilitySummary {
     mac_address: string;
     name: string;
     mode: DeviceMode;
+    device_type?: string;
     board?: string;
     provider?: string;
     extension_name?: string;

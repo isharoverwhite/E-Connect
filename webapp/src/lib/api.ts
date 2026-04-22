@@ -173,11 +173,14 @@ export interface ExtensionConfigField {
 
 export interface InstalledExtensionSchema {
     schema_id: string;
+    device_type: string;
     name: string;
     default_name: string;
     description?: string | null;
-    card_type: "light";
-    capabilities: Array<"power" | "brightness" | "rgb" | "color_temperature">;
+    card_type: "light" | "switch" | "fan" | "sensor";
+    capabilities: Array<
+        "power" | "brightness" | "rgb" | "color_temperature" | "speed" | "temperature" | "humidity" | "value"
+    >;
     temperature_range?: {
         min: number;
         max: number;

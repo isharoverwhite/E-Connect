@@ -3,11 +3,22 @@
 import React, { memo, useCallback, useEffect, useRef, useState } from "react";
 import { DeviceCommandResponse, sendDeviceCommand } from "@/lib/api";
 import { getActivePinConfigurations, getStatePins as readStatePins } from "@/lib/device-config";
+import { getExternalCardType } from "@/lib/device-display";
 import { DeviceConfig, DeviceStatePin, DeviceStateSnapshot, PinConfig } from "@/types/device";
 
 export const getCardMinHeight = (config: DeviceConfig) => {
-  if (config.provider || config.is_external || config.installed_extension_id) {
-    return 200; // Extension Card needs more height to fit Title, Slider, Tune button cleanly without clipping, matching standard layout nicely.
+  const externalCardType = getExternalCardType(config);
+  if (externalCardType === "light") {
+    return 200;
+  }
+  if (externalCardType === "switch") {
+    return 150;
+  }
+  if (externalCardType === "fan") {
+    return 210;
+  }
+  if (externalCardType === "sensor") {
+    return 180;
   }
   
   const pins = getActivePinConfigurations(config);
@@ -34,10 +45,10 @@ export const getCardMinHeight = (config: DeviceConfig) => {
 };
 
 export const getCardMinWidth = (config: DeviceConfig) => {
-  if (config.provider || config.is_external || config.installed_extension_id) {
-    return 280; // Extension cards match standard card width to provide a consistent look, color wheel fits perfectly in this space.
+  if (getExternalCardType(config) !== null) {
+    return 280;
   }
-  return 320; // Default standard card width
+  return 320;
 };
 
 export function DeviceToggle({
@@ -472,9 +483,12 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
     (optimisticSliderValue === null || sliderTargetMatched);
 
   const commandPending = pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced;
-  const toggleDisabled = requestPending || commandPending || !isOnline;
-  const sliderDisabled = requestPending || !isOnline;
+  const controlReady = isOnline;
+  // Keep custom controls interactive once the HTTP request settles; MQTT/state ack can lag behind the online badge.
+  const toggleDisabled = requestPending || !controlReady;
+  const sliderDisabled = requestPending || !controlReady;
   const toggleLoading =
+    commandPending ||
     optimisticToggleState !== null &&
     !toggleTargetMatched &&
     !acknowledgedPendingCommand &&
@@ -863,6 +877,24 @@ function getRuntimeStateCapabilities(config: DeviceConfig): string[] {
     : [];
 
   const normalized = new Set(runtimeCaps.map((capability) => capability.trim().toLowerCase()).filter(Boolean));
+  if (typeof config.last_state?.power === "string" && config.last_state.power.trim()) {
+    normalized.add("power");
+  }
+  if (typeof config.last_state?.brightness === "number") {
+    normalized.add("brightness");
+  }
+  if (typeof config.last_state?.speed === "number") {
+    normalized.add("speed");
+  }
+  if (typeof config.last_state?.temperature === "number") {
+    normalized.add("temperature");
+  }
+  if (typeof config.last_state?.humidity === "number") {
+    normalized.add("humidity");
+  }
+  if (typeof config.last_state?.value === "number" || typeof config.last_state?.value === "boolean") {
+    normalized.add("value");
+  }
   if (config.last_state?.rgb) {
     normalized.add("rgb");
   }
@@ -898,6 +930,83 @@ function getEffectiveExtensionCapabilities(config: DeviceConfig): string[] {
   const compatibilityCaps = getExtensionCompatibilityCapabilities(config);
   const preferred = runtimeCaps.length > 0 ? runtimeCaps : schemaCaps;
   return Array.from(new Set([...preferred, ...compatibilityCaps]));
+}
+
+function getExternalPowerState(state: DeviceStateSnapshot | null | undefined): boolean {
+  const rawPower = typeof state?.power === "string" ? state.power.trim().toLowerCase() : null;
+  if (rawPower === "on") {
+    return true;
+  }
+  if (rawPower === "off") {
+    return false;
+  }
+
+  const numericValue = getNumericStateValue(state?.value);
+  if (numericValue !== null) {
+    return numericValue !== 0;
+  }
+  if (typeof state?.brightness === "number") {
+    return state.brightness > 0;
+  }
+  if (typeof state?.speed === "number") {
+    return state.speed > 0;
+  }
+  return false;
+}
+
+function getExternalBrightnessValue(
+  state: DeviceStateSnapshot | null | undefined,
+  fallback: number,
+): number {
+  if (typeof state?.brightness === "number") {
+    return state.brightness;
+  }
+  const numericValue = getNumericStateValue(state?.value);
+  if (numericValue !== null && numericValue > 1) {
+    return numericValue;
+  }
+  if (typeof state?.restore_brightness === "number") {
+    return state.restore_brightness;
+  }
+  const restoreValue = getNumericStateValue(state?.restore_value);
+  if (restoreValue !== null && restoreValue > 1) {
+    return restoreValue;
+  }
+  return fallback;
+}
+
+function getExternalSpeedValue(
+  state: DeviceStateSnapshot | null | undefined,
+  fallback: number,
+): number {
+  if (typeof state?.speed === "number") {
+    return state.speed;
+  }
+  const numericValue = getNumericStateValue(state?.value);
+  if (numericValue !== null && numericValue > 1) {
+    return numericValue;
+  }
+  return fallback;
+}
+
+function getExternalSensorValue(value: unknown): number | boolean | null {
+  if (typeof value === "boolean" || typeof value === "number") {
+    return value;
+  }
+  return null;
+}
+
+function formatExternalSensorReading(value: number | boolean | null): string {
+  if (value === null) {
+    return "--";
+  }
+  if (typeof value === "boolean") {
+    return value ? "On" : "Off";
+  }
+  if (Number.isInteger(value)) {
+    return value.toString();
+  }
+  return value.toFixed(1);
 }
 
 type ExtensionAdvancedMode = "color" | "temperature";
@@ -937,8 +1046,8 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
   const failedPendingCommand =
     deliveryForPendingCommand && config.last_delivery?.status === "failed";
 
-  const baselineToggleState = getBinaryState(config.last_state);
-  const baselineSliderValue = getBrightnessState(config.last_state, null, 0);
+  const baselineToggleState = getExternalPowerState(config.last_state);
+  const baselineSliderValue = getExternalBrightnessValue(config.last_state, 0);
   
   // Extract RGB from state
   const rgbStateObj = config.last_state?.rgb;
@@ -964,9 +1073,11 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
 
   const controlReady = isOnline;
   const commandPending = pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced;
-  const toggleDisabled = requestPending || commandPending || !controlReady;
+  const toggleDisabled = requestPending || !controlReady;
   const valueControlDisabled = requestPending || !controlReady;
-  const toggleLoading = optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
+  const toggleLoading =
+    commandPending ||
+    optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
   const sliderLoading = optimisticSliderValue !== null && !sliderTargetMatched && !failedPendingCommand;
   const rgbLoading = optimisticRgb !== null && !rgbTargetMatched && !failedPendingCommand;
   const toneLoading = optimisticTone !== null && !toneTargetMatched && !failedPendingCommand;
@@ -1152,11 +1263,11 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
         </div>
       </div>
       
-      {/* Name and Room */}
+      {/* Name and Area */}
       <div className="flex justify-between items-start mb-3">
         <div className="flex-1 min-w-0 pr-4">
           <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
-          <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Unassigned room'}>{config.room_name || 'Unassigned room'}</p>
+          <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Unassigned area'}>{config.room_name || 'Unassigned area'}</p>
         </div>
         <span className="flex items-center text-xs text-slate-500 flex-shrink-0 mt-0.5">
           <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'} mr-1`}></span>
@@ -1320,9 +1431,383 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
   );
 }
 
+function ExternalSwitchCard({ config, isOnline }: { config: DeviceConfig; isOnline: boolean }) {
+  const [requestPending, setRequestPending] = useState(false);
+  const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
+  const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
+
+  const effectiveCaps = getEffectiveExtensionCapabilities(config);
+  const supportsPower = effectiveCaps.includes("power") || effectiveCaps.length === 0;
+  const deliveryForPendingCommand = Boolean(
+    config.last_delivery && pendingCmdId && config.last_delivery.command_id === pendingCmdId,
+  );
+  const failedPendingCommand = deliveryForPendingCommand && config.last_delivery?.status === "failed";
+  const baselineToggleState = getExternalPowerState(config.last_state);
+  const toggleTargetMatched = optimisticToggleState !== null && baselineToggleState === optimisticToggleState;
+  const commandStateSynced = optimisticToggleState === null || toggleTargetMatched;
+  const commandPending = pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced;
+  const toggleDisabled = !supportsPower || requestPending || !isOnline;
+  const toggleLoading =
+    commandPending ||
+    optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
+  const toggleState = optimisticToggleState !== null ? optimisticToggleState : baselineToggleState;
+
+  useEffect(() => {
+    if (optimisticToggleState !== null && commandStateSynced) {
+      const timer = window.setTimeout(() => {
+        setOptimisticToggleState(null);
+        setPendingCmdId(null);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [commandStateSynced, optimisticToggleState]);
+
+  useEffect(() => {
+    if (deliveryForPendingCommand || failedPendingCommand) {
+      const timer = window.setTimeout(() => {
+        setOptimisticToggleState(null);
+        setPendingCmdId(null);
+      }, failedPendingCommand ? 0 : 500);
+      return () => window.clearTimeout(timer);
+    }
+  }, [deliveryForPendingCommand, failedPendingCommand]);
+
+  useEffect(() => {
+    if (pendingCmdId !== null) {
+      const timer = window.setTimeout(() => {
+        setOptimisticToggleState(null);
+        setPendingCmdId(null);
+      }, 3000);
+      return () => window.clearTimeout(timer);
+    }
+  }, [pendingCmdId]);
+
+  const handleToggle = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const isChecked = event.target.checked;
+    setRequestPending(true);
+    setPendingCmdId(null);
+    setOptimisticToggleState(isChecked);
+    try {
+      const response = await sendDeviceCommand(config.device_id, { kind: "action", pin: 0, value: isChecked ? 1 : 0 });
+      setRequestPending(false);
+      if (response.status === "failed") {
+        setOptimisticToggleState(null);
+      } else {
+        setPendingCmdId(response.command_id || null);
+      }
+    } catch {
+      setRequestPending(false);
+      setOptimisticToggleState(null);
+    }
+  };
+
+  return (
+    <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-emerald-100 dark:border-emerald-900/40 p-5 shadow-sm hover:shadow-md transition-shadow relative w-full h-full flex flex-col">
+      <div className="absolute top-2 right-2 rounded-full bg-emerald-50 p-1 text-emerald-500 dark:bg-emerald-900/20 dark:text-emerald-300">
+        <span className="material-icons-round text-[16px]">extension</span>
+      </div>
+      <div className="flex items-start justify-between gap-3 mb-4 mt-1">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="h-10 w-10 rounded-full bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-300 flex items-center justify-center">
+            <span className="material-icons-round">toggle_on</span>
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>
+              {config.name}
+            </h3>
+            <p className="text-xs text-slate-500 truncate" title={config.room_name || "Unassigned area"}>
+              {config.room_name || "Unassigned area"}
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-2 pr-7">
+          <span className="flex items-center text-xs text-slate-500">
+            <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-red-500"} mr-1`} />
+            {isOnline ? "Online" : "Offline"}
+          </span>
+          <DeviceToggle
+            id={`ext-switch-${config.device_id}`}
+            checked={toggleState}
+            disabled={toggleDisabled}
+            loading={toggleLoading}
+            onChange={handleToggle}
+          />
+        </div>
+      </div>
+      <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Switch State</div>
+        <div className="mt-2 flex items-end justify-between gap-3">
+          <div className="text-lg font-semibold text-slate-900 dark:text-white">{toggleState ? "On" : "Off"}</div>
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            {supportsPower ? "Runtime-backed toggle" : "Power control unavailable"}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExternalFanCard({ config, isOnline }: { config: DeviceConfig; isOnline: boolean }) {
+  const [requestPending, setRequestPending] = useState(false);
+  const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
+  const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
+  const [optimisticSpeed, setOptimisticSpeed] = useState<number | null>(null);
+
+  const effectiveCaps = getEffectiveExtensionCapabilities(config);
+  const supportsPower = effectiveCaps.includes("power");
+  const supportsSpeed = effectiveCaps.includes("speed");
+  const deliveryForPendingCommand = Boolean(
+    config.last_delivery && pendingCmdId && config.last_delivery.command_id === pendingCmdId,
+  );
+  const failedPendingCommand = deliveryForPendingCommand && config.last_delivery?.status === "failed";
+  const baselineToggleState = getExternalPowerState(config.last_state);
+  const baselineSpeed = getExternalSpeedValue(config.last_state, 0);
+  const toggleTargetMatched = optimisticToggleState !== null && baselineToggleState === optimisticToggleState;
+  const speedTargetMatched = optimisticSpeed !== null && baselineSpeed === optimisticSpeed;
+  const commandStateSynced =
+    (optimisticToggleState === null || toggleTargetMatched) &&
+    (optimisticSpeed === null || speedTargetMatched);
+  const commandPending = pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced;
+  const toggleDisabled = !supportsPower || requestPending || !isOnline;
+  const speedDisabled = !supportsSpeed || requestPending || !isOnline;
+  const toggleLoading =
+    commandPending ||
+    optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
+  const speedLoading = optimisticSpeed !== null && !speedTargetMatched && !failedPendingCommand;
+  const toggleState = optimisticToggleState !== null ? optimisticToggleState : baselineToggleState;
+  const speedValue = optimisticSpeed !== null ? optimisticSpeed : baselineSpeed;
+
+  useEffect(() => {
+    if ((optimisticToggleState !== null || optimisticSpeed !== null) && commandStateSynced) {
+      const timer = window.setTimeout(() => {
+        setOptimisticToggleState(null);
+        setOptimisticSpeed(null);
+        setPendingCmdId(null);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [commandStateSynced, optimisticSpeed, optimisticToggleState]);
+
+  useEffect(() => {
+    if (deliveryForPendingCommand || failedPendingCommand) {
+      const timer = window.setTimeout(() => {
+        setOptimisticToggleState(null);
+        setOptimisticSpeed(null);
+        setPendingCmdId(null);
+      }, failedPendingCommand ? 0 : 500);
+      return () => window.clearTimeout(timer);
+    }
+  }, [deliveryForPendingCommand, failedPendingCommand]);
+
+  useEffect(() => {
+    if (pendingCmdId !== null) {
+      const timer = window.setTimeout(() => {
+        setOptimisticToggleState(null);
+        setOptimisticSpeed(null);
+        setPendingCmdId(null);
+      }, 3000);
+      return () => window.clearTimeout(timer);
+    }
+  }, [pendingCmdId]);
+
+  const { queueValue: queueRealtimeSpeedValue } = useRealtimeRangeCommand({
+    deviceId: config.device_id,
+    buildPayload: (rawValue) => ({ kind: "action", pin: 0, speed: Math.round(rawValue) }),
+    onLatestAccepted: (response) => {
+      setPendingCmdId(response.command_id || null);
+    },
+    onLatestRejected: () => {
+      setOptimisticToggleState(null);
+      setOptimisticSpeed(null);
+      setPendingCmdId(null);
+    },
+  });
+
+  const handleToggle = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const isChecked = event.target.checked;
+    setRequestPending(true);
+    setPendingCmdId(null);
+    setOptimisticToggleState(isChecked);
+    if (!isChecked) {
+      setOptimisticSpeed(0);
+    }
+    try {
+      const response = await sendDeviceCommand(config.device_id, { kind: "action", pin: 0, value: isChecked ? 1 : 0 });
+      setRequestPending(false);
+      if (response.status === "failed") {
+        setOptimisticToggleState(null);
+        setOptimisticSpeed(null);
+      } else {
+        setPendingCmdId(response.command_id || null);
+      }
+    } catch {
+      setRequestPending(false);
+      setOptimisticToggleState(null);
+      setOptimisticSpeed(null);
+    }
+  };
+
+  const scheduleSpeedValue = (rawValue: number, immediate = false) => {
+    setPendingCmdId(null);
+    setOptimisticToggleState(rawValue > 0 ? true : supportsPower ? false : null);
+    setOptimisticSpeed(rawValue);
+    queueRealtimeSpeedValue(rawValue, immediate ? { immediate: true } : undefined);
+  };
+
+  return (
+    <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-cyan-100 dark:border-cyan-900/40 p-5 shadow-sm hover:shadow-md transition-shadow relative w-full h-full flex flex-col">
+      <div className="absolute top-2 right-2 rounded-full bg-cyan-50 p-1 text-cyan-500 dark:bg-cyan-900/20 dark:text-cyan-300">
+        <span className="material-icons-round text-[16px]">extension</span>
+      </div>
+      <div className="flex items-start justify-between gap-3 mb-4 mt-1">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="h-10 w-10 rounded-full bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300 flex items-center justify-center">
+            <span className="material-icons-round">mode_fan</span>
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>
+              {config.name}
+            </h3>
+            <p className="text-xs text-slate-500 truncate" title={config.room_name || "Unassigned area"}>
+              {config.room_name || "Unassigned area"}
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-2 pr-7">
+          <span className="flex items-center text-xs text-slate-500">
+            <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-red-500"} mr-1`} />
+            {isOnline ? "Online" : "Offline"}
+          </span>
+          {supportsPower ? (
+            <DeviceToggle
+              id={`ext-fan-${config.device_id}`}
+              checked={toggleState}
+              disabled={toggleDisabled}
+              loading={toggleLoading || speedLoading}
+              onChange={handleToggle}
+            />
+          ) : null}
+        </div>
+      </div>
+      <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
+        <div className="flex items-end justify-between gap-3 mb-2">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Fan Speed</div>
+            <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{speedValue}%</div>
+          </div>
+          <span className="text-xs text-slate-500 dark:text-slate-400">
+            {supportsSpeed ? (toggleState ? "Running" : "Idle") : "Speed control unavailable"}
+          </span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={speedValue}
+          disabled={speedDisabled}
+          onChange={(event) => scheduleSpeedValue(parseInt(event.target.value, 10))}
+          onMouseUp={(event) => scheduleSpeedValue(parseInt(event.currentTarget.value, 10), true)}
+          onTouchEnd={(event) => scheduleSpeedValue(parseInt(event.currentTarget.value, 10), true)}
+          className="w-full h-2 rounded-lg appearance-none cursor-pointer outline-none transition-colors bg-cyan-100 dark:bg-cyan-900/30 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-cyan-600 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:border-none [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:bg-cyan-600"
+        />
+      </div>
+    </div>
+  );
+}
+
+function ExternalSensorCard({ config, isOnline }: { config: DeviceConfig; isOnline: boolean }) {
+  const effectiveCaps = getEffectiveExtensionCapabilities(config);
+  const sensorMetrics = [
+    {
+      key: "temperature",
+      label: "Temperature",
+      icon: "device_thermostat",
+      value: typeof config.last_state?.temperature === "number" ? config.last_state.temperature : null,
+      unit: "°C",
+      visible: effectiveCaps.includes("temperature"),
+      format: (value: number | boolean | null) => (typeof value === "number" ? formatClimateReading(value) : "--"),
+    },
+    {
+      key: "humidity",
+      label: "Humidity",
+      icon: "humidity_percentage",
+      value: typeof config.last_state?.humidity === "number" ? config.last_state.humidity : null,
+      unit: "%",
+      visible: effectiveCaps.includes("humidity"),
+      format: (value: number | boolean | null) => (typeof value === "number" ? formatClimateReading(value) : "--"),
+    },
+    {
+      key: "value",
+      label: "Value",
+      icon: "sensors",
+      value: getExternalSensorValue(config.last_state?.value),
+      unit: typeof config.last_state?.unit === "string" ? config.last_state.unit : null,
+      visible: effectiveCaps.includes("value") || effectiveCaps.length === 0,
+      format: formatExternalSensorReading,
+    },
+  ].filter((metric) => metric.visible);
+
+  return (
+    <div className="bg-surface-light dark:bg-surface-dark rounded-xl border border-amber-100 dark:border-amber-900/40 p-5 shadow-sm hover:shadow-md transition-shadow relative w-full h-full flex flex-col">
+      <div className="absolute top-2 right-2 rounded-full bg-amber-50 p-1 text-amber-500 dark:bg-amber-900/20 dark:text-amber-300">
+        <span className="material-icons-round text-[16px]">extension</span>
+      </div>
+      <div className="flex items-start justify-between gap-3 mb-4 mt-1">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="h-10 w-10 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300 flex items-center justify-center">
+            <span className="material-icons-round">sensors</span>
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>
+              {config.name}
+            </h3>
+            <p className="text-xs text-slate-500 truncate" title={config.room_name || "Unassigned area"}>
+              {config.room_name || "Unassigned area"}
+            </p>
+          </div>
+        </div>
+        <span className="flex items-center text-xs text-slate-500 pr-7">
+          <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-red-500"} mr-1`} />
+          {isOnline ? "Online" : "Offline"}
+        </span>
+      </div>
+      {sensorMetrics.length === 0 ? (
+        <div className="flex-1 rounded-xl border border-dashed border-slate-200 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
+          Waiting for the first sensor reading from the extension runtime.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {sensorMetrics.map((metric) => (
+            <div key={metric.key} className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
+              <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+                <span className="material-icons-round text-[14px]">{metric.icon}</span>
+                {metric.label}
+              </div>
+              <div className="mt-3 flex items-baseline gap-1">
+                <span className="text-xl font-semibold text-slate-900 dark:text-white">{metric.format(metric.value)}</span>
+                {metric.unit ? <span className="text-xs text-slate-500 dark:text-slate-400">{metric.unit}</span> : null}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export const DynamicDeviceCard = memo(function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
-  if (config.provider) {
-    return <ExtensionCard config={config} isOnline={isOnline} />;
+  switch (getExternalCardType(config)) {
+    case "light":
+      return <ExtensionCard config={config} isOnline={isOnline} />;
+    case "switch":
+      return <ExternalSwitchCard config={config} isOnline={isOnline} />;
+    case "fan":
+      return <ExternalFanCard config={config} isOnline={isOnline} />;
+    case "sensor":
+      return <ExternalSensorCard config={config} isOnline={isOnline} />;
+    default:
+      break;
   }
 
   const activePinConfigurations = getActivePinConfigurations(config);
@@ -1345,7 +1830,7 @@ export const DynamicDeviceCard = memo(function DynamicDeviceCard({ config, isOnl
       <div className="flex justify-between items-start mb-4">
         <div className="flex-1 min-w-0 pr-4">
           <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
-          <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Unassigned room'}>{config.room_name || 'Unassigned room'}</p>
+          <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Unassigned area'}>{config.room_name || 'Unassigned area'}</p>
         </div>
         <span className="flex items-center text-xs text-slate-500 flex-shrink-0">
           <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'} mr-1`}></span>

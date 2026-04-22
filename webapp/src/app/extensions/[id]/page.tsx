@@ -13,6 +13,7 @@ import {
     InstalledExtension,
     InstalledExtensionSchema,
 } from "@/lib/api";
+import { formatDeviceTypeLabel } from "@/lib/device-display";
 import { fetchRooms, RoomRecord } from "@/lib/rooms";
 
 type SchemaDialogState = {
@@ -26,6 +27,10 @@ const CAPABILITY_LABELS: Record<string, string> = {
     brightness: "Brightness",
     rgb: "RGB",
     color_temperature: "Tone",
+    speed: "Speed",
+    temperature: "Temperature",
+    humidity: "Humidity",
+    value: "Value",
 };
 
 function buildInitialConfig(schema: InstalledExtensionSchema): ConfigDraft {
@@ -88,7 +93,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                 setRooms(data);
             } catch (nextError) {
                 if (cancelled) return;
-                setRoomsError(nextError instanceof Error ? nextError.message : "Failed to load rooms");
+                setRoomsError(nextError instanceof Error ? nextError.message : "Failed to load areas");
             } finally {
                 if (!cancelled) setRoomsLoading(false);
             }
@@ -255,11 +260,14 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                                     <div className="flex flex-wrap items-center gap-2">
                                                         <h4 className="text-base font-bold text-slate-900 dark:text-white">{schema.name}</h4>
                                                         <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600 dark:bg-white/10 dark:text-slate-300">
-                                                            {schema.card_type}
+                                                            {formatDeviceTypeLabel(schema.device_type)}
                                                         </span>
                                                     </div>
                                                     <p className="mt-2 text-sm text-slate-500 dark:text-slate-400 min-h-12">
                                                         {schema.description || "No description provided for this schema."}
+                                                    </p>
+                                                    <p className="mt-3 text-[11px] font-medium uppercase tracking-[0.14em] text-slate-400 dark:text-slate-500">
+                                                        Renderer: {schema.card_type}
                                                     </p>
 
                                                     <div className="mt-4 flex flex-wrap gap-2">
@@ -335,14 +343,14 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                 </div>
 
                                 <div>
-                                    <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200">Room assignment</label>
+                                    <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-200">Area assignment</label>
                                     <select
                                         value={selectedRoomId}
                                         onChange={(event) => setSelectedRoomId(event.target.value)}
                                         disabled={roomsLoading}
                                         className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-500/10 disabled:cursor-not-allowed disabled:opacity-70 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
                                     >
-                                        <option value="">{roomsLoading ? "Loading rooms..." : "Unassigned"}</option>
+                                        <option value="">{roomsLoading ? "Loading areas..." : "Unassigned area"}</option>
                                         {rooms.map((room) => (
                                             <option key={room.room_id} value={room.room_id}>
                                                 {room.name}
@@ -353,7 +361,7 @@ export default function ExtensionDetailView({ params }: { params: Promise<{ id: 
                                         <p className="mt-2 text-sm text-rose-600 dark:text-rose-300">{roomsError}</p>
                                     ) : rooms.length === 0 && !roomsLoading ? (
                                         <p className="mt-2 text-sm text-amber-700 dark:text-amber-200">
-                                            No rooms exist yet. The device can be created unassigned and moved later from the room management flow.
+                                            No areas exist yet. The device can be created unassigned and moved later from the area management flow.
                                         </p>
                                     ) : null}
                                 </div>

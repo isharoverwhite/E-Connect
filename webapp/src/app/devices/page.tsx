@@ -9,6 +9,7 @@ import { useAuth } from "@/components/AuthProvider";
 import Sidebar from "@/components/Sidebar";
 import { fetchDevices, deleteDevice, fetchSystemStatus, SystemStatusResponse } from "@/lib/api";
 import { getActivePinConfigurations } from "@/lib/device-config";
+import { formatDeviceTypeLabel, getDeviceType, getDeviceTypeIcon, isExternalDevice } from "@/lib/device-display";
 import { DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
 import { useToast } from "@/components/ToastContext";
 import ConfirmModal from "@/components/ConfirmModal";
@@ -262,11 +263,15 @@ export default function DevicesPage() {
 
     const renderAdminDeviceCard = (device: DeviceConfig) => {
         const isOnline = device.conn_status === "online";
-        const isExternal = Boolean(device.is_external || device.provider);
+        const isExternal = isExternalDevice(device);
         const activePins = getActivePinConfigurations(device);
-        const modeColor = isExternal
+        const deviceType = getDeviceType(device);
+        const deviceTypeLabel = formatDeviceTypeLabel(deviceType);
+        const deviceTypeIcon = getDeviceTypeIcon(deviceType);
+        const deviceTypeColor = isExternal
             ? "border-indigo-200 bg-indigo-50 text-indigo-600 dark:border-indigo-500/20 dark:bg-indigo-500/10 dark:text-indigo-300"
-            : device.mode === "no-code"
+            : "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300";
+        const modeColor = device.mode === "no-code"
             ? "border-purple-200 bg-purple-50 text-purple-500 dark:border-purple-500/20 dark:bg-purple-500/10"
             : "border-blue-200 bg-blue-50 text-blue-500 dark:border-blue-500/20 dark:bg-blue-500/10";
         const deviceIp = device.ip_address || device.last_state?.ip_address;
@@ -279,7 +284,7 @@ export default function DevicesPage() {
                 <div className="flex items-start justify-between border-b border-slate-100 p-5 dark:border-slate-700/50">
                     <div className="flex w-full items-center gap-3">
                         <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${isOnline ? "bg-primary/10 text-primary" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>
-                            <span className="material-icons-round">{isExternal || device.mode === "no-code" ? "extension" : "developer_board"}</span>
+                            <span className="material-icons-round">{deviceTypeIcon}</span>
                         </div>
                         <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-2">
@@ -305,8 +310,8 @@ export default function DevicesPage() {
 
                 <div className="flex-1 space-y-3 p-5 text-sm">
                     <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
-                        <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">meeting_room</span> Room</span>
-                        <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{device.room_name || "Unassigned"}</span>
+                        <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">meeting_room</span> Area</span>
+                        <span className="text-xs font-medium text-slate-700 dark:text-slate-300">{device.room_name || "Unassigned area"}</span>
                     </div>
                     <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
                         <span className="text-slate-500 dark:text-slate-400">
@@ -318,16 +323,21 @@ export default function DevicesPage() {
                         </span>
                     </div>
                     <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
-                        <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">settings_ethernet</span> Mode</span>
+                        <span className="text-slate-500 dark:text-slate-400"><span className="material-icons-round mr-1 align-text-bottom text-xs">category</span> Device Type</span>
                         <div className="flex items-center gap-2">
                             {device.board && !isExternal && (
                                 <span className="rounded border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-500 dark:border-slate-700 dark:bg-slate-800/50 dark:text-slate-400" title="Board Model">
                                     {device.board}
                                 </span>
                             )}
-                            <span className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${modeColor}`}>
-                                {isExternal ? "external" : device.mode}
+                            <span className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${deviceTypeColor}`}>
+                                {deviceTypeLabel}
                             </span>
+                            {!isExternal ? (
+                                <span className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${modeColor}`}>
+                                    {device.mode}
+                                </span>
+                            ) : null}
                         </div>
                     </div>
                     {!isExternal && (
@@ -428,7 +438,7 @@ export default function DevicesPage() {
             <div key={device.device_id} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
                 <div className="flex items-center justify-between gap-4">
                     <div>
-                        <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{device.room_name || "Assigned room"}</h3>
+                        <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{device.room_name || "Assigned area"}</h3>
                         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Availability only</p>
                     </div>
                     <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] ${isOnline ? "border border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300" : "border border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-300"}`}>
@@ -546,8 +556,8 @@ export default function DevicesPage() {
                         </h1>
                         <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
                             {isAdmin
-                                ? "Pair, assign rooms, and manage the lifecycle of household devices."
-                                : "Your account can only monitor whether assigned-room devices are online."}
+                                ? "Pair, assign areas, and manage the lifecycle of household devices."
+                                : "Your account can only monitor whether assigned-area devices are online."}
                         </p>
                     </div>
 
@@ -584,7 +594,7 @@ export default function DevicesPage() {
                         <div className="mb-6 flex flex-col items-start justify-between sm:flex-row sm:items-center">
                             <div>
                                 <h2 className="text-xl font-bold text-slate-900 dark:text-white">
-                                    {isAdmin ? "Your Ecosystem" : "Assigned Room Status"}
+                                    {isAdmin ? "Your Ecosystem" : "Assigned Area Status"}
                                 </h2>
                                 <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                                     {isAdmin
@@ -641,7 +651,7 @@ export default function DevicesPage() {
 
                         {!isAdmin ? (
                             <div className="mb-6 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-700 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-300">
-                                Pairing, creating, deleting, and opening device configuration are disabled for non-admin accounts. Room control remains available from the dashboard for rooms assigned by an administrator.
+                                Pairing, creating, deleting, and opening device configuration are disabled for non-admin accounts. Area control remains available from the dashboard for areas assigned by an administrator.
                             </div>
                         ) : null}
 
@@ -658,7 +668,7 @@ export default function DevicesPage() {
                                 <p className="mx-auto mb-6 max-w-sm text-sm text-slate-500 dark:text-slate-400">
                                     {isAdmin
                                         ? "Start with the SVG builder for supported ESP32 or ESP8266 boards, or use discovery for already provisioned nodes."
-                                        : "An administrator has not yet assigned any rooms with devices to your account."}
+                                        : "An administrator has not yet assigned any areas with devices to your account."}
                                 </p>
                                 {isAdmin ? (
                                     <div className="flex flex-col items-center justify-center gap-3 sm:flex-row">
