@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 "use client";
 
 import React, { createContext, useContext, useState, useEffect } from "react";

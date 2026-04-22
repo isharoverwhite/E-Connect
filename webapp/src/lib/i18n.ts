@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
 export const translations = {
     en: {
         // Setup Page
