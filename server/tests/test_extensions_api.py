@@ -726,6 +726,74 @@ def test_create_external_device_is_merged_into_device_read_models():
         db.close()
 
 
+def test_external_device_visibility_is_preserved_in_read_models():
+    create_admin_user()
+    token = get_token()
+
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={"file": ("yeelight.zip", build_extension_zip(), "application/zip")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    create_response = client.post(
+        "/api/v1/external-devices",
+        json={
+            "installed_extension_id": "yeelight_control",
+            "device_schema_id": "yeelight_color_light",
+            "name": "Desk Yeelight",
+            "config": {"ip_address": "192.168.1.88"},
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 200, create_response.text
+    device_id = create_response.json()["device_id"]
+
+    visibility_response = client.patch(
+        f"/api/v1/device/{device_id}/visibility",
+        json={"show_on_dashboard": False},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert visibility_response.status_code == 200, visibility_response.text
+    assert visibility_response.json()["show_on_dashboard"] is False
+
+    devices_response = client.get(
+        "/api/v1/devices",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert devices_response.status_code == 200, devices_response.text
+    devices_payload = {
+        device["device_id"]: device for device in devices_response.json()
+    }
+    assert devices_payload[device_id]["show_on_dashboard"] is False
+
+    dashboard_response = client.get(
+        "/api/v1/dashboard/devices",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert dashboard_response.status_code == 200, dashboard_response.text
+    dashboard_payload = {
+        device["device_id"]: device for device in dashboard_response.json()
+    }
+    assert dashboard_payload[device_id]["show_on_dashboard"] is False
+
+    detail_response = client.get(
+        f"/api/v1/device/{device_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    assert detail_response.json()["show_on_dashboard"] is False
+
+    db = TestingSessionLocal()
+    try:
+        stored = db.query(ExternalDevice).filter_by(device_id=device_id).first()
+        assert stored is not None
+        assert stored.show_on_dashboard is False
+    finally:
+        db.close()
+
+
 def test_non_light_extension_schemas_are_serialized_with_runtime_pins():
     create_admin_user()
     token = get_token()

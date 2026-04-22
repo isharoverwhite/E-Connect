@@ -2048,6 +2048,7 @@ def _serialize_external_device(device: ExternalDevice) -> dict[str, Any]:
         "ip_address": config.get("ip_address"),
         "topic_pub": None,
         "topic_sub": None,
+        "show_on_dashboard": device.show_on_dashboard,
         "room_id": device.room_id,
         "room_name": room_name,
         "device_type": _resolve_external_device_type(device),
