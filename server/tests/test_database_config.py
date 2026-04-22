@@ -180,7 +180,7 @@ def test_initialize_database_backfills_legacy_history_and_cleans_stale_board_con
             role=sql_models.HouseholdRole.owner,
         )
         room = sql_models.Room(
-            name="Legacy Room",
+            name="Legacy Area",
             user_id=user.user_id,
             household_id=household.household_id,
         )
@@ -313,7 +313,7 @@ def test_initialize_database_skips_backfill_for_history_deleted_snapshots(monkey
             role=sql_models.HouseholdRole.owner,
         )
         room = sql_models.Room(
-            name="Deleted History Room",
+            name="Deleted History Area",
             user_id=user.user_id,
             household_id=household.household_id,
         )

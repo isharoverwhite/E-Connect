@@ -319,7 +319,7 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
         if not secure_project:
             _raise_secure_pairing_error("Provisioning project was not found on the server.")
         if secure_project.room_id is None:
-            _raise_secure_pairing_error("Provisioning project is missing a room assignment.")
+            _raise_secure_pairing_error("Provisioning project is missing an area assignment.")
 
         persisted_secret = (
             extract_project_secret_from_payload(secure_project.pending_config)

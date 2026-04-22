@@ -27,6 +27,7 @@ import threading
 import time
 import uuid
 from collections import deque
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from http import HTTPStatus
@@ -58,6 +59,96 @@ DEFAULT_COMMAND = {
     "pin": 2,
     "value": 1,
 }
+
+BOARD_PRESETS: dict[str, dict[str, Any]] = {
+    "dht22-sensor": {
+        "label": "DHT22 Sensor Board",
+        "description": "Single INPUT pin that publishes DHT22 temperature and humidity telemetry.",
+        "device_name": "Fake DHT22 Sensor Board",
+        "pins": [
+            {
+                "gpio_pin": 4,
+                "mode": "INPUT",
+                "function": "climate",
+                "label": "DHT22 Climate",
+                "extra_params": {
+                    "input_type": "dht",
+                    "dht_version": "DHT22",
+                },
+            }
+        ],
+        "command": {
+            "kind": "action",
+            "pin": 4,
+            "value": 1,
+        },
+    },
+    "pwm-fan-tach": {
+        "label": "PWM Fan + Tach Board",
+        "description": "PWM fan output paired with an INPUT tachometer pin that reports RPM-like values.",
+        "device_name": "Fake PWM Fan Tach Board",
+        "pins": [
+            {
+                "gpio_pin": 3,
+                "mode": "PWM",
+                "function": "fan",
+                "label": "PWM Fan",
+                "extra_params": {
+                    "min_value": 0,
+                    "max_value": 255,
+                    "input_type": "switch",
+                    "switch_type": "momentary",
+                },
+            },
+            {
+                "gpio_pin": 0,
+                "mode": "INPUT",
+                "function": "tachometer",
+                "label": "Fan Tachometer",
+                "extra_params": {
+                    "input_type": "tachometer",
+                    "switch_type": "momentary",
+                },
+            },
+        ],
+        "command": {
+            "kind": "action",
+            "pin": 3,
+            "brightness": 180,
+        },
+    },
+    "switch-board": {
+        "label": "Switch Board",
+        "description": "Single OUTPUT relay/switch board for discovery, approve, and on-off command testing.",
+        "device_name": "Fake Switch Board",
+        "pins": deepcopy(DEFAULT_PINS),
+        "command": deepcopy(DEFAULT_COMMAND),
+    },
+    "pwm-slicer": {
+        "label": "PWM Slicer Board",
+        "description": "Single PWM output board for slider-like dimmer or value-control test flows.",
+        "device_name": "Fake PWM Slicer Board",
+        "pins": [
+            {
+                "gpio_pin": 5,
+                "mode": "PWM",
+                "function": "dimmer",
+                "label": "PWM Slicer",
+                "extra_params": {
+                    "min_value": 0,
+                    "max_value": 255,
+                },
+            }
+        ],
+        "command": {
+            "kind": "action",
+            "pin": 5,
+            "brightness": 128,
+        },
+    },
+}
+
+CUSTOM_BOARD_PRESET = "custom"
 
 
 def utc_timestamp() -> str:
@@ -96,6 +187,56 @@ def load_json_array(raw: str, *, field_name: str) -> list[dict[str, Any]]:
     return rows
 
 
+def coerce_int(value: Any, default: int) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def coerce_float(value: Any, default: float) -> float:
+    if isinstance(value, bool):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def list_board_presets() -> list[dict[str, str]]:
+    presets = [
+        {
+            "id": CUSTOM_BOARD_PRESET,
+            "label": "Custom JSON",
+            "description": "Keep the current pins_json and command_json as-is.",
+        }
+    ]
+    for preset_id, preset in BOARD_PRESETS.items():
+        presets.append(
+            {
+                "id": preset_id,
+                "label": str(preset["label"]),
+                "description": str(preset["description"]),
+            }
+        )
+    return presets
+
+
+def apply_board_preset(settings: "Settings", preset_id: str) -> bool:
+    preset = BOARD_PRESETS.get(preset_id)
+    settings.board_preset = preset_id if preset else CUSTOM_BOARD_PRESET
+    if not preset:
+        return False
+
+    settings.device_name = str(preset.get("device_name") or settings.device_name)
+    settings.mode = str(preset.get("mode") or settings.mode or "no-code")
+    settings.pins_json = dump_json(deepcopy(preset["pins"]))
+    settings.command_json = dump_json(deepcopy(preset["command"]))
+    return True
+
+
 @dataclass
 class Settings:
     server_base_url: str = field(default_factory=lambda: os.getenv("FAKE_BOARD_SERVER_URL", "http://127.0.0.1:8000"))
@@ -116,6 +257,7 @@ class Settings:
     project_id: str = ""
     secret_key: str = ""
     ip_address: str = "192.168.50.90"
+    board_preset: str = CUSTOM_BOARD_PRESET
     pins_json: str = field(default_factory=lambda: dump_json(DEFAULT_PINS))
     command_json: str = field(default_factory=lambda: dump_json(DEFAULT_COMMAND))
 
@@ -188,6 +330,7 @@ class FakeBoardHarness:
             self.settings.project_id = first("project_id", self.settings.project_id)
             self.settings.secret_key = first("secret_key", self.settings.secret_key)
             self.settings.ip_address = first("ip_address", self.settings.ip_address)
+            self.settings.board_preset = first("board_preset", self.settings.board_preset) or CUSTOM_BOARD_PRESET
             self.settings.pins_json = form.get("pins_json", [self.settings.pins_json])[0].strip() or self.settings.pins_json
             self.settings.command_json = form.get("command_json", [self.settings.command_json])[0].strip() or self.settings.command_json
 
@@ -239,19 +382,31 @@ class FakeBoardHarness:
             if gpio < 0:
                 continue
             extra = pin.get("extra_params") if isinstance(pin.get("extra_params"), dict) else {}
+            mode = str(pin.get("mode", "OUTPUT")).upper()
+            input_type = str(extra.get("input_type") or "").strip().lower()
+            pwm_min = coerce_int(extra.get("min_value"), 0)
+            pwm_max = coerce_int(extra.get("max_value"), 255)
             runtime[gpio] = {
                 "pin": gpio,
-                "mode": str(pin.get("mode", "OUTPUT")),
+                "mode": mode,
                 "function": str(pin.get("function", "")),
                 "label": str(pin.get("label", f"Pin {gpio}")),
                 "value": 0,
                 "brightness": 0,
-                "active_level": int(extra.get("active_level", 1)),
-                "pwm_min": int(extra.get("min_value", 0)),
-                "pwm_max": int(extra.get("max_value", 255)),
+                "temperature": round(24.5 + (gpio % 4) * 0.8, 1),
+                "humidity": round(52.0 + (gpio % 5) * 2.4, 1),
+                "active_level": coerce_int(extra.get("active_level"), 1),
+                "pwm_min": pwm_min,
+                "pwm_max": pwm_max,
+                "extra_params": deepcopy(extra),
+                "input_type": input_type,
             }
-            if str(pin.get("mode", "OUTPUT")).upper() == "PWM" and runtime[gpio]["pwm_min"] > runtime[gpio]["pwm_max"]:
+            if mode == "PWM" and runtime[gpio]["pwm_min"] > runtime[gpio]["pwm_max"]:
                 runtime[gpio]["brightness"] = runtime[gpio]["pwm_min"]
+            if mode == "INPUT" and input_type == "switch":
+                runtime[gpio]["value"] = 0
+            if mode == "INPUT" and input_type == "tachometer":
+                runtime[gpio]["value"] = 0
         self._runtime_pins = runtime
 
     def _mqtt_topic(self, *suffix: str, device_id: str | None = None) -> str:
@@ -264,6 +419,74 @@ class FakeBoardHarness:
         if not self._runtime_pins:
             return 2
         return next(iter(self._runtime_pins))
+
+    def _first_command_pin_locked(self) -> int | None:
+        for pin_state in self._runtime_pins.values():
+            if str(pin_state.get("mode", "")).upper() in {"OUTPUT", "PWM"}:
+                return int(pin_state["pin"])
+        return None
+
+    def _primary_pwm_pin_locked(self) -> dict[str, Any] | None:
+        for pin_state in self._runtime_pins.values():
+            if str(pin_state.get("mode", "")).upper() == "PWM":
+                return pin_state
+        return None
+
+    def _tachometer_value_locked(self, pin_state: dict[str, Any]) -> int:
+        primary_pwm = self._primary_pwm_pin_locked()
+        if not primary_pwm:
+            return coerce_int(pin_state.get("value"), 0)
+
+        pwm_min = coerce_int(primary_pwm.get("pwm_min"), 0)
+        pwm_max = coerce_int(primary_pwm.get("pwm_max"), 255)
+        brightness = coerce_int(primary_pwm.get("brightness"), 0)
+        pwm_off = pwm_min if pwm_min > pwm_max else 0
+        if coerce_int(primary_pwm.get("value"), 0) == 0 or brightness == pwm_off:
+            return 0
+
+        span = max(1, abs(pwm_max - pwm_min))
+        normalized = abs(brightness - pwm_off) / span
+        return int(600 + normalized * 2100)
+
+    def _build_state_row_locked(self, pin_state: dict[str, Any]) -> dict[str, Any]:
+        row: dict[str, Any] = {
+            "pin": int(pin_state["pin"]),
+            "mode": str(pin_state["mode"]).upper(),
+            "function": pin_state.get("function"),
+            "label": pin_state.get("label"),
+            "extra_params": deepcopy(pin_state.get("extra_params") or {}),
+        }
+
+        mode = row["mode"]
+        input_type = str(pin_state.get("input_type") or "").lower()
+        if mode == "PWM":
+            row["value"] = coerce_int(pin_state.get("value"), 0)
+            row["brightness"] = coerce_int(pin_state.get("brightness"), 0)
+            row["restore_value"] = row["brightness"]
+            row["datatype"] = "number"
+            return row
+
+        if mode == "OUTPUT":
+            row["value"] = coerce_int(pin_state.get("value"), 0)
+            row["datatype"] = "boolean"
+            return row
+
+        if input_type == "dht":
+            row["temperature"] = round(coerce_float(pin_state.get("temperature"), 25.0), 1)
+            row["humidity"] = round(coerce_float(pin_state.get("humidity"), 55.0), 1)
+            row["value"] = row["temperature"]
+            row["datatype"] = "number"
+            return row
+
+        if input_type == "tachometer":
+            row["value"] = self._tachometer_value_locked(pin_state)
+            row["unit"] = "RPM"
+            row["datatype"] = "number"
+            return row
+
+        row["value"] = coerce_int(pin_state.get("value"), 0)
+        row["datatype"] = "boolean" if input_type == "switch" or mode == "INPUT" else "number"
+        return row
 
     def _create_mqtt_client(self) -> mqtt.Client:
         client = mqtt.Client(
@@ -388,8 +611,9 @@ class FakeBoardHarness:
             return
 
         applied = False
-        pin = int(payload.get("pin", self._first_pin()))
         with self._condition:
+            default_pin = self._first_command_pin_locked()
+            pin = int(payload.get("pin", default_pin if default_pin is not None else self._first_pin()))
             pin_state = self._runtime_pins.get(pin)
             if pin_state:
                 mode = str(pin_state["mode"]).upper()
@@ -500,15 +724,7 @@ class FakeBoardHarness:
         pins = []
         with self._condition:
             for pin in self._runtime_pins.values():
-                row = {
-                    "pin": pin["pin"],
-                    "mode": pin["mode"],
-                    "label": pin["label"],
-                    "value": pin["value"],
-                }
-                if str(pin["mode"]).upper() == "PWM":
-                    row["brightness"] = pin["brightness"]
-                pins.append(row)
+                pins.append(self._build_state_row_locked(pin))
 
         payload: dict[str, Any] = {
             "kind": "state",
@@ -520,10 +736,9 @@ class FakeBoardHarness:
         }
 
         if len(pins) == 1:
-            payload["pin"] = pins[0]["pin"]
-            payload["value"] = pins[0]["value"]
-            if "brightness" in pins[0]:
-                payload["brightness"] = pins[0]["brightness"]
+            for field in ("pin", "value", "brightness", "temperature", "humidity", "restore_value", "unit", "datatype"):
+                if field in pins[0]:
+                    payload[field] = pins[0][field]
 
         self.publish_state_payload(payload)
 
@@ -669,13 +884,13 @@ class FakeBoardHarness:
             data = response["data"] if isinstance(response["data"], list) else []
             with self._condition:
                 self._rooms = data
-                self._last_collection_label = "Rooms"
+                self._last_collection_label = "Areas"
                 self._last_collection = data
                 self._last_http_result = response
-            self._last_action = f"Loaded {len(data)} room(s)"
+            self._last_action = f"Loaded {len(data)} area(s)"
             self.log(self._last_action)
             return
-        self._store_http_result(response, "Loading rooms failed")
+        self._store_http_result(response, "Loading areas failed")
 
     def _ensure_room(self) -> int | None:
         room_id_text = self.settings.room_id.strip()
@@ -683,7 +898,7 @@ class FakeBoardHarness:
             try:
                 return int(room_id_text)
             except ValueError:
-                self.log(f"Ignoring invalid room id '{room_id_text}'.")
+                self.log(f"Ignoring invalid area id '{room_id_text}'.")
 
         self.list_rooms()
         for room in self._rooms:
@@ -693,7 +908,7 @@ class FakeBoardHarness:
                 return room_id
 
         if not self.settings.room_name:
-            self.log("Approve requires room_id or room_name.")
+            self.log("Approve requires an area id or area name.")
             return None
 
         response = self._request_json(
@@ -707,19 +922,19 @@ class FakeBoardHarness:
             room_id = int(data["room_id"])
             self.settings.room_id = str(room_id)
             self._rooms.append(data)
-            self._last_collection_label = "Rooms"
+            self._last_collection_label = "Areas"
             self._last_collection = self._rooms
             self._last_http_result = response
-            self.log(f"Created room '{self.settings.room_name}' ({room_id}).")
+            self.log(f"Created area '{self.settings.room_name}' ({room_id}).")
             return room_id
 
-        self._store_http_result(response, "Create room failed")
+        self._store_http_result(response, "Create area failed")
         return None
 
     def approve_device(self) -> None:
         room_id = self._ensure_room()
         if room_id is None:
-            self._last_action = "Approve skipped because no room could be resolved"
+            self._last_action = "Approve skipped because no area could be resolved"
             return
 
         response = self._request_json(
@@ -839,9 +1054,16 @@ class FakeBoardHarness:
         self._store_http_result(response, "Remote command failed")
 
     def send_quick_command(self, value: int) -> None:
+        with self._condition:
+            command_pin = self._first_command_pin_locked()
+        if command_pin is None:
+            self._last_action = "Quick command skipped because no OUTPUT or PWM pin is configured."
+            self.log(self._last_action)
+            return
+
         payload = {
             "kind": "action",
-            "pin": self._first_pin(),
+            "pin": command_pin,
             "value": value,
         }
         self.send_server_command(payload)
@@ -860,6 +1082,32 @@ class FakeBoardHarness:
             self._logs.clear()
             self._logs.appendleft(f"[{utc_timestamp()}] Logs cleared.")
         self._last_action = "Logs cleared"
+
+    def apply_selected_board_preset(self) -> None:
+        preset_id = (self.settings.board_preset or CUSTOM_BOARD_PRESET).strip() or CUSTOM_BOARD_PRESET
+        if preset_id == CUSTOM_BOARD_PRESET:
+            self._last_action = "Preset selector left in custom JSON mode."
+            self.log(self._last_action)
+            return
+
+        with self._condition:
+            applied = apply_board_preset(self.settings, preset_id)
+            if applied:
+                self._rebuild_runtime_pins_locked()
+                self._last_state_payload = {}
+                self._last_command_payload = {}
+                self._last_device_snapshot = {}
+
+        if not applied:
+            self._last_action = f"Unknown board preset '{preset_id}'"
+            self.log(self._last_action)
+            return
+
+        preset_label = str(BOARD_PRESETS[preset_id]["label"])
+        self._last_action = f"Applied board preset: {preset_label}"
+        self.log(
+            f"{self._last_action}. Re-register or publish heartbeat to expose the new fake board shape."
+        )
 
     def generate_fresh_identity(self) -> None:
         with self._condition:
@@ -904,6 +1152,7 @@ class FakeBoardHarness:
     def handle_action(self, action: str) -> None:
         actions = {
             "save_settings": self.acknowledge_settings,
+            "apply_board_preset": self.apply_selected_board_preset,
             "generate_identity": self.generate_fresh_identity,
             "mqtt_connect": self.connect_mqtt,
             "mqtt_disconnect": self.disconnect_mqtt,
@@ -1033,6 +1282,7 @@ class FakeBoardHarness:
                 "rooms": self._rooms,
                 "logs": list(self._logs),
                 "runtime_pins": list(self._runtime_pins.values()),
+                "board_presets": list_board_presets(),
             }
 
     def render_dashboard(self) -> str:
@@ -1058,7 +1308,19 @@ class FakeBoardHarness:
             room_options.append(
                 f'<option value="{esc(room_id)}"{selected}>{esc(room.get("name", room_id))}</option>'
             )
-        room_options_html = "".join(room_options) or '<option value="">No rooms loaded yet</option>'
+        room_options_html = "".join(room_options) or '<option value="">No areas loaded yet</option>'
+        preset_options = []
+        for preset in state["board_presets"]:
+            preset_id = str(preset["id"])
+            selected = " selected" if preset_id == settings["board_preset"] else ""
+            preset_options.append(
+                f'<option value="{esc(preset_id)}"{selected}>{esc(preset["label"])}</option>'
+            )
+        preset_options_html = "".join(preset_options)
+        active_preset = next(
+            (preset for preset in state["board_presets"] if preset["id"] == settings["board_preset"]),
+            state["board_presets"][0],
+        )
 
         return f"""<!DOCTYPE html>
 <html lang="en">
@@ -1337,23 +1599,42 @@ class FakeBoardHarness:
             <label>Password
               <input type="password" name="password" value="{esc(settings["password"])}" />
             </label>
-            <label>Room ID
+            <label>Area ID
               <input name="room_id" value="{esc(settings["room_id"])}" />
             </label>
-            <label>Room Name
+            <label>Area Name
               <input name="room_name" value="{esc(settings["room_name"])}" />
             </label>
-            <label>Known Rooms
+            <label>Known Areas
               <select disabled>{room_options_html}</select>
             </label>
           </div>
           <div class="actions" style="margin-top: 14px;">
             <button type="submit" name="action" value="login">Login</button>
-            <button class="secondary" type="submit" name="action" value="list_rooms">Load Rooms</button>
+            <button class="secondary" type="submit" name="action" value="list_rooms">Load Areas</button>
             <button class="secondary" type="submit" name="action" value="generate_identity">Generate Fresh Identity</button>
             <button type="submit" name="action" value="mqtt_connect">Connect MQTT</button>
             <button class="secondary" type="submit" name="action" value="mqtt_disconnect">Disconnect MQTT</button>
             <button class="danger" type="submit" name="action" value="reset_transient">Reset Transient State</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <h2>Board Presets</h2>
+          <p>Load one of the canned fake board shapes for sensor, fan, switch, or PWM slider testing, or stay in custom JSON mode.</p>
+          <label>Preset
+            <select name="board_preset">{preset_options_html}</select>
+          </label>
+          <div class="actions" style="margin-top: 14px;">
+            <button type="submit" name="action" value="apply_board_preset">Apply Preset</button>
+          </div>
+          <div class="hint">
+            <strong>Active preset:</strong> {esc(active_preset["label"])}<br />
+            {esc(active_preset["description"])}
+          </div>
+          <div class="hint">
+            <strong>Multi-board tip:</strong> launch another harness with a different
+            <code>--dashboard-port</code> and <code>--board-preset</code> if you want several fake boards online at once.
           </div>
         </section>
 
@@ -1405,8 +1686,8 @@ class FakeBoardHarness:
             <button class="secondary" type="submit" name="action" value="list_dashboard_devices">List Dashboard</button>
           </div>
           <div class="hint">
-            <strong>Quick note:</strong> if <code>room_id</code> is empty, the dashboard will reuse or create
-            the room named <code>{esc(settings["room_name"])}</code> during approval.
+            <strong>Quick note:</strong> if Area ID is empty, the dashboard will reuse or create
+            the area named <code>{esc(settings["room_name"])}</code> during approval.
           </div>
           <div class="hint">
             <strong>Discovery fallback:</strong> if the main webapp stays on "Scanning Network", click
@@ -1418,7 +1699,7 @@ class FakeBoardHarness:
 
         <section class="panel">
           <h2>Remote + State Tests</h2>
-          <p>The quick buttons target the first mapped GPIO from <code>pins_json</code>. Custom JSON goes through the server <code>/device/{{id}}/command</code> endpoint.</p>
+          <p>The quick buttons target the first OUTPUT or PWM pin from <code>pins_json</code>. Custom JSON goes through the server <code>/device/{{id}}/command</code> endpoint.</p>
           <div class="actions">
             <button type="submit" name="action" value="publish_state_ok">Publish Heartbeat</button>
             <button class="warn" type="submit" name="action" value="publish_state_fail">Publish Failure State</button>
@@ -1445,9 +1726,10 @@ class FakeBoardHarness:
           <h2>Current Snapshot</h2>
           <div class="kpi-grid" style="margin-bottom: 14px;">
             <div class="kpi"><strong>Device ID</strong><span>{esc(settings["device_id"])}</span></div>
+            <div class="kpi"><strong>Preset</strong><span>{esc(active_preset["label"])}</span></div>
             <div class="kpi"><strong>MQTT Namespace</strong><span>{esc(settings["mqtt_namespace"])}</span></div>
             <div class="kpi"><strong>Runtime Pins</strong><span>{len(state["runtime_pins"])}</span></div>
-            <div class="kpi"><strong>Rooms Cached</strong><span>{len(state["rooms"])}</span></div>
+            <div class="kpi"><strong>Areas Cached</strong><span>{len(state["rooms"])}</span></div>
           </div>
           <div class="split">
             <div>
@@ -1569,9 +1851,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mqtt-namespace", default=os.getenv("MQTT_NAMESPACE", "local"))
     parser.add_argument("--dashboard-host", default=os.getenv("FAKE_BOARD_DASHBOARD_HOST", "127.0.0.1"))
     parser.add_argument("--dashboard-port", type=int, default=int(os.getenv("FAKE_BOARD_DASHBOARD_PORT", "8765")))
-    parser.add_argument("--device-id", default=generate_device_id())
-    parser.add_argument("--device-name", default="Fake Board Test Node")
-    parser.add_argument("--mac-address", default=generate_mac_address())
+    parser.add_argument(
+        "--board-preset",
+        choices=[CUSTOM_BOARD_PRESET, *sorted(BOARD_PRESETS)],
+        default=os.getenv("FAKE_BOARD_PRESET", CUSTOM_BOARD_PRESET),
+        help="Optional canned fake board shape to load on startup.",
+    )
+    parser.add_argument("--device-id")
+    parser.add_argument("--device-name")
+    parser.add_argument("--mac-address")
     return parser.parse_args()
 
 
@@ -1584,10 +1872,18 @@ def main() -> None:
         mqtt_namespace=args.mqtt_namespace,
         dashboard_host=args.dashboard_host,
         dashboard_port=args.dashboard_port,
-        device_id=args.device_id,
-        device_name=args.device_name,
-        mac_address=args.mac_address,
     )
+    if args.board_preset != CUSTOM_BOARD_PRESET:
+        apply_board_preset(settings, args.board_preset)
+    else:
+        settings.board_preset = CUSTOM_BOARD_PRESET
+
+    if args.device_id:
+        settings.device_id = args.device_id
+    if args.device_name:
+        settings.device_name = args.device_name
+    if args.mac_address:
+        settings.mac_address = args.mac_address
 
     harness = FakeBoardHarness(settings)
     server = ThreadingHTTPServer(

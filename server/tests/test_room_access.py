@@ -296,7 +296,7 @@ def _insert_diy_project(
     wifi_credential = WifiCredential(
         household_id=membership.household_id,
         ssid=f"{credential_name}-wifi",
-        password="RoomAccessPass123",
+        password="AreaAccessPass123",
     )
     db.add(wifi_credential)
     db.flush()
@@ -352,7 +352,7 @@ def test_room_access_filters_devices_and_commands(monkeypatch):
         household_role=HouseholdRole.member.value,
     )
 
-    living_room = _create_room(admin_headers, name="Living Room", allowed_user_ids=[member["user_id"]])
+    living_room = _create_room(admin_headers, name="Living Area", allowed_user_ids=[member["user_id"]])
     office_room = _create_room(admin_headers, name="Office")
 
     assert _room_permission_ids(living_room["room_id"]) == {admin["user_id"], member["user_id"]}
@@ -363,7 +363,7 @@ def test_room_access_filters_devices_and_commands(monkeypatch):
 
     rooms_response = client.get("/api/v1/rooms", headers=member_headers)
     assert rooms_response.status_code == 200
-    assert [room["name"] for room in rooms_response.json()] == ["Living Room"]
+    assert [room["name"] for room in rooms_response.json()] == ["Living Area"]
 
     devices_response = client.get("/api/v1/devices", headers=member_headers)
     assert devices_response.status_code == 200
@@ -419,7 +419,7 @@ def test_pwm_command_persists_restore_value_and_reuses_it_on_power_on(monkeypatc
         household_id=household["household_id"],
         household_role=HouseholdRole.owner.value,
     )
-    room = _create_room(admin_headers, name="Dimmer Room")
+    room = _create_room(admin_headers, name="Dimmer Area")
     _insert_device(
         device_id="device-dimmer",
         name="Dimmer Lamp",
@@ -533,7 +533,7 @@ def test_send_command_supersedes_older_pending_command_for_same_pin(monkeypatch)
         household_id=household["household_id"],
         household_role=HouseholdRole.owner.value,
     )
-    room = _create_room(admin_headers, name="Supersede Room")
+    room = _create_room(admin_headers, name="Supersede Area")
     _insert_device(
         device_id="device-supersede",
         name="Realtime Dimmer",
@@ -584,7 +584,7 @@ def test_dashboard_prefers_pending_predicted_state_before_history_commit():
         household_id=household["household_id"],
         household_role=HouseholdRole.owner.value,
     )
-    room = _create_room(admin_headers, name="Pending Predicted Room")
+    room = _create_room(admin_headers, name="Pending Predicted Area")
     _insert_device(
         device_id="device-pending-predicted",
         name="Pending Predicted Lamp",
@@ -672,7 +672,7 @@ def test_reported_pwm_off_state_keeps_restore_value(monkeypatch):
         household_id=household["household_id"],
         household_role=HouseholdRole.owner.value,
     )
-    room = _create_room(admin_headers, name="Reported Dimmer Room")
+    room = _create_room(admin_headers, name="Reported Dimmer Area")
     _insert_device(
         device_id="device-reported-dimmer",
         name="Reported Dimmer",

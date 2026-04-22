@@ -22,7 +22,7 @@ void setup() {
   EConnect.begin(
     "YOUR_WIFI_SSID", 
     "YOUR_WIFI_PASS",
-    "living-room-sensor" // Device ID
+    "living-area-sensor" // Device ID
   );
   
   // Set Auth Token generated from dashboard
@@ -170,7 +170,7 @@ void loop() {
                     {/* Code Container */}
                     <div className="flex-1 overflow-auto p-6 text-sm leading-loose">
                         <pre className="font-mono"><code className="text-slate-300">
-                            <span className="text-[#89929b]">{`// Provisioning Template Generated for Living Room Sensor`}</span>
+                            <span className="text-[#89929b]">{`// Provisioning Template Generated for Living Area Sensor`}</span>
 
                             <span className="text-[#f78166] font-bold">#include</span> <span className="text-[#a5d6ff]">{`<EConnect.h>`}</span>
 
@@ -181,7 +181,7 @@ void loop() {
                             <span className="text-[#79c0ff]">EConnect</span>.<span className="text-[#d2a8ff]">begin</span>(
                             <span className="text-[#a5d6ff]">&quot;YOUR_WIFI_SSID&quot;</span>,
                             <span className="text-[#a5d6ff]">&quot;YOUR_WIFI_PASS&quot;</span>,
-                            <span className="text-[#a5d6ff]">&quot;living-room-sensor&quot;</span> <span className="text-[#89929b]">{`// Device ID`}</span>
+                            <span className="text-[#a5d6ff]">&quot;living-area-sensor&quot;</span> <span className="text-[#89929b]">{`// Device ID`}</span>
                             );
 
                             <span className="text-[#89929b]">{`// Set Auth Token generated from dashboard`}</span>

@@ -756,7 +756,7 @@ export default function Dashboard() {
     return d.auth_status === "approved" && d.conn_status === "online";
   };
 
-  const approvedDevices = devices.filter((device) => device.auth_status === "approved");
+  const approvedDevices = devices.filter((device) => device.auth_status === "approved" && device.show_on_dashboard !== false);
   const onlineDevices = approvedDevices.filter(isDeviceOnline);
   const offlineDevices = approvedDevices.filter((d) => !isDeviceOnline(d));
 
@@ -1249,15 +1249,19 @@ export default function Dashboard() {
                     </div>
                   ) : houseTemperatureData ? (
                     <>
-                      <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2 flex items-start">
-                        {formatHouseClimateValue(houseTemperatureData.temperature)}<span className="text-lg font-medium text-slate-500 mt-1">°C</span>
+                      <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2 flex items-center">
+                        <span className="flex items-start">
+                          {formatHouseClimateValue(houseTemperatureData.temperature)}<span className="text-xl font-medium text-slate-500 mt-1 ml-0.5">°C</span>
+                        </span>
+                        {houseTemperatureData.humidity != null && (
+                          <>
+                            <span className="text-3xl font-light text-slate-300 dark:text-slate-600 mx-3">/</span>
+                            <span className="flex items-start text-slate-700 dark:text-slate-300">
+                              {formatHouseClimateValue(houseTemperatureData.humidity)}<span className="text-xl font-medium text-slate-500 mt-1 ml-0.5">%</span>
+                            </span>
+                          </>
+                        )}
                       </h3>
-                      <div className="mt-2 text-xs flex items-center font-medium text-slate-500 dark:text-slate-400">
-                        <span className="material-icons-round text-sm mr-1">humidity_percentage</span>
-                        {houseTemperatureData.humidity != null
-                          ? `${formatHouseClimateValue(houseTemperatureData.humidity)}% humidity`
-                          : "Humidity unavailable"}
-                      </div>
                       <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
                         <span className={`inline-flex items-center rounded-full px-2 py-1 font-medium ${
                           houseTemperatureData.is_online

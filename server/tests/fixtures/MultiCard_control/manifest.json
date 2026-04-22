@@ -1,0 +1,137 @@
+{
+  "manifest_version": "1.0",
+  "extension_id": "demo_multicard_control",
+  "name": "Demo Multi-Card Control",
+  "version": "1.0.0",
+  "author": "Experience",
+  "description": "Runtime-backed demo provider for switch, fan, and sensor extension hooks.",
+  "provider": {
+    "key": "demo_multicard",
+    "display_name": "Demo Multi-Card"
+  },
+  "package": {
+    "runtime": "python",
+    "entrypoint": "main.py",
+    "hooks": {
+      "validate_command": "validate_command",
+      "execute_command": "execute_command",
+      "probe_state": "probe_state"
+    }
+  },
+  "device_schemas": [
+    {
+      "schema_id": "smart_switch",
+      "device_type": "switch",
+      "name": "Smart Switch",
+      "default_name": "Smart Switch",
+      "description": "Binary switch control for provider-backed outlets or relays.",
+      "display": {
+        "card_type": "switch",
+        "capabilities": [
+          "power"
+        ]
+      },
+      "config_schema": {
+        "fields": [
+          {
+            "key": "ip_address",
+            "label": "IP Address",
+            "type": "string",
+            "required": true
+          },
+          {
+            "key": "default_on",
+            "label": "Default On",
+            "type": "boolean",
+            "required": false
+          }
+        ]
+      }
+    },
+    {
+      "schema_id": "ceiling_fan",
+      "device_type": "fan",
+      "name": "Ceiling Fan",
+      "default_name": "Ceiling Fan",
+      "description": "Fan power and speed control.",
+      "display": {
+        "card_type": "fan",
+        "capabilities": [
+          "power",
+          "speed"
+        ]
+      },
+      "config_schema": {
+        "fields": [
+          {
+            "key": "ip_address",
+            "label": "IP Address",
+            "type": "string",
+            "required": true
+          },
+          {
+            "key": "default_speed",
+            "label": "Default Speed",
+            "type": "number",
+            "required": false
+          }
+        ]
+      }
+    },
+    {
+      "schema_id": "climate_sensor",
+      "device_type": "sensor",
+      "name": "Climate Sensor",
+      "default_name": "Climate Sensor",
+      "description": "Temperature and humidity telemetry.",
+      "display": {
+        "card_type": "sensor",
+        "capabilities": [
+          "temperature",
+          "humidity",
+          "value"
+        ]
+      },
+      "config_schema": {
+        "fields": [
+          {
+            "key": "ip_address",
+            "label": "IP Address",
+            "type": "string",
+            "required": true
+          },
+          {
+            "key": "temperature",
+            "label": "Temperature",
+            "type": "number",
+            "required": false
+          },
+          {
+            "key": "humidity",
+            "label": "Humidity",
+            "type": "number",
+            "required": false
+          },
+          {
+            "key": "value",
+            "label": "Value",
+            "type": "number",
+            "required": false
+          },
+          {
+            "key": "unit",
+            "label": "Unit",
+            "type": "string",
+            "required": false
+          },
+          {
+            "key": "trend",
+            "label": "Trend",
+            "type": "string",
+            "required": false
+          }
+        ]
+      }
+    }
+  ]
+}

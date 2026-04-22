@@ -213,7 +213,7 @@ def test_member_api_key_inherits_room_and_device_permissions():
         household_role=HouseholdRole.member.value,
     )
 
-    living_room = _create_room(admin_headers, name="Living Room", allowed_user_ids=[member["user_id"]])
+    living_room = _create_room(admin_headers, name="Living Area", allowed_user_ids=[member["user_id"]])
     office_room = _create_room(admin_headers, name="Office")
 
     _insert_device(

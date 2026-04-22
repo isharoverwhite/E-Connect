@@ -189,6 +189,7 @@ class Device(Base):
     
     auth_status = Column(Enum(AuthStatus), default=AuthStatus.pending, comment='Lifecycle authorization status')
     conn_status = Column(Enum(ConnStatus), default=ConnStatus.offline, comment='Realtime MQTT heartbeat state')
+    show_on_dashboard = Column(Boolean, default=True, nullable=False, comment='Flag to show or hide the device on the dashboard')
     
     mode = Column(Enum(DeviceMode), default=DeviceMode.library)
     firmware_revision = Column(String(50), nullable=True, comment='Developer-managed firmware revision reported by the device')
@@ -330,6 +331,7 @@ class ExternalDevice(Base):
     schema_snapshot = Column(JSON, nullable=False)
     auth_status = Column(Enum(AuthStatus), nullable=False, default=AuthStatus.approved, index=True)
     conn_status = Column(Enum(ConnStatus), nullable=False, default=ConnStatus.offline, index=True)
+    show_on_dashboard = Column(Boolean, default=True, nullable=False, comment="Flag to show or hide the device on the dashboard")
     last_state = Column(JSON, nullable=True)
     last_seen = Column(DateTime, nullable=True)
     created_at = Column(TIMESTAMP, server_default=func.now())

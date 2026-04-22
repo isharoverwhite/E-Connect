@@ -63,6 +63,7 @@ Các CLI option hiện có:
 - `--mqtt-namespace`
 - `--dashboard-host`
 - `--dashboard-port`
+- `--board-preset`
 - `--device-id`
 - `--device-name`
 - `--mac-address`
@@ -75,8 +76,51 @@ Các giá trị này cũng có thể lấy từ env:
 - `MQTT_NAMESPACE`
 - `FAKE_BOARD_DASHBOARD_HOST`
 - `FAKE_BOARD_DASHBOARD_PORT`
+- `FAKE_BOARD_PRESET`
 
 *Lưu ý: Từ nay, public broker (broker.emqx.io) không còn dùng mặc định. Bạn phải đảm bảo local broker đã chạy, và Fake board harness khai báo đúng IP local broker, nếu không Fake board sẽ bị Timeout chờ broker.*
+
+## 3.1 Preset board mới cho manual test
+
+`harness.py` hiện có thêm 4 preset để bạn tạo nhanh các fake board đúng contract:
+
+- `dht22-sensor`: board chỉ có cảm biến nhiệt độ/độ ẩm `DHT22`
+- `pwm-fan-tach`: board quạt `PWM` có thêm `tachometer`
+- `switch-board`: board relay/switch on-off
+- `pwm-slicer`: board `PWM` kiểu dimmer/slider
+
+Bạn có thể chọn preset ngay trên dashboard local bằng `Board Presets -> Apply Preset`, hoặc chạy trực tiếp bằng CLI.
+
+Ví dụ mở 4 fake board ở 4 dashboard port khác nhau:
+
+```bash
+python3 server/tests/manual/fake_board/harness.py \
+  --board-preset dht22-sensor \
+  --dashboard-port 8765 \
+  --device-name "Fake DHT22 Sensor"
+
+python3 server/tests/manual/fake_board/harness.py \
+  --board-preset pwm-fan-tach \
+  --dashboard-port 8766 \
+  --device-name "Fake PWM Fan Tach"
+
+python3 server/tests/manual/fake_board/harness.py \
+  --board-preset switch-board \
+  --dashboard-port 8767 \
+  --device-name "Fake Switch Board"
+
+python3 server/tests/manual/fake_board/harness.py \
+  --board-preset pwm-slicer \
+  --dashboard-port 8768 \
+  --device-name "Fake PWM Slicer"
+```
+
+Ghi chú hành vi:
+
+- preset `dht22-sensor` sẽ publish `temperature` và `humidity`
+- preset `pwm-fan-tach` sẽ publish pin `PWM` và pin `tachometer`; RPM giả sẽ thay đổi theo mức PWM hiện tại
+- preset `switch-board` giữ flow relay/switch cũ
+- preset `pwm-slicer` phù hợp để test slider/value command trên dashboard
 
 ## 4. Các khu vực chính trên dashboard
 
@@ -94,6 +138,7 @@ Cho phép:
 
 Cho phép chỉnh:
 
+- `board_preset`
 - `device_id`
 - `mac_address`
 - `device_name`
@@ -128,6 +173,8 @@ Các nút chính:
 - `Remote OFF`: gửi command tắt qua server
 - `Send Custom Command`: gửi JSON tự nhập ở ô `Custom Command JSON`
 - `Check Command Policy`: kiểm tra `/device/{id}/command/latest`
+
+*Lưu ý:* `Remote ON` / `Remote OFF` sẽ nhắm vào pin `OUTPUT` hoặc `PWM` đầu tiên trong `pins_json`. Với preset chỉ có cảm biến `DHT22`, hai nút này sẽ bỏ qua vì không có pin điều khiển hợp lệ.
 
 ### Snapshot + Log
 
@@ -235,6 +282,8 @@ Nếu cần test payload riêng:
 4. Cuối cùng bấm `Generate Fresh Identity` trước khi bắt đầu scenario tiếp theo.
 
 ## 6. JSON mặc định
+
+Nếu bạn không chọn preset nào thì harness vẫn chạy ở chế độ `Custom JSON`, giống flow cũ.
 
 ### Pins JSON mặc định
 

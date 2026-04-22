@@ -67,7 +67,7 @@ def _seed_device(*, last_seen: datetime) -> tuple[str, int]:
         room = Room(
             user_id=user.user_id,
             household_id=household.household_id,
-            name="Heartbeat Room",
+            name="Heartbeat Area",
         )
         db.add_all([membership, room])
         db.commit()

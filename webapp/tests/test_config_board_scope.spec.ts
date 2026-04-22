@@ -100,7 +100,7 @@ test.describe("DIY config board scoping", () => {
     const roomRes = await request.get("/api/v1/rooms", { headers: authHeaders });
     expect(roomRes.ok()).toBeTruthy();
     const rooms = (await roomRes.json()) as RoomRecord[];
-    test.skip(rooms.length === 0, "Requires at least one room");
+    test.skip(rooms.length === 0, "Requires at least one area");
 
     const wifiRes = await request.get("/api/v1/wifi-credentials", { headers: authHeaders });
     expect(wifiRes.ok()).toBeTruthy();
@@ -209,7 +209,7 @@ test.describe("DIY config board scoping", () => {
     const roomRes = await request.get("/api/v1/rooms", { headers: authHeaders });
     expect(roomRes.ok()).toBeTruthy();
     const rooms = (await roomRes.json()) as RoomRecord[];
-    test.skip(rooms.length === 0, "Requires at least one room");
+    test.skip(rooms.length === 0, "Requires at least one area");
 
     const wifiRes = await request.get("/api/v1/wifi-credentials", { headers: authHeaders });
     expect(wifiRes.ok()).toBeTruthy();

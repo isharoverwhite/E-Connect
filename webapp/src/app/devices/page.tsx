@@ -7,7 +7,7 @@ import Link from "next/link";
 
 import { useAuth } from "@/components/AuthProvider";
 import Sidebar from "@/components/Sidebar";
-import { fetchDevices, deleteDevice, fetchSystemStatus, SystemStatusResponse } from "@/lib/api";
+import { fetchDevices, deleteDevice, fetchSystemStatus, SystemStatusResponse, updateDeviceVisibility } from "@/lib/api";
 import { getActivePinConfigurations } from "@/lib/device-config";
 import { formatDeviceTypeLabel, getDeviceType, getDeviceTypeIcon, isExternalDevice } from "@/lib/device-display";
 import { DeviceConfig, DeviceDirectoryEntry } from "@/types/device";
@@ -37,6 +37,7 @@ export default function DevicesPage() {
     const [pairingRequests, setPairingRequests] = useState<DeviceConfig[]>([]);
     const [loading, setLoading] = useState(true);
     const [isDeleting, setIsDeleting] = useState<string | null>(null);
+    const [isTogglingVisibility, setIsTogglingVisibility] = useState<string | null>(null);
     const [filterStatus, setFilterStatus] = useState<"all" | "online" | "offline">("all");
     const [modalConfig, setModalConfig] = useState<{
         isOpen: boolean;
@@ -232,6 +233,22 @@ export default function DevicesPage() {
         setModalConfig({ isOpen: true, deviceId, deviceName, isExternal });
     };
 
+    const handleToggleVisibility = async (deviceId: string, currentVisibility: boolean) => {
+        if (isTogglingVisibility === deviceId) return;
+        setIsTogglingVisibility(deviceId);
+        try {
+            const result = await updateDeviceVisibility(deviceId, !currentVisibility);
+            if (result.status === "success") {
+                setDevices((prev) => prev.map(d => d.device_id === deviceId ? { ...d, show_on_dashboard: result.show_on_dashboard } : d));
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to toggle visibility";
+            showToast(message, "error");
+        } finally {
+            setIsTogglingVisibility(null);
+        }
+    };
+
     const handleConfirmDelete = async () => {
         const { deviceId, deviceName, isExternal } = modalConfig;
         setModalConfig(prev => ({ ...prev, isOpen: false }));
@@ -381,6 +398,19 @@ export default function DevicesPage() {
                         <span className="font-mono text-xs text-slate-700 dark:text-slate-300 max-w-[10rem] truncate text-right" title={isExternal ? device.device_schema_id || "N/A" : deviceIp || "N/A"}>
                             {isExternal ? device.device_schema_id || "N/A" : deviceIp || "N/A"}
                         </span>
+                    </div>
+                    <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
+                        <span className="text-slate-500 dark:text-slate-400 flex items-center">
+                            <span className="material-icons-round mr-1 text-xs">dashboard</span>
+                            Show on Dashboard
+                        </span>
+                        <button
+                            onClick={() => handleToggleVisibility(device.device_id, device.show_on_dashboard ?? true)}
+                            disabled={isTogglingVisibility === device.device_id}
+                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${device.show_on_dashboard !== false ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-600'} ${isTogglingVisibility === device.device_id ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                            <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${device.show_on_dashboard !== false ? 'translate-x-5' : 'translate-x-1'}`} />
+                        </button>
                     </div>
                     <div className="flex items-center justify-between">
                         <span className="text-slate-500 dark:text-slate-400">

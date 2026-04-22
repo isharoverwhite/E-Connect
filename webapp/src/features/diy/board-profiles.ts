@@ -716,7 +716,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     name: "LOLIN S2 Mini",
     family: "ESP32-S2",
     chipLabel: "ESP32-S2 Mini",
-    description: "Compact S2 layout for battery-powered room sensors and touch controls.",
+    description: "Compact S2 layout for battery-powered area sensors and touch controls.",
     layoutLabel: "Mini 2x10 layout",
     serialBridge: "Native USB CDC",
     warnings: [

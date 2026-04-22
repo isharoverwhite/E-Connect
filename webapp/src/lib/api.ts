@@ -757,6 +757,28 @@ export async function deleteDevice(uuid: string): Promise<boolean> {
     }
 }
 
+export async function updateDeviceVisibility(uuid: string, showOnDashboard: boolean): Promise<{ status: string; show_on_dashboard: boolean }> {
+    const token = getToken();
+    if (!token) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/device/${uuid}/visibility`, {
+        method: "PATCH",
+        headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ show_on_dashboard: showOnDashboard }),
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to update device visibility"));
+    }
+
+    return response.json();
+}
+
 export async function sendDeviceCommand(
     uuid: string,
     payload: Record<string, unknown>

@@ -35,7 +35,7 @@ from .ws_manager import manager as ws_manager
 from .models import (
     ApiKeyCreateRequest, ApiKeyCreateResponse, ApiKeyResponse,
     UserCreate, UserResponse, Token, TokenData, InitialServerRequest, RefreshTokenRequest,
-    DeviceApprovalRequest, DeviceAvailabilityResponse, DeviceHandshakeResponse, DeviceRegister, DeviceResponse, PinConfigCreate,
+    DeviceApprovalRequest, DeviceAvailabilityResponse, DeviceHandshakeResponse, DeviceRegister, DeviceResponse, DeviceVisibilityUpdate, PinConfigCreate,
     AutomationCreate, AutomationResponse, AutomationUpdate,
     DeviceHistoryCreate, DeviceHistoryResponse,
     SystemLogAcknowledgeResponse, SystemLogListResponse, SystemLogResponse, SystemStatusResponse,
@@ -331,7 +331,7 @@ def _load_household_physical_device(
         if project is not None:
             setattr(device, "board", project.board_profile)
 
-    return _attach_room_name(device)
+    return _attach_device_read_metadata(device)
 
 
 def _pin_extra_params(pin_config: Any) -> dict[str, Any]:
@@ -1611,12 +1611,12 @@ def _build_device_widgets(device: Device) -> list[dict[str, Any]]:
     return widgets
 
 
-def _sync_user_dashboard_widgets(user: User, device: Device):
+def _sync_user_dashboard_widgets(user: User, device: Union[Device, ExternalDevice]):
     existing_widgets = [
         widget for widget in _get_layout_widgets(user.ui_layout)
         if widget.get("deviceId") != device.device_id
     ]
-    user.ui_layout = [*existing_widgets, *_build_device_widgets(device)]
+    user.ui_layout = [*existing_widgets, *_build_device_widgets(device)] if getattr(device, "pin_configurations", None) is not None else existing_widgets
 
 
 def _remove_device_widgets(user: Optional[User], device_id: str):
@@ -1812,7 +1812,7 @@ def _serialize_room_response(room: Room, assigned_user_ids: Optional[list[int]] 
 def _get_room_or_404(db: Session, room_id: int) -> Room:
     room = db.query(Room).filter(Room.room_id == room_id).first()
     if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+        raise HTTPException(status_code=404, detail="Area not found")
     return room
 
 
@@ -1839,7 +1839,7 @@ def _get_room_in_household_or_404(db: Session, current_user: User, room_id: int)
         .first()
     )
     if not room:
-        raise HTTPException(status_code=404, detail="Room not found")
+        raise HTTPException(status_code=404, detail="Area not found")
     return room
 
 
@@ -1981,8 +1981,9 @@ def _ensure_external_device_control_access(db: Session, current_user: User, devi
         raise HTTPException(status_code=403, detail="Not authorized")
 
 
-def _attach_room_name(device: Device) -> Device:
+def _attach_device_read_metadata(device: Device) -> Device:
     setattr(device, "room_name", device.room.name if device.room else None)
+    setattr(device, "device_type", "custom")
     return device
 
 
@@ -2009,6 +2010,26 @@ def _serialize_external_device_availability(device: ExternalDevice) -> dict[str,
     }
 
 
+def _normalize_device_type_value(value: Any, *, default: str) -> str:
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized:
+            return normalized
+    return default
+
+
+def _resolve_external_device_type(device: ExternalDevice) -> str:
+    schema_snapshot = device.schema_snapshot if isinstance(device.schema_snapshot, dict) else {}
+    fallback = "light"
+
+    raw_device_type = schema_snapshot.get("device_type")
+    if isinstance(raw_device_type, str) and raw_device_type.strip():
+        return raw_device_type.strip().lower()
+
+    display = schema_snapshot.get("display") if isinstance(schema_snapshot.get("display"), dict) else {}
+    return _normalize_device_type_value(display.get("card_type"), default=fallback)
+
+
 def _serialize_external_device(device: ExternalDevice) -> dict[str, Any]:
     room_name = device.room.name if device.room is not None else None
     config = device.config if isinstance(device.config, dict) else {}
@@ -2029,6 +2050,7 @@ def _serialize_external_device(device: ExternalDevice) -> dict[str, Any]:
         "topic_sub": None,
         "room_id": device.room_id,
         "room_name": room_name,
+        "device_type": _resolve_external_device_type(device),
         "owner_id": device.owner_id,
         "auth_status": device.auth_status,
         "conn_status": device.conn_status,
@@ -2086,6 +2108,10 @@ def _serialize_extension_device_schema(schema: dict[str, Any]) -> dict[str, Any]
             temperature_range = {"min": min_kelvin, "max": max_kelvin}
     return {
         "schema_id": str(schema.get("schema_id") or ""),
+        "device_type": _normalize_device_type_value(
+            schema.get("device_type"),
+            default=str(display.get("card_type") or "light"),
+        ),
         "name": str(schema.get("name") or ""),
         "default_name": str(schema.get("default_name") or schema.get("name") or ""),
         "description": schema.get("description"),
@@ -2094,6 +2120,27 @@ def _serialize_extension_device_schema(schema: dict[str, Any]) -> dict[str, Any]
         "temperature_range": temperature_range,
         "config_fields": config_fields,
     }
+
+
+def _build_initial_external_device_state(schema: dict[str, Any]) -> dict[str, Any]:
+    display = schema.get("display") if isinstance(schema.get("display"), dict) else {}
+    raw_capabilities = display.get("capabilities") if isinstance(display.get("capabilities"), list) else []
+    capabilities = {
+        str(capability).strip().lower()
+        for capability in raw_capabilities
+        if isinstance(capability, str) and capability.strip()
+    }
+    card_type = _normalize_device_type_value(display.get("card_type"), default="light")
+
+    state: dict[str, Any] = {}
+    if card_type in {"light", "switch", "fan"} or "power" in capabilities:
+        state["value"] = 0
+        state["power"] = "off"
+    if "brightness" in capabilities:
+        state["brightness"] = 0
+    if "speed" in capabilities:
+        state["speed"] = 0
+    return state
 
 
 def _coerce_runtime_reported_at(value: Any) -> datetime:
@@ -3000,6 +3047,15 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
 
+@router.get("/households/current", response_model=HouseholdResponse)
+async def read_household_current(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    household = _get_current_household_or_404(db, current_user)
+    return household
+
+
 @router.get("/api-keys", response_model=List[ApiKeyResponse])
 async def list_api_keys(
     db: Session = Depends(get_db),
@@ -3316,7 +3372,7 @@ async def create_room(room: RoomCreate, db: Session = Depends(get_db), current_u
     if not room_name:
         raise HTTPException(
             status_code=400,
-            detail={"error": "validation", "message": "Room name is required."},
+            detail={"error": "validation", "message": "Area name is required."},
         )
 
     household_id = resolve_household_id_for_user(db, current_user)
@@ -3331,7 +3387,7 @@ async def create_room(room: RoomCreate, db: Session = Depends(get_db), current_u
     if existing_room:
         raise HTTPException(
             status_code=409,
-            detail={"error": "conflict", "message": "A room with this name already exists."},
+            detail={"error": "conflict", "message": "An area with this name already exists."},
         )
 
     allowed_user_ids = _validate_room_permission_targets(db, household_id, room.allowed_user_ids)
@@ -3401,7 +3457,7 @@ async def update_room(
     if not room_name:
         raise HTTPException(
             status_code=400,
-            detail={"error": "validation", "message": "Room name is required."},
+            detail={"error": "validation", "message": "Area name is required."},
         )
 
     household_id = resolve_household_id_for_user(db, current_user)
@@ -3413,7 +3469,7 @@ async def update_room(
     if existing_room:
         raise HTTPException(
             status_code=409,
-            detail={"error": "conflict", "message": "A room with this name already exists."},
+            detail={"error": "conflict", "message": "An area with this name already exists."},
         )
 
     room.name = room_name
@@ -3445,7 +3501,7 @@ async def delete_room(
 
     db.delete(room)
     db.commit()
-    return {"message": "Room deleted successfully"}
+    return {"message": "Area deleted successfully"}
 
 
 @router.get("/wifi-credentials", response_model=List[WifiCredentialResponse])
@@ -3855,7 +3911,7 @@ async def create_external_device(
         schema_snapshot=schema,
         auth_status=AuthStatus.approved,
         conn_status=ConnStatus.offline,
-        last_state={"pin": 0, "value": 0, "brightness": 0},
+        last_state=_build_initial_external_device_state(schema),
     )
     db.add(external_device)
     db.commit()
@@ -3896,7 +3952,7 @@ async def register_device_handshake(
             build_pairing_request_event_payload(result.device),
         )
 
-    _attach_room_name(result.device)
+    _attach_device_read_metadata(result.device)
     response = DeviceHandshakeResponse.model_validate(result.device)
     response.secret_verified = result.secret_verified
     response.project_id = result.project_id
@@ -3982,7 +4038,7 @@ def _load_visible_devices(
             if d.provisioning_project_id:
                 setattr(d, "board", project_boards.get(d.provisioning_project_id))
 
-    return [_attach_room_name(_attach_runtime_state(db, device)) for device in devices]
+    return [_attach_device_read_metadata(_attach_runtime_state(db, device)) for device in devices]
 
 
 def _load_visible_external_devices(
@@ -4093,7 +4149,7 @@ async def get_device(device_id: str, db: Session = Depends(get_db), current_user
             project = db.query(DiyProject.id, DiyProject.board_profile).filter(DiyProject.id == device.provisioning_project_id).first()
             if project:
                 setattr(device, "board", project.board_profile)
-        return _attach_room_name(_attach_runtime_state(db, device))
+        return _attach_device_read_metadata(_attach_runtime_state(db, device))
 
     external_device = _get_external_device_in_household_or_404(db, current_user, device_id)
     _ensure_external_device_control_access(db, current_user, external_device)
@@ -4388,6 +4444,37 @@ async def rebuild_device_firmware(
         "config_id": committed_config.id,
         "message": "Rebuild job queued.",
     }
+
+@router.patch("/device/{device_id}/visibility")
+async def update_device_visibility(
+    device_id: str,
+    payload: DeviceVisibilityUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Update the dashboard visibility status of a device.
+    """
+    try:
+        device = _get_device_in_household_or_404(db, current_user, device_id)
+    except HTTPException as exc:
+        if exc.status_code != 404:
+            raise
+        device = None
+
+    if device is not None:
+        device.show_on_dashboard = payload.show_on_dashboard
+        db.commit()
+        owner = db.query(User).filter(User.user_id == device.owner_id).first()
+        _sync_user_dashboard_widgets(owner or current_user, device)
+        return {"status": "success", "device_id": device_id, "show_on_dashboard": device.show_on_dashboard}
+
+    external_device = _get_external_device_in_household_or_404(db, current_user, device_id)
+    external_device.show_on_dashboard = payload.show_on_dashboard
+    db.commit()
+    owner = db.query(User).filter(User.user_id == external_device.owner_id).first()
+    _sync_user_dashboard_widgets(owner or current_user, external_device)
+    return {"status": "success", "device_id": device_id, "show_on_dashboard": external_device.show_on_dashboard}
 
 @router.delete("/device/{device_id}")
 async def delete_device(device_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
@@ -4918,7 +5005,7 @@ async def create_diy_project(project: DiyProjectCreate, db: Session = Depends(ge
     if project.room_id is None:
         raise HTTPException(
             status_code=400,
-            detail={"error": "validation", "message": "Select a room before creating a device project."},
+            detail={"error": "validation", "message": "Select an area before creating a device project."},
         )
 
     try:
@@ -4988,7 +5075,7 @@ async def list_diy_projects(
         Device.provisioning_project_id.in_(project_ids),
         Device.auth_status == AuthStatus.approved
     ).all()
-    devices = [_attach_room_name(d) for d in devices]
+    devices = [_attach_device_read_metadata(d) for d in devices]
 
     device_map = {}
     for d in devices:
@@ -5337,7 +5424,7 @@ async def update_diy_project(project_id: str, project_update: DiyProjectCreate, 
     if project_update.room_id is None:
         raise HTTPException(
             status_code=400,
-            detail={"error": "validation", "message": "Select a room before saving the device project."},
+            detail={"error": "validation", "message": "Select an area before saving the device project."},
         )
     room = _get_room_in_household_or_404(db, current_user, project_update.room_id)
     wifi_credential = _resolve_wifi_credential_for_payload(
@@ -5393,7 +5480,7 @@ async def trigger_diy_build(
     if project.room_id is None:
          raise HTTPException(
              status_code=400,
-             detail={"error": "validation", "message": "Select a room before triggering a server build."},
+             detail={"error": "validation", "message": "Select an area before triggering a server build."},
          )
 
     _, validation_errors, validation_warnings = validate_diy_config(project.board_profile, project.config)

@@ -21,6 +21,7 @@
   "device_schemas": [
     {
       "schema_id": "yeelight_white_light",
+      "device_type": "light",
       "name": "Yeelight White Light",
       "default_name": "Yeelight White Light",
       "description": "Power and brightness control for single-tone Yeelight lamps.",
@@ -44,6 +45,7 @@
     },
     {
       "schema_id": "yeelight_ambient_light",
+      "device_type": "light",
       "name": "Yeelight Ambient Light",
       "default_name": "Yeelight Ambient Light",
       "description": "Brightness plus tunable-white control for tone-adjustable lamps.",
@@ -72,6 +74,7 @@
     },
     {
       "schema_id": "yeelight_color_light",
+      "device_type": "light",
       "name": "Yeelight Color Light",
       "default_name": "Yeelight Color Light",
       "description": "Brightness, RGB, and tunable-white control for common color-capable Yeelight lamps.",
@@ -101,6 +104,7 @@
     },
     {
       "schema_id": "yeelight_full_spectrum_light",
+      "device_type": "light",
       "name": "Yeelight Full Spectrum Light",
       "default_name": "Yeelight Full Spectrum Light",
       "description": "Brightness, RGB, and tunable-white control for full-spectrum lamps.",

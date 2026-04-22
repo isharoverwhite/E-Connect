@@ -52,6 +52,7 @@ File `manifest.json` là định nghĩa bắt buộc phải có cho mọi extens
   "device_schemas": [
     {
       "schema_id": "dimmer_light",
+      "device_type": "light",
       "name": "Dimmer Light",
       "display": {
         "card_type": "light",
@@ -74,8 +75,14 @@ File `manifest.json` là định nghĩa bắt buộc phải có cho mọi extens
 
 *Lưu ý:*
 - `extension_id`, `schema_id`, `config_schema.fields.key` cần viết đúng định dạng lowercase (vd: `a-z0-9_-`).
-- `display.card_type` hiện tại hỗ trợ giá trị `light`.
-- `capabilities` hỗ trợ: `power`, `brightness`, `rgb`, `color_temperature`.
+- `device_type` mô tả loại thiết bị nghiệp vụ (ví dụ: `light`, `sensor`, `switch`, `fan`, `custom`).
+- `display.card_type` hiện hỗ trợ: `light`, `switch`, `fan`, `sensor`.
+- `capabilities` hợp lệ theo từng `card_type`:
+  - `light`: `power`, `brightness`, `rgb`, `color_temperature`
+  - `switch`: `power`
+  - `fan`: `power`, `speed`
+  - `sensor`: `temperature`, `humidity`, `value`
+- `display.temperature_range` chỉ dùng cho `light` có capability `color_temperature`.
 - `config_schema.fields.type` hỗ trợ: `string`, `number`, `boolean`.
 - Thuộc tính `hooks` trong `package` cho phép map tên hook nội bộ sang tên function Python của bạn trong `entrypoint`. Nếu để trống, server mặc định tìm 3 hàm: `validate_command`, `execute_command`, `probe_state`.
 
@@ -211,6 +218,7 @@ The heart of every extension is `manifest.json`. It bridges your implementation 
   "device_schemas": [
     {
       "schema_id": "dimmer_light",
+      "device_type": "light",
       "name": "Dimmer Light",
       "display": {
         "card_type": "light",
@@ -233,8 +241,14 @@ The heart of every extension is `manifest.json`. It bridges your implementation 
 
 *Key Schema Details:*
 - Identifiers (`extension_id`, `schema_id`, `fields.key`) must perfectly match the `a-z0-9_-` lowercase pattern.
-- `display.card_type` currently supports `light`.
-- Sub `capabilities` strictly support: `power`, `brightness`, `rgb`, `color_temperature`.
+- `device_type` describes the business-facing device category (for example `light`, `sensor`, `switch`, `fan`, or `custom`).
+- `display.card_type` currently supports `light`, `switch`, `fan`, and `sensor`.
+- Supported capability families are:
+  - `light`: `power`, `brightness`, `rgb`, `color_temperature`
+  - `switch`: `power`
+  - `fan`: `power`, `speed`
+  - `sensor`: `temperature`, `humidity`, `value`
+- `display.temperature_range` is valid only for `light` schemas that include `color_temperature`.
 - Provided `config_schema.fields.type` bindings are `string`, `number`, `boolean`.
 - Inside `package.hooks`, you assign internal hooks mapped directly to your actual Python functions in your `entrypoint` file. If omitted, the default assumed hook names are strictly: `validate_command`, `execute_command`, and `probe_state`.
 

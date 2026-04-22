@@ -177,7 +177,7 @@ export function ApiKeysPanel({ timezone }: { timezone?: string | null }) {
               <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Create a new API key</h2>
               <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
                 Each key acts as your signed-in account. Third-party tools can query device data and send control commands,
-                but they still inherit your existing room and device permissions.
+                but they still inherit your existing area and device permissions.
               </p>
             </div>
             <span className="material-icons-round rounded-2xl bg-primary/10 p-3 text-2xl text-primary">vpn_key</span>
@@ -256,7 +256,7 @@ export function ApiKeysPanel({ timezone }: { timezone?: string | null }) {
               <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Account identity</p>
               <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">
                 The API key behaves exactly like the account that created it. Admin accounts keep admin access.
-                Normal users only see and control devices inside rooms they have been granted.
+                Normal users only see and control devices inside areas they have been granted.
               </p>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">

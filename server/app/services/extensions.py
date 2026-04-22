@@ -16,9 +16,20 @@ EXTENSIONS_DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "extensions
 EXTENSION_PACKAGES_DIR = EXTENSIONS_DATA_DIR / "packages"
 EXTENSION_EXTRACTED_DIR = EXTENSIONS_DATA_DIR / "extracted"
 MAX_EXTENSION_ARCHIVE_BYTES = 5 * 1024 * 1024
-SUPPORTED_CARD_TYPES = {"light"}
+SUPPORTED_CARD_TYPES = {"light", "switch", "fan", "sensor"}
 SUPPORTED_CONFIG_FIELD_TYPES = {"string", "number", "boolean"}
-SUPPORTED_LIGHT_CAPABILITIES = {"power", "brightness", "rgb", "color_temperature"}
+SUPPORTED_CAPABILITIES_BY_CARD_TYPE = {
+    "light": {"power", "brightness", "rgb", "color_temperature"},
+    "switch": {"power"},
+    "fan": {"power", "speed"},
+    "sensor": {"temperature", "humidity", "value"},
+}
+DEFAULT_CAPABILITIES_BY_CARD_TYPE = {
+    "light": ("power", "brightness"),
+    "switch": ("power",),
+    "fan": ("power",),
+    "sensor": ("value",),
+}
 IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,119}$")
 PYTHON_SYMBOL_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 DEFAULT_PACKAGE_HOOKS = {
@@ -126,12 +137,24 @@ def _normalize_device_schema(schema_payload: Any, *, seen_schema_ids: set[str]) 
             f"Schema '{schema_id}' uses unsupported card type '{card_type}'."
         )
 
-    raw_capabilities = display_payload.get("capabilities") or ["power", "brightness"]
+    raw_device_type = schema_payload.get("device_type")
+    if raw_device_type is None:
+        device_type = card_type
+    else:
+        device_type = _validate_identifier(
+            _read_nonempty_string(schema_payload, "device_type"),
+            field_name="device_schemas.device_type",
+        )
+
+    raw_capabilities = display_payload.get("capabilities")
+    if raw_capabilities is None:
+        raw_capabilities = list(DEFAULT_CAPABILITIES_BY_CARD_TYPE[card_type])
     if not isinstance(raw_capabilities, list) or len(raw_capabilities) == 0:
         raise ExtensionManifestValidationError(
             f"Schema '{schema_id}' display.capabilities must be a non-empty list."
         )
 
+    allowed_capabilities = SUPPORTED_CAPABILITIES_BY_CARD_TYPE[card_type]
     capabilities: list[str] = []
     seen_capabilities: set[str] = set()
     for raw_capability in raw_capabilities:
@@ -140,9 +163,9 @@ def _normalize_device_schema(schema_payload: Any, *, seen_schema_ids: set[str]) 
                 f"Schema '{schema_id}' has an invalid display capability entry."
             )
         capability = raw_capability.strip().lower()
-        if capability not in SUPPORTED_LIGHT_CAPABILITIES:
+        if capability not in allowed_capabilities:
             raise ExtensionManifestValidationError(
-                f"Schema '{schema_id}' uses unsupported capability '{capability}'."
+                f"Schema '{schema_id}' uses unsupported capability '{capability}' for card type '{card_type}'."
             )
         if capability in seen_capabilities:
             continue
@@ -152,6 +175,10 @@ def _normalize_device_schema(schema_payload: Any, *, seen_schema_ids: set[str]) 
     temperature_range: dict[str, int] | None = None
     raw_temperature_range = display_payload.get("temperature_range")
     if raw_temperature_range is not None:
+        if card_type != "light":
+            raise ExtensionManifestValidationError(
+                f"Schema '{schema_id}' only allows display.temperature_range for light card types."
+            )
         if not isinstance(raw_temperature_range, dict):
             raise ExtensionManifestValidationError(
                 f"Schema '{schema_id}' display.temperature_range must be an object."
@@ -168,7 +195,12 @@ def _normalize_device_schema(schema_payload: Any, *, seen_schema_ids: set[str]) 
             )
         temperature_range = {"min": min_kelvin, "max": max_kelvin}
 
-    if "color_temperature" in capabilities and temperature_range is None:
+    if temperature_range is not None and "color_temperature" not in capabilities:
+        raise ExtensionManifestValidationError(
+            f"Schema '{schema_id}' declares display.temperature_range without the 'color_temperature' capability."
+        )
+
+    if card_type == "light" and "color_temperature" in capabilities and temperature_range is None:
         temperature_range = {"min": 1700, "max": 6500}
 
     config_schema_payload = schema_payload.get("config_schema") or {}
@@ -191,6 +223,7 @@ def _normalize_device_schema(schema_payload: Any, *, seen_schema_ids: set[str]) 
 
     return {
         "schema_id": schema_id,
+        "device_type": device_type,
         "name": name,
         "default_name": default_name,
         "description": normalized_description,

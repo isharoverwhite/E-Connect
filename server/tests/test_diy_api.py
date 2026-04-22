@@ -18,6 +18,11 @@ from app.api import _resolve_build_artifact_path
 from app.database import Base, get_db
 from app.sql_models import (
     AccountType,
+    AuthStatus,
+    ConnStatus,
+    Device,
+    DeviceHistory,
+    DeviceMode,
     User,
     Household,
     HouseholdMembership,
@@ -27,6 +32,9 @@ from app.sql_models import (
     DiyProjectConfig,
     BuildJob,
     JobStatus,
+    EventType,
+    PinConfiguration,
+    PinMode,
     SerialSession,
     SerialSessionStatus,
     WifiCredential,
@@ -96,7 +104,7 @@ def create_test_user(
     )
     db.add(membership)
     
-    room = Room(name="Test Room", user_id=user.user_id, household_id=household.household_id)
+    room = Room(name="Test Area", user_id=user.user_id, household_id=household.household_id)
     db.add(room)
     db.commit()
     db.refresh(room)
@@ -128,6 +136,348 @@ def create_test_project(token: str, room_id: int, *, name: str = "Test Project")
     )
     assert response.status_code == 200, response.text
     return response.json()["id"]
+
+
+def create_test_diy_device(
+    db,
+    *,
+    user: User,
+    room: Room,
+    device_id: str,
+    mac_address: str,
+    name: str,
+    pin_configurations: list[dict[str, object]],
+    last_state: dict[str, object] | None = None,
+) -> Device:
+    device = Device(
+        device_id=device_id,
+        mac_address=mac_address,
+        name=name,
+        mode=DeviceMode.no_code,
+        auth_status=AuthStatus.approved,
+        conn_status=ConnStatus.offline,
+        owner_id=user.user_id,
+        room_id=room.room_id,
+        firmware_version="fake-board-test-1.0.0",
+        ip_address="192.168.50.90",
+        topic_pub=f"econnect/local/device/{device_id}/state",
+        topic_sub=f"econnect/local/device/{device_id}/command",
+    )
+    db.add(device)
+    db.flush()
+
+    for pin in pin_configurations:
+        db.add(
+            PinConfiguration(
+                device_id=device_id,
+                gpio_pin=int(pin["gpio_pin"]),
+                mode=pin["mode"],
+                function=pin.get("function"),
+                label=pin.get("label"),
+                extra_params=pin.get("extra_params"),
+            )
+        )
+
+    if last_state is not None:
+        db.add(
+            DeviceHistory(
+                device_id=device_id,
+                event_type=EventType.state_change,
+                payload=json.dumps(last_state),
+            )
+        )
+
+    db.commit()
+    db.refresh(device)
+    return device
+
+
+def assert_custom_device_response_payload(
+    payload: dict[str, object],
+    *,
+    device_id: str,
+    name: str,
+    expected_pin_rows: dict[int, dict[str, object]],
+) -> None:
+    assert payload["device_id"] == device_id
+    assert payload["name"] == name
+    assert payload["device_type"] == "custom"
+    assert payload["is_external"] is False
+    assert payload["mode"] == "no-code"
+    assert payload["room_name"] == "Test Area"
+
+    pin_configurations = payload["pin_configurations"]
+    assert isinstance(pin_configurations, list)
+    assert {pin["gpio_pin"] for pin in pin_configurations} == set(expected_pin_rows)
+
+    last_state = payload["last_state"]
+    assert isinstance(last_state, dict)
+    assert last_state["kind"] == "state"
+
+    rows = {row["pin"]: row for row in last_state["pins"]}
+    assert set(rows) == set(expected_pin_rows)
+    for pin_number, expected_row in expected_pin_rows.items():
+        row = rows[pin_number]
+        for key, expected_value in expected_row.items():
+            assert row[key] == expected_value
+
+
+@pytest.mark.parametrize(
+    ("device_id", "mac_address", "name", "pin_configurations", "last_state", "expected_pin_rows"),
+    [
+        pytest.param(
+            "custom-switch-regression",
+            "02:00:00:00:10:01",
+            "Custom Switch Regression",
+            [
+                {
+                    "gpio_pin": 2,
+                    "mode": PinMode.OUTPUT,
+                    "function": "relay",
+                    "label": "Test Relay",
+                    "extra_params": {"active_level": 1},
+                }
+            ],
+            {
+                "kind": "state",
+                "device_id": "custom-switch-regression",
+                "applied": True,
+                "pin": 2,
+                "value": 1,
+                "pins": [
+                    {
+                        "pin": 2,
+                        "mode": "OUTPUT",
+                        "function": "relay",
+                        "label": "Test Relay",
+                        "value": 1,
+                    }
+                ],
+            },
+            {
+                2: {
+                    "mode": "OUTPUT",
+                    "function": "relay",
+                    "value": 1,
+                }
+            },
+            id="switch-board",
+        ),
+        pytest.param(
+            "custom-fan-regression",
+            "02:00:00:00:10:02",
+            "Custom Fan Regression",
+            [
+                {
+                    "gpio_pin": 3,
+                    "mode": PinMode.PWM,
+                    "function": "fan",
+                    "label": "PWM Fan",
+                    "extra_params": {
+                        "min_value": 0,
+                        "max_value": 255,
+                        "input_type": "switch",
+                        "switch_type": "momentary",
+                    },
+                },
+                {
+                    "gpio_pin": 0,
+                    "mode": PinMode.INPUT,
+                    "function": "tachometer",
+                    "label": "Fan Tachometer",
+                    "extra_params": {
+                        "input_type": "tachometer",
+                        "switch_type": "momentary",
+                    },
+                },
+            ],
+            {
+                "kind": "state",
+                "device_id": "custom-fan-regression",
+                "applied": True,
+                "pins": [
+                    {
+                        "pin": 0,
+                        "mode": "INPUT",
+                        "function": "tachometer",
+                        "label": "Fan Tachometer",
+                        "value": 2082,
+                    },
+                    {
+                        "pin": 3,
+                        "mode": "PWM",
+                        "function": "fan",
+                        "label": "PWM Fan",
+                        "value": 180,
+                        "brightness": 180,
+                    },
+                ],
+            },
+            {
+                0: {
+                    "mode": "INPUT",
+                    "function": "tachometer",
+                    "value": 2082,
+                },
+                3: {
+                    "mode": "PWM",
+                    "function": "fan",
+                    "value": 180,
+                },
+            },
+            id="fan-tach-board",
+        ),
+        pytest.param(
+            "custom-dht-regression",
+            "02:00:00:00:10:03",
+            "Custom DHT Regression",
+            [
+                {
+                    "gpio_pin": 4,
+                    "mode": PinMode.INPUT,
+                    "function": "climate",
+                    "label": "DHT22 Climate",
+                    "extra_params": {
+                        "input_type": "dht",
+                        "dht_version": "DHT22",
+                    },
+                }
+            ],
+            {
+                "kind": "state",
+                "device_id": "custom-dht-regression",
+                "applied": True,
+                "temperature": 24.5,
+                "humidity": 61.6,
+                "pins": [
+                    {
+                        "pin": 4,
+                        "mode": "INPUT",
+                        "function": "climate",
+                        "label": "DHT22 Climate",
+                        "temperature": 24.5,
+                        "humidity": 61.6,
+                        "value": 24.5,
+                    }
+                ],
+            },
+            {
+                4: {
+                    "mode": "INPUT",
+                    "function": "climate",
+                    "temperature": 24.5,
+                    "humidity": 61.6,
+                    "value": 24.5,
+                }
+            },
+            id="dht22-board",
+        ),
+        pytest.param(
+            "custom-pwm-slicer-regression",
+            "02:00:00:00:10:04",
+            "Custom PWM Slicer Regression",
+            [
+                {
+                    "gpio_pin": 5,
+                    "mode": PinMode.PWM,
+                    "function": "dimmer",
+                    "label": "PWM Slicer",
+                    "extra_params": {
+                        "min_value": 0,
+                        "max_value": 255,
+                    },
+                }
+            ],
+            {
+                "kind": "state",
+                "device_id": "custom-pwm-slicer-regression",
+                "applied": True,
+                "pin": 5,
+                "value": 128,
+                "brightness": 128,
+                "pins": [
+                    {
+                        "pin": 5,
+                        "mode": "PWM",
+                        "function": "dimmer",
+                        "label": "PWM Slicer",
+                        "value": 128,
+                        "brightness": 128,
+                    }
+                ],
+            },
+            {
+                5: {
+                    "mode": "PWM",
+                    "function": "dimmer",
+                    "value": 128,
+                }
+            },
+            id="pwm-only-board",
+        ),
+    ],
+)
+def test_custom_diy_boards_keep_custom_device_type_across_device_endpoints(
+    device_id,
+    mac_address,
+    name,
+    pin_configurations,
+    last_state,
+    expected_pin_rows,
+):
+    db = TestingSessionLocal()
+    username = device_id.replace("-", "_")
+    user, room = create_test_user(db, username=username)
+    token = get_token(username=username)
+
+    create_test_diy_device(
+        db,
+        user=user,
+        room=room,
+        device_id=device_id,
+        mac_address=mac_address,
+        name=name,
+        pin_configurations=pin_configurations,
+        last_state=last_state,
+    )
+
+    devices_response = client.get(
+        "/api/v1/devices",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert devices_response.status_code == 200, devices_response.text
+    device_payload = next(row for row in devices_response.json() if row["device_id"] == device_id)
+    assert_custom_device_response_payload(
+        device_payload,
+        device_id=device_id,
+        name=name,
+        expected_pin_rows=expected_pin_rows,
+    )
+
+    dashboard_response = client.get(
+        "/api/v1/dashboard/devices",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert dashboard_response.status_code == 200, dashboard_response.text
+    dashboard_payload = next(row for row in dashboard_response.json() if row["device_id"] == device_id)
+    assert_custom_device_response_payload(
+        dashboard_payload,
+        device_id=device_id,
+        name=name,
+        expected_pin_rows=expected_pin_rows,
+    )
+
+    detail_response = client.get(
+        f"/api/v1/device/{device_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert detail_response.status_code == 200, detail_response.text
+    assert_custom_device_response_payload(
+        detail_response.json(),
+        device_id=device_id,
+        name=name,
+        expected_pin_rows=expected_pin_rows,
+    )
 
 
 def test_wifi_credentials_are_masked_in_list_and_reveal_requires_password():

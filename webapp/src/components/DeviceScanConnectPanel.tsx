@@ -134,7 +134,7 @@ export default function DeviceScanConnectPanel({
         });
       } catch (error) {
         if (!cancelled) {
-          setRoomError(error instanceof Error ? error.message : "Failed to load rooms");
+          setRoomError(error instanceof Error ? error.message : "Failed to load areas");
         }
       } finally {
         if (!cancelled) {
@@ -206,7 +206,7 @@ export default function DeviceScanConnectPanel({
 
   async function handleCreateRoom() {
     if (!newRoomName.trim()) {
-      setRoomError("Enter a room name before creating it.");
+      setRoomError("Enter an area name before creating it.");
       return;
     }
 
@@ -221,7 +221,7 @@ export default function DeviceScanConnectPanel({
       setSelectedRoomId(createdRoom.room_id);
       setNewRoomName("");
     } catch (error) {
-      setRoomError(error instanceof Error ? error.message : "Failed to create room");
+      setRoomError(error instanceof Error ? error.message : "Failed to create area");
     } finally {
       setCreatingRoom(false);
     }
@@ -229,7 +229,7 @@ export default function DeviceScanConnectPanel({
 
   async function connectDevice(deviceId: string) {
     if (!selectedRoomId) {
-      setRoomError("Select or create a room before connecting this device.");
+      setRoomError("Select or create an area before connecting this device.");
       return;
     }
 
@@ -255,7 +255,7 @@ export default function DeviceScanConnectPanel({
               ...pendingDevice,
               auth_status: "approved",
               pairing_requested_at: null,
-              room_name: selectedRoom?.name ?? pendingDevice.room_name ?? "Unassigned",
+              room_name: selectedRoom?.name ?? pendingDevice.room_name ?? "Unassigned area",
             }
           : null,
       );
@@ -416,7 +416,7 @@ export default function DeviceScanConnectPanel({
                 htmlFor="scanner-room-select"
                 className="block text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400"
               >
-                Assign Room
+                Assign Area
               </label>
               <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
                 Select where this board belongs, then connect it directly from this live scanner.
@@ -429,7 +429,7 @@ export default function DeviceScanConnectPanel({
                 className="mt-4 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
                 disabled={roomsLoading}
               >
-                <option value="">{roomsLoading ? "Loading rooms..." : "Select a room"}</option>
+                <option value="">{roomsLoading ? "Loading areas..." : "Select an area"}</option>
                 {rooms.map((room) => (
                   <option key={room.room_id} value={room.room_id}>
                     {room.name}
@@ -439,7 +439,7 @@ export default function DeviceScanConnectPanel({
 
               <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_auto]">
                 <label htmlFor="scanner-new-room-name" className="sr-only">
-                  New room name
+                  New area name
                 </label>
                 <input
                   id="scanner-new-room-name"
@@ -448,7 +448,7 @@ export default function DeviceScanConnectPanel({
                   value={newRoomName}
                   onChange={(event) => setNewRoomName(event.target.value)}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-                  placeholder="Create a room without leaving connect flow"
+                  placeholder="Create an area without leaving connect flow"
                 />
                 <button
                   type="button"
@@ -456,7 +456,7 @@ export default function DeviceScanConnectPanel({
                   disabled={creatingRoom || !newRoomName.trim()}
                   className="rounded-xl bg-primary px-4 py-3 text-sm font-semibold text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {creatingRoom ? "Creating..." : "Create room"}
+                  {creatingRoom ? "Creating..." : "Create area"}
                 </button>
               </div>
 
@@ -512,8 +512,8 @@ export default function DeviceScanConnectPanel({
                 <span className="text-sm font-mono text-slate-700 dark:text-slate-300">{connectedDevice.mac_address || "N/A"}</span>
               </div>
               <div className="mb-3 flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-700/50">
-                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Assigned Room</span>
-                <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">{connectedDevice.room_name || "Unassigned"}</span>
+                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Assigned Area</span>
+                <span className="text-sm font-semibold text-slate-700 dark:text-slate-300">{connectedDevice.room_name || "Unassigned area"}</span>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Status</span>

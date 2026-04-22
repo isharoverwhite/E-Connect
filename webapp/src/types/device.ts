@@ -26,6 +26,7 @@ export interface DeviceAvailabilitySummary {
     auth_status: AuthStatus;
     conn_status: ConnStatus;
     pairing_requested_at?: string | null;
+    show_on_dashboard?: boolean;
 }
 
 export interface PinConfig {

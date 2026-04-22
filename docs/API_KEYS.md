@@ -44,7 +44,7 @@ Format đề xuất:
 Ví dụ:
 
 - `Admin MacBook Pro | Full backend read + device control`
-- `Member iPhone Living Room | Read dashboard + control allowed devices`
+- `Member iPhone Living Area | Read dashboard + control allowed devices`
 - `Admin NAS Monitor | System live-status + logs`
 - `Admin Home Assistant Bridge | Device read + selected control`
 - `Automation Runner MiniPC | Read automations + trigger rules`
@@ -54,7 +54,7 @@ Ví dụ:
 | Label đề xuất | Description gợi ý |
 |---|---|
 | `Admin MacBook Pro \| Full backend read + device control` | Dùng cho máy MacBook của quản trị viên để đọc toàn bộ dashboard, lấy chi tiết thiết bị, gửi lệnh relay/dimmer/RGB/color temperature, và truy cập các endpoint giám sát hệ thống yêu cầu quyền admin. |
-| `Member iPhone Living Room \| Read dashboard + control allowed devices` | Dùng cho tài khoản member chỉ có quyền ở phòng khách. Key chỉ đọc được danh sách thiết bị trong phạm vi room đã cấp và chỉ điều khiển được các thiết bị room đó. Không có quyền xem system logs hay live-status admin. |
+| `Member iPhone Living Area \| Read dashboard + control allowed devices` | Dùng cho tài khoản member chỉ có quyền ở một khu vực như phòng khách. Key chỉ đọc được danh sách thiết bị trong phạm vi area đã cấp và chỉ điều khiển được các thiết bị trong area đó. Không có quyền xem system logs hay live-status admin. |
 | `Admin NAS Monitor \| System live-status + logs` | Dùng cho dịch vụ monitoring nội bộ để đọc `/system/live-status`, `/system/logs`, và kiểm tra tình trạng DB, MQTT, uptime, CPU, memory, storage, firmware revision mới nhất. |
 | `Admin Home Assistant Bridge \| Device read + selected control` | Dùng cho integration bridge trong LAN để sync danh sách thiết bị, đọc trạng thái hiện tại, và gửi lệnh điều khiển tới một tập thiết bị được phép. Không nên dùng key này cho thao tác provisioning hoặc OTA nếu không thật sự cần. |
 | `Automation Runner MiniPC \| Read automations + trigger rules` | Dùng cho máy chạy tác vụ nội bộ cần đọc danh sách automation và trigger thủ công các rule đã lưu. Chỉ nên cấp cho tài khoản biết rõ phạm vi automation cần quản lý. |
@@ -137,7 +137,7 @@ curl -s -X POST -H "Authorization: Bearer $KEY" \
 | Profile | Nên tạo bằng user nào | Dùng cho việc gì | Endpoint chính |
 |---|---|---|---|
 | `Read-Only Dashboard Key` | member hoặc admin | đọc dashboard và trạng thái thiết bị trong phạm vi được cấp | `/users/me`, `/devices`, `/dashboard/devices`, `/device/{id}`, `/automations` |
-| `Room Control Key` | member có room permission hoặc admin | điều khiển relay, dimmer, light trong room được phép | `/dashboard/devices`, `/device/{id}`, `/device/{id}/command` |
+| `Area Control Key` | member có area permission hoặc admin | điều khiển relay, dimmer, light trong area được phép | `/dashboard/devices`, `/device/{id}`, `/device/{id}/command` |
 | `Admin Monitoring Key` | admin / owner | đọc sức khỏe hệ thống và log | `/system/live-status`, `/system/logs`, `/system/time-context` |
 | `Admin Provisioning Key` | admin / owner | provisioning, cấu hình DIY, rebuild, OTA | `/device/{id}/config`, `/device/{id}/action/rebuild`, `/diy/build/*`, `/serial/*` |
 | `Automation Operator Key` | user có automation liên quan | đọc/tạo/sửa/trigger automation | `/automations`, `/automation`, `/automation/{id}`, `/automation/{id}/trigger` |
@@ -157,7 +157,7 @@ curl -s -X POST -H "Authorization: Bearer $KEY" \
 
 | Method | Endpoint | Quyền tối thiểu | Description |
 |---|---|---|---|
-| `GET` | `/devices` | user có key hợp lệ | Lấy danh sách thiết bị đã `approved` trong phạm vi nhìn thấy của key. Với member thường, dữ liệu có thể bị rút gọn để không lộ full detail ngoài room được cấp. |
+| `GET` | `/devices` | user có key hợp lệ | Lấy danh sách thiết bị đã `approved` trong phạm vi nhìn thấy của key. Với member thường, dữ liệu có thể bị rút gọn để không lộ full detail ngoài area được cấp. |
 | `GET` | `/devices?auth_status=pending` | admin / owner | Đọc hàng chờ pairing pending. Member thường không được xem trạng thái này. |
 | `GET` | `/dashboard/devices` | user có key hợp lệ | Lấy read model đầy đủ hơn cho dashboard card, bao gồm `last_state`, `pin_configurations` và metadata cần cho điều khiển UI. Đây là endpoint phù hợp nhất để integration render bảng trạng thái thiết bị. |
 | `GET` | `/device/{device_id}` | có quyền với device đó | Đọc chi tiết một thiết bị cụ thể trước khi gửi command. Nên dùng endpoint này để xác định đúng `pin`, `mode`, `function`, capability và trạng thái hiện tại. |
@@ -285,7 +285,7 @@ curl -s -H "Authorization: Bearer $KEY" "$BASE/system/logs?limit=100"
 - không phải là MQTT credential cho device
 - không phải là WebSocket credential chuẩn ở route `/ws`
 - không tự nâng quyền lên admin
-- không nhìn thấy device ngoài room được cấp nếu key được tạo bởi member không có quyền
+- không nhìn thấy device ngoài area được cấp nếu key được tạo bởi member không có quyền
 - không có `description` field riêng khi tạo key
 
 ## 10. Best practices cho người dùng

@@ -740,7 +740,7 @@ export default function DIYBuilderPage() {
 
     if (!roomId) {
       setProjectSyncState("idle");
-      setProjectSyncMessage("Select a room before syncing this device project to the server.");
+      setProjectSyncMessage("Select an area before syncing this device project to the server.");
       return null;
     }
 
@@ -871,13 +871,13 @@ export default function DIYBuilderPage() {
     const token = getToken();
     if (!token) {
       handleBuildAuthFailure(
-        new ApiRequestError(401, "Missing auth token. Sign in again before creating a room."),
+        new ApiRequestError(401, "Missing auth token. Sign in again before creating an area."),
       );
       return;
     }
 
     if (!newRoomName.trim()) {
-      setRoomError("Enter a room name before creating it.");
+      setRoomError("Enter an area name before creating it.");
       return;
     }
 
@@ -1933,7 +1933,7 @@ export default function DIYBuilderPage() {
           </div>
           <h1 className="mt-5 text-2xl font-bold text-slate-900 dark:text-white">Admin access required</h1>
           <p className="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">
-            Pairing, creating, and flashing new devices are reserved for administrators. You can still return to the dashboard to control rooms that were explicitly assigned to your account.
+            Pairing, creating, and flashing new devices are reserved for administrators. You can still return to the dashboard to control areas that were explicitly assigned to your account.
           </p>
           <button
             onClick={() => router.push("/devices")}

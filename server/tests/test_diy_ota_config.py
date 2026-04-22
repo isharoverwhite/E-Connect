@@ -107,7 +107,7 @@ def create_test_data(db):
     membership = HouseholdMembership(user_id=user.user_id, household_id=household.household_id, role=HouseholdRole.owner)
     db.add(membership)
 
-    room = Room(name="Test Room", user_id=user.user_id, household_id=household.household_id)
+    room = Room(name="Test Area", user_id=user.user_id, household_id=household.household_id)
     db.add(room)
     db.commit()
     db.refresh(room)
@@ -588,7 +588,7 @@ def test_get_diy_project_reconciles_flashing_ota_when_device_reports_expected_fi
         project_id=project.id,
         device_id=device.device_id,
         board_profile=project.board_profile,
-        name="Living Room Relay Node",
+        name="Living Area Relay Node",
         config=dict(pending_config),
     )
     db.add(saved_config)
@@ -661,7 +661,7 @@ def test_list_device_config_history_reconciles_recent_flashed_ota_when_device_re
         "wifi_password": "test",
         "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}],
         "config_id": str(uuid.uuid4()),
-        "config_name": "Living Room Relay Node",
+        "config_name": "Living Area Relay Node",
         "assigned_device_id": device.device_id,
         "assigned_device_name": device.name,
     }
@@ -673,7 +673,7 @@ def test_list_device_config_history_reconciles_recent_flashed_ota_when_device_re
         project_id=project.id,
         device_id=device.device_id,
         board_profile=project.board_profile,
-        name="Living Room Relay Node",
+        name="Living Area Relay Node",
         config=dict(pending_config),
     )
     db.add(saved_config)
@@ -2056,7 +2056,7 @@ def test_mqtt_state_ota_status_success_promotes_pending_config_when_device_alrea
         project_id=project.id,
         device_id=device.device_id,
         board_profile=project.board_profile,
-        name="Living Room Relay Node",
+        name="Living Area Relay Node",
         config=dict(project.pending_config),
     )
     db.add(saved_config)

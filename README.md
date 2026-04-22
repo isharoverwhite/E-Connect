@@ -100,9 +100,9 @@ English: The `Extensions` area manages external integration packages, showing in
 ### 10. Settings And Wi-Fi Credentials
 ![E-Connect Settings Wi-Fi](./docs/screenshots/readme/settings-wifi.png)
 
-Tiếng Việt: `Settings` tập trung phần quản trị instance như timezone, user management, rooms, DIY configs, và danh sách Wi-Fi dùng lại cho provisioning.
+Tiếng Việt: `Settings` tập trung phần quản trị instance như timezone, user management, areas, DIY configs, và danh sách Wi-Fi dùng lại cho provisioning.
 
-English: `Settings` centralizes instance administration, including timezone, user management, rooms, DIY configs, and reusable Wi-Fi credentials for provisioning.
+English: `Settings` centralizes instance administration, including timezone, user management, areas, DIY configs, and reusable Wi-Fi credentials for provisioning.
 
 ---
 
@@ -252,7 +252,7 @@ docker compose up -d
    Vào `Settings -> Wi-Fi`, thêm SSID và mật khẩu mà thiết bị DIY sẽ dùng khi khởi động lần đầu.
 
 3. **Tạo cấu hình phần cứng**
-   Vào `Devices -> Create New Device`, chọn board, profile phần cứng, room, và network đã lưu.
+   Vào `Devices -> Create New Device`, chọn board, profile phần cứng, area, và network đã lưu.
 
 4. **Map GPIO và build firmware**
    Đi tiếp qua các bước `Configs -> Pins -> Review -> Flash` để tạo build phía server.
@@ -456,7 +456,7 @@ docker compose up -d
    Go to `Settings -> Wi-Fi` and save the network your DIY nodes should use during initial boot.
 
 3. **Create a hardware project**
-   Open `Devices -> Create New Device`, then choose the board family, exact profile, room, and saved network.
+   Open `Devices -> Create New Device`, then choose the board family, exact profile, area, and saved network.
 
 4. **Map GPIO and build firmware**
    Continue through `Configs -> Pins -> Review -> Flash` to prepare a server-generated firmware build.

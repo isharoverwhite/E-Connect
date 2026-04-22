@@ -76,7 +76,7 @@ test.describe('DIY Flasher Infinite Loop Regression Tests', () => {
     await page.getByRole('heading', { name: 'ESP32-C3', exact: true }).click();
     await expect(page.getByText('Selected: ESP32-C3 DevKitM-1')).toBeVisible();
 
-    // The user needs a room to be selected to proceed. Wait for the API to auto-select the first room.
+    // The user needs an area to be selected to proceed. Wait for the API to auto-select the first area.
     // Ensure the 'Next: Choose Config' button is enabled.
     await page.getByLabel('Project Name').fill('Loop Regression Device');
     const nextBtn = page.getByRole('button', { name: 'Next: Choose Config' });

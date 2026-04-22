@@ -208,7 +208,7 @@ export default function SettingsPage() {
             const data = await fetchRooms(token);
             setRooms(data);
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Failed to load rooms";
+            const message = error instanceof Error ? error.message : "Failed to load areas";
             setRoomsError(message);
         } finally {
             setRoomsLoading(false);
@@ -483,9 +483,9 @@ export default function SettingsPage() {
                 current.map((r) => (r.room_id === room.room_id ? updatedRoom : r))
             );
             
-            showToast(`Room access updated.`, "success");
+            showToast(`Area access updated.`, "success");
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Failed to update room access";
+            const message = error instanceof Error ? error.message : "Failed to update area access";
             setRoomsError(message);
         } finally {
             setRoomActionId(null);
@@ -505,7 +505,7 @@ export default function SettingsPage() {
         }
 
         if (!roomFormName.trim()) {
-            setCreateRoomNameError("Please enter a room name.");
+            setCreateRoomNameError("Please enter an area name.");
             return;
         }
 
@@ -523,9 +523,9 @@ export default function SettingsPage() {
                 [...currentRooms, createdRoom].sort((left, right) => left.name.localeCompare(right.name)),
             );
             setRoomFormName("");
-            setNotice(`Created room ${createdRoom.name}.`);
+            setNotice(`Created area ${createdRoom.name}.`);
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Failed to create room";
+            const message = error instanceof Error ? error.message : "Failed to create area";
             setRoomsError(message);
         } finally {
             setRoomSubmitting(false);
@@ -554,10 +554,10 @@ export default function SettingsPage() {
             setRooms((currentRooms) =>
                 currentRooms.map((entry) => (entry.room_id === updatedRoom.room_id ? updatedRoom : entry)),
             );
-            setNotice(`Renamed room to ${updatedRoom.name}.`);
+            setNotice(`Renamed area to ${updatedRoom.name}.`);
             setEditingRoomId(null);
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Failed to update room";
+            const message = error instanceof Error ? error.message : "Failed to update area";
             setRoomsError(message);
         } finally {
             setRoomActionId(null);
@@ -565,7 +565,7 @@ export default function SettingsPage() {
     }
 
     async function handleDeleteRoom(roomId: number) {
-        if (!window.confirm("Are you sure you want to delete this room? Devices assigned to it will be unassigned.")) return;
+        if (!window.confirm("Are you sure you want to delete this area? Devices assigned to it will be unassigned.")) return;
 
         const token = getToken();
         if (!token) {
@@ -581,9 +581,9 @@ export default function SettingsPage() {
             await deleteRoom(roomId, token);
 
             setRooms((currentRooms) => currentRooms.filter((entry) => entry.room_id !== roomId));
-            setNotice("Room deleted.");
+            setNotice("Area deleted.");
         } catch (error) {
-            const message = error instanceof Error ? error.message : "Failed to delete room";
+            const message = error instanceof Error ? error.message : "Failed to delete area";
             setRoomsError(message);
         } finally {
             setRoomActionId(null);
@@ -1309,10 +1309,10 @@ export default function SettingsPage() {
                                     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
                                         <div className="flex items-start justify-between gap-4">
                                             <div>
-                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Create room</p>
-                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Provision a room boundary</h2>
+                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Create area</p>
+                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Define an area</h2>
                                                 <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                    New rooms start private by default. Only admins retain access until you explicitly grant control to other household users.
+                                                    New areas start private by default. Only admins retain access until you explicitly grant control to other household users.
                                                 </p>
                                             </div>
                                             <span className="material-icons-round rounded-2xl bg-primary/10 p-3 text-2xl text-primary">meeting_room</span>
@@ -1320,7 +1320,7 @@ export default function SettingsPage() {
 
                                         <form className="mt-6 space-y-5" onSubmit={handleCreateRoom} noValidate>
                                             <div>
-                                                <label className={`mb-1.5 block text-sm font-medium ${createRoomNameError ? 'text-rose-500' : 'text-slate-700 dark:text-slate-300'}`}>Room name</label>
+                                                <label className={`mb-1.5 block text-sm font-medium ${createRoomNameError ? 'text-rose-500' : 'text-slate-700 dark:text-slate-300'}`}>Area name</label>
                                                 <input
                                                     type="text"
                                                     value={roomFormName}
@@ -1329,7 +1329,7 @@ export default function SettingsPage() {
                                                         if (createRoomNameError) setCreateRoomNameError("");
                                                     }}
                                                     className={`w-full rounded-2xl border bg-white px-4 py-3 text-slate-900 outline-none transition dark:bg-slate-900/80 dark:text-white ${createRoomNameError ? 'border-rose-500 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20' : 'border-slate-300 focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700'}`}
-                                                    placeholder="Living room"
+                                                    placeholder="Living area"
                                                 />
                                                 {createRoomNameError ? (
                                                     <p className="mt-2 text-sm font-medium text-rose-500 flex items-center">
@@ -1349,7 +1349,7 @@ export default function SettingsPage() {
                                                 ) : (
                                                     <>
                                                         <span className="material-icons-round mr-2 text-[18px]">add_home</span>
-                                                        Create Room
+                                                        Create Area
                                                     </>
                                                 )}
                                             </button>
@@ -1360,9 +1360,9 @@ export default function SettingsPage() {
                                         <div className="flex flex-wrap items-start justify-between gap-3">
                                             <div>
                                                 <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Access matrix</p>
-                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Room-level control assignments</h2>
+                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Area-level control assignments</h2>
                                                 <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                    Decide exactly which household users may operate devices inside each room.
+                                                    Decide exactly which household users may operate devices inside each area.
                                                 </p>
                                             </div>
                                             <button
@@ -1379,7 +1379,7 @@ export default function SettingsPage() {
                                                 <div className="flex min-h-64 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/50">
                                                     <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
                                                         <span className="material-icons-round animate-spin">refresh</span>
-                                                        Loading rooms...
+                                                        Loading areas...
                                                     </div>
                                                 </div>
                                             ) : rooms.length === 0 ? (
@@ -1387,9 +1387,9 @@ export default function SettingsPage() {
                                                     <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
                                                         <span className="material-icons-round text-3xl">meeting_room</span>
                                                     </div>
-                                                    <h3 className="mt-4 text-lg font-semibold text-slate-900 dark:text-white">No rooms created yet</h3>
+                                                    <h3 className="mt-4 text-lg font-semibold text-slate-900 dark:text-white">No areas created yet</h3>
                                                     <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                        Create the first room on the left to start assigning device control boundaries.
+                                                        Create the first area on the left to start assigning device control boundaries.
                                                     </p>
                                                 </div>
                                             ) : (
@@ -1419,12 +1419,12 @@ export default function SettingsPage() {
                                                                             <div className="flex flex-wrap items-center gap-2">
                                                                                 <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{room.name}</h3>
                                                                                 <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                                                                                    room #{room.room_id}
+                                                                                    area #{room.room_id}
                                                                                 </span>
                                                                             </div>
                                                                         )}
                                                                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                                            Room configuration and devices assigned.
+                                                                            Area configuration and assigned devices.
                                                                         </p>
                                                                     </div>
 
@@ -1458,7 +1458,7 @@ export default function SettingsPage() {
                                                                                         setEditingRoomName(room.name);
                                                                                     }}
                                                                                     className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-600 transition hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
-                                                                                    title="Edit Room Name"
+                                                                                    title="Edit Area Name"
                                                                                 >
                                                                                     <span className="material-icons-round text-xl">edit</span>
                                                                                 </button>
@@ -1466,7 +1466,7 @@ export default function SettingsPage() {
                                                                                     onClick={() => void handleDeleteRoom(room.room_id)}
                                                                                     disabled={roomActionId === room.room_id}
                                                                                     className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-red-50 text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40"
-                                                                                    title="Delete Room"
+                                                                                    title="Delete Area"
                                                                                 >
                                                                                     {roomActionId === room.room_id ? (
                                                                                         <span className="material-icons-round animate-spin">refresh</span>
@@ -1522,7 +1522,7 @@ export default function SettingsPage() {
                                     </div>
                                     <h2 className="mt-5 text-2xl font-semibold text-slate-900 dark:text-white">Admin access required</h2>
                                     <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-                                        This menu only appears for accounts with admin privileges. Sign in with an admin account if you need to manage room boundaries and device access.
+                                        This menu only appears for accounts with admin privileges. Sign in with an admin account if you need to manage area boundaries and device access.
                                     </p>
                                 </section>
                             )

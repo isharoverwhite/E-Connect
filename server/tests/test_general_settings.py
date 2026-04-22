@@ -112,7 +112,7 @@ def create_temperature_source_device(
     *,
     username: str = "timezone-admin",
     device_id: str = "house-temp-node",
-    room_name: str = "Living Room",
+    room_name: str = "Living Area",
     sensor_label: str = "Indoor Climate",
     temperature: float = 28.6,
     humidity: float = 63.2,
@@ -129,7 +129,7 @@ def create_temperature_source_device(
         device = Device(
             device_id=device_id,
             mac_address="AA:BB:CC:DD:EE:FF",
-            name="Living Room Climate Board",
+            name="Living Area Climate Board",
             room_id=room.room_id,
             owner_id=user.user_id,
             auth_status=AuthStatus.approved,
@@ -270,7 +270,7 @@ def test_update_general_settings_persists_house_temperature_source(monkeypatch):
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["house_temperature_device_id"] == source_device.device_id
-    assert payload["house_temperature_device_name"] == "Living Room Climate Board"
+    assert payload["house_temperature_device_name"] == "Living Area Climate Board"
     assert payload["effective_timezone"] == "Asia/Ho_Chi_Minh"
 
     db = TestingSessionLocal()
@@ -316,8 +316,8 @@ def test_house_temperature_endpoint_returns_selected_device_reading(monkeypatch)
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["device_id"] == source_device.device_id
-    assert payload["device_name"] == "Living Room Climate Board"
-    assert payload["room_name"] == "Living Room"
+    assert payload["device_name"] == "Living Area Climate Board"
+    assert payload["room_name"] == "Living Area"
     assert payload["source_label"] == "Indoor Climate"
     assert payload["temperature"] == pytest.approx(29.4)
     assert payload["humidity"] == pytest.approx(58.1)

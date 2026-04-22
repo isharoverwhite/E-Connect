@@ -13,7 +13,7 @@ export interface RoomRecord {
 }
 
 async function parseRoomError(response: Response) {
-    const fallback = "Room request failed";
+    const fallback = "Area request failed";
 
     try {
         const payload = (await response.json()) as {

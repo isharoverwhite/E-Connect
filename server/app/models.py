@@ -275,10 +275,14 @@ class DeviceBase(BaseModel):
     ip_address: Optional[str] = None
     topic_pub: Optional[str] = None
     topic_sub: Optional[str] = None
+    show_on_dashboard: bool = True
 
 class DeviceCreate(DeviceBase):
     device_id: str # UUID from device
     pin_configurations: List[PinConfigCreate] = []
+
+class DeviceVisibilityUpdate(BaseModel):
+    show_on_dashboard: bool
 
 class DeviceRegister(BaseModel):
     # Payload from device during handshake
@@ -298,6 +302,7 @@ class DeviceResponse(DeviceBase):
     device_id: str
     room_id: Optional[int] = None
     room_name: Optional[str] = None
+    device_type: Optional[str] = None
     owner_id: int
     auth_status: AuthStatus
     conn_status: ConnStatus
@@ -571,11 +576,14 @@ class ExtensionTemperatureRangeResponse(BaseModel):
 
 class ExtensionDeviceSchemaResponse(BaseModel):
     schema_id: str
+    device_type: str
     name: str
     default_name: str
     description: Optional[str] = None
-    card_type: Literal["light"]
-    capabilities: List[Literal["power", "brightness", "rgb", "color_temperature"]] = Field(default_factory=list)
+    card_type: Literal["light", "switch", "fan", "sensor"]
+    capabilities: List[
+        Literal["power", "brightness", "rgb", "color_temperature", "speed", "temperature", "humidity", "value"]
+    ] = Field(default_factory=list)
     temperature_range: Optional[ExtensionTemperatureRangeResponse] = None
     config_fields: List[ExtensionConfigField] = Field(default_factory=list)
 

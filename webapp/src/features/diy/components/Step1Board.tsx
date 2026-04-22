@@ -258,10 +258,10 @@ export function Step1Board({
                             htmlFor="diy-room-id"
                             className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider"
                         >
-                            Device Room
+                            Device Area
                         </label>
                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                            New devices must be assigned to a room before the server build can be approved and paired.
+                            New devices must be assigned to an area before the server build can be approved and paired.
                         </p>
                     </div>
 
@@ -272,7 +272,7 @@ export function Step1Board({
                         className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
                         disabled={roomsLoading}
                     >
-                        <option value="">{roomsLoading ? "Loading rooms..." : "Select a room"}</option>
+                        <option value="">{roomsLoading ? "Loading areas..." : "Select an area"}</option>
                         {rooms.map((room) => (
                             <option key={room.room_id} value={room.room_id}>
                                 {room.name}
@@ -286,7 +286,7 @@ export function Step1Board({
                             value={newRoomName}
                             onChange={(event) => setNewRoomName(event.target.value)}
                             className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-base text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
-                            placeholder="Create a new room here"
+                            placeholder="Create a new area here"
                         />
                         <button
                             type="button"
@@ -294,7 +294,7 @@ export function Step1Board({
                             disabled={creatingRoom || !newRoomName.trim()}
                             className="rounded-xl bg-primary px-5 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                         >
-                            {creatingRoom ? "Creating..." : "Create room"}
+                            {creatingRoom ? "Creating..." : "Create area"}
                         </button>
                     </div>
 

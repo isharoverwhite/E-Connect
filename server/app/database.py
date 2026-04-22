@@ -407,6 +407,18 @@ def _ensure_additive_columns():
         ("build_jobs", "staged_project_config", "TEXT", "JSON NULL"),
         (
             "devices",
+            "show_on_dashboard",
+            "BOOLEAN DEFAULT 1",
+            "BOOLEAN NOT NULL DEFAULT 1 COMMENT 'Flag to show or hide the device on the dashboard'",
+        ),
+        (
+            "external_devices",
+            "show_on_dashboard",
+            "BOOLEAN DEFAULT 1",
+            "BOOLEAN NOT NULL DEFAULT 1 COMMENT 'Flag to show or hide the device on the dashboard'",
+        ),
+        (
+            "devices",
             "provisioning_project_id",
             "VARCHAR(36)",
             "VARCHAR(36) NULL COMMENT 'DIY project id used to derive secure firmware credentials'",

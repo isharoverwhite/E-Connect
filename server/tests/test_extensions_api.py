@@ -70,19 +70,20 @@ app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 TEST_EXTENSION_VERSION = "1.0.0-test"
 TEST_EXTENSION_FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "Yeelight_control"
+MULTI_CARD_EXTENSION_FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures" / "MultiCard_control"
 
 
 def cleanup_test_extension_archives() -> None:
     packages_dir = EXTENSIONS_DATA_DIR / "packages"
     if packages_dir.exists():
-        for archive_path in packages_dir.glob(f"yeelight_control-{TEST_EXTENSION_VERSION}-*.zip"):
+        for archive_path in packages_dir.glob(f"*-{TEST_EXTENSION_VERSION}-*.zip"):
             if isinstance(archive_path, Path):
                 archive_path.unlink(missing_ok=True)
 
     if EXTENSION_EXTRACTED_DIR.exists():
         import shutil
 
-        for extracted_path in EXTENSION_EXTRACTED_DIR.glob(f"yeelight_control-{TEST_EXTENSION_VERSION}-*"):
+        for extracted_path in EXTENSION_EXTRACTED_DIR.glob(f"*-{TEST_EXTENSION_VERSION}-*"):
             if isinstance(extracted_path, Path) and extracted_path.is_dir():
                 shutil.rmtree(extracted_path)
 
@@ -141,7 +142,7 @@ def get_token(username: str = "extension-admin") -> str:
     return response.json()["access_token"]
 
 
-def create_room(token: str, *, name: str = "Living Room") -> dict[str, object]:
+def create_room(token: str, *, name: str = "Living Area") -> dict[str, object]:
     response = client.post(
         "/api/v1/rooms",
         json={"name": name},
@@ -175,6 +176,7 @@ def build_manifest() -> dict[str, object]:
         "device_schemas": [
             {
                 "schema_id": "yeelight_white_light",
+                "device_type": "light",
                 "name": "Yeelight White Light",
                 "default_name": "Yeelight White Light",
                 "description": "On/off and brightness control for white Yeelight lamps.",
@@ -195,6 +197,7 @@ def build_manifest() -> dict[str, object]:
             },
             {
                 "schema_id": "yeelight_ambient_light",
+                "device_type": "light",
                 "name": "Yeelight Ambient Light",
                 "default_name": "Yeelight Ambient Light",
                 "description": "Brightness plus tunable white control.",
@@ -216,6 +219,7 @@ def build_manifest() -> dict[str, object]:
             },
             {
                 "schema_id": "yeelight_color_light",
+                "device_type": "light",
                 "name": "Yeelight Color Light",
                 "default_name": "Yeelight Color Light",
                 "description": "Brightness plus RGB control.",
@@ -238,22 +242,163 @@ def build_manifest() -> dict[str, object]:
     }
 
 
+def build_multi_card_manifest() -> dict[str, object]:
+    return {
+        "manifest_version": "1.0",
+        "extension_id": "demo_multicard_control",
+        "name": "Demo Multi-Card Control",
+        "version": TEST_EXTENSION_VERSION,
+        "author": "econnect",
+        "description": "Runtime-backed demo provider for switch, fan, and sensor extension hooks.",
+        "provider": {
+            "key": "demo_multicard",
+            "display_name": "Demo Multi-Card",
+        },
+        "package": {
+            "runtime": "python",
+            "entrypoint": "main.py",
+            "hooks": {
+                "validate_command": "validate_command",
+                "execute_command": "execute_command",
+                "probe_state": "probe_state",
+            },
+        },
+        "device_schemas": [
+            {
+                "schema_id": "smart_switch",
+                "device_type": "switch",
+                "name": "Smart Switch",
+                "default_name": "Smart Switch",
+                "description": "Binary switch control for provider-backed outlets or relays.",
+                "display": {
+                    "card_type": "switch",
+                    "capabilities": ["power"],
+                },
+                "config_schema": {
+                    "fields": [
+                        {
+                            "key": "ip_address",
+                            "label": "IP Address",
+                            "type": "string",
+                            "required": True,
+                        },
+                        {
+                            "key": "default_on",
+                            "label": "Default On",
+                            "type": "boolean",
+                            "required": False,
+                        },
+                    ]
+                },
+            },
+            {
+                "schema_id": "ceiling_fan",
+                "device_type": "fan",
+                "name": "Ceiling Fan",
+                "default_name": "Ceiling Fan",
+                "description": "Fan power and speed control.",
+                "display": {
+                    "card_type": "fan",
+                    "capabilities": ["power", "speed"],
+                },
+                "config_schema": {
+                    "fields": [
+                        {
+                            "key": "ip_address",
+                            "label": "IP Address",
+                            "type": "string",
+                            "required": True,
+                        },
+                        {
+                            "key": "default_speed",
+                            "label": "Default Speed",
+                            "type": "number",
+                            "required": False,
+                        },
+                    ]
+                },
+            },
+            {
+                "schema_id": "climate_sensor",
+                "device_type": "sensor",
+                "name": "Climate Sensor",
+                "default_name": "Climate Sensor",
+                "description": "Temperature and humidity telemetry.",
+                "display": {
+                    "card_type": "sensor",
+                    "capabilities": ["temperature", "humidity", "value"],
+                },
+                "config_schema": {
+                    "fields": [
+                        {
+                            "key": "ip_address",
+                            "label": "IP Address",
+                            "type": "string",
+                            "required": True,
+                        },
+                        {
+                            "key": "temperature",
+                            "label": "Temperature",
+                            "type": "number",
+                            "required": False,
+                        },
+                        {
+                            "key": "humidity",
+                            "label": "Humidity",
+                            "type": "number",
+                            "required": False,
+                        },
+                        {
+                            "key": "value",
+                            "label": "Value",
+                            "type": "number",
+                            "required": False,
+                        },
+                        {
+                            "key": "unit",
+                            "label": "Unit",
+                            "type": "string",
+                            "required": False,
+                        },
+                        {
+                            "key": "trend",
+                            "label": "Trend",
+                            "type": "string",
+                            "required": False,
+                        },
+                    ]
+                },
+            },
+        ],
+    }
+
+
 def build_extension_zip(
     manifest: dict[str, object] | None = None,
     *,
     root_folder: str | None = None,
     entrypoint_name: str = "main.py",
+    fixture_root: Path | None = None,
 ) -> bytes:
-    manifest_payload = manifest or build_manifest()
-    extension_source_root = TEST_EXTENSION_FIXTURE_ROOT
-    entrypoint_source = (extension_source_root / "main.py").read_text(encoding="utf-8")
-    helper_source = (extension_source_root / "yeelight_control.py").read_text(encoding="utf-8")
+    extension_source_root = fixture_root or TEST_EXTENSION_FIXTURE_ROOT
+    if manifest is not None:
+        manifest_payload = manifest
+    elif extension_source_root == TEST_EXTENSION_FIXTURE_ROOT:
+        manifest_payload = build_manifest()
+    else:
+        manifest_payload = json.loads((extension_source_root / "manifest.json").read_text(encoding="utf-8"))
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         prefix = f"{root_folder}/" if root_folder else ""
         archive.writestr(f"{prefix}manifest.json", json.dumps(manifest_payload))
-        archive.writestr(f"{prefix}{entrypoint_name}", entrypoint_source)
-        archive.writestr(f"{prefix}yeelight_control.py", helper_source)
+        for source_path in sorted(extension_source_root.rglob("*")):
+            if not source_path.is_file():
+                continue
+            if "__pycache__" in source_path.parts or source_path.name == "manifest.json":
+                continue
+            relative_path = source_path.relative_to(extension_source_root)
+            target_name = entrypoint_name if relative_path.as_posix() == "main.py" else relative_path.as_posix()
+            archive.writestr(f"{prefix}{target_name}", source_path.read_bytes())
     return buffer.getvalue()
 
 
@@ -261,9 +406,14 @@ def build_runtime_backed_extension(
     *,
     manifest: dict[str, object] | None = None,
     package_root: str | None = "Yeelight_control",
+    fixture_root: Path | None = None,
 ) -> InstalledExtension:
     manifest_payload = manifest or build_manifest()
-    archive_bytes = build_extension_zip(manifest_payload, root_folder=package_root)
+    archive_bytes = build_extension_zip(
+        manifest_payload,
+        root_folder=package_root,
+        fixture_root=fixture_root,
+    )
     archive_sha256 = hashlib.sha256(archive_bytes).hexdigest()
     archive_path = EXTENSION_PACKAGES_DIR / (
         f"{manifest_payload['extension_id']}-{manifest_payload['version']}-{archive_sha256[:12]}.zip"
@@ -306,6 +456,39 @@ def test_parse_extension_archive_rejects_legacy_manifest_shape():
         parse_extension_archive(build_extension_zip(legacy_manifest))
 
 
+def test_parse_extension_archive_defaults_device_type_from_card_type():
+    manifest = build_manifest()
+    for schema in manifest["device_schemas"]:
+        if isinstance(schema, dict):
+            schema.pop("device_type", None)
+
+    normalized_manifest, _ = parse_extension_archive(build_extension_zip(manifest))
+
+    assert normalized_manifest["device_schemas"][0]["device_type"] == "light"
+
+
+def test_parse_extension_archive_accepts_switch_fan_and_sensor_card_types():
+    normalized_manifest, _ = parse_extension_archive(build_extension_zip(build_multi_card_manifest()))
+
+    schemas = {schema["schema_id"]: schema for schema in normalized_manifest["device_schemas"]}
+    assert schemas["smart_switch"]["display"]["card_type"] == "switch"
+    assert schemas["smart_switch"]["display"]["capabilities"] == ["power"]
+    assert schemas["ceiling_fan"]["display"]["card_type"] == "fan"
+    assert schemas["ceiling_fan"]["display"]["capabilities"] == ["power", "speed"]
+    assert schemas["climate_sensor"]["display"]["card_type"] == "sensor"
+    assert schemas["climate_sensor"]["display"]["capabilities"] == ["temperature", "humidity", "value"]
+
+
+def test_parse_extension_archive_rejects_capability_not_supported_by_card_type():
+    manifest = build_multi_card_manifest()
+    schema = manifest["device_schemas"][0]
+    assert isinstance(schema, dict)
+    schema["display"] = {"card_type": "switch", "capabilities": ["power", "brightness"]}
+
+    with pytest.raises(ExtensionManifestValidationError, match="unsupported capability 'brightness'"):
+        parse_extension_archive(build_extension_zip(manifest))
+
+
 def test_upload_extension_zip_persists_manifest_and_lists_it():
     create_admin_user()
     token = get_token()
@@ -322,6 +505,7 @@ def test_upload_extension_zip_persists_manifest_and_lists_it():
     assert payload["provider_name"] == "Yeelight"
     assert payload["package_root"] == "Yeelight_control"
     assert payload["device_schemas"][0]["schema_id"] == "yeelight_white_light"
+    assert payload["device_schemas"][0]["device_type"] == "light"
     assert payload["device_schemas"][0]["capabilities"] == ["power", "brightness"]
 
     db = TestingSessionLocal()
@@ -510,6 +694,7 @@ def test_create_external_device_is_merged_into_device_read_models():
     assert devices_response.status_code == 200, devices_response.text
     assert devices_response.json()[0]["device_id"] == device_payload["device_id"]
     assert devices_response.json()[0]["is_external"] is True
+    assert devices_response.json()[0]["device_type"] == "light"
 
     dashboard_response = client.get(
         "/api/v1/dashboard/devices",
@@ -525,6 +710,7 @@ def test_create_external_device_is_merged_into_device_read_models():
     )
     assert detail_response.status_code == 200, detail_response.text
     assert detail_response.json()["schema_snapshot"]["schema_id"] == "yeelight_white_light"
+    assert detail_response.json()["device_type"] == "light"
 
     delete_response = client.delete(
         f"/api/v1/device/{device_payload['device_id']}",
@@ -536,6 +722,209 @@ def test_create_external_device_is_merged_into_device_read_models():
     db = TestingSessionLocal()
     try:
         assert db.query(ExternalDevice).count() == 0
+    finally:
+        db.close()
+
+
+def test_non_light_extension_schemas_are_serialized_with_runtime_pins():
+    create_admin_user()
+    token = get_token()
+    manifest = build_multi_card_manifest()
+    extension_id = str(manifest["extension_id"])
+
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={
+            "file": (
+                "multicard.zip",
+                build_extension_zip(
+                    manifest,
+                    root_folder="MultiCard_control",
+                    fixture_root=MULTI_CARD_EXTENSION_FIXTURE_ROOT,
+                ),
+                "application/zip",
+            )
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    switch_create = client.post(
+        "/api/v1/external-devices",
+        json={
+            "installed_extension_id": extension_id,
+            "device_schema_id": "smart_switch",
+            "name": "Utility Relay",
+            "config": {"ip_address": "192.168.1.70"},
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert switch_create.status_code == 200, switch_create.text
+
+    fan_create = client.post(
+        "/api/v1/external-devices",
+        json={
+            "installed_extension_id": extension_id,
+            "device_schema_id": "ceiling_fan",
+            "name": "Bedroom Fan",
+            "config": {"ip_address": "192.168.1.71"},
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert fan_create.status_code == 200, fan_create.text
+
+    sensor_create = client.post(
+        "/api/v1/external-devices",
+        json={
+            "installed_extension_id": extension_id,
+            "device_schema_id": "climate_sensor",
+            "name": "Hall Climate",
+            "config": {"ip_address": "192.168.1.72"},
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert sensor_create.status_code == 200, sensor_create.text
+
+    devices_response = client.get(
+        "/api/v1/devices",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert devices_response.status_code == 200, devices_response.text
+    devices_by_name = {row["name"]: row for row in devices_response.json()}
+
+    switch_device = devices_by_name["Utility Relay"]
+    assert switch_device["device_type"] == "switch"
+    assert {pin["gpio_pin"] for pin in switch_device["pin_configurations"]} == {0}
+
+    fan_device = devices_by_name["Bedroom Fan"]
+    assert fan_device["device_type"] == "fan"
+    assert {pin["gpio_pin"] for pin in fan_device["pin_configurations"]} == {0, 2}
+    assert fan_device["last_state"]["power"] == "off"
+    assert fan_device["last_state"]["speed"] == 0
+
+    sensor_device = devices_by_name["Hall Climate"]
+    assert sensor_device["device_type"] == "sensor"
+    assert {pin["gpio_pin"] for pin in sensor_device["pin_configurations"]} == {3, 4, 5}
+    assert sensor_device["last_state"] == {}
+
+
+def test_multicard_runtime_fan_speed_command_updates_state_via_real_extension_hooks():
+    create_admin_user()
+    token = get_token()
+    room = create_room(token, name="Bedroom")
+    manifest = build_multi_card_manifest()
+    extension_id = str(manifest["extension_id"])
+
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={
+            "file": (
+                "multicard.zip",
+                build_extension_zip(
+                    manifest,
+                    root_folder="MultiCard_control",
+                    fixture_root=MULTI_CARD_EXTENSION_FIXTURE_ROOT,
+                ),
+                "application/zip",
+            )
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    create_response = client.post(
+        "/api/v1/external-devices",
+        json={
+            "installed_extension_id": extension_id,
+            "device_schema_id": "ceiling_fan",
+            "name": "Bedroom Fan",
+            "room_id": room["room_id"],
+            "config": {"ip_address": "192.168.1.71", "default_speed": 15},
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 200, create_response.text
+    device_payload = create_response.json()
+
+    command_response = client.post(
+        f"/api/v1/device/{device_payload['device_id']}/command",
+        json={"kind": "action", "pin": 0, "speed": 67},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert command_response.status_code == 200, command_response.text
+    assert command_response.json()["status"] == "pending"
+
+    db = TestingSessionLocal()
+    try:
+        stored_device = db.query(ExternalDevice).filter_by(device_id=device_payload["device_id"]).one()
+        assert stored_device.conn_status == ConnStatus.online
+        assert stored_device.last_state["power"] == "on"
+        assert stored_device.last_state["value"] == 1
+        assert stored_device.last_state["speed"] == 67
+        assert stored_device.last_state["capabilities"] == ["power", "speed"]
+        assert stored_device.last_seen is not None
+    finally:
+        db.close()
+
+
+def test_refresh_external_device_states_once_uses_multicard_sensor_probe_hook():
+    create_admin_user()
+    token = get_token()
+    manifest = build_multi_card_manifest()
+    extension_id = str(manifest["extension_id"])
+
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={
+            "file": (
+                "multicard.zip",
+                build_extension_zip(
+                    manifest,
+                    root_folder="MultiCard_control",
+                    fixture_root=MULTI_CARD_EXTENSION_FIXTURE_ROOT,
+                ),
+                "application/zip",
+            )
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    create_response = client.post(
+        "/api/v1/external-devices",
+        json={
+            "installed_extension_id": extension_id,
+            "device_schema_id": "climate_sensor",
+            "name": "Hall Climate",
+            "config": {
+                "ip_address": "192.168.1.72",
+                "temperature": 24.5,
+                "humidity": 56,
+                "value": 24.5,
+                "unit": "C",
+                "trend": "stable",
+            },
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 200, create_response.text
+    device_payload = create_response.json()
+
+    stats = refresh_external_device_states_once(session_factory=TestingSessionLocal)
+
+    assert stats == {"probed": 1, "online": 1, "offline": 0, "changed": 1}
+
+    db = TestingSessionLocal()
+    try:
+        stored_device = db.query(ExternalDevice).filter_by(device_id=device_payload["device_id"]).one()
+        assert stored_device.conn_status == ConnStatus.online
+        assert stored_device.last_state["temperature"] == 24.5
+        assert stored_device.last_state["humidity"] == 56
+        assert stored_device.last_state["value"] == 24.5
+        assert stored_device.last_state["unit"] == "C"
+        assert stored_device.last_state["trend"] == "stable"
+        assert stored_device.last_state["capabilities"] == ["temperature", "humidity", "value"]
+        assert stored_device.last_seen is not None
     finally:
         db.close()
 
