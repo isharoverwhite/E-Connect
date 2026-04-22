@@ -584,7 +584,7 @@ export default function Dashboard() {
 
   const onlineCount = onlineDevices.length;
   const hasCustomLayout = approvedDevices.some((device) => Boolean(canvasLayouts[device.device_id]));
-  const shouldUseCanvas = enableDesktopCanvasEditor && isMounted && !isMobile && (isCustomizeMode || hasCustomLayout);
+  const shouldUseCanvas = enableDesktopCanvasEditor && isMounted && !isMobile;
   const canvasUsableWidth = useMemo(() => getCanvasUsableWidth(windowWidth), [windowWidth]);
   const cardHeights = useMemo(
     () =>

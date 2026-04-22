@@ -44,7 +44,6 @@ export default function Sidebar() {
 
     const isEffectivelyCollapsed = isMobile || (isCollapsed && (!hoverToExpandSetting || !isHovered));
 
-
     const toggleSidebar = () => {
         setIsCollapsed(prev => {
             const next = !prev;
@@ -78,37 +77,46 @@ export default function Sidebar() {
         return `${isActive
             ? "bg-primary/10 font-medium text-primary"
             : "text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white"
-            } flex items-center rounded-lg px-4 py-3 transition-colors ${isEffectivelyCollapsed ? 'justify-center mx-2' : ''}`;
+            } flex items-center rounded-lg transition-colors overflow-hidden mx-3 my-1 relative`;
     };
 
     return (
         <aside
             onMouseEnter={() => !isMobile && setIsHovered(true)}
             onMouseLeave={() => !isMobile && setIsHovered(false)}
-            className={`z-20 flex flex-col justify-between border-r border-slate-200 bg-surface-light shadow-lg transition-all duration-300 dark:border-slate-700 dark:bg-surface-dark shrink-0 sticky top-0 h-[100dvh] ${isEffectivelyCollapsed ? 'w-20 md:w-24' : 'w-64'}`}
+            className={`z-20 flex flex-col justify-between border-r border-slate-200 bg-surface-light shadow-lg transition-all duration-300 dark:border-slate-700 dark:bg-surface-dark shrink-0 sticky top-0 h-[100dvh] overflow-hidden ${isEffectivelyCollapsed ? 'w-20' : 'w-64'}`}
         >
-            <div>
-                <div className={`flex items-center border-b border-slate-200 dark:border-slate-700 overflow-hidden whitespace-nowrap transition-all duration-300 ${isEffectivelyCollapsed ? 'justify-center h-16' : 'justify-between px-4 h-16'}`}>
-                    <div className={`flex items-center overflow-hidden transition-all duration-300 ${isEffectivelyCollapsed ? 'max-w-0 opacity-0' : 'max-w-[200px] opacity-100'}`}>
+            <div className="flex flex-col w-full">
+                {/* Header Logo & Toggle */}
+                <div className="relative flex items-center h-16 border-b border-slate-200 dark:border-slate-700 overflow-hidden shrink-0 w-full">
+                    {/* Logo */}
+                    <div className={`flex items-center w-[256px] px-5 transition-all duration-300 ${isEffectivelyCollapsed ? '-translate-x-12 opacity-0 pointer-events-none' : 'translate-x-0 opacity-100'}`}>
                         <span className="material-icons-round text-3xl text-primary flex-shrink-0">hub</span>
-                        <span className={`ml-2 text-xl font-bold tracking-tight text-slate-900 dark:text-white transition-opacity duration-300 ${isEffectivelyCollapsed ? 'opacity-0' : 'opacity-100 delay-150'}`}>E-Connect</span>
+                        <span className="ml-2 text-xl font-bold tracking-tight text-slate-900 dark:text-white whitespace-nowrap">E-Connect</span>
                     </div>
-                    <button
-                        onClick={toggleSidebar}
-                        className={`flex shrink-0 items-center justify-center rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white ${isMobile ? 'hidden' : ''}`}
-                        title={isEffectivelyCollapsed ? "Expand Sidebar" : (isCollapsed ? "Pin Sidebar Open" : "Collapse Sidebar")}
-                    >
-                        <span className="material-icons-round text-[20px]">
-                            {isCollapsed ? 'keyboard_double_arrow_right' : 'keyboard_double_arrow_left'}
-                        </span>
-                    </button>
+
+                    {/* Toggle Button */}
+                    <div className={`absolute top-0 bottom-0 right-0 flex items-center justify-center transition-all duration-300 ${isEffectivelyCollapsed ? 'w-20' : 'w-16'}`}>
+                        <button
+                            onClick={toggleSidebar}
+                            className={`flex shrink-0 items-center justify-center rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white ${isMobile ? 'hidden' : ''}`}
+                            title={isEffectivelyCollapsed ? "Expand Sidebar" : (isCollapsed ? "Pin Sidebar Open" : "Collapse Sidebar")}
+                        >
+                            <span className="material-icons-round text-[20px]">
+                                {isCollapsed ? 'keyboard_double_arrow_right' : 'keyboard_double_arrow_left'}
+                            </span>
+                        </button>
+                    </div>
                 </div>
 
-                <nav className={`space-y-1 transition-all duration-300 ${isEffectivelyCollapsed ? 'py-4 px-0' : 'p-4'}`}>
+                {/* Navigation Items */}
+                <nav className="py-4 flex flex-col gap-1 w-full overflow-hidden">
                     {navItems.map((item) => (
                         <Link key={item.href} href={item.href} className={getLinkClass(item.href)} title={isEffectivelyCollapsed ? item.label : undefined}>
-                            <span className="material-icons-round flex-shrink-0 text-[24px]">{item.icon}</span>
-                            <span className={`transition-all duration-300 whitespace-nowrap overflow-hidden ${isEffectivelyCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[200px] opacity-100 ml-3 delay-100'}`}>
+                            <div className={`flex h-11 shrink-0 items-center justify-center transition-all duration-300 ${isEffectivelyCollapsed ? 'w-14' : 'w-12'}`}>
+                                <span className="material-icons-round text-[24px]">{item.icon}</span>
+                            </div>
+                            <span className={`transition-all duration-300 whitespace-nowrap ${isEffectivelyCollapsed ? 'opacity-0 translate-x-4' : 'opacity-100 translate-x-0'}`}>
                                 {item.label}
                             </span>
                         </Link>
@@ -116,40 +124,47 @@ export default function Sidebar() {
                 </nav>
             </div>
 
-            <div className={`border-t border-slate-200 transition-all duration-300 ${isEffectivelyCollapsed ? 'py-4 px-0' : 'p-4'} dark:border-slate-700 space-y-2`}>
+            {/* Bottom Actions */}
+            <div className="border-t border-slate-200 dark:border-slate-700 py-4 flex flex-col gap-1 w-full overflow-hidden shrink-0">
                 <Link href="/settings" className={getLinkClass('/settings')} title={isEffectivelyCollapsed ? "Settings" : undefined}>
-                    <span className="material-icons-round flex-shrink-0 text-[24px]">settings</span>
-                    <span className={`transition-all duration-300 whitespace-nowrap overflow-hidden ${isEffectivelyCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[200px] opacity-100 ml-3 delay-100'}`}>
+                    <div className={`flex h-11 shrink-0 items-center justify-center transition-all duration-300 ${isEffectivelyCollapsed ? 'w-14' : 'w-12'}`}>
+                        <span className="material-icons-round text-[24px]">settings</span>
+                    </div>
+                    <span className={`transition-all duration-300 whitespace-nowrap ${isEffectivelyCollapsed ? 'opacity-0 translate-x-4' : 'opacity-100 translate-x-0'}`}>
                         Settings
                     </span>
                 </Link>
 
-                <div className={`group flex transition-all duration-300 ${isEffectivelyCollapsed ? 'flex-col gap-3 justify-center items-center mt-2' : 'items-center justify-between'} px-4 py-3 overflow-hidden`}>
-                    <div className={`flex items-center min-w-0 transition-all duration-300 ${isEffectivelyCollapsed ? 'justify-center pr-0' : 'pr-2'}`}>
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-tr from-primary to-purple-500 text-xs font-bold uppercase text-white" title={isEffectivelyCollapsed ? (user?.fullname || "E-Connect User") : undefined}>
+                <div className={`group flex items-center mx-3 my-1 rounded-lg transition-all duration-300 overflow-hidden relative ${isEffectivelyCollapsed ? 'h-11' : 'h-16'}`}>
+                    <div className={`flex shrink-0 items-center justify-center transition-all duration-300 ${isEffectivelyCollapsed ? 'w-14' : 'w-12'}`}>
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-tr from-primary to-purple-500 text-xs font-bold uppercase text-white" title={isEffectivelyCollapsed ? (user?.fullname || "E-Connect User") : undefined}>
                             {user?.fullname?.substring(0, 2) || "EC"}
                         </div>
-                        <div className={`min-w-0 relative group/profile flex-1 transition-all duration-300 overflow-hidden ${isEffectivelyCollapsed ? 'max-w-0 opacity-0 ml-0' : 'max-w-[150px] opacity-100 ml-3 delay-100'}`}>
-                            <div className="relative">
-                                <p className="text-sm font-medium leading-tight truncate text-slate-900 dark:text-white">
+                    </div>
+                    
+                    <div className={`flex-1 min-w-0 transition-all duration-300 overflow-hidden ${isEffectivelyCollapsed ? 'opacity-0 translate-x-4' : 'opacity-100 translate-x-0'}`}>
+                        <div className="relative">
+                            <p className="text-sm font-medium leading-tight truncate text-slate-900 dark:text-white">
+                                {user?.fullname || "E-Connect User"}
+                            </p>
+                            {(user?.fullname || "E-Connect User").length > 10 && !isEffectivelyCollapsed && (
+                                <p className="text-sm font-medium leading-tight absolute top-0 left-0 bg-surface-light dark:bg-surface-dark z-[100] opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap overflow-visible w-max pr-2 pointer-events-none text-slate-900 dark:text-white">
                                     {user?.fullname || "E-Connect User"}
                                 </p>
-                                {(user?.fullname || "E-Connect User").length > 10 && (
-                                    <p className="text-sm font-medium leading-tight absolute top-0 left-0 bg-surface-light dark:bg-surface-dark z-[100] opacity-0 group-hover/profile:opacity-100 transition-opacity whitespace-nowrap overflow-visible w-max pr-2 pointer-events-none text-slate-900 dark:text-white">
-                                        {user?.fullname || "E-Connect User"}
-                                    </p>
-                                )}
-                            </div>
-                            <p className="mt-0.5 text-xs capitalize text-slate-500 dark:text-slate-400 truncate">{formatAccountTypeLabel(user?.account_type)}</p>
+                            )}
                         </div>
+                        <p className="mt-0.5 text-xs capitalize text-slate-500 dark:text-slate-400 truncate">{formatAccountTypeLabel(user?.account_type)}</p>
                     </div>
-                    <button
-                        onClick={logout}
-                        className={`rounded-md p-2 text-slate-400 transition-all duration-300 hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10 shrink-0 ${isEffectivelyCollapsed ? 'hidden md:opacity-0 md:group-hover:opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
-                        title="Logout"
-                    >
-                        <span className="material-icons-round text-[18px]">logout</span>
-                    </button>
+
+                    <div className={`absolute right-2 flex shrink-0 items-center justify-center transition-all duration-300 ${isEffectivelyCollapsed ? 'opacity-0 pointer-events-none' : 'opacity-0 group-hover:opacity-100'}`}>
+                        <button
+                            onClick={logout}
+                            className="rounded-md p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
+                            title="Logout"
+                        >
+                            <span className="material-icons-round text-[18px]">logout</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </aside>

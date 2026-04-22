@@ -539,42 +539,43 @@ export default function DevicesPage() {
 
 
             <main className="relative flex min-w-0 flex-1 flex-col">
-                <header className="z-30 flex min-h-16 flex-wrap items-start justify-between gap-x-4 gap-y-3 border-b border-slate-200 bg-surface-light px-6 py-4 shadow-sm dark:border-slate-700 dark:bg-surface-dark lg:items-center">
+                <header className="z-30 flex h-16 shrink-0 items-center justify-between gap-x-4 border-b border-slate-200 bg-surface-light px-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
                     <div className="min-w-0 flex-1">
-                        <h1 className="text-lg font-semibold text-slate-800 dark:text-white">
+                        <h1 className="truncate text-lg font-semibold leading-tight text-slate-800 dark:text-white">
                             {isAdmin ? "Device Management" : "Device Availability"}
                         </h1>
-                        <p className="max-w-2xl text-xs text-slate-500 dark:text-slate-400">
+                        <p className="mt-0.5 truncate text-xs text-slate-500 dark:text-slate-400">
                             {isAdmin
                                 ? "Pair, assign rooms, and manage the lifecycle of household devices."
                                 : "Your account can only monitor whether assigned-room devices are online."}
                         </p>
                     </div>
 
-                    <div className="flex w-full flex-wrap items-center justify-start gap-3 sm:w-auto sm:justify-end">
+                    <div className="flex shrink-0 items-center justify-end gap-3">
                         {isAdmin ? (
                             <>
-                                <Link href="/devices/diy" className={primaryActionButtonClassName}>
+                                <Link href="/devices/diy" className={`${primaryActionButtonClassName} !min-h-9 !py-1.5`}>
                                     <span className="material-icons-round text-sm">hardware</span>
-                                    <span>Create New Device</span>
+                                    <span className="hidden sm:inline">Create New Device</span>
+                                    <span className="sm:hidden">Create</span>
                                 </Link>
                                 <button
                                     type="button"
                                     onClick={() => setIsScanModalOpen(true)}
-                                    className={`${secondaryActionButtonClassName} relative`}
+                                    className={`${secondaryActionButtonClassName} !min-h-9 !py-1.5 relative`}
                                 >
                                     <span className="material-icons-round text-sm">radar</span>
-                                    <span>Scan Device</span>
+                                    <span className="hidden sm:inline">Scan Device</span>
+                                    <span className="sm:hidden">Scan</span>
                                     {pairingRequests.length > 0 && (
                                         <span className="absolute -top-1 -right-1 flex h-3 w-3">
-                                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                                            <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500 border-2 border-white dark:border-slate-800"></span>
+                                            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75"></span>
+                                            <span className="relative inline-flex h-3 w-3 rounded-full border-2 border-white bg-red-500 dark:border-slate-800"></span>
                                         </span>
                                     )}
                                 </button>
                             </>
                         ) : null}
-
                     </div>
                 </header>
 

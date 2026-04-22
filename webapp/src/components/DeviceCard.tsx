@@ -35,7 +35,7 @@ export const getCardMinHeight = (config: DeviceConfig) => {
 
 export const getCardMinWidth = (config: DeviceConfig) => {
   if (config.provider || config.is_external || config.installed_extension_id) {
-    return 320; // Extension cards match standard card width to provide a consistent look, color wheel fits perfectly in this space.
+    return 280; // Extension cards match standard card width to provide a consistent look, color wheel fits perfectly in this space.
   }
   return 320; // Default standard card width
 };
@@ -962,7 +962,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
     (optimisticRgb === null || rgbTargetMatched) &&
     (optimisticTone === null || toneTargetMatched);
 
-  const controlReady = isOnline || Boolean(config.is_external);
+  const controlReady = isOnline;
   const commandPending = pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced;
   const toggleDisabled = requestPending || commandPending || !controlReady;
   const valueControlDisabled = requestPending || !controlReady;
@@ -1109,6 +1109,20 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
     queueRealtimeToneValue(tone, immediate ? { immediate: true } : undefined);
   };
 
+  const switchMode = (mode: ExtensionAdvancedMode) => {
+    if (visibleAdvancedMode === mode) return;
+    
+    setAdvancedModeOverride(mode);
+    
+    if (isOnline && !valueControlDisabled) {
+      if (mode === "color") {
+        handleRgbCommit(rgbValue);
+      } else if (mode === "temperature") {
+        scheduleToneValue(toneValue, true);
+      }
+    }
+  };
+
   return (
     <div 
       style={{ zIndex: isExpanded ? 50 : 10 }}
@@ -1186,7 +1200,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
       </div>
 
       {hasAdvanced && (
-          <div className="mt-auto flex justify-center pb-2">
+          <div className="flex justify-center pb-2">
               <button 
                 onClick={() => setIsExpanded(!isExpanded)}
                 className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
@@ -1204,19 +1218,25 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
           <div className="flex flex-col gap-6 pt-4 border-t border-slate-100 dark:border-slate-800 mt-4">
             {supportsRgb && supportsTone ? (
               <div className="flex justify-center">
-                <div className="inline-flex items-center rounded-full bg-slate-100 p-1 text-xs font-medium dark:bg-slate-800">
+                <div className="relative inline-flex rounded-full bg-slate-100 p-1 text-xs font-medium dark:bg-slate-800">
+                  {/* Sliding Background */}
+                  <div 
+                    className={`absolute inset-y-1 left-1 w-16 rounded-full shadow-sm transition-all duration-300 ease-out
+                      ${visibleAdvancedMode === "color" ? "bg-indigo-500 translate-x-0" : "bg-amber-500 translate-x-full"}
+                    `} 
+                  />
                   <button
                     type="button"
-                    className={`rounded-full px-3 py-1.5 transition-colors ${visibleAdvancedMode === "color" ? "bg-indigo-500 text-white shadow-sm" : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"}`}
-                    onClick={() => setAdvancedModeOverride("color")}
+                    className={`relative z-10 w-16 rounded-full py-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${visibleAdvancedMode === "color" ? "text-white" : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"}`}
+                    onClick={() => switchMode("color")}
                     disabled={valueControlDisabled}
                   >
                     Color
                   </button>
                   <button
                     type="button"
-                    className={`rounded-full px-3 py-1.5 transition-colors ${visibleAdvancedMode === "temperature" ? "bg-amber-500 text-white shadow-sm" : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"}`}
-                    onClick={() => setAdvancedModeOverride("temperature")}
+                    className={`relative z-10 w-16 rounded-full py-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${visibleAdvancedMode === "temperature" ? "text-white" : "text-slate-600 hover:text-slate-900 dark:text-slate-300 dark:hover:text-white"}`}
+                    onClick={() => switchMode("temperature")}
                     disabled={valueControlDisabled}
                   >
                     White
@@ -1225,62 +1245,74 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
               </div>
             ) : null}
             
-            {/* RGB Color Wheel */}
-            {supportsRgb && visibleAdvancedMode === "color" && (
-              <div className="flex flex-col items-center">
-                <div className="flex justify-between items-center w-full mb-3">
-                   <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                     Color
-                     <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm">
-                       <div className="w-5 h-5 rounded-full shadow-sm border border-slate-200 dark:border-slate-700" style={{ backgroundColor: `rgb(${rgbValue[0]}, ${rgbValue[1]}, ${rgbValue[2]})` }} />
-                       <span className="text-[10px] uppercase font-mono tracking-wider font-bold text-slate-600 dark:text-slate-300">
-                         {rgbToHex(rgbValue[0], rgbValue[1], rgbValue[2])}
-                       </span>
-                     </div>
-                   </label>
-                </div>
-                <ColorWheel 
-                    rgb={rgbValue} 
-                    onChange={handleRgbCommit} 
-                    disabled={valueControlDisabled} 
-                />
-              </div>
-            )}
-
-            {/* Color Temperature (Tone) */}
-            {supportsTone && visibleAdvancedMode === "temperature" && (
-              <div className="mb-2 pb-2">
-                  <div className="flex justify-between items-end mb-2">
-                  <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                      Light Temperature
-                  </label>
-                  {toneLoading ? (
-                    <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300 animate-pulse">
-                      Syncing...
-                    </span>
-                  ) : (
-                    <span className="text-xs font-bold text-orange-600 dark:text-orange-400 flex items-center gap-1.5">
-                        {toneValue}K
-                    </span>
-                  )}
+            <div className="relative overflow-hidden w-full mt-2">
+              <div 
+                className="flex transition-transform duration-300 ease-in-out items-start"
+                style={{ 
+                  width: (supportsRgb && supportsTone) ? '200%' : '100%',
+                  transform: (supportsRgb && supportsTone && visibleAdvancedMode === "temperature") ? "translateX(-50%)" : "translateX(0)" 
+                }}
+              >
+                {/* RGB Color Wheel */}
+                {supportsRgb && (
+                  <div className={`${supportsRgb && supportsTone ? 'w-1/2' : 'w-full'} flex flex-col items-center flex-shrink-0`}>
+                    <div className="flex justify-between items-center w-full mb-3 px-1">
+                       <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-2">
+                         Color
+                         <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm ${valueControlDisabled ? 'opacity-50' : ''}`}>
+                           <div className="w-5 h-5 rounded-full shadow-sm border border-slate-200 dark:border-slate-700" style={{ backgroundColor: `rgb(${rgbValue[0]}, ${rgbValue[1]}, ${rgbValue[2]})` }} />
+                           <span className="text-[10px] uppercase font-mono tracking-wider font-bold text-slate-600 dark:text-slate-300">
+                             {rgbToHex(rgbValue[0], rgbValue[1], rgbValue[2])}
+                           </span>
+                         </div>
+                       </label>
+                    </div>
+                    <ColorWheel 
+                        rgb={rgbValue} 
+                        onChange={handleRgbCommit} 
+                        disabled={valueControlDisabled} 
+                    />
                   </div>
-                  <input
-                  type="range"
-                  className="w-full h-2 rounded-lg appearance-none cursor-pointer outline-none [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-slate-200 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:shadow-md [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border [&::-moz-range-thumb]:border-slate-200"
-                  style={{
-                      background: 'linear-gradient(to right, #ff8c00, #ffddaa, #eef2ff, #aaccff)'
-                  }}
-                  min={temperatureRange?.min ?? 1700}
-                  max={temperatureRange?.max ?? 6500}
-                  step={50}
-                  value={toneValue}
-                  disabled={valueControlDisabled}
-                  onChange={(e) => scheduleToneValue(parseInt(e.target.value, 10))}
-                  onMouseUp={(e) => scheduleToneValue(parseInt(e.currentTarget.value, 10), true)}
-                  onTouchEnd={(e) => scheduleToneValue(parseInt(e.currentTarget.value, 10), true)}
-                  />
+                )}
+                
+                {/* Color Temperature (Tone) */}
+                {supportsTone && (
+                  <div className={`${supportsRgb && supportsTone ? 'w-1/2' : 'w-full'} flex-shrink-0 px-1`}>
+                    <div className="mb-2 pb-2">
+                        <div className="flex justify-between items-end mb-2">
+                        <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                            Light Temperature
+                        </label>
+                        {toneLoading ? (
+                          <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300 animate-pulse">
+                            Syncing...
+                          </span>
+                        ) : (
+                          <span className={`text-xs font-bold text-orange-600 dark:text-orange-400 flex items-center gap-1.5 ${valueControlDisabled ? 'opacity-50' : ''}`}>
+                              {toneValue}K
+                          </span>
+                        )}
+                        </div>
+                        <input
+                        type="range"
+                        className="w-full h-2 rounded-lg appearance-none outline-none disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-slate-200 [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:shadow-md [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border [&::-moz-range-thumb]:border-slate-200"
+                        style={{
+                            background: 'linear-gradient(to right, #ff8c00, #ffddaa, #eef2ff, #aaccff)'
+                        }}
+                        min={temperatureRange?.min ?? 1700}
+                        max={temperatureRange?.max ?? 6500}
+                        step={50}
+                        value={toneValue}
+                        disabled={valueControlDisabled}
+                        onChange={(e) => scheduleToneValue(parseInt(e.target.value, 10))}
+                        onMouseUp={(e) => scheduleToneValue(parseInt(e.currentTarget.value, 10), true)}
+                        onTouchEnd={(e) => scheduleToneValue(parseInt(e.currentTarget.value, 10), true)}
+                        />
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>

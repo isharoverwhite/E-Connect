@@ -32,33 +32,35 @@ English: **E-Connect** is a `self-hosted`, `local-first` smart home platform for
 
 ## Tour Giao Diện / Visual Tour
 
-### 1. First-Time Setup
-![E-Connect Setup](./docs/screenshots/readme/setup.png)
+Current screenshots below were recaptured from the live self-hosted WebUI after bootstrap, so the tour focuses on the current operational surfaces available from the running instance.
 
-Tiếng Việt: Màn hình khởi tạo lần đầu dùng để tạo `Master Administrator`, khóa instance, và hoàn tất bootstrap an toàn cho hệ thống self-hosted.
-
-English: The first-time setup screen creates the `Master Administrator`, locks the instance bootstrap flow, and secures the self-hosted installation.
-
-### 2. Login
+### 1. Login
 ![E-Connect Login](./docs/screenshots/readme/login.png)
 
-Tiếng Việt: Sau khi khởi tạo, người dùng đăng nhập qua form xác thực thật với tùy chọn `Keep me logged in`.
+Tiếng Việt: Người dùng đi vào hệ thống qua form xác thực thật với tùy chọn `Keep me logged in` để duy trì session trên thiết bị tin cậy.
 
-English: After bootstrap, users sign in through the real authentication flow with an optional `Keep me logged in` session mode.
+English: Users enter the system through the real authentication form, with an optional `Keep me logged in` session mode for trusted devices.
 
-### 3. Dashboard
+### 2. Dashboard
 ![E-Connect Dashboard](./docs/screenshots/readme/dashboard.png)
 
 Tiếng Việt: Dashboard là trung tâm quan sát thiết bị, cảnh báo hệ thống, trạng thái online/offline và các thao tác vận hành chính.
 
 English: The dashboard is the command surface for device status, system alerts, online/offline visibility, and day-to-day operations.
 
-### 4. Device Management
+### 3. Device Management
 ![E-Connect Device Management](./docs/screenshots/readme/devices-empty.png)
 
-Tiếng Việt: Khu vực `Devices` quản lý vòng đời thiết bị, duyệt thiết bị mới, và đi vào luồng cấu hình DIY qua SVG builder.
+Tiếng Việt: Khu vực `Devices` quản lý vòng đời thiết bị, trạng thái từng node, metadata firmware, thao tác cấu hình và các entrypoint pairing.
 
-English: The `Devices` area manages the device lifecycle, approves new devices, and launches the DIY SVG-based provisioning flow.
+English: The `Devices` area manages the device lifecycle, per-node status, firmware metadata, configuration actions, and pairing entrypoints.
+
+### 4. Device Discovery
+![E-Connect Device Discovery](./docs/screenshots/readme/device-discovery.png)
+
+Tiếng Việt: Màn hình discovery giữ kết nối WebSocket mở để chờ board gửi yêu cầu pairing về đúng server nội bộ mà không cần quét lại thủ công.
+
+English: The discovery surface keeps a WebSocket listener open so boards can report pairing requests to the local server without a manual rescan.
 
 ### 5. DIY Builder
 ![E-Connect DIY Builder](./docs/screenshots/readme/diy-builder.png)
@@ -67,14 +69,35 @@ Tiếng Việt: `IoT Configurator` hỗ trợ chọn board ESP32/ESP8266, gắn 
 
 English: The `IoT Configurator` lets you choose ESP32/ESP8266 boards, attach saved Wi-Fi credentials, pick hardware profiles, map GPIO, and prepare server-side firmware builds.
 
-### 6. Automation Builder
+### 6. Device Configuration
+![E-Connect Device Configuration](./docs/screenshots/readme/device-config.png)
+
+Tiếng Việt: Màn hình cấu hình thiết bị cho phép xem lịch sử config đã flash, chỉnh lại pin map, Wi-Fi gắn kèm, và theo dõi trạng thái OTA của board đã ghép nối.
+
+English: The device configuration screen exposes flashed config history, pin remapping, attached Wi-Fi credentials, and OTA status for an already paired board.
+
+### 7. Automation Builder
 ![E-Connect Automation Builder](./docs/screenshots/readme/automation-builder.png)
 
 Tiếng Việt: Trình tạo automation dùng graph builder trực quan theo mô hình `Trigger -> Condition -> Action`, có workspace riêng để lưu, chạy thử và kiểm tra rule.
 
 English: The automation builder uses a visual `Trigger -> Condition -> Action` graph workspace for saving, testing, and iterating automation rules.
 
-### 7. Settings And Wi-Fi Credentials
+### 8. Logs And Stats
+![E-Connect Logs And Stats](./docs/screenshots/readme/logs-stats.png)
+
+Tiếng Việt: `Logs & Stats` tập trung health của server, retention alert 30 ngày, bộ lọc tra cứu sự kiện và bảng hoạt động chi tiết để review runtime.
+
+English: `Logs & Stats` centralizes server health, the 30-day alert window, event filters, and detailed activity tables for runtime review.
+
+### 9. Extensions
+![E-Connect Extensions](./docs/screenshots/readme/extensions.png)
+
+Tiếng Việt: Khu vực `Extensions` quản lý package tích hợp ngoài, hiển thị provider đã cài, số thiết bị liên kết, và các ràng buộc xoá package còn đang được dùng.
+
+English: The `Extensions` area manages external integration packages, showing installed providers, linked device counts, and deletion guardrails when packages are still in use.
+
+### 10. Settings And Wi-Fi Credentials
 ![E-Connect Settings Wi-Fi](./docs/screenshots/readme/settings-wifi.png)
 
 Tiếng Việt: `Settings` tập trung phần quản trị instance như timezone, user management, rooms, DIY configs, và danh sách Wi-Fi dùng lại cho provisioning.
