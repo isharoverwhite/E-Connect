@@ -298,9 +298,9 @@ export default function DevicesPage() {
 
         return (
             <div key={device.device_id} className="group flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-surface-light transition-shadow hover:shadow-md dark:border-slate-700 dark:bg-surface-dark">
-                <div className="flex items-start justify-between border-b border-slate-100 p-5 dark:border-slate-700/50">
-                    <div className="flex w-full items-center gap-3">
-                        <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${isOnline ? "bg-primary/10 text-primary" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>
+                <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-slate-700/50 gap-4">
+                    <div className="flex min-w-0 flex-1 items-center gap-3">
+                        <div className={`flex shrink-0 h-10 w-10 items-center justify-center rounded-lg ${isOnline ? "bg-primary/10 text-primary" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>
                             <span className="material-icons-round">{deviceTypeIcon}</span>
                         </div>
                         <div className="min-w-0 flex-1">
@@ -323,6 +323,14 @@ export default function DevicesPage() {
                             </div>
                         </div>
                     </div>
+                    <button
+                        title="Show on Dashboard"
+                        onClick={() => handleToggleVisibility(device.device_id, device.show_on_dashboard ?? true)}
+                        disabled={isTogglingVisibility === device.device_id}
+                        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors ${device.show_on_dashboard !== false ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-600'} ${isTogglingVisibility === device.device_id ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${device.show_on_dashboard !== false ? 'translate-x-5' : 'translate-x-1'}`} />
+                    </button>
                 </div>
 
                 <div className="flex-1 space-y-3 p-5 text-sm">
@@ -398,19 +406,6 @@ export default function DevicesPage() {
                         <span className="font-mono text-xs text-slate-700 dark:text-slate-300 max-w-[10rem] truncate text-right" title={isExternal ? device.device_schema_id || "N/A" : deviceIp || "N/A"}>
                             {isExternal ? device.device_schema_id || "N/A" : deviceIp || "N/A"}
                         </span>
-                    </div>
-                    <div className="flex items-center justify-between border-b border-dashed border-slate-100 pb-2 dark:border-slate-700/50">
-                        <span className="text-slate-500 dark:text-slate-400 flex items-center">
-                            <span className="material-icons-round mr-1 text-xs">dashboard</span>
-                            Show on Dashboard
-                        </span>
-                        <button
-                            onClick={() => handleToggleVisibility(device.device_id, device.show_on_dashboard ?? true)}
-                            disabled={isTogglingVisibility === device.device_id}
-                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${device.show_on_dashboard !== false ? 'bg-primary' : 'bg-slate-300 dark:bg-slate-600'} ${isTogglingVisibility === device.device_id ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        >
-                            <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${device.show_on_dashboard !== false ? 'translate-x-5' : 'translate-x-1'}`} />
-                        </button>
                     </div>
                     <div className="flex items-center justify-between">
                         <span className="text-slate-500 dark:text-slate-400">
