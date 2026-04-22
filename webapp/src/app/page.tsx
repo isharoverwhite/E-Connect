@@ -4,15 +4,18 @@
 
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchDashboardDevices, fetchDevices, fetchSystemLogs, markSystemLogRead, markAllSystemLogsRead, SystemLogEntry, fetchSystemStatus, SystemStatusResponse } from "@/lib/api";
+import { fetchCurrentHouseTemperature, fetchCurrentWeather, fetchDashboardDevices, fetchDevices, fetchSystemLogs, markSystemLogRead, markAllSystemLogsRead, SystemLogEntry, fetchSystemStatus, SystemStatusResponse, CurrentWeatherResponse, HouseTemperatureResponse, updateHouseholdLocation } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
+import { useToast } from "@/components/ToastContext";
 import Sidebar from '@/components/Sidebar';
+import HomeLocationPicker from "@/components/HomeLocationPicker";
 import { DeviceConfig } from "@/types/device";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { DynamicDeviceCard, getCardMinHeight, getCardMinWidth } from "@/components/DeviceCard";
 import { Rnd } from "react-rnd";
 import DeviceScanConnectPanel from "@/components/DeviceScanConnectPanel";
 import { isSystemLogAlertEntry } from "@/lib/system-log";
+import { HomeLocation } from "@/lib/home-location";
 
 type CanvasLayout = { x: number; y: number; w: number; h: number };
 const DEFAULT_CARD_WIDTH = 320;
@@ -20,11 +23,28 @@ const DEFAULT_CARD_HEIGHT = 350;
 const CANVAS_GRID_STEP = 20;
 const CANVAS_COLLISION_GAP = CANVAS_GRID_STEP;
 const ADMIN_SUPPLEMENTAL_REFRESH_DEBOUNCE_MS = 750;
+const WEATHER_LOCATION_MAX_LENGTH = 15;
 
 type DashboardRefreshMode = "admin" | "full";
 
 function snapCanvasCoordinate(value: number) {
   return Math.max(0, Math.round(value / CANVAS_GRID_STEP) * CANVAS_GRID_STEP);
+}
+
+function truncateLabel(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength).trimEnd()}...`;
+}
+
+function formatHouseClimateValue(value: number | null | undefined) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "--";
+  }
+
+  return Math.round(value).toString();
 }
 
 function snapCanvasSize(value: number, minimum: number) {
@@ -231,9 +251,69 @@ function DashboardCanvasPreviewCard({
   );
 }
 
+function HomeLocationSetupPrompt({
+  isOpen,
+  onConfirm,
+  isSaving,
+}: {
+  isOpen: boolean;
+  onConfirm: (location: HomeLocation) => Promise<void>;
+  isSaving: boolean;
+}) {
+  const [homeLocation, setHomeLocation] = useState<HomeLocation | null>(null);
+
+  if (!isOpen) {
+    return null;
+  }
+
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+        <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-700">
+          <div className="flex items-start gap-3">
+            <span className="material-icons-round mt-0.5 text-2xl text-primary">home_pin</span>
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">Set home location</h2>
+              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                This server was initialized before home weather existed. Choose the house location once so weather follows the home, not this browser.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="max-h-[82vh] overflow-y-auto p-5">
+          <HomeLocationPicker
+            isOpen={isOpen}
+            selectedLocation={homeLocation}
+            onLocationChange={setHomeLocation}
+            title="Confirm home location"
+            description="Allow location access, search manually, or drag the marker to the exact house position before saving."
+            isSaving={isSaving}
+            labels={{
+              noneDescription: "Allow browser location access, search manually, or drag the marker on the map.",
+              dragHint: "Drag the marker or click anywhere on the map to place the home exactly where this server lives.",
+            }}
+            actions={(
+              <button
+                type="button"
+                onClick={() => homeLocation ? void onConfirm(homeLocation) : null}
+                disabled={isSaving || !homeLocation}
+                className="flex w-full items-center justify-center rounded-lg bg-primary py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:opacity-70"
+              >
+                {isSaving ? <span className="material-icons-round animate-spin">refresh</span> : "Confirm home location"}
+              </button>
+            )}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const router = useRouter();
+  const { showToast } = useToast();
   const [devices, setDevices] = useState<DeviceConfig[]>([]);
   const [pairingRequests, setPairingRequests] = useState<DeviceConfig[]>([]);
   const [systemLogs, setSystemLogs] = useState<SystemLogEntry[]>([]);
@@ -246,6 +326,14 @@ export default function Dashboard() {
   const [markingAllNotifications, setMarkingAllNotifications] = useState(false);
   const [markingNotificationIds, setMarkingNotificationIds] = useState<Set<number>>(new Set());
   const [notificationError, setNotificationError] = useState("");
+  const [weatherData, setWeatherData] = useState<CurrentWeatherResponse | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(true);
+  const [weatherError, setWeatherError] = useState<string | null>(null);
+  const [houseTemperatureData, setHouseTemperatureData] = useState<HouseTemperatureResponse | null>(null);
+  const [houseTemperatureLoading, setHouseTemperatureLoading] = useState(true);
+  const [houseTemperatureError, setHouseTemperatureError] = useState<string | null>(null);
+  const [homeLocationPromptOpen, setHomeLocationPromptOpen] = useState(false);
+  const [isSavingHomeLocation, setIsSavingHomeLocation] = useState(false);
   const notificationRef = useRef<HTMLDivElement>(null);
   const dashboardRefreshPromiseRef = useRef<Promise<void> | null>(null);
   const queuedDashboardRefreshModeRef = useRef<DashboardRefreshMode | null>(null);
@@ -326,6 +414,96 @@ export default function Dashboard() {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+
+  const loadHomeWeather = useCallback(async (options?: { silent?: boolean; isCancelled?: () => boolean }) => {
+    const isCancelled = options?.isCancelled ?? (() => false);
+    setWeatherLoading(true);
+    try {
+      const data = await fetchCurrentWeather();
+      if (!isCancelled()) {
+        setWeatherData(data);
+        setWeatherError(null);
+      }
+    } catch (error) {
+      if (!isCancelled()) {
+        const message = error instanceof Error ? error.message : "";
+        const isMissingHomeLocation = message.toLowerCase().includes("home location");
+        setWeatherError(isMissingHomeLocation ? "Set home location" : "Weather unavailable");
+        setWeatherData(null);
+        if (isMissingHomeLocation) {
+          setHomeLocationPromptOpen(true);
+        } else if (!options?.silent) {
+          showToast("Weather is unavailable right now.", "warning");
+        }
+      }
+    } finally {
+      if (!isCancelled()) {
+        setWeatherLoading(false);
+      }
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadHomeWeather({ silent: true, isCancelled: () => cancelled });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadHomeWeather]);
+
+  const loadHouseTemperature = useCallback(async (options?: { silent?: boolean; isCancelled?: () => boolean }) => {
+    const isCancelled = options?.isCancelled ?? (() => false);
+    setHouseTemperatureLoading(true);
+    try {
+      const data = await fetchCurrentHouseTemperature();
+      if (!isCancelled()) {
+        setHouseTemperatureData(data);
+        setHouseTemperatureError(null);
+      }
+    } catch (error) {
+      if (!isCancelled()) {
+        const message = error instanceof Error ? error.message : "";
+        const isMissingSource = message.toLowerCase().includes("temperature source");
+        setHouseTemperatureData(null);
+        setHouseTemperatureError(isMissingSource ? "Set source board" : "House temperature unavailable");
+        if (!options?.silent && !isMissingSource) {
+          showToast("House temperature is unavailable right now.", "warning");
+        }
+      }
+    } finally {
+      if (!isCancelled()) {
+        setHouseTemperatureLoading(false);
+      }
+    }
+  }, [showToast]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadHouseTemperature({ silent: true, isCancelled: () => cancelled });
+    return () => {
+      cancelled = true;
+    };
+  }, [loadHouseTemperature]);
+
+  const handleConfirmHomeLocation = async (location: HomeLocation) => {
+    setIsSavingHomeLocation(true);
+    try {
+      await updateHouseholdLocation({
+        latitude: location.latitude,
+        longitude: location.longitude,
+        label: location.label,
+        source: location.source,
+      });
+      setHomeLocationPromptOpen(false);
+      showToast("Home location saved. Weather now follows your house.", "success");
+      await loadHomeWeather({ silent: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to save home location";
+      showToast(message, "error");
+    } finally {
+      setIsSavingHomeLocation(false);
+    }
+  };
 
   const isMobile = windowWidth < 1024;
   const enableDesktopCanvasEditor = true;
@@ -584,6 +762,10 @@ export default function Dashboard() {
 
   const onlineCount = onlineDevices.length;
   const hasCustomLayout = approvedDevices.some((device) => Boolean(canvasLayouts[device.device_id]));
+  const weatherLocationName = weatherData?.location_name || "Home Weather";
+  const weatherLocationLabel = truncateLabel(weatherLocationName, WEATHER_LOCATION_MAX_LENGTH);
+  const houseTemperatureSourceName = houseTemperatureData?.device_name || "No source selected";
+  const houseTemperatureSourceLabel = truncateLabel(houseTemperatureSourceName, WEATHER_LOCATION_MAX_LENGTH);
   const shouldUseCanvas = enableDesktopCanvasEditor && isMounted && !isMobile;
   const canvasUsableWidth = useMemo(() => getCanvasUsableWidth(windowWidth), [windowWidth]);
   const cardHeights = useMemo(
@@ -751,10 +933,6 @@ export default function Dashboard() {
                         highestSeverity === 'info' ? 'info' :
                         'check_circle';
 
-  const offlineCardDynamicClasses = offlineDevices.length > 0
-    ? "animate-[pulse_1s_ease-in-out_infinite] border-red-500 dark:border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.4)] dark:shadow-[0_0_15px_rgba(248,113,113,0.3)] bg-red-50 dark:bg-red-900/20 focus:outline-none focus:ring-2 focus:ring-red-500"
-    : "border-slate-200 dark:border-slate-700 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-500 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-green-500";
-
   const alertCardDynamicClasses = highestSeverity === 'critical' || highestSeverity === 'error'
     ? "animate-[pulse_1s_ease-in-out_infinite] border-red-500 dark:border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.4)] dark:shadow-[0_0_15px_rgba(248,113,113,0.3)] bg-red-50 dark:bg-red-900/20 focus:outline-none focus:ring-2 focus:ring-red-500"
     : highestSeverity === 'warning'
@@ -871,6 +1049,14 @@ export default function Dashboard() {
             <DeviceScanConnectPanel onClose={() => setIsScanModalOpen(false)} />
           </div>
         </div>
+      ) : null}
+
+      {homeLocationPromptOpen ? (
+        <HomeLocationSetupPrompt
+          isOpen={homeLocationPromptOpen}
+          isSaving={isSavingHomeLocation}
+          onConfirm={handleConfirmHomeLocation}
+        />
       ) : null}
 
       <Sidebar />
@@ -992,47 +1178,142 @@ export default function Dashboard() {
                 Only devices in rooms assigned by an administrator appear here. Pairing and device-management actions stay hidden for non-admin accounts.
               </div>
             ) : null}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-              <div className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300 cursor-pointer">
+            <div className="grid grid-cols-1 gap-6 mb-8 md:grid-cols-2 lg:grid-cols-4">
+              <div
+                className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300"
+              >
                 <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
-                  <span className="material-icons-round text-6xl text-slate-500 dark:group-hover:text-slate-400 transition-colors">router</span>
+                  <span className="material-icons-round text-6xl text-sky-500 dark:text-sky-400 group-hover:text-sky-600 dark:group-hover:text-sky-300 transition-colors">{weatherData?.icon || 'wb_cloudy'}</span>
                 </div>
                 <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
-                  <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">Total Devices</p>
-                  <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{loading ? '--' : devices.length.toString().padStart(2, '0')}</h3>
-                  <div className={`mt-2 text-xs flex items-center font-medium ${outdatedDevices.length > 0 ? "text-green-600 dark:text-green-400 animate-[pulse_1.5s_ease-in-out_infinite]" : "text-slate-500 dark:text-slate-400"}`}>
+                  <p
+                    className="text-slate-500 dark:text-slate-400 text-sm font-medium"
+                    title={weatherLocationName}
+                  >
+                    {weatherLocationLabel}
+                  </p>
+                  
+                  {weatherLoading ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="material-icons-round text-slate-400 animate-spin">autorenew</span>
+                      <span className="text-sm text-slate-500">Loading weather...</span>
+                    </div>
+                  ) : weatherError ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="material-icons-round text-red-400 text-lg">error_outline</span>
+                      <span className="text-sm text-slate-500">{weatherError}</span>
+                    </div>
+                  ) : weatherData ? (
+                    <>
+                      <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2 flex items-start">
+                        {Math.round(weatherData.temperature)}<span className="text-lg font-medium text-slate-500 mt-1">°C</span>
+                      </h3>
+                      <div className="mt-2 text-xs flex items-center font-medium text-slate-500 dark:text-slate-400">
+                        <span className="material-icons-round text-sm mr-1">{weatherData.icon}</span>
+                        {weatherData.description}
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+              <div
+                className={`bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300 ${isAdmin ? "cursor-pointer" : ""}`}
+                onClick={isAdmin ? () => router.push("/settings") : undefined}
+                onKeyDown={isAdmin ? ((event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    router.push("/settings");
+                  }
+                }) : undefined}
+                role={isAdmin ? "button" : undefined}
+                tabIndex={isAdmin ? 0 : undefined}
+              >
+                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
+                  <span className="material-icons-round text-6xl text-orange-500 dark:text-orange-400 group-hover:text-orange-600 dark:group-hover:text-orange-300 transition-colors">device_thermostat</span>
+                </div>
+                <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
+                  <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">House Temperature</p>
+                  <p className="mt-1 text-xs text-slate-400 dark:text-slate-500" title={houseTemperatureSourceName}>
+                    {houseTemperatureSourceLabel}
+                  </p>
+
+                  {houseTemperatureLoading ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="material-icons-round text-slate-400 animate-spin">autorenew</span>
+                      <span className="text-sm text-slate-500">Loading temperature...</span>
+                    </div>
+                  ) : houseTemperatureError ? (
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className="material-icons-round text-red-400 text-lg">error_outline</span>
+                      <span className="text-sm text-slate-500">{houseTemperatureError}</span>
+                    </div>
+                  ) : houseTemperatureData ? (
+                    <>
+                      <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2 flex items-start">
+                        {formatHouseClimateValue(houseTemperatureData.temperature)}<span className="text-lg font-medium text-slate-500 mt-1">°C</span>
+                      </h3>
+                      <div className="mt-2 text-xs flex items-center font-medium text-slate-500 dark:text-slate-400">
+                        <span className="material-icons-round text-sm mr-1">humidity_percentage</span>
+                        {houseTemperatureData.humidity != null
+                          ? `${formatHouseClimateValue(houseTemperatureData.humidity)}% humidity`
+                          : "Humidity unavailable"}
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
+                        <span className={`inline-flex items-center rounded-full px-2 py-1 font-medium ${
+                          houseTemperatureData.is_online
+                            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
+                            : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"
+                        }`}>
+                          {houseTemperatureData.is_online ? "Live" : "Offline"}
+                        </span>
+                        {houseTemperatureData.source_label ? <span>{houseTemperatureData.source_label}</span> : null}
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              </div>
+              <div
+                className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300 cursor-pointer"
+                onClick={() => router.push("/devices")}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    router.push("/devices");
+                  }
+                }}
+                role="button"
+                tabIndex={0}
+              >
+                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
+                  <span className="material-icons-round text-6xl text-indigo-500 dark:text-indigo-400 group-hover:text-indigo-600 dark:group-hover:text-indigo-300 transition-colors">devices</span>
+                </div>
+                <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
+                  <div>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">Device Overview</p>
+                    <div className="flex items-end gap-3 mt-2">
+                      <h3 className="text-3xl font-bold text-slate-900 dark:text-white leading-none tracking-tight">{loading ? '--' : devices.length.toString().padStart(2, '0')}</h3>
+                      <div className="flex flex-wrap items-center gap-2 pb-0.5 text-xs font-medium">
+                        <div className="flex items-center gap-1.5 px-2 py-0.5 bg-slate-100 dark:bg-slate-800/50 rounded-md">
+                          <span className="h-1.5 w-1.5 rounded-full bg-green-500"></span>
+                          <span className="text-slate-600 dark:text-slate-300">{loading ? '-' : onlineCount} <span className="text-slate-500 dark:text-slate-400 font-normal">On</span></span>
+                        </div>
+                        <div className={`flex items-center gap-1.5 px-2 py-0.5 ${offlineDevices.length > 0 ? "bg-red-50 dark:bg-red-500/10" : "bg-slate-100 dark:bg-slate-800/50"} rounded-md`}>
+                          <span className={`h-1.5 w-1.5 rounded-full ${offlineDevices.length > 0 ? "bg-red-500 animate-[pulse_1.5s_ease-in-out_infinite]" : "bg-slate-300 dark:bg-slate-600"}`}></span>
+                          <span className={`${offlineDevices.length > 0 ? "text-red-600 dark:text-red-400 font-semibold" : "text-slate-600 dark:text-slate-300"}`}>{loading ? '-' : offlineDevices.length} <span className={`${offlineDevices.length > 0 ? "text-red-500 dark:text-red-400/80" : "text-slate-500 dark:text-slate-400"} font-normal`}>Off</span></span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className={`mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs flex items-center font-medium ${outdatedDevices.length > 0 ? "text-green-600 dark:text-green-400 animate-[pulse_1.5s_ease-in-out_infinite]" : "text-slate-500 dark:text-slate-400"}`}>
                     <span className="material-icons-round text-sm mr-1">{outdatedDevices.length > 0 ? "system_update" : "trending_up"}</span>
                     {outdatedDevices.length > 0 ? (
                         <div className="flex items-center gap-1">
-                            <span>{outdatedDevices.length} devices update</span>
+                            <span>{outdatedDevices.length} update{outdatedDevices.length > 1 ? 's' : ''}</span>
                             <span className="material-icons-round text-[10px]">arrow_forward</span>
                             <span className="font-mono">{latestFirmwareRevision}</span>
                         </div>
                     ) : newThisWeek > 0 ? <span className="text-green-600 dark:text-green-400">{`+${newThisWeek} New this week`}</span> : 'Up to date'}
-                  </div>
-                </div>
-              </div>
-              <div className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300 cursor-pointer">
-                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
-                  <span className="material-icons-round text-6xl text-green-500 dark:group-hover:text-green-400 transition-colors">wifi</span>
-                </div>
-                <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
-                  <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">Online</p>
-                  <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{loading ? '--' : onlineCount.toString().padStart(2, '0')}</h3>
-                  <div className="mt-2 text-xs text-slate-500 dark:text-slate-400 flex items-center">
-                    Stable connection
-                  </div>
-                </div>
-              </div>
-              <div className={`bg-surface-light dark:bg-surface-dark p-6 rounded-xl border relative overflow-hidden group transition-all duration-300 cursor-pointer ${offlineCardDynamicClasses}`}>
-                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
-                  <span className={`material-icons-round text-6xl ${offlineDevices.length > 0 ? "text-red-500 dark:group-hover:text-red-400 animate-[pulse_2s_ease-in-out_infinite]" : "text-green-500 dark:group-hover:text-green-400"} transition-colors`}>wifi_off</span>
-                </div>
-                <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
-                  <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">Offline</p>
-                  <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{loading ? '--' : offlineDevices.length.toString().padStart(2, '0')}</h3>
-                  <div className={`mt-2 text-xs flex items-center font-medium ${offlineDevices.length > 0 ? "text-red-500 dark:text-red-400" : "text-green-500 dark:text-green-400"}`}>
-                    {offlineDevices.length > 0 ? "Needs attention" : "All online"}
                   </div>
                 </div>
               </div>

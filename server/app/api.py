@@ -40,7 +40,8 @@ from .models import (
     DeviceHistoryCreate, DeviceHistoryResponse,
     SystemLogAcknowledgeResponse, SystemLogListResponse, SystemLogResponse, SystemStatusResponse,
     FirmwareTemplateStatusResponse,
-    GeneralSettingsResponse, GeneralSettingsUpdate,
+    CurrentWeatherResponse, GeneralSettingsResponse, GeneralSettingsUpdate, HouseholdLocationCreate, HouseholdLocationResponse,
+    HouseTemperatureResponse,
     FirmwareResponse, DeviceMode, AccountType, EventType,
     RoomAccessUpdate, RoomUpdate, RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
     FirmwareNetworkTargetsResponse,
@@ -57,7 +58,7 @@ from .sql_models import (
     Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
     AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, DiyProjectConfig, BuildJob, SerialSession, SerialSessionStatus,
     SystemLog, SystemLogCategory as SqlSystemLogCategory, SystemLogSeverity as SqlSystemLogSeverity,
-    WifiCredential, InstalledExtension, ExternalDevice,
+    WifiCredential, InstalledExtension, ExternalDevice, HouseholdLocation,
 )
 from .database import (
     SessionLocal,
@@ -166,6 +167,7 @@ from .services.automation_devices import (
     serialize_external_device_automation_pins,
 )
 from .services.command_ordering import command_ordering_manager
+from .services.weather import WeatherProviderError, fetch_current_weather_for_location
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
@@ -294,8 +296,154 @@ def _set_request_timezone_context(request: Request, context: dict[str, Any]) -> 
     request.app.state.server_timezone_source = context["timezone_source"]
 
 
-def _serialize_general_settings(household: Household, context: dict[str, Any]) -> GeneralSettingsResponse:
+def _load_household_physical_device(
+    db: Session,
+    *,
+    household: Household,
+    device_id: str | None,
+) -> Device | None:
+    normalized_device_id = _trimmed_string(device_id)
+    if normalized_device_id is None:
+        return None
+
+    household_member_ids = _get_household_member_ids(db, household.household_id)
+    household_room_ids = _get_household_room_ids(db, household.household_id)
+    household_filters = _build_household_device_scope_filters(household_member_ids, household_room_ids)
+    if not household_filters:
+        return None
+
+    device = (
+        db.query(Device)
+        .options(joinedload(Device.room), joinedload(Device.pin_configurations))
+        .filter(Device.device_id == normalized_device_id)
+        .filter(or_(*household_filters))
+        .first()
+    )
+    if device is None:
+        return None
+
+    if device.provisioning_project_id:
+        project = (
+            db.query(DiyProject.id, DiyProject.board_profile)
+            .filter(DiyProject.id == device.provisioning_project_id)
+            .first()
+        )
+        if project is not None:
+            setattr(device, "board", project.board_profile)
+
+    return _attach_room_name(device)
+
+
+def _pin_extra_params(pin_config: Any) -> dict[str, Any]:
+    raw_extra_params = getattr(pin_config, "extra_params", None)
+    if isinstance(raw_extra_params, dict):
+        return raw_extra_params
+    return {}
+
+
+def _is_dht_pin_configuration(pin_config: Any) -> bool:
+    return (_trimmed_string(_pin_extra_params(pin_config).get("input_type")) or "").lower() == "dht"
+
+
+def _get_device_state_pin_rows(state: Any) -> dict[int, dict[str, Any]]:
+    if not isinstance(state, dict):
+        return {}
+
+    raw_rows = state.get("pins")
+    if not isinstance(raw_rows, list):
+        return {}
+
+    rows_by_pin: dict[int, dict[str, Any]] = {}
+    for row in raw_rows:
+        if not isinstance(row, dict):
+            continue
+        pin_number = row.get("pin")
+        if isinstance(pin_number, int):
+            rows_by_pin[pin_number] = row
+    return rows_by_pin
+
+
+def _coerce_optional_runtime_reported_at(value: Any) -> datetime | None:
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        return _coerce_utc_api_datetime(value)
+
+    if isinstance(value, str):
+        normalized = value.strip()
+        if not normalized:
+            return None
+        try:
+            parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        return _coerce_utc_api_datetime(parsed)
+
+    return None
+
+
+def _extract_house_temperature_payload(
+    db: Session,
+    device: Device,
+) -> dict[str, Any]:
+    hydrated_device = _attach_runtime_state(db, device)
+    state = hydrated_device.last_state if isinstance(hydrated_device.last_state, dict) else {}
+    state_rows = _get_device_state_pin_rows(state)
+    dht_pins = [pin for pin in hydrated_device.pin_configurations if _is_dht_pin_configuration(pin)]
+
+    temperature: float | None = None
+    humidity: float | None = None
+    source_label: str | None = None
+
+    for pin in dht_pins:
+        state_row = state_rows.get(pin.gpio_pin)
+        if state_row is None:
+            continue
+        if isinstance(state_row.get("temperature"), (int, float)):
+            temperature = float(state_row["temperature"])
+        if isinstance(state_row.get("humidity"), (int, float)):
+            humidity = float(state_row["humidity"])
+        if temperature is not None or humidity is not None:
+            source_label = _trimmed_string(getattr(pin, "label", None)) or _trimmed_string(getattr(pin, "function", None)) or f"GPIO {pin.gpio_pin}"
+            break
+
+    if (temperature is None and humidity is None) and len(dht_pins) == 1:
+        if isinstance(state.get("temperature"), (int, float)):
+            temperature = float(state["temperature"])
+        if isinstance(state.get("humidity"), (int, float)):
+            humidity = float(state["humidity"])
+        if temperature is not None or humidity is not None:
+            only_pin = dht_pins[0]
+            source_label = _trimmed_string(getattr(only_pin, "label", None)) or _trimmed_string(getattr(only_pin, "function", None)) or f"GPIO {only_pin.gpio_pin}"
+
+    measured_at = _coerce_optional_runtime_reported_at(state.get("reported_at")) or _coerce_utc_api_datetime(hydrated_device.last_seen)
+    status = "ok" if temperature is not None else "offline" if hydrated_device.conn_status == ConnStatus.offline else "no_reading"
+
+    return {
+        "device_id": hydrated_device.device_id,
+        "device_name": hydrated_device.name,
+        "room_name": getattr(hydrated_device, "room_name", None),
+        "source_label": source_label,
+        "temperature": temperature,
+        "humidity": humidity,
+        "is_online": hydrated_device.conn_status == ConnStatus.online,
+        "status": status,
+        "measured_at": measured_at,
+    }
+
+
+def _serialize_general_settings(
+    db: Session,
+    household: Household,
+    context: dict[str, Any],
+) -> GeneralSettingsResponse:
     effective_timezone = str(context["effective_timezone"])
+    selected_temperature_device = _load_household_physical_device(
+        db,
+        household=household,
+        device_id=getattr(household, "house_temperature_device_id", None),
+    )
     return GeneralSettingsResponse(
         household_id=household.household_id,
         configured_timezone=context.get("configured_timezone"),
@@ -303,7 +451,41 @@ def _serialize_general_settings(household: Household, context: dict[str, Any]) -
         timezone_source=str(context["timezone_source"]),
         current_server_time=get_current_server_time(effective_timezone),
         timezone_options=list(get_supported_timezones()),
+        house_temperature_device_id=_trimmed_string(getattr(household, "house_temperature_device_id", None)),
+        house_temperature_device_name=selected_temperature_device.name if selected_temperature_device is not None else None,
     )
+
+
+def _normalize_location_label(label: str | None, fallback: str) -> str:
+    if isinstance(label, str) and label.strip():
+        return label.strip()[:255]
+    return fallback.strip()[:255] or "Home"
+
+
+def _serialize_household_location(location: HouseholdLocation) -> HouseholdLocationResponse:
+    return HouseholdLocationResponse.model_validate(location)
+
+
+def _upsert_household_location(
+    db: Session,
+    *,
+    household: Household,
+    payload: HouseholdLocationCreate,
+) -> HouseholdLocation:
+    location = (
+        db.query(HouseholdLocation)
+        .filter(HouseholdLocation.household_id == household.household_id)
+        .first()
+    )
+    if location is None:
+        location = HouseholdLocation(household_id=household.household_id)
+
+    location.latitude = payload.latitude
+    location.longitude = payload.longitude
+    location.label = _normalize_location_label(payload.label, household.name)
+    location.source = payload.source
+    db.add(location)
+    return location
 
 
 def _serialize_time_context_response(context: dict[str, Any]) -> AutomationScheduleContextResponse:
@@ -2650,6 +2832,12 @@ async def initialserver(payload: InitialServerRequest, db: Session = Depends(get
     db.commit()
     db.refresh(new_household)
 
+    home_location = _upsert_household_location(
+        db,
+        household=new_household,
+        payload=payload.home_location,
+    )
+
     # Automatically add the setup admin as the owner of the household
     membership = HouseholdMembership(
         household_id=new_household.household_id,
@@ -2658,8 +2846,9 @@ async def initialserver(payload: InitialServerRequest, db: Session = Depends(get
     )
     db.add(membership)
     db.commit()
+    db.refresh(home_location)
 
-    return SetupResponse(user=new_user, household=new_household)
+    return SetupResponse(user=new_user, household=new_household, home_location=home_location)
 
 @router.post("/users", response_model=UserResponse)
 async def create_user(user_data: UserCreate, db: Session = Depends(get_db), admin: User = Depends(get_admin_user)):
@@ -2889,7 +3078,7 @@ async def get_general_settings(
     household = _get_current_household_or_404(db, current_user)
     timezone_context = apply_effective_timezone_context(household=household)
     _set_request_timezone_context(request, timezone_context)
-    return _serialize_general_settings(household, timezone_context)
+    return _serialize_general_settings(db, household, timezone_context)
 
 
 @router.put("/settings/general", response_model=GeneralSettingsResponse)
@@ -2900,52 +3089,224 @@ async def update_general_settings(
     current_user: User = Depends(get_admin_user),
 ):
     household = _get_current_household_or_404(db, current_user)
+    payload_fields = payload.model_fields_set
+    timezone_changed = False
     previous_context = resolve_effective_timezone_context(household=household)
-    requested_timezone = payload.timezone.strip() if isinstance(payload.timezone, str) else ""
 
-    if requested_timezone:
-        normalized_timezone = normalize_supported_timezone(requested_timezone)
-        if normalized_timezone is None:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": "validation",
-                    "message": "Select a valid IANA timezone from the supported timezone list.",
+    if "timezone" in payload_fields:
+        requested_timezone = payload.timezone.strip() if isinstance(payload.timezone, str) else ""
+
+        if requested_timezone:
+            normalized_timezone = normalize_supported_timezone(requested_timezone)
+            if normalized_timezone is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "validation",
+                        "message": "Select a valid IANA timezone from the supported timezone list.",
+                    },
+                )
+        else:
+            normalized_timezone = None
+
+        timezone_changed = household.timezone != normalized_timezone
+        household.timezone = normalized_timezone
+        db.add(household)
+
+    if "house_temperature_device_id" in payload_fields:
+        requested_device_id = _trimmed_string(payload.house_temperature_device_id)
+        if requested_device_id is None:
+            selected_temperature_device = None
+        else:
+            selected_temperature_device = _load_household_physical_device(
+                db,
+                household=household,
+                device_id=requested_device_id,
+            )
+            if selected_temperature_device is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "validation",
+                        "message": "Select a board in this household before using it as the house temperature source.",
+                    },
+                )
+            if not any(_is_dht_pin_configuration(pin) for pin in selected_temperature_device.pin_configurations):
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "error": "validation",
+                        "message": "Selected board does not have a configured DHT temperature sensor.",
+                    },
+                )
+
+        previous_temperature_device_id = _trimmed_string(getattr(household, "house_temperature_device_id", None))
+        next_temperature_device_id = selected_temperature_device.device_id if selected_temperature_device is not None else None
+        if previous_temperature_device_id != next_temperature_device_id:
+            household.house_temperature_device_id = next_temperature_device_id
+            db.add(household)
+            create_system_log(
+                db,
+                severity=SqlSystemLogSeverity.info,
+                category=SqlSystemLogCategory.health,
+                event_code="house_temperature_source_updated",
+                message="House temperature source board was updated.",
+                details={
+                    "previous_device_id": previous_temperature_device_id,
+                    "device_id": next_temperature_device_id,
+                    "device_name": selected_temperature_device.name if selected_temperature_device is not None else None,
+                    "room_name": getattr(selected_temperature_device, "room_name", None) if selected_temperature_device is not None else None,
                 },
             )
-    else:
-        normalized_timezone = None
 
-    household.timezone = normalized_timezone
-    db.add(household)
     db.flush()
-
     next_context = apply_effective_timezone_context(household=household)
-    refresh_time_trigger_automations_for_household(
-        db,
-        household_id=household.household_id,
-        effective_timezone=str(next_context["effective_timezone"]),
-        reference_time=datetime.now(timezone.utc),
-    )
-    create_system_log(
-        db,
-        severity=SqlSystemLogSeverity.info,
-        category=SqlSystemLogCategory.health,
-        event_code="server_timezone_updated",
-        message=f"Server timezone now resolves to {next_context['effective_timezone']}.",
-        details={
-            "previous_effective_timezone": previous_context["effective_timezone"],
-            "previous_source": previous_context["timezone_source"],
-            "configured_timezone": normalized_timezone,
-            "effective_timezone": next_context["effective_timezone"],
-            "timezone_source": next_context["timezone_source"],
-        },
-    )
+    if timezone_changed:
+        refresh_time_trigger_automations_for_household(
+            db,
+            household_id=household.household_id,
+            effective_timezone=str(next_context["effective_timezone"]),
+            reference_time=datetime.now(timezone.utc),
+        )
+        create_system_log(
+            db,
+            severity=SqlSystemLogSeverity.info,
+            category=SqlSystemLogCategory.health,
+            event_code="server_timezone_updated",
+            message=f"Server timezone now resolves to {next_context['effective_timezone']}.",
+            details={
+                "previous_effective_timezone": previous_context["effective_timezone"],
+                "previous_source": previous_context["timezone_source"],
+                "configured_timezone": household.timezone,
+                "effective_timezone": next_context["effective_timezone"],
+                "timezone_source": next_context["timezone_source"],
+            },
+        )
     db.commit()
     db.refresh(household)
 
     _set_request_timezone_context(request, next_context)
-    return _serialize_general_settings(household, next_context)
+    return _serialize_general_settings(db, household, next_context)
+
+
+@router.get("/settings/location", response_model=HouseholdLocationResponse)
+async def get_household_location(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    household = _get_current_household_or_404(db, current_user)
+    location = (
+        db.query(HouseholdLocation)
+        .filter(HouseholdLocation.household_id == household.household_id)
+        .first()
+    )
+    if location is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "home_location_missing", "message": "Home location has not been configured."},
+        )
+    return _serialize_household_location(location)
+
+
+@router.put("/settings/location", response_model=HouseholdLocationResponse)
+async def update_household_location(
+    payload: HouseholdLocationCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    household = _get_current_household_or_404(db, current_user)
+    location = _upsert_household_location(db, household=household, payload=payload)
+    create_system_log(
+        db,
+        severity=SqlSystemLogSeverity.info,
+        category=SqlSystemLogCategory.health,
+        event_code="home_location_updated",
+        message="Home location was updated for server weather.",
+        details={
+            "latitude": payload.latitude,
+            "longitude": payload.longitude,
+            "label": location.label,
+            "source": payload.source,
+        },
+    )
+    db.commit()
+    db.refresh(location)
+    return _serialize_household_location(location)
+
+
+@router.get("/weather/current", response_model=CurrentWeatherResponse)
+def get_current_weather(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    household = _get_current_household_or_404(db, current_user)
+    location = (
+        db.query(HouseholdLocation)
+        .filter(HouseholdLocation.household_id == household.household_id)
+        .first()
+    )
+    if location is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "home_location_missing", "message": "Home location has not been configured."},
+        )
+
+    try:
+        weather_payload = fetch_current_weather_for_location(location.latitude, location.longitude)
+    except WeatherProviderError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "weather_provider_unavailable", "message": str(exc)},
+        ) from exc
+
+    return CurrentWeatherResponse(
+        **weather_payload,
+        location_name=location.label or household.name,
+        latitude=location.latitude,
+        longitude=location.longitude,
+    )
+
+
+@router.get("/house-temperature/current", response_model=HouseTemperatureResponse)
+async def get_current_house_temperature(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    household = _get_current_household_or_404(db, current_user)
+    selected_device_id = _trimmed_string(getattr(household, "house_temperature_device_id", None))
+    if selected_device_id is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "house_temperature_source_missing",
+                "message": "House temperature source has not been configured.",
+            },
+        )
+
+    selected_device = _load_household_physical_device(
+        db,
+        household=household,
+        device_id=selected_device_id,
+    )
+    if selected_device is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error": "house_temperature_source_missing",
+                "message": "Configured house temperature source is no longer available.",
+            },
+        )
+
+    if not any(_is_dht_pin_configuration(pin) for pin in selected_device.pin_configurations):
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "house_temperature_source_invalid",
+                "message": "Configured house temperature source no longer exposes a DHT sensor.",
+            },
+        )
+
+    return HouseTemperatureResponse(**_extract_house_temperature_payload(db, selected_device))
 
 # --- Room Endpoints ---
 

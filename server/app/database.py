@@ -442,6 +442,12 @@ def _ensure_additive_columns():
             "VARCHAR(64) NULL COMMENT 'IANA timezone override for server runtime behavior'",
         ),
         (
+            "households",
+            "house_temperature_device_id",
+            "VARCHAR(36)",
+            "VARCHAR(36) NULL COMMENT 'Selected physical device that feeds the household house-temperature dashboard block'",
+        ),
+        (
             "diy_projects",
             "room_id",
             "INTEGER",

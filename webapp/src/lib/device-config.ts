@@ -161,6 +161,14 @@ export function getActivePinConfigurations(
   return configuredPins;
 }
 
+export function hasDhtSensor(
+  device: Pick<DeviceConfig, "pin_configurations" | "last_state"> | null | undefined,
+): boolean {
+  return getActivePinConfigurations(device).some(
+    (pin) => (typeof pin.extra_params?.input_type === "string" ? pin.extra_params.input_type.toLowerCase() : "") === "dht",
+  );
+}
+
 export function arePinConfigurationsEquivalent(
   left: ReadonlyArray<ComparablePinInput>,
   right: ReadonlyArray<ComparablePinInput>,

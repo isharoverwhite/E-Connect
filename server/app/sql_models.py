@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
 
-from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime, Text, ForeignKey, Enum, TIMESTAMP, UniqueConstraint, Index
+from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime, Text, ForeignKey, Enum, TIMESTAMP, UniqueConstraint, Index, Float
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
@@ -96,11 +96,17 @@ class Household(Base):
     household_id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(255), nullable=False)
     timezone = Column(String(64), nullable=True, comment="IANA timezone override for server runtime behavior")
+    house_temperature_device_id = Column(
+        String(36),
+        nullable=True,
+        comment="Selected physical device that feeds the household house-temperature dashboard block",
+    )
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     memberships = relationship("HouseholdMembership", back_populates="household", cascade="all, delete-orphan")
     rooms = relationship("Room", back_populates="household")
     wifi_credentials = relationship("WifiCredential", back_populates="household", cascade="all, delete-orphan")
+    location = relationship("HouseholdLocation", back_populates="household", uselist=False, cascade="all, delete-orphan")
 
 class HouseholdMembership(Base):
     __tablename__ = "household_memberships"
@@ -113,6 +119,22 @@ class HouseholdMembership(Base):
 
     household = relationship("Household", back_populates="memberships")
     user = relationship("User", back_populates="memberships")
+
+
+class HouseholdLocation(Base):
+    __tablename__ = "household_locations"
+    __table_args__ = (UniqueConstraint("household_id", name="uq_household_locations_household"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    household_id = Column(Integer, ForeignKey("households.household_id"), nullable=False, unique=True)
+    latitude = Column(Float, nullable=False)
+    longitude = Column(Float, nullable=False)
+    label = Column(String(255), nullable=True)
+    source = Column(String(64), nullable=False, default="manual_search")
+    created_at = Column(TIMESTAMP, server_default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    household = relationship("Household", back_populates="location")
 
 
 class ApiKey(Base):

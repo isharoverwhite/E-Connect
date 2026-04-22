@@ -1156,7 +1156,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
       <div className="flex justify-between items-start mb-3">
         <div className="flex-1 min-w-0 pr-4">
           <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
-          <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Chưa gán phòng'}>{config.room_name || 'Chưa gán phòng'}</p>
+          <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Unassigned room'}>{config.room_name || 'Unassigned room'}</p>
         </div>
         <span className="flex items-center text-xs text-slate-500 flex-shrink-0 mt-0.5">
           <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'} mr-1`}></span>
@@ -1345,7 +1345,7 @@ export const DynamicDeviceCard = memo(function DynamicDeviceCard({ config, isOnl
       <div className="flex justify-between items-start mb-4">
         <div className="flex-1 min-w-0 pr-4">
           <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
-          <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Chưa gán phòng'}>{config.room_name || 'Chưa gán phòng'}</p>
+          <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Unassigned room'}>{config.room_name || 'Unassigned room'}</p>
         </div>
         <span className="flex items-center text-xs text-slate-500 flex-shrink-0">
           <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'} mr-1`}></span>

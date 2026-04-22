@@ -6,6 +6,7 @@ import "./globals.css";
 import AuthProvider from "@/components/AuthProvider";
 import { ToastProvider } from "@/components/ToastContext";
 import { ThemeProvider } from "@/components/ThemeProvider";
+import { LanguageProvider } from "@/components/LanguageContext";
 import MqttWarningBanner from "@/components/MqttWarningBanner";
 import WifiWarningBanner from "@/components/WifiWarningBanner";
 
@@ -32,13 +33,15 @@ export default function RootLayout({
       </head>
       <body className={`${inter.variable} ${fira_code.variable} ${jetbrains_mono.variable} font-sans antialiased bg-background-light dark:bg-background-dark text-slate-800 dark:text-slate-200 selection:bg-primary selection:text-white`}>
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-          <AuthProvider>
-            <ToastProvider>
-              <MqttWarningBanner />
-              <WifiWarningBanner />
-              {children}
-            </ToastProvider>
-          </AuthProvider>
+          <LanguageProvider>
+            <AuthProvider>
+              <ToastProvider>
+                <MqttWarningBanner />
+                <WifiWarningBanner />
+                {children}
+              </ToastProvider>
+            </AuthProvider>
+          </LanguageProvider>
         </ThemeProvider>
       </body>
     </html>

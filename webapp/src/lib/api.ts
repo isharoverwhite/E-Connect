@@ -117,6 +117,45 @@ export interface GeneralSettingsResponse {
     timezone_source: "setting" | "runtime";
     current_server_time: string;
     timezone_options: string[];
+    house_temperature_device_id?: string | null;
+    house_temperature_device_name?: string | null;
+}
+
+export interface HouseholdLocationResponse {
+    id: number;
+    household_id: number;
+    latitude: number;
+    longitude: number;
+    label?: string | null;
+    source: "browser_geolocation" | "manual_search" | "manual_coordinates";
+    created_at?: string | null;
+    updated_at?: string | null;
+}
+
+export type HouseholdLocationPayload = Pick<HouseholdLocationResponse, "latitude" | "longitude" | "label" | "source">;
+
+export interface CurrentWeatherResponse {
+    temperature: number;
+    weather_code: number;
+    description: string;
+    icon: string;
+    location_name: string;
+    latitude: number;
+    longitude: number;
+    is_day?: boolean | null;
+    observed_at?: string | null;
+}
+
+export interface HouseTemperatureResponse {
+    device_id: string;
+    device_name: string;
+    room_name?: string | null;
+    source_label?: string | null;
+    temperature?: number | null;
+    humidity?: number | null;
+    is_online: boolean;
+    status: "ok" | "offline" | "no_reading";
+    measured_at?: string | null;
 }
 
 export interface ServerTimeContextResponse {
@@ -308,7 +347,10 @@ export async function updateUiLayout(layout: Record<string, unknown>, token?: st
 }
 
 export async function updateGeneralSettings(
-    payload: { timezone: string | null },
+    payload: {
+        timezone?: string | null;
+        house_temperature_device_id?: string | null;
+    },
     token?: string,
 ): Promise<GeneralSettingsResponse> {
     const authToken = token ?? getToken();
@@ -327,6 +369,71 @@ export async function updateGeneralSettings(
 
     if (!response.ok) {
         throw new Error(await parseApiError(response, "Failed to update general settings"));
+    }
+
+    return response.json();
+}
+
+export async function fetchCurrentWeather(token?: string): Promise<CurrentWeatherResponse> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/weather/current`, {
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+        cache: "no-store",
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to load home weather"));
+    }
+
+    return response.json();
+}
+
+export async function fetchCurrentHouseTemperature(token?: string): Promise<HouseTemperatureResponse> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/house-temperature/current`, {
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+        cache: "no-store",
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to load house temperature"));
+    }
+
+    return response.json();
+}
+
+export async function updateHouseholdLocation(
+    payload: HouseholdLocationPayload,
+    token?: string,
+): Promise<HouseholdLocationResponse> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/settings/location`, {
+        method: "PUT",
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to update home location"));
     }
 
     return response.json();

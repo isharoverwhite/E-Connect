@@ -18,10 +18,13 @@ import {
 import {
     GeneralSettingsResponse,
     RuntimeNetworkInfo,
+    fetchDashboardDevices,
     fetchGeneralSettings,
     fetchRuntimeNetworkInfo,
     updateGeneralSettings,
 } from "@/lib/api";
+import { hasDhtSensor } from "@/lib/device-config";
+import { DeviceConfig } from "@/types/device";
 import { formatServerTimestamp } from "@/lib/server-time";
 import {
     RoomRecord,
@@ -37,6 +40,7 @@ import { ConfigsPanel } from "./ConfigsPanel";
 import { WifiCredentialsPanel } from "./WifiCredentialsPanel";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastContext";
+import { useLanguage } from "@/components/LanguageContext";
 
 function formatAccountTypeLabel(accountType?: string | null) {
     return accountType === "admin" ? "admin" : "user";
@@ -71,10 +75,17 @@ function formatServerTimePreview(value?: string | null, timezone?: string | null
 
 type SettingsPanel = "general" | "apiKeys" | "users" | "rooms" | "wifi" | "configs";
 type AccountType = ManagedUser["account_type"];
+type TemperatureSourceOption = {
+    device_id: string;
+    name: string;
+    room_name?: string | null;
+    board?: string | null;
+};
 
 export default function SettingsPage() {
     const { user } = useAuth();
     const { showToast } = useToast();
+    const { t, language, setLanguage } = useLanguage();
     const isAdmin = user?.account_type === "admin";
 
     const [activePanel, setActivePanel] = useState<SettingsPanel>("general");
@@ -89,6 +100,11 @@ export default function SettingsPage() {
     const [generalSettingsError, setGeneralSettingsError] = useState("");
     const [timezoneDraft, setTimezoneDraft] = useState("");
     const [timezoneSaving, setTimezoneSaving] = useState(false);
+    const [houseTemperatureDeviceDraft, setHouseTemperatureDeviceDraft] = useState("");
+    const [temperatureSourceOptions, setTemperatureSourceOptions] = useState<TemperatureSourceOption[]>([]);
+    const [temperatureSourceLoading, setTemperatureSourceLoading] = useState(true);
+    const [temperatureSourceError, setTemperatureSourceError] = useState("");
+    const [temperatureSourceSaving, setTemperatureSourceSaving] = useState(false);
     const [runtimeNetwork, setRuntimeNetwork] = useState<RuntimeNetworkInfo | null>(null);
     const [networkLoading, setNetworkLoading] = useState(true);
     const [networkError, setNetworkError] = useState("");
@@ -205,6 +221,7 @@ export default function SettingsPage() {
             setGeneralSettingsError("");
             setGeneralSettingsLoading(false);
             setTimezoneDraft("");
+            setHouseTemperatureDeviceDraft("");
             return;
         }
 
@@ -223,12 +240,45 @@ export default function SettingsPage() {
             const data = await fetchGeneralSettings(token);
             setGeneralSettings(data);
             setTimezoneDraft(data.configured_timezone ?? "");
+            setHouseTemperatureDeviceDraft(data.house_temperature_device_id ?? "");
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to load general settings";
             setGeneralSettings(null);
             setGeneralSettingsError(message);
         } finally {
             setGeneralSettingsLoading(false);
+        }
+    }
+
+    async function loadTemperatureSourceOptions() {
+        if (!isAdmin) {
+            setTemperatureSourceOptions([]);
+            setTemperatureSourceError("");
+            setTemperatureSourceLoading(false);
+            return;
+        }
+
+        setTemperatureSourceLoading(true);
+        setTemperatureSourceError("");
+
+        try {
+            const devices = await fetchDashboardDevices();
+            const eligibleDevices = devices
+                .filter((device): device is DeviceConfig => !device.is_external && hasDhtSensor(device))
+                .map((device) => ({
+                    device_id: device.device_id,
+                    name: device.name,
+                    room_name: device.room_name ?? null,
+                    board: device.board ?? null,
+                }))
+                .sort((left, right) => left.name.localeCompare(right.name));
+            setTemperatureSourceOptions(eligibleDevices);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to load eligible temperature boards";
+            setTemperatureSourceOptions([]);
+            setTemperatureSourceError(message);
+        } finally {
+            setTemperatureSourceLoading(false);
         }
     }
 
@@ -276,6 +326,10 @@ export default function SettingsPage() {
         void loadGeneralSettings();
     });
 
+    const loadTemperatureSourceOptionsForEffect = useEffectEvent(() => {
+        void loadTemperatureSourceOptions();
+    });
+
     const loadRuntimeNetworkForEffect = useEffectEvent(() => {
         void loadRuntimeNetworkInfo();
     });
@@ -283,6 +337,7 @@ export default function SettingsPage() {
     useEffect(() => {
         if (isAdmin && activePanel === "general") {
             loadGeneralSettingsForEffect();
+            loadTemperatureSourceOptionsForEffect();
             loadRuntimeNetworkForEffect();
         }
 
@@ -583,14 +638,61 @@ export default function SettingsPage() {
         }
     }
 
+    async function handleSaveHouseTemperatureSource(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+
+        if (!isAdmin) {
+            return;
+        }
+
+        const token = getToken();
+        if (!token) {
+            setTemperatureSourceError("Missing session token. Please sign in again.");
+            return;
+        }
+
+        const normalizedDraft = houseTemperatureDeviceDraft.trim();
+        if (
+            normalizedDraft &&
+            !temperatureSourceOptions.some((option) => option.device_id === normalizedDraft)
+        ) {
+            setTemperatureSourceError("Select a board that already reports DHT temperature data.");
+            return;
+        }
+
+        setTemperatureSourceSaving(true);
+        setTemperatureSourceError("");
+
+        try {
+            const nextSettings = await updateGeneralSettings(
+                { house_temperature_device_id: normalizedDraft || null },
+                token,
+            );
+            setGeneralSettings(nextSettings);
+            setHouseTemperatureDeviceDraft(nextSettings.house_temperature_device_id ?? "");
+            showToast(
+                nextSettings.house_temperature_device_name
+                    ? `House temperature now follows ${nextSettings.house_temperature_device_name}.`
+                    : "House temperature block disabled.",
+                "success",
+            );
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to update house temperature source";
+            setTemperatureSourceError(message);
+            showToast(message, "error");
+        } finally {
+            setTemperatureSourceSaving(false);
+        }
+    }
+
     return (
         <div className="flex h-screen w-full bg-background-light text-slate-800 dark:bg-background-dark dark:text-slate-200 overflow-hidden font-sans selection:bg-primary selection:text-white">
             <Sidebar />
 
             <main className="flex min-w-0 min-h-0 flex-1 flex-col">
                 <header className="px-8 pt-8 pb-4">
-                    <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">Settings</h2>
-                    <p className="text-slate-500 dark:text-slate-400 mt-1">Admin tools, user lifecycle, and instance notes.</p>
+                    <h2 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">{t("settings.title")}</h2>
+                    <p className="text-slate-500 dark:text-slate-400 mt-1">{t("settings.description")}</p>
                 </header>
 
                 <div className="px-8 border-b border-slate-200 dark:border-slate-800 flex gap-8">
@@ -602,7 +704,7 @@ export default function SettingsPage() {
                                 : "text-slate-500 hover:text-primary dark:text-slate-400"
                         }`}
                     >
-                        General
+                        {t("settings.tabs.general")}
                     </button>
                     <button
                         onClick={() => setActivePanel("apiKeys")}
@@ -612,7 +714,7 @@ export default function SettingsPage() {
                                 : "text-slate-500 hover:text-primary dark:text-slate-400"
                         }`}
                     >
-                        API Keys
+                        {t("settings.tabs.apiKeys")}
                     </button>
                     {isAdmin ? (
                         <button
@@ -623,7 +725,7 @@ export default function SettingsPage() {
                                     : "text-slate-500 hover:text-primary dark:text-slate-400"
                             }`}
                         >
-                            User Management
+                            {t("settings.tabs.users")}
                         </button>
                     ) : null}
                     {isAdmin ? (
@@ -635,7 +737,7 @@ export default function SettingsPage() {
                                     : "text-slate-500 hover:text-primary dark:text-slate-400"
                             }`}
                         >
-                            Rooms
+                            {t("settings.tabs.rooms")}
                         </button>
                     ) : null}
                     {isAdmin ? (
@@ -647,7 +749,7 @@ export default function SettingsPage() {
                                     : "text-slate-500 hover:text-primary dark:text-slate-400"
                             }`}
                         >
-                            Configs
+                            {t("settings.tabs.configs")}
                         </button>
                     ) : null}
                     {isAdmin ? (
@@ -659,7 +761,7 @@ export default function SettingsPage() {
                                     : "text-slate-500 hover:text-primary dark:text-slate-400"
                             }`}
                         >
-                            Wi-Fi
+                            {t("settings.tabs.wifi")}
                         </button>
                     ) : null}
                 </div>
@@ -687,10 +789,10 @@ export default function SettingsPage() {
                                 <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
                                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                                         <div>
-                                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Appearance</p>
-                                            <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Theme Preference</h2>
+                                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.appearance.label")}</p>
+                                            <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.appearance.title")}</h2>
                                             <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                                                Choose your preferred lighting mode for the E-Connect interface.
+                                                {t("settings.appearance.description")}
                                             </p>
                                         </div>
                                         <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
@@ -704,10 +806,37 @@ export default function SettingsPage() {
                                 <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
                                     <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
                                         <div>
-                                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Navigation</p>
-                                            <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Expand Sidebar on Hover</h2>
+                                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.language.label")}</p>
+                                            <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.language.title")}</h2>
                                             <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                                                Automatically expand the sidebar when hovering over it while collapsed.
+                                                {t("settings.language.description")}
+                                            </p>
+                                        </div>
+                                        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
+                                            <div className="relative">
+                                                <select
+                                                    className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-surface-dark dark:text-white"
+                                                    value={language}
+                                                    onChange={(e) => setLanguage(e.target.value as "en" | "vi")}
+                                                >
+                                                    <option value="en">{t("lang.en")}</option>
+                                                    <option value="vi">{t("lang.vi")}</option>
+                                                </select>
+                                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-slate-500 dark:text-slate-400">
+                                                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </section>
+
+                                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                        <div>
+                                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.navigation.label")}</p>
+                                            <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.navigation.title")}</h2>
+                                            <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
+                                                {t("settings.navigation.description")}
                                             </p>
                                         </div>
                                         <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
@@ -806,6 +935,89 @@ export default function SettingsPage() {
                                                 </form>
                                             </div>
                                         ) : null}
+                                    </section>
+                                ) : null}
+
+                                {isAdmin ? (
+                                    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                            <div>
+                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">House Climate</p>
+                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">House temperature source</h2>
+                                                <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
+                                                    Choose which physical board with a configured DHT sensor should feed the shared House Temperature dashboard block.
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {temperatureSourceError ? (
+                                            <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+                                                {temperatureSourceError}
+                                            </div>
+                                        ) : null}
+
+                                        {temperatureSourceLoading ? (
+                                            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-400">
+                                                Loading boards with temperature sensors...
+                                            </div>
+                                        ) : (
+                                            <div className="mt-6 space-y-6">
+                                                <div className="grid gap-4 md:grid-cols-2">
+                                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
+                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Current Source</p>
+                                                        <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
+                                                            {generalSettings?.house_temperature_device_name || "Not configured"}
+                                                        </p>
+                                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                                                            {generalSettings?.house_temperature_device_id
+                                                                ? "Dashboard users will see this board as the household temperature source."
+                                                                : "The house temperature block stays hidden until a source board is selected."}
+                                                        </p>
+                                                    </div>
+                                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
+                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Eligible Boards</p>
+                                                        <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{temperatureSourceOptions.length}</p>
+                                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                                                            Only approved physical boards with at least one configured DHT sensor appear here.
+                                                        </p>
+                                                    </div>
+                                                </div>
+
+                                                <form className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900/80" onSubmit={handleSaveHouseTemperatureSource}>
+                                                    <div>
+                                                        <label htmlFor="house-temperature-source" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                                                            Source board
+                                                        </label>
+                                                        <select
+                                                            id="house-temperature-source"
+                                                            value={houseTemperatureDeviceDraft}
+                                                            onChange={(event) => setHouseTemperatureDeviceDraft(event.target.value)}
+                                                            className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                                                        >
+                                                            <option value="">Do not show house temperature block</option>
+                                                            {temperatureSourceOptions.map((option) => (
+                                                                <option key={option.device_id} value={option.device_id}>
+                                                                    {option.name}{option.room_name ? ` · ${option.room_name}` : ""}{option.board ? ` · ${option.board}` : ""}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                                                            Select one board to publish a single household temperature summary block on the dashboard.
+                                                        </p>
+                                                    </div>
+
+                                                    <div className="flex flex-wrap gap-3">
+                                                        <button
+                                                            type="submit"
+                                                            disabled={temperatureSourceSaving}
+                                                            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                                                        >
+                                                            {temperatureSourceSaving ? "Saving..." : "Save House Temperature Source"}
+                                                        </button>
+                                                    </div>
+                                                </form>
+                                            </div>
+                                        )}
                                     </section>
                                 ) : null}
 

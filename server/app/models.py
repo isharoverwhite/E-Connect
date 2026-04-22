@@ -140,13 +140,36 @@ class HouseholdResponse(HouseholdBase):
 
     model_config = ConfigDict(from_attributes=True)
 
+
+class HouseholdLocationBase(BaseModel):
+    latitude: float = Field(..., ge=-90, le=90)
+    longitude: float = Field(..., ge=-180, le=180)
+    label: Optional[str] = Field(default=None, max_length=255)
+    source: Literal["browser_geolocation", "manual_search", "manual_coordinates"] = "manual_search"
+
+
+class HouseholdLocationCreate(HouseholdLocationBase):
+    pass
+
+
+class HouseholdLocationResponse(HouseholdLocationBase):
+    id: int
+    household_id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class SetupResponse(BaseModel):
     user: UserResponse
     household: HouseholdResponse
+    home_location: HouseholdLocationResponse
 
 
 class GeneralSettingsUpdate(BaseModel):
     timezone: Optional[str] = Field(default=None, max_length=64)
+    house_temperature_device_id: Optional[str] = Field(default=None, max_length=36)
 
 
 class GeneralSettingsResponse(BaseModel):
@@ -156,9 +179,37 @@ class GeneralSettingsResponse(BaseModel):
     timezone_source: Literal["setting", "runtime"]
     current_server_time: datetime
     timezone_options: List[str] = Field(default_factory=list)
+    house_temperature_device_id: Optional[str] = None
+    house_temperature_device_name: Optional[str] = None
+
+
+class CurrentWeatherResponse(BaseModel):
+    temperature: float
+    weather_code: int
+    description: str
+    icon: str
+    location_name: str
+    latitude: float
+    longitude: float
+    is_day: Optional[bool] = None
+    observed_at: Optional[str] = None
+
+
+class HouseTemperatureResponse(BaseModel):
+    device_id: str
+    device_name: str
+    room_name: Optional[str] = None
+    source_label: Optional[str] = None
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    is_online: bool = False
+    status: Literal["ok", "offline", "no_reading"]
+    measured_at: Optional[datetime] = None
+
 
 class InitialServerRequest(UserCreate):
     householdName: Optional[str] = None
+    home_location: HouseholdLocationCreate
 
 
 class Token(BaseModel):

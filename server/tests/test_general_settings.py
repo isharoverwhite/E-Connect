@@ -7,6 +7,7 @@ import os
 from datetime import datetime, timezone
 
 import main
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import close_all_sessions, sessionmaker
@@ -17,10 +18,19 @@ from app import api as api_module
 from app.database import Base, get_db
 from app.sql_models import (
     AccountType,
+    AuthStatus,
+    ConnStatus,
+    Device,
+    DeviceHistory,
+    DeviceMode,
+    EventType,
     Automation,
     Household,
     HouseholdMembership,
     HouseholdRole,
+    PinConfiguration,
+    PinMode,
+    Room,
     SystemLog,
     User,
 )
@@ -98,6 +108,76 @@ def get_token(client: TestClient, username: str = "timezone-admin") -> str:
     return response.json()["access_token"]
 
 
+def create_temperature_source_device(
+    *,
+    username: str = "timezone-admin",
+    device_id: str = "house-temp-node",
+    room_name: str = "Living Room",
+    sensor_label: str = "Indoor Climate",
+    temperature: float = 28.6,
+    humidity: float = 63.2,
+) -> Device:
+    db = TestingSessionLocal()
+    try:
+        user = db.query(User).filter(User.username == username).one()
+        household = db.query(Household).one()
+        room = Room(name=room_name, user_id=user.user_id, household_id=household.household_id)
+        db.add(room)
+        db.commit()
+        db.refresh(room)
+
+        device = Device(
+            device_id=device_id,
+            mac_address="AA:BB:CC:DD:EE:FF",
+            name="Living Room Climate Board",
+            room_id=room.room_id,
+            owner_id=user.user_id,
+            auth_status=AuthStatus.approved,
+            conn_status=ConnStatus.online,
+            mode=DeviceMode.library,
+            firmware_version="1.0.0",
+            topic_pub="devices/house-temp-node/pub",
+            topic_sub="devices/house-temp-node/sub",
+            last_seen=datetime(2026, 4, 22, 5, 0, tzinfo=timezone.utc).replace(tzinfo=None),
+        )
+        db.add(device)
+        db.commit()
+        db.refresh(device)
+
+        db.add(
+            PinConfiguration(
+                device_id=device.device_id,
+                gpio_pin=4,
+                mode=PinMode.INPUT,
+                label=sensor_label,
+                extra_params={"input_type": "dht", "dht_version": "DHT22"},
+            )
+        )
+        db.add(
+            DeviceHistory(
+                device_id=device.device_id,
+                event_type=EventType.state_change,
+                payload=json.dumps(
+                    {
+                        "reported_at": "2026-04-22T05:00:00Z",
+                        "pins": [
+                            {
+                                "pin": 4,
+                                "temperature": temperature,
+                                "humidity": humidity,
+                            }
+                        ],
+                    }
+                ),
+            )
+        )
+        db.commit()
+        db.refresh(device)
+        return device
+    finally:
+        db.close()
+
+
 def test_general_settings_surfaces_env_timezone_as_current_runtime_timezone(monkeypatch):
     monkeypatch.setenv("TZ", "Europe/Paris")
     create_admin_user()
@@ -172,6 +252,77 @@ def test_update_general_settings_persists_override_and_beats_env(monkeypatch):
         assert latest_log.details["effective_timezone"] == "Asia/Tokyo"
     finally:
         db.close()
+
+
+def test_update_general_settings_persists_house_temperature_source(monkeypatch):
+    monkeypatch.setenv("TZ", "Asia/Ho_Chi_Minh")
+    create_admin_user()
+    source_device = create_temperature_source_device()
+
+    with TestClient(main.app) as client:
+        token = get_token(client)
+        response = client.put(
+            "/api/v1/settings/general",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"house_temperature_device_id": source_device.device_id},
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["house_temperature_device_id"] == source_device.device_id
+    assert payload["house_temperature_device_name"] == "Living Room Climate Board"
+    assert payload["effective_timezone"] == "Asia/Ho_Chi_Minh"
+
+    db = TestingSessionLocal()
+    try:
+        household = db.query(Household).first()
+        assert household is not None
+        assert household.house_temperature_device_id == source_device.device_id
+
+        latest_log = db.query(SystemLog).order_by(SystemLog.id.desc()).first()
+        assert latest_log is not None
+        assert latest_log.event_code == "house_temperature_source_updated"
+        assert latest_log.details["device_id"] == source_device.device_id
+    finally:
+        db.close()
+
+
+def test_house_temperature_endpoint_returns_selected_device_reading(monkeypatch):
+    monkeypatch.setenv("TZ", "Asia/Ho_Chi_Minh")
+    create_admin_user()
+    db = TestingSessionLocal()
+    try:
+        household_id = db.query(Household.household_id).scalar()
+    finally:
+        db.close()
+    source_device = create_temperature_source_device(temperature=29.4, humidity=58.1)
+
+    db = TestingSessionLocal()
+    try:
+        stored_household = db.query(Household).filter(Household.household_id == household_id).one()
+        stored_household.house_temperature_device_id = source_device.device_id
+        db.add(stored_household)
+        db.commit()
+    finally:
+        db.close()
+
+    with TestClient(main.app) as client:
+        token = get_token(client)
+        response = client.get(
+            "/api/v1/house-temperature/current",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["device_id"] == source_device.device_id
+    assert payload["device_name"] == "Living Room Climate Board"
+    assert payload["room_name"] == "Living Room"
+    assert payload["source_label"] == "Indoor Climate"
+    assert payload["temperature"] == pytest.approx(29.4)
+    assert payload["humidity"] == pytest.approx(58.1)
+    assert payload["status"] == "ok"
+    assert payload["is_online"] is True
 
 
 def test_update_general_settings_reschedules_time_trigger_automations(monkeypatch):

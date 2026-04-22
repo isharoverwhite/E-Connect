@@ -1,6 +1,7 @@
 /* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
 
 @import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
 
 @custom-variant dark (&:is(.dark *));
 @theme {
@@ -100,5 +101,65 @@
   
   .dark .canvas-dot-bg {
     background-image: radial-gradient(circle, #334155 1.5px, transparent 1.5px);
+  }
+
+  .home-location-map .leaflet-control-attribution {
+    font-size: 10px;
+  }
+
+  .home-location-map .leaflet-control-zoom a {
+    color: #0f172a;
+  }
+
+  .dark .home-location-map .leaflet-control-zoom a {
+    color: #e2e8f0;
+    background-color: #0f172a;
+    border-color: #334155;
+  }
+
+  .dark .home-location-map .leaflet-control-attribution {
+    background-color: rgba(15, 23, 42, 0.9);
+    color: #cbd5e1;
+  }
+
+  .dark .home-location-map .leaflet-control-attribution a {
+    color: #93c5fd;
+  }
+
+  .home-location-marker {
+    background: transparent;
+    border: 0;
+  }
+
+  .home-location-marker__pin {
+    display: flex;
+    height: 42px;
+    width: 42px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+    border: 3px solid rgba(255, 255, 255, 0.96);
+    color: white;
+    box-shadow: 0 14px 30px rgba(37, 99, 235, 0.32);
+    position: relative;
+  }
+
+  .home-location-marker__pin::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: -10px;
+    height: 18px;
+    width: 18px;
+    transform: translateX(-50%) rotate(45deg);
+    border-radius: 0 0 4px 0;
+    background: #1d4ed8;
+    z-index: -1;
+  }
+
+  .home-location-marker__icon {
+    font-size: 22px;
+    line-height: 1;
   }
 }

@@ -318,7 +318,13 @@ def test_initial_server_setup():
         "username": "admin",
         "password": "securepassword",
         "householdName": "My Home",
-        "ui_layout": {}
+        "ui_layout": {},
+        "home_location": {
+            "latitude": 21.0285,
+            "longitude": 105.8542,
+            "label": "Hanoi",
+            "source": "manual_search",
+        },
     }
     response = client.post("/api/v1/auth/initialserver", json=payload)
     assert response.status_code == 200

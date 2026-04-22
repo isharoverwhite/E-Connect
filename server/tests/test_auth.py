@@ -19,7 +19,8 @@ from app.auth import (
 )
 from main import app
 from app.database import Base, get_db
-from app.sql_models import User, AccountType
+from app.sql_models import User, AccountType, HouseholdLocation
+import app.api as api_module
 
 # Keep auth tests in memory to avoid workspace disk growth during CI.
 SQLALCHEMY_DATABASE_URL = "sqlite://"
@@ -42,6 +43,25 @@ def override_get_db():
 
 client = TestClient(app)
 
+HOME_LOCATION_PAYLOAD = {
+    "latitude": 21.0285,
+    "longitude": 105.8542,
+    "label": "Hanoi",
+    "source": "manual_search",
+}
+
+
+def initial_server_payload(**overrides):
+    payload = {
+        "fullname": "Admin",
+        "username": "admin",
+        "password": "password",
+        "ui_layout": {},
+        "home_location": dict(HOME_LOCATION_PAYLOAD),
+    }
+    payload.update(overrides)
+    return payload
+
 @pytest.fixture(autouse=True)
 def run_before_and_after_tests(tmpdir):
     """Fixture to execute asserts before and after a test is run"""
@@ -62,34 +82,50 @@ def test_system_status_uninitialized():
 def test_initialserver_success():
     response = client.post(
         "/api/v1/auth/initialserver",
-        json={
-            "fullname": "Admin User",
-            "username": "admin",
-            "password": "securepassword",
-            "account_type": "parent",  # Even if user tries to set non-admin
-            "ui_layout": {}
-        },
+        json=initial_server_payload(
+            fullname="Admin User",
+            username="admin",
+            password="securepassword",
+            account_type="parent",  # Even if user tries to set non-admin
+            ui_layout={},
+        ),
     )
     assert response.status_code == 200
     data = response.json()
     assert data["user"]["username"] == "admin"
     assert data["user"]["account_type"] == AccountType.admin.value
     assert data["household"]["name"] == "Admin User's Household"
+    assert data["home_location"]["latitude"] == HOME_LOCATION_PAYLOAD["latitude"]
+    assert data["home_location"]["longitude"] == HOME_LOCATION_PAYLOAD["longitude"]
+    assert data["home_location"]["label"] == "Hanoi"
+
+    db = TestingSessionLocal()
+    try:
+        stored_location = db.query(HouseholdLocation).one()
+        assert stored_location.latitude == HOME_LOCATION_PAYLOAD["latitude"]
+        assert stored_location.longitude == HOME_LOCATION_PAYLOAD["longitude"]
+    finally:
+        db.close()
 
     # System should now report as initialized
     status_resp = client.get("/api/v1/system/status")
     assert status_resp.status_code == 200
     assert status_resp.json() == {"initialized": True}
 
+
+def test_initialserver_requires_home_location():
+    payload = initial_server_payload()
+    payload.pop("home_location")
+
+    response = client.post("/api/v1/auth/initialserver", json=payload)
+
+    assert response.status_code == 422
+
 def test_initialserver_validation_failures():
     # Test short username
     short_user_resp = client.post(
         "/api/v1/auth/initialserver",
-        json={
-            "fullname": "Admin User",
-            "username": "ad", # too short, need 3
-            "password": "securepassword",
-        }
+        json=initial_server_payload(fullname="Admin User", username="ad", password="securepassword")
     )
     assert short_user_resp.status_code == 422
     assert "String should have at least 3 characters" in short_user_resp.json()["detail"][0]["msg"]
@@ -97,11 +133,7 @@ def test_initialserver_validation_failures():
     # Test short password
     short_pass_resp = client.post(
         "/api/v1/auth/initialserver",
-        json={
-            "fullname": "Admin User",
-            "username": "admin",
-            "password": "short", # too short, need 8
-        }
+        json=initial_server_payload(fullname="Admin User", username="admin", password="short")
     )
     assert short_pass_resp.status_code == 422
     assert "String should have at least 8 characters" in short_pass_resp.json()["detail"][0]["msg"]
@@ -110,13 +142,13 @@ def test_initialserver_second_attempt_fails():
     # First attempt
     client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin 1", "username": "admin1", "password": "password", "ui_layout": {}}
+        json=initial_server_payload(fullname="Admin 1", username="admin1")
     )
     
     # Second attempt
     response = client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin 2", "username": "admin2", "password": "password", "ui_layout": {}}
+        json=initial_server_payload(fullname="Admin 2", username="admin2")
     )
     assert response.status_code == 403
     assert response.json()["detail"]["error"] == "system_initialized"
@@ -125,7 +157,7 @@ def test_admin_can_create_user():
     # 1. Setup Admin
     client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+        json=initial_server_payload()
     )
     
     # 2. Login as Admin
@@ -157,7 +189,7 @@ def test_non_admin_cannot_create_user():
     # 1. Setup Admin
     client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+        json=initial_server_payload()
     )
     # 2. Login as Admin, Create User
     token_admin = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"}).json()["access_token"]
@@ -194,7 +226,7 @@ def test_unauthenticated_cannot_create_user():
 def test_admin_created_user_can_log_in_immediately():
     client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+        json=initial_server_payload()
     )
     token_admin = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"}).json()["access_token"]
 
@@ -213,7 +245,7 @@ def test_admin_created_user_can_log_in_immediately():
 def test_deleted_user_cannot_access_authenticated_routes():
     client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+        json=initial_server_payload()
     )
     token_admin = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"}).json()["access_token"]
 
@@ -245,7 +277,7 @@ def test_deleted_user_cannot_access_authenticated_routes():
 def test_login_token_uses_self_hosted_friendly_expiry():
     client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+        json=initial_server_payload()
     )
 
     login_resp = client.post(
@@ -266,7 +298,7 @@ def test_login_token_uses_self_hosted_friendly_expiry():
 def test_login_returns_refresh_token_and_expiry_metadata():
     client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+        json=initial_server_payload()
     )
 
     login_resp = client.post(
@@ -299,7 +331,7 @@ def test_login_returns_refresh_token_and_expiry_metadata():
 def test_refresh_endpoint_rotates_non_persistent_session():
     client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+        json=initial_server_payload()
     )
 
     login_resp = client.post(
@@ -330,7 +362,7 @@ def test_refresh_endpoint_rotates_non_persistent_session():
 def test_users_me_layout_update_persists_canvas_layout():
     client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+        json=initial_server_payload()
     )
 
     login_resp = client.post(
@@ -363,7 +395,7 @@ def test_users_me_layout_update_persists_canvas_layout():
 def test_refresh_endpoint_rejects_access_token_payload():
     client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+        json=initial_server_payload()
     )
 
     login_resp = client.post(
@@ -383,7 +415,7 @@ def test_refresh_endpoint_rejects_access_token_payload():
 def test_keep_login_returns_persistent_session_tokens():
     client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+        json=initial_server_payload()
     )
 
     login_resp = client.post(
@@ -409,7 +441,7 @@ def test_keep_login_returns_persistent_session_tokens():
 def test_deleted_user_cannot_refresh_existing_session():
     client.post(
         "/api/v1/auth/initialserver",
-        json={"fullname": "Admin", "username": "admin", "password": "password", "ui_layout": {}}
+        json=initial_server_payload()
     )
     token_admin = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"}).json()["access_token"]
 
@@ -438,6 +470,44 @@ def test_deleted_user_cannot_refresh_existing_session():
     )
     assert refresh_resp.status_code == 401
     assert refresh_resp.json()["detail"]["error"] == "invalid_refresh_token"
+
+
+def test_current_weather_uses_persisted_home_location(monkeypatch):
+    client.post(
+        "/api/v1/auth/initialserver",
+        json=initial_server_payload(
+            home_location={
+                "latitude": 10.7769,
+                "longitude": 106.7009,
+                "label": "Ho Chi Minh City",
+                "source": "manual_search",
+            }
+        )
+    )
+    token = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"}).json()["access_token"]
+
+    def fake_weather(latitude: float, longitude: float):
+        assert latitude == 10.7769
+        assert longitude == 106.7009
+        return {
+            "temperature": 31.4,
+            "weather_code": 2,
+            "description": "Partly cloudy",
+            "icon": "cloud",
+            "is_day": True,
+            "observed_at": "2026-04-22T11:00",
+        }
+
+    monkeypatch.setattr(api_module, "fetch_current_weather_for_location", fake_weather)
+
+    response = client.get("/api/v1/weather/current", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["temperature"] == 31.4
+    assert payload["location_name"] == "Ho Chi Minh City"
+    assert payload["latitude"] == 10.7769
+    assert payload["longitude"] == 106.7009
 
 
 def test_create_access_token_still_honors_explicit_override():
