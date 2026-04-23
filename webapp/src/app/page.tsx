@@ -190,66 +190,7 @@ function findFirstCanvasSlot(
   };
 }
 
-function DashboardCanvasPreviewCard({
-  config,
-  isOnline,
-}: {
-  config: DeviceConfig;
-  isOnline: boolean;
-}) {
-  const roomName = (config as DeviceConfig & { room_name?: string | null }).room_name || "Unassigned room";
-  const pinCount = config.pin_configurations.length;
-  const modeLabel = config.provider
-    ? config.provider
-    : config.mode.replace("-", " ");
 
-  return (
-    <div className="flex h-full w-full flex-col overflow-hidden rounded-xl border border-slate-300 bg-white/95 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/95">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-slate-900 dark:text-white">{config.name}</div>
-          <div className="mt-1 truncate text-xs text-slate-500 dark:text-slate-400">{roomName}</div>
-        </div>
-        <span
-          className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-medium ${
-            isOnline
-              ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
-              : "bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300"
-          }`}
-        >
-          <span className={`h-2 w-2 rounded-full ${isOnline ? "bg-emerald-500" : "bg-rose-500"}`} />
-          {isOnline ? "Online" : "Offline"}
-        </span>
-      </div>
-
-      <div className="mt-4 grid grid-cols-2 gap-3">
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/80">
-          <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Controls</div>
-          <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{pinCount}</div>
-        </div>
-        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/80">
-          <div className="text-[11px] uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Source</div>
-          <div className="mt-1 truncate text-sm font-medium text-slate-900 dark:text-white">{modeLabel}</div>
-        </div>
-      </div>
-
-      <div className="mt-4 flex flex-1 flex-col overflow-hidden rounded-lg border border-dashed border-slate-300 bg-slate-50/70 px-3 py-3 dark:border-slate-700 dark:bg-slate-800/40">
-        <div className="text-[11px] flex-none uppercase tracking-[0.12em] text-slate-500 dark:text-slate-400">Editor Preview</div>
-        <div className="mt-3 flex-1 overflow-y-auto min-h-0 space-y-2 pr-1 custom-scrollbar">
-          {Array.from({ length: Math.min(3, Math.max(1, pinCount || 1)) }).map((_, index) => (
-            <div
-              key={`${config.device_id}-preview-${index}`}
-              className="flex items-center justify-between rounded-md border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900/80"
-            >
-              <div className="h-2 w-24 rounded bg-slate-200 dark:bg-slate-700" />
-              <div className="h-2 w-10 rounded bg-slate-200 dark:bg-slate-700" />
-            </div>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function HomeLocationSetupPrompt({
   isOpen,
@@ -326,6 +267,7 @@ export default function Dashboard() {
   const [markingAllNotifications, setMarkingAllNotifications] = useState(false);
   const [markingNotificationIds, setMarkingNotificationIds] = useState<Set<number>>(new Set());
   const [notificationError, setNotificationError] = useState("");
+  const [hasLoadedSystemLogs, setHasLoadedSystemLogs] = useState(false);
   const [weatherData, setWeatherData] = useState<CurrentWeatherResponse | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(true);
   const [weatherError, setWeatherError] = useState<string | null>(null);
@@ -355,7 +297,7 @@ export default function Dashboard() {
       document.removeEventListener("mousedown", handleClickOutside);
     };
   }, [showNotifications]);
-  
+
   const [isCustomizeMode, setIsCustomizeMode] = useState(false);
   const [layoutVersion, setLayoutVersion] = useState(0);
   const [canvasLayouts, setCanvasLayouts] = useState<Record<string, CanvasLayout>>({});
@@ -398,7 +340,7 @@ export default function Dashboard() {
         }
       }
     };
-    
+
     if (typeof window !== "undefined") {
       window.addEventListener("storage", handleStorageChange);
       return () => window.removeEventListener("storage", handleStorageChange);
@@ -512,7 +454,7 @@ export default function Dashboard() {
     setIsSavingLayout(true);
     const layout = normalizeCanvasLayouts(persistedCanvasLayout);
     setCanvasLayouts(layout);
-    
+
     // Attempt saving to DB if possible
     try {
       const { updateUiLayout } = await import("@/lib/api");
@@ -520,12 +462,12 @@ export default function Dashboard() {
     } catch (e) {
       console.warn("Failed to sync layout to server", e);
     }
-    
+
     localStorage.setItem("dashboardCanvasLayout", JSON.stringify(layout));
-    
+
     setIsSavingLayout(false);
     setSaveLayoutSuccess(true);
-    
+
     setTimeout(() => {
       setSaveLayoutSuccess(false);
       setIsCustomizeMode(false);
@@ -557,38 +499,99 @@ export default function Dashboard() {
     }
   }, []);
 
-  const loadFullDashboardData = useCallback(async () => {
-    const [dashboardDevices, pendingRequests, logsRes, statusRes] = await Promise.all([
-      fetchDashboardDevices(),
-      isAdmin ? fetchDevices({ authStatus: "pending" }) : Promise.resolve([]),
-      isAdmin ? fetchSystemLogs(undefined, 500) : Promise.resolve({ entries: [] }),
-      fetchSystemStatus().catch(() => null),
-    ]);
-
-    setDevices(dashboardDevices);
-    setPairingRequests((pendingRequests as DeviceConfig[]) || []);
-    if (isAdmin) {
-      setSystemLogs(logsRes.entries);
-    }
-    applySystemStatus(statusRes);
-    hasLoadedInitialDashboardSnapshotRef.current = true;
-  }, [applySystemStatus, isAdmin]);
-
-  const loadAdminSupplementalData = useCallback(async () => {
+  useEffect(() => {
     if (!isAdmin) {
+      setPairingRequests([]);
+      setSystemLogs([]);
+      setHasLoadedSystemLogs(true);
       return;
     }
 
-    const [pendingRequests, logsRes, statusRes] = await Promise.all([
-      fetchDevices({ authStatus: "pending" }),
-      fetchSystemLogs(undefined, 500),
-      fetchSystemStatus().catch(() => null),
-    ]);
+    setHasLoadedSystemLogs(false);
+  }, [isAdmin]);
 
-    setPairingRequests((pendingRequests as DeviceConfig[]) || []);
-    setSystemLogs(logsRes.entries);
-    applySystemStatus(statusRes);
-  }, [applySystemStatus, isAdmin]);
+  const refreshDashboardDevices = useCallback(() => {
+    return fetchDashboardDevices()
+      .then((dashboardDevices) => {
+        setDevices(dashboardDevices);
+        hasLoadedInitialDashboardSnapshotRef.current = true;
+      })
+      .catch((error) => {
+        console.error("Failed to load dashboard devices:", error);
+      })
+      .finally(() => {
+        setLoading(false);
+      });
+  }, []);
+
+  const refreshPendingPairingRequests = useCallback(() => {
+    if (!isAdmin) {
+      setPairingRequests([]);
+      return Promise.resolve();
+    }
+
+    return fetchDevices({ authStatus: "pending" })
+      .then((pendingRequests) => {
+        setPairingRequests((pendingRequests as DeviceConfig[]) || []);
+      })
+      .catch((error) => {
+        console.error("Failed to load pending pairing requests:", error);
+      });
+  }, [isAdmin]);
+
+  const refreshSystemAlerts = useCallback(() => {
+    if (!isAdmin) {
+      setSystemLogs([]);
+      setHasLoadedSystemLogs(true);
+      return Promise.resolve();
+    }
+
+    return fetchSystemLogs(undefined, 500)
+      .then((logsRes) => {
+        setSystemLogs(logsRes.entries);
+      })
+      .catch((error) => {
+        console.error("Failed to load system logs:", error);
+      })
+      .finally(() => {
+        setHasLoadedSystemLogs(true);
+      });
+  }, [isAdmin]);
+
+  const refreshSystemStatus = useCallback(() => {
+    return fetchSystemStatus()
+      .then((statusRes) => {
+        applySystemStatus(statusRes);
+      })
+      .catch((error) => {
+        console.error("Failed to load system status:", error);
+      });
+  }, [applySystemStatus]);
+
+  const loadFullDashboardData = useCallback(() => {
+    const refreshes: Promise<unknown>[] = [
+      refreshDashboardDevices(),
+      refreshSystemStatus(),
+    ];
+
+    if (isAdmin) {
+      refreshes.push(refreshPendingPairingRequests(), refreshSystemAlerts());
+    }
+
+    return Promise.allSettled(refreshes).then(() => undefined);
+  }, [isAdmin, refreshDashboardDevices, refreshPendingPairingRequests, refreshSystemAlerts, refreshSystemStatus]);
+
+  const loadAdminSupplementalData = useCallback(() => {
+    if (!isAdmin) {
+      return Promise.resolve();
+    }
+
+    return Promise.allSettled([
+      refreshPendingPairingRequests(),
+      refreshSystemAlerts(),
+      refreshSystemStatus(),
+    ]).then(() => undefined);
+  }, [isAdmin, refreshPendingPairingRequests, refreshSystemAlerts, refreshSystemStatus]);
 
   const runDashboardRefresh = useCallback((mode: DashboardRefreshMode) => {
     if (mode === "full" && adminRefreshTimeoutRef.current !== null) {
@@ -611,19 +614,10 @@ export default function Dashboard() {
       while (nextMode) {
         queuedDashboardRefreshModeRef.current = null;
 
-        try {
-          if (nextMode === "full" || !isAdmin) {
-            await loadFullDashboardData();
-          } else {
-            await loadAdminSupplementalData();
-          }
-        } catch (error) {
-          console.error(
-            nextMode === "full" ? "Failed to sync dashboard data:" : "Failed to refresh admin dashboard data:",
-            error,
-          );
-        } finally {
-          setLoading(false);
+        if (nextMode === "full" || !isAdmin) {
+          await loadFullDashboardData();
+        } else {
+          await loadAdminSupplementalData();
         }
 
         nextMode = queuedDashboardRefreshModeRef.current;
@@ -739,17 +733,7 @@ export default function Dashboard() {
   });
 
   useEffect(() => {
-    let cancelled = false;
-    const timeoutId = window.setTimeout(() => {
-      if (!cancelled) {
-        void runDashboardRefresh("full");
-      }
-    }, 50);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
+    void runDashboardRefresh("full");
   }, [runDashboardRefresh]);
 
   const isDeviceOnline = (d: DeviceConfig) => {
@@ -789,7 +773,7 @@ export default function Dashboard() {
       ),
     [approvedDevices],
   );
-  
+
   const computedLayouts = useMemo(() => {
     if (!shouldUseCanvas) {
       return {};
@@ -919,27 +903,28 @@ export default function Dashboard() {
   }, [visibleNotifications]);
 
   const alertIconColor = highestSeverity === 'critical' || highestSeverity === 'error' ? 'text-red-500 dark:group-hover:text-red-400' :
-                         highestSeverity === 'warning' ? 'text-orange-500 dark:group-hover:text-orange-400' :
-                         highestSeverity === 'info' ? 'text-blue-500 dark:group-hover:text-blue-400' :
-                         'text-green-500 dark:group-hover:text-green-400';
+    highestSeverity === 'warning' ? 'text-orange-500 dark:group-hover:text-orange-400' :
+      highestSeverity === 'info' ? 'text-blue-500 dark:group-hover:text-blue-400' :
+        'text-green-500 dark:group-hover:text-green-400';
 
   const alertTextColor = highestSeverity === 'critical' || highestSeverity === 'error' ? 'text-red-500 dark:text-red-400' :
-                         highestSeverity === 'warning' ? 'text-orange-500 dark:text-orange-400' :
-                         highestSeverity === 'info' ? 'text-blue-500 dark:text-blue-400' :
-                         'text-green-500 dark:text-green-400';
-  
+    highestSeverity === 'warning' ? 'text-orange-500 dark:text-orange-400' :
+      highestSeverity === 'info' ? 'text-blue-500 dark:text-blue-400' :
+        'text-green-500 dark:text-green-400';
+  const alertsLoading = isAdmin && !hasLoadedSystemLogs;
+
   const alertCardIcon = highestSeverity === 'critical' || highestSeverity === 'error' ? 'report' :
-                        highestSeverity === 'warning' ? 'warning' :
-                        highestSeverity === 'info' ? 'info' :
-                        'check_circle';
+    highestSeverity === 'warning' ? 'warning' :
+      highestSeverity === 'info' ? 'info' :
+        'check_circle';
 
   const alertCardDynamicClasses = highestSeverity === 'critical' || highestSeverity === 'error'
     ? "animate-[pulse_1s_ease-in-out_infinite] border-red-500 dark:border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.4)] dark:shadow-[0_0_15px_rgba(248,113,113,0.3)] bg-red-50 dark:bg-red-900/20 focus:outline-none focus:ring-2 focus:ring-red-500"
     : highestSeverity === 'warning'
-    ? "border-slate-200 dark:border-slate-700 shadow-sm hover:border-orange-300 dark:hover:border-orange-500 hover:shadow-[0_0_15px_rgba(249,115,22,0.2)] dark:hover:shadow-[0_0_15px_rgba(251,146,60,0.15)] hover:bg-orange-50 dark:hover:bg-orange-900/10 focus:outline-none focus:ring-2 focus:ring-orange-500"
-    : highestSeverity === 'info'
-    ? "border-slate-200 dark:border-slate-700 shadow-sm hover:border-blue-300 dark:hover:border-blue-500 hover:shadow-[0_0_15px_rgba(59,130,246,0.2)] dark:hover:shadow-[0_0_15px_rgba(96,165,250,0.15)] hover:bg-blue-50 dark:hover:bg-blue-900/10 focus:outline-none focus:ring-2 focus:ring-blue-500"
-    : "border-slate-200 dark:border-slate-700 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-500 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-green-500";
+      ? "border-slate-200 dark:border-slate-700 shadow-sm hover:border-orange-300 dark:hover:border-orange-500 hover:shadow-[0_0_15px_rgba(249,115,22,0.2)] dark:hover:shadow-[0_0_15px_rgba(251,146,60,0.15)] hover:bg-orange-50 dark:hover:bg-orange-900/10 focus:outline-none focus:ring-2 focus:ring-orange-500"
+      : highestSeverity === 'info'
+        ? "border-slate-200 dark:border-slate-700 shadow-sm hover:border-blue-300 dark:hover:border-blue-500 hover:shadow-[0_0_15px_rgba(59,130,246,0.2)] dark:hover:shadow-[0_0_15px_rgba(96,165,250,0.15)] hover:bg-blue-50 dark:hover:bg-blue-900/10 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        : "border-slate-200 dark:border-slate-700 shadow-sm hover:bg-slate-50 dark:hover:bg-slate-900 hover:border-slate-300 dark:hover:border-slate-500 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-green-500";
 
   const toggleDropdown = () => {
     if (showNotifications) {
@@ -989,10 +974,10 @@ export default function Dashboard() {
 
       try {
         await markSystemLogRead(notif.id);
-        
+
         // Wait for slide-out animation to finish
         await new Promise(r => setTimeout(r, 300));
-        
+
         setSystemLogs((prev) => prev.map((entry) => (
           entry.id === notif.id ? { ...entry, is_read: true } : entry
         )));
@@ -1016,9 +1001,9 @@ export default function Dashboard() {
     if (serverTimezone) {
       try {
         const timeString = new Intl.DateTimeFormat('en-US', {
-            timeZone: serverTimezone,
-            hour: '2-digit',
-            hour12: false
+          timeZone: serverTimezone,
+          hour: '2-digit',
+          hour12: false
         }).format(new Date());
         currentHour = parseInt(timeString, 10);
       } catch {
@@ -1028,9 +1013,9 @@ export default function Dashboard() {
 
     let greeting = "Good evening";
     if (currentHour >= 5 && currentHour < 12) {
-        greeting = "Good morning";
+      greeting = "Good morning";
     } else if (currentHour >= 12 && currentHour < 18) {
-        greeting = "Good afternoon";
+      greeting = "Good afternoon";
     }
 
     const name = user?.fullname || user?.username || "";
@@ -1080,7 +1065,7 @@ export default function Dashboard() {
               </button>
 
               {mountDropdown && (
-                <div 
+                <div
                   className={`absolute right-0 top-full mt-3 w-80 sm:w-96 bg-surface-light dark:bg-surface-dark rounded-xl shadow-xl border border-slate-200 dark:border-slate-700 overflow-hidden z-50 transition-all duration-300 ease-out origin-top-right transform ${showNotifications ? 'scale-100 opacity-100 translate-y-0' : 'scale-90 opacity-0 -translate-y-2'}`}
                 >
                   <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/50 backdrop-blur-sm">
@@ -1111,39 +1096,39 @@ export default function Dashboard() {
                       </div>
                     ) : (
                       visibleNotifications.map((notif) => {
-                          const isMarking = markingNotificationIds.has(notif.id);
-                          const severityColor = notif.severity === 'info' ? 'text-sky-500 bg-sky-100 dark:bg-sky-500/10 dark:text-sky-400' :
-                                                notif.severity === 'warning' ? 'text-amber-500 bg-amber-100 dark:bg-amber-500/10 dark:text-amber-400' :
-                                                notif.severity === 'error' ? 'text-rose-500 bg-rose-100 dark:bg-rose-500/10 dark:text-rose-400' :
-                                                'text-red-500 bg-red-100 dark:bg-red-500/10 dark:text-red-400';
-                          const icon = notif.severity === 'info' ? 'info' :
-                                       notif.severity === 'warning' ? 'warning' :
-                                       notif.severity === 'error' ? 'error' : 'report';
-                          return (
-                            <div key={notif.id} 
-                              className={`p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 cursor-pointer relative transition-all duration-300 ease-in-out ${(isMarking || markingAllNotifications) ? 'opacity-0 -translate-x-full pointer-events-none' : 'opacity-100 translate-x-0'}`}
-                              onClick={() => void handleSingleNotifClick(notif)}
-                            >
-                              <div className="flex gap-3">
-                                <div className="flex-shrink-0 mt-1">
-                                  <div className={`w-8 h-8 rounded-full flex items-center justify-center ${severityColor}`}>
-                                    <span className="material-icons-round text-lg">{icon}</span>
-                                  </div>
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex justify-between items-start mb-1">
-                                    <p className="text-sm text-slate-900 flex items-center gap-2 dark:text-white mt-1 font-bold capitalize">
-                                      {notif.category}
-                                      <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
-                                    </p>
-                                    {isMarking ? <span className="material-icons-round animate-spin text-sm text-slate-400">autorenew</span> : null}
-                                  </div>
-                                  <p className="text-xs break-all sm:break-words text-slate-700 dark:text-slate-300 font-medium">{notif.message}</p>
-                                  <p className="text-[10px] text-slate-400 mt-1">{new Date(notif.occurred_at).toLocaleString()}</p>
+                        const isMarking = markingNotificationIds.has(notif.id);
+                        const severityColor = notif.severity === 'info' ? 'text-sky-500 bg-sky-100 dark:bg-sky-500/10 dark:text-sky-400' :
+                          notif.severity === 'warning' ? 'text-amber-500 bg-amber-100 dark:bg-amber-500/10 dark:text-amber-400' :
+                            notif.severity === 'error' ? 'text-rose-500 bg-rose-100 dark:bg-rose-500/10 dark:text-rose-400' :
+                              'text-red-500 bg-red-100 dark:bg-red-500/10 dark:text-red-400';
+                        const icon = notif.severity === 'info' ? 'info' :
+                          notif.severity === 'warning' ? 'warning' :
+                            notif.severity === 'error' ? 'error' : 'report';
+                        return (
+                          <div key={notif.id}
+                            className={`p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 border-b border-slate-100 dark:border-slate-700/50 cursor-pointer relative transition-all duration-300 ease-in-out ${(isMarking || markingAllNotifications) ? 'opacity-0 -translate-x-full pointer-events-none' : 'opacity-100 translate-x-0'}`}
+                            onClick={() => void handleSingleNotifClick(notif)}
+                          >
+                            <div className="flex gap-3">
+                              <div className="flex-shrink-0 mt-1">
+                                <div className={`w-8 h-8 rounded-full flex items-center justify-center ${severityColor}`}>
+                                  <span className="material-icons-round text-lg">{icon}</span>
                                 </div>
                               </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex justify-between items-start mb-1">
+                                  <p className="text-sm text-slate-900 flex items-center gap-2 dark:text-white mt-1 font-bold capitalize">
+                                    {notif.category}
+                                    <span className="w-2 h-2 rounded-full bg-blue-500 inline-block"></span>
+                                  </p>
+                                  {isMarking ? <span className="material-icons-round animate-spin text-sm text-slate-400">autorenew</span> : null}
+                                </div>
+                                <p className="text-xs break-all sm:break-words text-slate-700 dark:text-slate-300 font-medium">{notif.message}</p>
+                                <p className="text-[10px] text-slate-400 mt-1">{new Date(notif.occurred_at).toLocaleString()}</p>
+                              </div>
                             </div>
-                          );
+                          </div>
+                        );
                       })
                     )}
                   </div>
@@ -1183,7 +1168,9 @@ export default function Dashboard() {
                 className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300"
               >
                 <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
-                  <span className="material-icons-round text-6xl text-sky-500 dark:text-sky-400 group-hover:text-sky-600 dark:group-hover:text-sky-300 transition-colors">{weatherData?.icon || 'wb_cloudy'}</span>
+                  <span className="material-symbols-rounded text-6xl text-sky-500 dark:text-sky-400 group-hover:text-sky-600 dark:group-hover:text-sky-300 transition-colors">
+                    {weatherData?.icon || 'cloud'}
+                  </span>
                 </div>
                 <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
                   <p
@@ -1192,15 +1179,15 @@ export default function Dashboard() {
                   >
                     {weatherLocationLabel}
                   </p>
-                  
+
                   {weatherLoading ? (
                     <div className="mt-2 flex items-center gap-2">
-                      <span className="material-icons-round text-slate-400 animate-spin">autorenew</span>
+                      <span className="material-symbols-rounded text-slate-400 animate-spin">autorenew</span>
                       <span className="text-sm text-slate-500">Loading weather...</span>
                     </div>
                   ) : weatherError ? (
                     <div className="mt-2 flex items-center gap-2">
-                      <span className="material-icons-round text-red-400 text-lg">error_outline</span>
+                      <span className="material-symbols-rounded text-red-400 text-lg">error_outline</span>
                       <span className="text-sm text-slate-500">{weatherError}</span>
                     </div>
                   ) : weatherData ? (
@@ -1209,7 +1196,18 @@ export default function Dashboard() {
                         {Math.round(weatherData.temperature)}<span className="text-lg font-medium text-slate-500 mt-1">°C</span>
                       </h3>
                       <div className="mt-2 text-xs flex items-center font-medium text-slate-500 dark:text-slate-400">
-                        <span className="material-icons-round text-sm mr-1">{weatherData.icon}</span>
+                        {weatherData.icon === 'rainy' ? (
+                          <div className="relative mr-1 w-5 h-5 flex items-center justify-center">
+                            <span className="material-symbols-rounded text-sm animate-weather-cloud relative z-10">cloud</span>
+                            <div className="absolute top-[12px] left-1/2 -translate-x-1/2 flex items-center gap-[2px]">
+                              <div className="w-[1.5px] h-[6px] bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] animate-weather-rain-1"></div>
+                              <div className="w-[1.5px] h-[6px] bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] animate-weather-rain-2 mt-[2px]"></div>
+                              <div className="w-[1.5px] h-[6px] bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] animate-weather-rain-3"></div>
+                            </div>
+                          </div>
+                        ) : (
+                          <span className={`material-symbols-rounded text-sm mr-1 ${weatherData.icon === 'cloud' ? 'animate-weather-cloud inline-block' : ''}`}>{weatherData.icon}</span>
+                        )}
                         {weatherData.description}
                       </div>
                     </>
@@ -1263,11 +1261,10 @@ export default function Dashboard() {
                         )}
                       </h3>
                       <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400">
-                        <span className={`inline-flex items-center rounded-full px-2 py-1 font-medium ${
-                          houseTemperatureData.is_online
+                        <span className={`inline-flex items-center rounded-full px-2 py-1 font-medium ${houseTemperatureData.is_online
                             ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300"
                             : "bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300"
-                        }`}>
+                          }`}>
                           {houseTemperatureData.is_online ? "Live" : "Offline"}
                         </span>
                         {houseTemperatureData.source_label ? <span>{houseTemperatureData.source_label}</span> : null}
@@ -1308,15 +1305,15 @@ export default function Dashboard() {
                       </div>
                     </div>
                   </div>
-                  
+
                   <div className={`mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs flex items-center font-medium ${outdatedDevices.length > 0 ? "text-green-600 dark:text-green-400 animate-[pulse_1.5s_ease-in-out_infinite]" : "text-slate-500 dark:text-slate-400"}`}>
                     <span className="material-icons-round text-sm mr-1">{outdatedDevices.length > 0 ? "system_update" : "trending_up"}</span>
                     {outdatedDevices.length > 0 ? (
-                        <div className="flex items-center gap-1">
-                            <span>{outdatedDevices.length} update{outdatedDevices.length > 1 ? 's' : ''}</span>
-                            <span className="material-icons-round text-[10px]">arrow_forward</span>
-                            <span className="font-mono">{latestFirmwareRevision}</span>
-                        </div>
+                      <div className="flex items-center gap-1">
+                        <span>{outdatedDevices.length} update{outdatedDevices.length > 1 ? 's' : ''}</span>
+                        <span className="material-icons-round text-[10px]">arrow_forward</span>
+                        <span className="font-mono">{latestFirmwareRevision}</span>
+                      </div>
                     ) : newThisWeek > 0 ? <span className="text-green-600 dark:text-green-400">{`+${newThisWeek} New this week`}</span> : 'Up to date'}
                   </div>
                 </div>
@@ -1338,7 +1335,7 @@ export default function Dashboard() {
                 </div>
                 <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
                   <p className="text-slate-500 dark:text-slate-400 text-sm font-medium">System Alerts</p>
-                  <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{loading ? '--' : alertCount.toString().padStart(2, '0')}</h3>
+                  <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2">{alertsLoading ? '--' : alertCount.toString().padStart(2, '0')}</h3>
                   <div className={`mt-2 text-xs flex items-center font-medium ${alertTextColor}`}>
                     <span className="material-icons-round text-sm mr-1">{highestSeverity !== 'none' ? 'priority_high' : 'check'}</span>
                     {alertCount > 0 ? `${alertCount} unhandled issues` : 'All clear'}
@@ -1354,21 +1351,21 @@ export default function Dashboard() {
                   {!isMobile && (
                     isCustomizeMode ? (
                       <>
-                        <button 
-                          onClick={resetCanvasLayout} 
+                        <button
+                          onClick={resetCanvasLayout}
                           disabled={isSavingLayout || saveLayoutSuccess}
                           className="flex items-center px-3 py-1.5 border border-red-300 dark:border-red-600 rounded bg-white dark:bg-slate-800 shadow-sm text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <span className="material-icons-round text-[16px] mr-1.5">restart_alt</span> Reset
                         </button>
-                        <button 
-                          onClick={saveCanvasLayout} 
+                        <button
+                          onClick={saveCanvasLayout}
                           disabled={isSavingLayout || saveLayoutSuccess}
                           className={`flex items-center justify-center w-[140px] flex-none px-3 py-1.5 text-white rounded shadow-sm text-sm font-medium transition-colors duration-300 ${saveLayoutSuccess ? 'bg-green-500 hover:bg-green-600' : 'bg-primary hover:bg-blue-600'} disabled:opacity-80 disabled:cursor-not-allowed`}
                         >
                           <span className={`material-icons-round flex-none text-[16px] mr-1.5 ${isSavingLayout ? "animate-spin" : ""}`}>
                             {isSavingLayout ? "autorenew" : saveLayoutSuccess ? "check_circle" : "save"}
-                          </span> 
+                          </span>
                           <span className="flex-none">{isSavingLayout ? "Saving..." : saveLayoutSuccess ? "Saved!" : "Save Layout"}</span>
                         </button>
                       </>
@@ -1396,96 +1393,76 @@ export default function Dashboard() {
                       const c = config as DeviceConfig;
                       const cardHeight = cardHeights.get(c.device_id) ?? DEFAULT_CARD_HEIGHT;
                       const cardWidth = cardWidths.get(c.device_id) ?? DEFAULT_CARD_WIDTH;
-                      const layout = computedLayouts[c.device_id] || { x: 0, y: 0, w: cardWidth, h: cardHeight };
-                      const cardContents = isCustomizeMode ? (
-                        <DashboardCanvasPreviewCard config={c} isOnline={isDeviceOnline(c)} />
-                      ) : (
-                        <DynamicDeviceCard config={c} isOnline={isDeviceOnline(c)} />
+                      const savedLayout = computedLayouts[c.device_id];
+                      const layout = {
+                        x: savedLayout?.x || 0,
+                        y: savedLayout?.y || 0,
+                        w: cardWidth,
+                        h: cardHeight
+                      };
+
+                      const cardContents = (
+                        <div
+                          className={`w-full transition-all duration-300 ${isCustomizeMode ? 'pointer-events-none' : ''}`}
+                          style={{ minHeight: `${layout.h}px` }}
+                        >
+                          <DynamicDeviceCard config={c} isOnline={isDeviceOnline(c)} />
+                        </div>
                       );
 
                       if (!isCustomizeMode) {
                         return (
                           <div
                             key={c.device_id}
-                            className="absolute transition-shadow"
+                            className="absolute transition-shadow focus-within:z-50"
                             style={{
                               left: `${layout.x}px`,
                               top: `${layout.y}px`,
                               width: `${layout.w}px`,
-                              height: `${layout.h}px`,
+                              minHeight: `${layout.h}px`,
                             }}
                           >
-                            <div className="h-full w-full">{cardContents}</div>
+                            {cardContents}
                           </div>
                         );
                       }
 
                       return (
-                      <Rnd
-                        key={`${c.device_id}-${layoutVersion}`}
-                        size={{
-                          width: layout.w,
-                          height: layout.h,
-                        }}
-                        position={{ x: layout.x, y: layout.y }}
-                        onDragStop={(_event, data) => {
-                          const nextX = snapCanvasCoordinate(data.x);
-                          const nextY = snapCanvasCoordinate(data.y);
-                          const newRect = { x: nextX, y: nextY, w: layout.w, h: layout.h };
-                          if (!hasCanvasOverlap(c.device_id, newRect)) {
-                            setCanvasLayouts((prev) => ({
-                              ...prev,
-                              [c.device_id]: { ...layout, x: nextX, y: nextY },
-                            }));
-                          } else {
-                            setLayoutVersion((value) => value + 1);
-                          }
-                        }}
-                        onResizeStop={(_event, _direction, ref, _delta, position) => {
-                          const parsedW = parseInt(ref.style.width, 10);
-                          const parsedH = parseInt(ref.style.height, 10);
-                          const nextX = snapCanvasCoordinate(position.x);
-                          const nextY = snapCanvasCoordinate(position.y);
-                          const newW = Number.isNaN(parsedW) ? layout.w : snapCanvasSize(Math.max(parsedW, cardWidth), cardWidth);
-                          const newH = Number.isNaN(parsedH) ? layout.h : snapCanvasSize(Math.max(parsedH, cardHeight), cardHeight);
-                          
-                          const newRect = {
-                              x: nextX,
-                              y: nextY,
-                              w: newW,
-                              h: newH
-                          };
-
-                          if (!hasCanvasOverlap(c.device_id, newRect)) {
-                            setCanvasLayouts((prev) => ({ 
-                              ...prev, 
-                              [c.device_id]: { 
-                                x: nextX, 
-                                y: nextY, 
-                                w: newW, 
-                                h: newH 
-                              } 
-                            }));
-                          } else {
-                            setLayoutVersion((value) => value + 1);
-                          }
-                        }}
-                        disableDragging={!isCustomizeMode}
-                        enableResizing={isCustomizeMode}
-                        dragGrid={[CANVAS_GRID_STEP, CANVAS_GRID_STEP]}
-                        resizeGrid={[CANVAS_GRID_STEP, CANVAS_GRID_STEP]}
-                        minWidth={cardWidth}
-                        minHeight={cardHeight}
-                        bounds="parent"
-                        className="z-50 cursor-grab rounded-xl shadow-xl ring-2 ring-primary ring-offset-2 ring-offset-transparent transition-shadow active:cursor-grabbing"
-                      >
-                        <div className="pointer-events-none h-full w-full">
-                          {cardContents}
-                        </div>
-                      </Rnd>
-                    );
-                  })}
-                </div>
+                        <Rnd
+                          key={`${c.device_id}-${layoutVersion}`}
+                          size={{
+                            width: layout.w,
+                            height: layout.h,
+                          }}
+                          position={{ x: layout.x, y: layout.y }}
+                          onDragStop={(_event, data) => {
+                            const nextX = snapCanvasCoordinate(data.x);
+                            const nextY = snapCanvasCoordinate(data.y);
+                            const newRect = { x: nextX, y: nextY, w: layout.w, h: layout.h };
+                            if (!hasCanvasOverlap(c.device_id, newRect)) {
+                              setCanvasLayouts((prev) => ({
+                                ...prev,
+                                [c.device_id]: { ...layout, x: nextX, y: nextY },
+                              }));
+                            } else {
+                              setLayoutVersion((value) => value + 1);
+                            }
+                          }}
+                          disableDragging={!isCustomizeMode}
+                          enableResizing={false}
+                          dragGrid={[CANVAS_GRID_STEP, CANVAS_GRID_STEP]}
+                          minWidth={cardWidth}
+                          minHeight={cardHeight}
+                          bounds="parent"
+                          className="z-50 cursor-grab rounded-xl shadow-xl ring-2 ring-primary ring-offset-2 ring-offset-transparent transition-shadow active:cursor-grabbing"
+                        >
+                          <div className="pointer-events-none h-full w-full">
+                            {cardContents}
+                          </div>
+                        </Rnd>
+                      );
+                    })}
+                  </div>
                 ) : (
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 p-1">
                     {approvedDevices.map((config) => {

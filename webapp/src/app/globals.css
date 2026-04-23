@@ -81,6 +81,35 @@
     animation: shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
   }
 
+  @keyframes weather-cloud-move {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
+  }
+
+  @keyframes weather-rain-fall {
+    0% { transform: rotate(15deg) translateY(-4px); opacity: 0; }
+    20% { opacity: 1; transform: rotate(15deg) translateY(0); }
+    80% { opacity: 1; transform: rotate(15deg) translateY(6px); }
+    100% { transform: rotate(15deg) translateY(10px); opacity: 0; }
+  }
+
+  .animate-weather-cloud {
+    animation: weather-cloud-move 1.5s ease-in-out 2 forwards;
+  }
+
+  .animate-weather-rain-1 {
+    animation: weather-rain-fall 1s linear 3;
+  }
+  .animate-weather-rain-2 {
+    animation: weather-rain-fall 1s linear 3;
+    animation-delay: 0.2s;
+  }
+  .animate-weather-rain-3 {
+    animation: weather-rain-fall 1s linear 3;
+    animation-delay: 0.4s;
+  }
+
   @keyframes stripe-slide {
     from {
       background-position: 0 0;

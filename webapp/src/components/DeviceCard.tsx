@@ -8,17 +8,35 @@ import { DeviceConfig, DeviceStatePin, DeviceStateSnapshot, PinConfig } from "@/
 
 export const getCardMinHeight = (config: DeviceConfig) => {
   const externalCardType = getExternalCardType(config);
+  const effectiveCaps = getEffectiveExtensionCapabilities(config);
+
   if (externalCardType === "light") {
-    return 200;
+    let minH = 140; 
+    
+    const supportsRgb = effectiveCaps.includes("rgb");
+    const supportsTone = effectiveCaps.includes("color_temperature");
+    if (supportsRgb || supportsTone) {
+      minH += 30; // Allocate space for the Tune button
+    }
+    return minH;
   }
+  
   if (externalCardType === "switch") {
     return 150;
   }
+  
   if (externalCardType === "fan") {
-    return 210;
+    const supportsSpeed = effectiveCaps.includes("speed");
+    return supportsSpeed ? 210 : 150;
   }
+  
   if (externalCardType === "sensor") {
-    return 180;
+    let minH = 100; // Base header
+    if (effectiveCaps.includes("temperature")) minH += 60;
+    if (effectiveCaps.includes("humidity")) minH += 60;
+    if (effectiveCaps.includes("illuminance")) minH += 60;
+    if (effectiveCaps.includes("value") || effectiveCaps.length === 0) minH += 60;
+    return Math.max(180, minH);
   }
   
   const pins = getActivePinConfigurations(config);

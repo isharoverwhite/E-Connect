@@ -21,20 +21,20 @@ class WeatherProviderError(RuntimeError):
 
 def describe_weather_code(weather_code: int) -> tuple[str, str]:
     if weather_code == 0:
-        return "Clear sky", "wb_sunny"
+        return "Clear sky", "sunny"
     if weather_code in (1, 2, 3):
         return "Partly cloudy", "cloud"
     if weather_code in (45, 48):
         return "Foggy", "foggy"
     if 51 <= weather_code <= 67:
-        return "Rainy", "water_drop"
+        return "Rainy", "rainy"
     if 71 <= weather_code <= 77:
         return "Snowy", "ac_unit"
     if 80 <= weather_code <= 82:
         return "Showers", "rainy"
     if 95 <= weather_code <= 99:
         return "Thunderstorm", "thunderstorm"
-    return "Cloudy", "wb_cloudy"
+    return "Cloudy", "cloud"
 
 
 def _coerce_float(value: Any, field_name: str) -> float:
