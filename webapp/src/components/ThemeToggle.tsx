@@ -3,9 +3,11 @@
 "use client";
 
 import { useTheme } from "next-themes";
+import { useLanguage } from "@/components/LanguageContext";
 
 export function ThemeToggle({ isCollapsed }: { isCollapsed?: boolean }) {
   const { theme, setTheme } = useTheme();
+  const { t } = useLanguage();
 
   const toggleTheme = () => {
     if (theme === "light") setTheme("dark");
@@ -20,9 +22,9 @@ export function ThemeToggle({ isCollapsed }: { isCollapsed?: boolean }) {
   };
 
   const getLabel = () => {
-    if (theme === "light") return "Light Theme";
-    if (theme === "dark") return "Dark Theme";
-    return "System Theme";
+    if (theme === "light") return t("settings.appearance.theme.light");
+    if (theme === "dark") return t("settings.appearance.theme.dark");
+    return t("settings.appearance.theme.system");
   };
 
   return (

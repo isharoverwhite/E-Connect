@@ -27,6 +27,12 @@ export interface BoardPin {
   inputOnly?: boolean;
 }
 
+export interface BoardPinMarker {
+  gpio: number;
+  label: "LED" | "RGB" | "FLASH";
+  tone?: "amber" | "sky" | "rose";
+}
+
 export interface DemoFirmwarePart {
   offset: number;
   path: string;
@@ -50,6 +56,7 @@ export interface BoardProfile {
   warnings: string[];
   leftPins: BoardPin[];
   rightPins: BoardPin[];
+  pinMarkers?: BoardPinMarker[];
   demoFirmware?: DemoFirmwarePreset;
   defaultCpuMhz?: number;
   defaultFlashSize?: string;
@@ -93,6 +100,15 @@ const INPUT_ADC = ["INPUT", "ADC"] satisfies PinMode[];
 const INPUT_ONLY = ["INPUT"] satisfies PinMode[];
 const ADC_ONLY = ["ADC"] satisfies PinMode[];
 const I2C_IO = ["INPUT", "OUTPUT", "I2C"] satisfies PinMode[];
+
+export function isBoardPinReserved(pin: BoardPin): boolean {
+  return Boolean(pin.reserved) || pin.capabilities.length === 0;
+}
+
+export function getBoardPinMarkers(board: BoardProfile, pinOrGpio: BoardPin | number): BoardPinMarker[] {
+  const gpio = typeof pinOrGpio === "number" ? pinOrGpio : pinOrGpio.gpio;
+  return board.pinMarkers?.filter((marker) => marker.gpio === gpio) ?? [];
+}
 
 export const BOARD_FAMILIES: BoardFamilyInfo[] = [
   {
@@ -243,7 +259,7 @@ const classicEsp32Right = [
   pin(17, "GPIO17", "right", IO),
   pin(16, "GPIO16", "right", IO),
   pin(4, "GPIO4", "right", IO_ADC, { bootSensitive: true }),
-  pin(2, "GPIO2", "right", IO_ADC, { bootSensitive: true, note: "Built-in LED on some boards." }),
+  pin(2, "GPIO2", "right", IO_ADC, { bootSensitive: true, note: "Boot strap pin. Some vendor boards also route a status LED here." }),
   pin(15, "GPIO15", "right", IO, { bootSensitive: true }),
   pin(0, "GPIO0", "right", IO_ADC, { reserved: true, bootSensitive: true, note: "Boot button / download mode pin." }),
 ];
@@ -269,8 +285,9 @@ const esp32S2Right = [
   pin(15, "GPIO15", "right", IO_ADC),
   pin(16, "GPIO16", "right", I2C_IO),
   pin(17, "GPIO17", "right", I2C_IO),
-  pin(18, "GPIO18", "right", IO, { reserved: true, note: "Native USB D- on USB capable variants." }),
-  pin(19, "GPIO19", "right", IO, { reserved: true, note: "Native USB D+ on USB capable variants." }),
+  pin(18, "GPIO18", "right", IO_ADC, { note: "Board-specific LED or peripheral routing on some S2 carriers." }),
+  pin(19, "GPIO19", "right", IO_ADC, { reserved: true, note: "Native USB D- on USB-capable S2 boards." }),
+  pin(20, "GPIO20", "right", IO_ADC, { reserved: true, note: "Native USB D+ on USB-capable S2 boards." }),
 ];
 
 const esp32S3Left = [
@@ -296,7 +313,7 @@ const esp32S3Right = [
   pin(14, "GPIO14", "right", IO),
   pin(21, "GPIO21", "right", IO_ADC),
   pin(47, "GPIO47", "right", IO),
-  pin(48, "GPIO48", "right", IO, { note: "RGB LED on many compact S3 boards." }),
+  pin(48, "GPIO48", "right", IO, { note: "Revision-specific RGB LED or peripheral routing on some S3 boards." }),
 ];
 
 const esp32C2Left = [
@@ -338,11 +355,11 @@ const esp32C3SuperMiniLeft = [
 
 const esp32C3Right = [
   pin(9, "GPIO9", "right", IO, { reserved: true, bootSensitive: true, note: "Boot button pin on many C3 boards." }),
-  pin(10, "GPIO10", "right", IO, { reserved: true, note: "USB serial bridge or LED on some boards." }),
-  pin(18, "GPIO18", "right", IO),
-  pin(19, "GPIO19", "right", IO),
-  pin(20, "GPIO20", "right", IO, { reserved: true, note: "USB D+ on USB-native variants." }),
-  pin(21, "GPIO21", "right", IO, { reserved: true, note: "USB D- on USB-native variants." }),
+  pin(10, "GPIO10", "right", IO, { note: "General-purpose GPIO on the official DevKitM-1 layout." }),
+  pin(18, "GPIO18", "right", IO, { reserved: true, note: "Native USB D- / USB-JTAG on ESP32-C3." }),
+  pin(19, "GPIO19", "right", IO, { reserved: true, note: "Native USB D+ / USB-JTAG on ESP32-C3." }),
+  pin(20, "GPIO20", "right", IO, { reserved: true, note: "UART RX on official ESP32-C3 DevKitM-1 headers." }),
+  pin(21, "GPIO21", "right", IO, { reserved: true, note: "UART TX on official ESP32-C3 DevKitM-1 headers." }),
 ];
 
 const esp32C3SuperMiniRight = [
@@ -350,10 +367,34 @@ const esp32C3SuperMiniRight = [
   pin(6, "GPIO6", "right", I2C_IO),
   pin(7, "GPIO7", "right", I2C_IO),
   pin(8, "GPIO8", "right", IO, { note: "Connected to Built-in LED (Blue)." }),
-  pin(9, "GPIO9", "right", IO, { bootSensitive: true, note: "Boot button" }),
-  pin(10, "GPIO10", "right", IO),
-  pin(20, "GPIO20", "right", IO, { note: "USB D+ / RX" }),
-  pin(21, "GPIO21", "right", IO, { note: "USB D- / TX" }),
+  pin(9, "GPIO9", "right", IO, { reserved: true, bootSensitive: true, note: "Boot button." }),
+  pin(10, "GPIO10", "right", IO, { reserved: true, note: "USB serial bridge or onboard routing on many variants." }),
+  pin(20, "GPIO20", "right", IO, { reserved: true, note: "USB D+ / RX." }),
+  pin(21, "GPIO21", "right", IO, { reserved: true, note: "USB D- / TX." }),
+];
+
+const dfrobotBeetleEsp32C3Left = [
+  pin(-1, "BAT", "left", [], { reserved: true, note: "Battery input." }),
+  pin(-2, "GND", "left", [], { reserved: true, note: "Ground." }),
+  pin(-3, "VIN", "left", [], { reserved: true, note: "5V input." }),
+  pin(20, "GPIO20 / RX", "left", IO, { reserved: true, note: "UART RX on the Beetle header." }),
+  pin(21, "GPIO21 / TX", "left", IO, { reserved: true, note: "UART TX on the Beetle header." }),
+  pin(8, "GPIO8 / SDA", "left", I2C_IO, { bootSensitive: true, note: "Header silk labels this as SDA." }),
+  pin(9, "GPIO9 / SCL", "left", IO, { reserved: true, bootSensitive: true, note: "BOOT button and SCL silk label share GPIO9." }),
+  pin(2, "GPIO2", "left", IO_ADC),
+];
+
+const dfrobotBeetleEsp32C3Right = [
+  pin(-4, "GND", "right", [], { reserved: true, note: "Ground." }),
+  pin(-5, "3V3", "right", [], { reserved: true, note: "3.3V output." }),
+  pin(10, "GPIO10", "right", IO, { note: "Onboard user LED on DFR0868." }),
+  pin(3, "GPIO3", "right", IO_ADC),
+  pin(0, "GPIO0", "right", IO_ADC),
+  pin(1, "GPIO1", "right", IO_ADC),
+  pin(4, "GPIO4 / SCK", "right", IO_ADC),
+  pin(6, "GPIO6 / MOSI", "right", IO),
+  pin(5, "GPIO5 / MISO", "right", IO_ADC),
+  pin(7, "GPIO7", "right", IO),
 ];
 
 const esp32C5Left = [
@@ -589,6 +630,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: d1MiniLeft,
     rightPins: d1MiniRight,
+    pinMarkers: [{ gpio: 2, label: "LED", tone: "amber" }],
     defaultCpuMhz: 80,
     defaultFlashSize: "4MB",
     defaultPsram: "None",
@@ -608,6 +650,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: d1MiniProLeft,
     rightPins: d1MiniProRight,
+    pinMarkers: [{ gpio: 2, label: "LED", tone: "amber" }],
     defaultCpuMhz: 80,
     defaultFlashSize: "16MB",
     defaultPsram: "None",
@@ -664,6 +707,11 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: classicEsp32Left,
     rightPins: classicEsp32Right,
+    pinMarkers: [
+      { gpio: 0, label: "RGB", tone: "sky" },
+      { gpio: 2, label: "RGB", tone: "sky" },
+      { gpio: 4, label: "RGB", tone: "sky" },
+    ],
     i2cDefaults: { sda: 21, scl: 22 },
   },
   {
@@ -676,6 +724,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     serialBridge: "External USB serial required",
     warnings: [
       "Camera wiring consumes several GPIOs; only exposed safe pins are listed here.",
+      "GPIO 4 drives the onboard white flash LED on common ESP32-CAM modules.",
       "Use dedicated power and stable 5V supply before web flashing.",
     ],
     leftPins: [
@@ -694,6 +743,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
       pin(33, "GPIO33", "right", IO),
       pin(32, "GPIO32", "right", IO),
     ],
+    pinMarkers: [{ gpio: 4, label: "FLASH", tone: "amber" }],
   },
   {
     id: "esp32-s2-saola-1",
@@ -704,11 +754,13 @@ export const BOARD_PROFILES: BoardProfile[] = [
     layoutLabel: "Native USB devkit layout",
     serialBridge: "Native USB CDC",
     warnings: [
-      "USB data pins are exposed and should stay free if you rely on native USB flashing.",
+      "GPIO 18 drives the onboard RGB LED on the official Saola-1 board.",
+      "GPIO 19 and 20 are the native USB D- / D+ pair and should stay free for USB flashing.",
       "Single-core S2 boards excel at sensors and captive portal provisioning, not heavy UI workloads.",
     ],
     leftPins: esp32S2Left,
     rightPins: esp32S2Right,
+    pinMarkers: [{ gpio: 18, label: "RGB", tone: "sky" }],
     i2cDefaults: { sda: 8, scl: 9 },
   },
   {
@@ -736,7 +788,8 @@ export const BOARD_PROFILES: BoardProfile[] = [
     serialBridge: "Native USB CDC / UART",
     warnings: [
       "GPIO 46 is input-only and not safe for relay or PWM outputs.",
-      "USB pins and RGB LED pins vary by vendor board, so keep GPIO 18, 20, 47, and 48 under review.",
+      "The official RGB LED pin depends on board revision: GPIO 48 on the initial release, GPIO 38 on v1.1.",
+      "Keep GPIO 18, 19, 20, 38, 47, and 48 under review if your exact carrier revision is unknown.",
     ],
     leftPins: esp32S3Left,
     rightPins: esp32S3Right,
@@ -751,11 +804,20 @@ export const BOARD_PROFILES: BoardProfile[] = [
     layoutLabel: "Compact S3 layout",
     serialBridge: "Native USB CDC",
     warnings: [
-      "Compact boards have fewer safe GPIOs; avoid using reserved USB lines for actuators.",
-      "GPIO 48 commonly drives the onboard RGB LED.",
+      "Waveshare routes the onboard WS2812 RGB LED to GPIO 21 on ESP32-S3 Zero.",
+      "Compact boards have fewer safe GPIOs; avoid using the USB/boot path for actuators.",
     ],
     leftPins: esp32S3Left.slice(0, 7),
-    rightPins: esp32S3Right.slice(0, 7),
+    rightPins: [
+      pin(9, "GPIO9", "right", IO),
+      pin(10, "GPIO10", "right", IO),
+      pin(11, "GPIO11", "right", IO),
+      pin(12, "GPIO12", "right", IO),
+      pin(13, "GPIO13", "right", IO),
+      pin(14, "GPIO14", "right", IO),
+      pin(21, "GPIO21", "right", IO_ADC),
+    ],
+    pinMarkers: [{ gpio: 21, label: "RGB", tone: "sky" }],
   },
   {
     id: "esp32-c2-reference",
@@ -781,11 +843,12 @@ export const BOARD_PROFILES: BoardProfile[] = [
     layoutLabel: "RISC-V mini devkit layout",
     serialBridge: "Native USB / UART bridge",
     warnings: [
-      "GPIO 8 and 9 are boot-sensitive on many C3 boards.",
-      "USB lines vary by carrier board; if flashing fails, remove peripheral wiring from GPIO 20/21.",
+      "GPIO 8 drives the onboard RGB LED and is also a boot-sensitive strapping pin.",
+      "GPIO 18 and 19 are the native USB D- / D+ pair, while GPIO 20 and 21 are the onboard RX / TX header pins.",
     ],
     leftPins: esp32C3Left,
     rightPins: esp32C3Right,
+    pinMarkers: [{ gpio: 8, label: "RGB", tone: "sky" }],
     i2cDefaults: { sda: 8, scl: 9 },
   },
   {
@@ -802,21 +865,24 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32C3SuperMiniLeft,
     rightPins: esp32C3SuperMiniRight,
+    pinMarkers: [{ gpio: 8, label: "LED", tone: "amber" }],
     i2cDefaults: { sda: 8, scl: 9 },
   },
   {
     id: "dfrobot-beetle-esp32-c3",
     name: "DFRobot Beetle ESP32-C3",
     family: "ESP32-C3",
-    chipLabel: "DFR0975 / ESP32-C3",
-    description: "Compact C3 board for custom local-first modules.",
+    chipLabel: "DFR0868 / ESP32-C3",
+    description: "Compact DFRobot C3 board with an onboard LED on GPIO 10 and a board-specific header layout.",
     layoutLabel: "Beetle micro layout",
     serialBridge: "Native USB CDC",
     warnings: [
-      "GPIO 9 remains tied to boot mode on many Beetle C3 workflows.",
+      "DFRobot documents GPIO 10 as the onboard LED and GPIO 9 as the BOOT button on the Beetle ESP32-C3.",
+      "The Beetle header exposes UART aliases on GPIO 20 / 21 and silk I2C aliases on GPIO 8 / 9, but GPIO 9 remains boot-sensitive.",
     ],
-    leftPins: esp32C3Left.slice(0, 5),
-    rightPins: esp32C3Right.slice(0, 5),
+    leftPins: dfrobotBeetleEsp32C3Left,
+    rightPins: dfrobotBeetleEsp32C3Right,
+    pinMarkers: [{ gpio: 10, label: "LED", tone: "amber" }],
   },
   {
     id: "esp32-c5-reference",
@@ -847,6 +913,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32C6Left,
     rightPins: esp32C6Right,
+    pinMarkers: [{ gpio: 8, label: "RGB", tone: "sky" }],
   },
   {
     id: "esp32-c61-reference",
@@ -877,6 +944,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32H2Left,
     rightPins: esp32H2Right,
+    pinMarkers: [{ gpio: 8, label: "RGB", tone: "sky" }],
   },
   {
     id: "esp32-p4-reference",

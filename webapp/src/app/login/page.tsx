@@ -4,6 +4,7 @@
 
 import { useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
+import { useLanguage } from "@/components/LanguageContext";
 import { loginUser, setToken } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 
@@ -16,6 +17,7 @@ export default function LoginPage() {
     const [isLoading, setIsLoading] = useState(false);
 
     const { refreshProfile } = useAuth();
+    const { t } = useLanguage();
     const router = useRouter();
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -34,7 +36,7 @@ export default function LoginPage() {
             await refreshProfile();
             router.push("/");
         } catch (error: unknown) {
-            setError(error instanceof Error ? error.message : "Failed to login");
+            setError(error instanceof Error ? error.message : t("login.error.failed"));
         } finally {
             setIsLoading(false);
         }
@@ -48,8 +50,8 @@ export default function LoginPage() {
                     <span className="material-icons-round text-primary text-3xl">home</span>
                 </div>
 
-                <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Welcome Back</h1>
-                <p className="text-slate-500 dark:text-slate-400 text-sm mb-8 text-center">Log in to E-Connect to manage your smart ecosystem.</p>
+                <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">{t("login.title")}</h1>
+                <p className="text-slate-500 dark:text-slate-400 text-sm mb-8 text-center">{t("login.subtitle")}</p>
 
                 {error && (
                     <div className="w-full bg-red-500/10 border border-red-500/50 text-red-500 text-sm rounded-lg p-3 mb-6 flex items-center">
@@ -60,7 +62,7 @@ export default function LoginPage() {
 
                 <form onSubmit={handleSubmit} className="w-full space-y-5">
                     <div>
-                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">Username</label>
+                        <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{t("login.username")}</label>
                         <div className="relative">
                             <span className="material-icons-round absolute left-3 top-2.5 text-slate-400 text-[20px]">person</span>
                             <input
@@ -68,7 +70,7 @@ export default function LoginPage() {
                                 value={username}
                                 onChange={(e) => setUsername(e.target.value)}
                                 className="w-full bg-white dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-xl py-2.5 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent transition-all"
-                                placeholder="Enter your username"
+                                placeholder={t("login.username_placeholder")}
                                 required
                             />
                         </div>
@@ -76,7 +78,7 @@ export default function LoginPage() {
 
                     <div>
                         <div className="flex justify-between items-center mb-1.5">
-                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">Password</label>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">{t("login.password")}</label>
                         </div>
                         <div className="relative">
                             <span className="material-icons-round absolute left-3 top-2.5 text-slate-400 text-[20px]">lock</span>
@@ -114,7 +116,7 @@ export default function LoginPage() {
                                 transition-all cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/30"
                             />
                             <span className="text-sm text-slate-600 dark:text-slate-400 group-hover:text-slate-900 dark:group-hover:text-slate-200 transition-colors">
-                                Keep me logged in
+                                {t("login.keep_login")}
                             </span>
                         </label>
                     </div>
@@ -127,7 +129,7 @@ export default function LoginPage() {
                         {isLoading ? (
                             <span className="material-icons-round animate-spin">refresh</span>
                         ) : (
-                            "Sign In"
+                            t("login.btn_signin")
                         )}
                     </button>
                 </form>

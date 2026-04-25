@@ -16,6 +16,7 @@ import {
 import { useToast } from "@/components/ToastContext";
 import ConfirmModal from "@/components/ConfirmModal";
 import { formatServerTimestamp } from "@/lib/server-time";
+import { useLanguage } from "@/components/LanguageContext";
 
 interface EditingState {
   id: number;
@@ -25,6 +26,7 @@ interface EditingState {
 
 export function WifiCredentialsPanel({ timezone }: { timezone?: string | null }) {
   const { showToast } = useToast();
+  const { t } = useLanguage();
   const [credentials, setCredentials] = useState<WifiCredentialRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -50,7 +52,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
   async function loadCredentials() {
     const token = getToken();
     if (!token) {
-      showToast("Missing session token. Please sign in again.", "error");
+      showToast(t("settings.error.missing_token"), "error");
       setLoading(false);
       return;
     }
@@ -64,7 +66,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
       showToast(
         nextError instanceof Error
           ? nextError.message
-          : "Failed to load Wi-Fi credentials",
+          : t("settings.error.load_wifi"),
         "error"
       );
     } finally {
@@ -90,10 +92,10 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
 
     const nextErrors: Record<string, string> = {};
     if (!createSsid.trim()) {
-      nextErrors.ssid = "SSID is required.";
+      nextErrors.ssid = t("settings.error.ssid_required");
     }
     if (!createPassword) {
-      nextErrors.password = "Password is required.";
+      nextErrors.password = t("settings.error.password_required");
     }
     if (Object.keys(nextErrors).length > 0) {
       setCreateErrors(nextErrors);
@@ -102,7 +104,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
 
     const token = getToken();
     if (!token) {
-      showToast("Missing session token. Please sign in again.", "error");
+      showToast(t("settings.error.missing_token"), "error");
       return;
     }
 
@@ -115,12 +117,12 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
       setCredentials((current) => [...current, created]);
       setCreateSsid("");
       setCreatePassword("");
-      showToast(`Saved Wi-Fi credential for ${created.ssid}.`, "success");
+      showToast(t("settings.toast.wifi_saved").replace("{ssid}", created.ssid), "success");
     } catch (nextError) {
       showToast(
         nextError instanceof Error
           ? nextError.message
-          : "Failed to save Wi-Fi credential",
+          : t("settings.error.save_wifi"),
         "error"
       );
     } finally {
@@ -135,12 +137,12 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
 
     const token = getToken();
     if (!token) {
-      showToast("Missing session token. Please sign in again.", "error");
+      showToast(t("settings.error.missing_token"), "error");
       return;
     }
 
     if (!editing.ssid.trim() || !editing.password) {
-      showToast("SSID and password are required.", "error");
+      showToast(t("settings.error.ssid_password_required"), "error");
       return;
     }
 
@@ -157,12 +159,12 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
       );
       setEditing(null);
       setShowEditPassword(false);
-      showToast(`Updated Wi-Fi credential for ${updated.ssid}.`, "success");
+      showToast(t("settings.toast.wifi_updated").replace("{ssid}", updated.ssid), "success");
     } catch (nextError) {
       showToast(
         nextError instanceof Error
           ? nextError.message
-          : "Failed to update Wi-Fi credential",
+          : t("settings.error.update_wifi"),
         "error"
       );
     } finally {
@@ -173,7 +175,9 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
   async function handleDelete(target: WifiCredentialRecord) {
     if (target.usage_count > 0) {
       showToast(
-        `Cannot delete ${target.ssid} because it is still attached to ${target.usage_count} project(s).`,
+        t("settings.error.delete_wifi_in_use")
+          .replace("{ssid}", target.ssid)
+          .replace("{count}", target.usage_count.toString()),
         "error"
       );
       return;
@@ -190,7 +194,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
 
     const token = getToken();
     if (!token) {
-      showToast("Missing session token. Please sign in again.", "error");
+      showToast(t("settings.error.missing_token"), "error");
       return;
     }
 
@@ -201,12 +205,12 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
       setCredentials((current) =>
         current.filter((entry) => entry.id !== target.id),
       );
-      showToast(`Deleted Wi-Fi credential ${target.ssid}.`, "success");
+      showToast(t("settings.toast.wifi_deleted").replace("{ssid}", target.ssid), "success");
     } catch (nextError) {
       showToast(
         nextError instanceof Error
           ? nextError.message
-          : "Failed to delete Wi-Fi credential",
+          : t("settings.error.delete_wifi"),
         "error"
       );
     } finally {
@@ -220,15 +224,13 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
     }
 
     if (!revealAccountPassword.trim()) {
-      setRevealError(
-        "Enter your account password before viewing this Wi-Fi password.",
-      );
+      setRevealError(t("settings.error.reveal_password_req"));
       return;
     }
 
     const token = getToken();
     if (!token) {
-      setRevealError("Missing session token. Please sign in again.");
+      setRevealError(t("settings.error.missing_token"));
       return;
     }
 
@@ -248,9 +250,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
       closeRevealModal();
     } catch (nextError) {
       void nextError; // Ignore the actual error message
-      setRevealError(
-        "Incorrect password. Enter the password for the signed-in account to view this Wi-Fi password.",
-      );
+      setRevealError(t("settings.error.reveal_password_incorrect"));
       setRevealShakeKey((prev) => prev + 1);
     } finally {
       setRevealing(false);
@@ -279,11 +279,10 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
       <div className="flex justify-between items-start mb-6">
         <div>
           <h3 className="text-xl font-bold dark:text-white text-slate-900">
-            Provision a new Wi-Fi network
+            {t("settings.wifi.title")}
           </h3>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Add an SSID and password record to be reused during DIY device
-            setup.
+            {t("settings.wifi.desc")}
           </p>
         </div>
       </div>
@@ -296,7 +295,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
       >
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-            SSID
+            {t("settings.wifi.form.ssid")}
           </label>
           <input
             className={`w-full bg-white dark:bg-slate-800 border rounded-lg px-4 py-2.5 text-sm focus:ring-primary focus:border-primary outline-none transition-shadow text-slate-900 dark:text-white ${
@@ -304,7 +303,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
                 ? "border-rose-400"
                 : "border-slate-200 dark:border-slate-700"
             }`}
-            placeholder="e.g. MainFloor-2G"
+            placeholder={t("settings.wifi.form.ssid_placeholder")}
             value={createSsid}
             onChange={(event) => setCreateSsid(event.target.value)}
           />
@@ -320,7 +319,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
 
         <div>
           <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-            Password
+            {t("settings.wifi.form.password")}
           </label>
           <div className="relative">
             <input
@@ -329,7 +328,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
                   ? "border-rose-400"
                   : "border-slate-200 dark:border-slate-700"
               }`}
-              placeholder="Wi-Fi password"
+              placeholder={t("settings.wifi.form.password_placeholder")}
               type={showCreatePassword ? "text" : "password"}
               value={createPassword}
               onChange={(event) => setCreatePassword(event.target.value)}
@@ -339,7 +338,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
               className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 transition-colors cursor-pointer"
               onClick={() => setShowCreatePassword((prev) => !prev)}
               aria-label={
-                showCreatePassword ? "Hide password" : "Show password"
+                showCreatePassword ? t("settings.wifi.table.hide_password") : t("settings.wifi.table.reveal_password")
               }
             >
               <span className="material-icons-round text-[20px]">
@@ -363,7 +362,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
             disabled={submitting}
             type="submit"
           >
-            {submitting ? "Saving..." : "Add network"}
+            {submitting ? t("settings.wifi.form.btn_saving") : t("settings.wifi.form.btn_add")}
           </button>
         </div>
       </form>
@@ -371,15 +370,16 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
       <div className="flex justify-between items-end mb-6">
         <div>
           <h3 className="text-xl font-bold dark:text-white text-slate-900">
-            Saved networks
+            {t("settings.wifi.saved_title")}
           </h3>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            List of active Wi-Fi credentials
+            {t("settings.wifi.saved_desc")}
           </p>
         </div>
         <div className="text-sm font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-4 py-2 rounded-full border border-slate-200 dark:border-slate-700">
-          {sortedCredentials.length} Network
-          {sortedCredentials.length === 1 ? "" : "s"}
+          {sortedCredentials.length === 1 
+            ? t("settings.wifi.network_count_single") 
+            : t("settings.wifi.network_count_plural").replace("{count}", sortedCredentials.length.toString())}
         </div>
       </div>
 
@@ -389,11 +389,10 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
             <span className="material-icons-round text-3xl">wifi</span>
           </div>
           <h3 className="mt-4 text-lg font-semibold text-slate-900 dark:text-white">
-            No Wi-Fi credentials
+            {t("settings.wifi.empty_title")}
           </h3>
           <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-            Add the first saved network here before building or reconfiguring a
-            DIY device.
+            {t("settings.wifi.empty_desc")}
           </p>
         </div>
       ) : (
@@ -402,16 +401,16 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
             <thead className="text-xs uppercase bg-slate-50 dark:bg-slate-800/50 text-slate-700 dark:text-slate-300 border-b border-slate-200 dark:border-slate-800">
               <tr>
                 <th scope="col" className="px-6 py-4">
-                  SSID / Usage
+                  {t("settings.wifi.table.ssid_usage")}
                 </th>
                 <th scope="col" className="px-6 py-4">
-                  Password Status
+                  {t("settings.wifi.table.password_status")}
                 </th>
                 <th scope="col" className="px-6 py-4">
-                  Last Updated
+                  {t("settings.wifi.table.last_updated")}
                 </th>
                 <th scope="col" className="px-6 py-4 text-right">
-                  Actions
+                  {t("settings.wifi.table.actions")}
                 </th>
               </tr>
             </thead>
@@ -443,8 +442,9 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
                             {credential.ssid}
                           </div>
                           <div className="text-xs mt-1 text-slate-500">
-                            {credential.usage_count} project
-                            {credential.usage_count === 1 ? "" : "s"}
+                            {credential.usage_count === 1
+                              ? t("settings.wifi.table.usage_single")
+                              : t("settings.wifi.table.usage_plural").replace("{count}", credential.usage_count.toString())}
                           </div>
                         </div>
                       )}
@@ -470,8 +470,8 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
                             onClick={() => setShowEditPassword((prev) => !prev)}
                             aria-label={
                               showEditPassword
-                                ? "Hide password"
-                                : "Show password"
+                                ? t("settings.wifi.table.hide_password")
+                                : t("settings.wifi.table.reveal_password")
                             }
                           >
                             <span className="material-icons-round text-[18px]">
@@ -493,7 +493,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
                     <td className="px-6 py-4 whitespace-nowrap">
                       {credential.updated_at
                         ? formatServerTimestamp(credential.updated_at, {
-                            fallback: "recently",
+                            fallback: t("settings.wifi.recently"),
                             options: {
                               year: "numeric",
                               month: "short",
@@ -503,7 +503,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
                             },
                             timezone,
                           })
-                        : "recently"}
+                        : t("settings.wifi.recently")}
                     </td>
                     <td className="px-6 py-4 text-right">
                       {isEditing ? (
@@ -513,7 +513,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
                             disabled={actionId === credential.id}
                             className="text-white bg-emerald-500 hover:bg-emerald-600 font-medium rounded-lg text-sm px-3 py-2 transition-colors disabled:opacity-50"
                           >
-                            Save
+                            {t("settings.wifi.table.btn_save")}
                           </button>
                           <button
                             onClick={() => {
@@ -522,7 +522,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
                             }}
                             className="text-slate-700 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 font-medium rounded-lg text-sm px-3 py-2 transition-colors"
                           >
-                            Cancel
+                            {t("settings.wifi.table.btn_cancel")}
                           </button>
                         </div>
                       ) : (
@@ -552,8 +552,8 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
                             </button>
                             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1.5 bg-slate-800 text-white text-xs font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10 shadow-lg">
                               {revealedPasswords[credential.id]
-                                ? "Hide Password"
-                                : "Reveal Password"}
+                                ? t("settings.wifi.table.hide_password")
+                                : t("settings.wifi.table.reveal_password")}
                               <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
                             </div>
                           </div>
@@ -574,7 +574,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
                               </span>
                             </button>
                             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2.5 py-1.5 bg-slate-800 text-white text-xs font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10 shadow-lg">
-                              Edit Network
+                              {t("settings.wifi.table.edit_network")}
                               <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800"></div>
                             </div>
                           </div>
@@ -593,8 +593,8 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
                             </button>
                             <div className="absolute bottom-full right-0 mb-2 px-2.5 py-1.5 bg-slate-800 text-white text-xs font-medium rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap z-10 shadow-lg">
                               {credential.usage_count > 0
-                                ? "Cannot delete (In use)"
-                                : "Delete Network"}
+                                ? t("settings.wifi.table.cannot_delete")
+                                : t("settings.wifi.table.delete_network")}
                               <div className="absolute top-full right-3 border-4 border-transparent border-t-slate-800"></div>
                             </div>
                           </div>
@@ -614,7 +614,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
           <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl p-6">
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-xl font-bold text-slate-900 dark:text-white">
-                Reveal password
+                {t("settings.wifi.modal_reveal.title")}
               </h3>
               <button
                 onClick={closeRevealModal}
@@ -624,7 +624,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
               </button>
             </div>
             <p className="text-sm text-slate-500 dark:text-slate-400 mb-6">
-              Re-enter your account password to reveal the Wi-Fi password for{" "}
+              {t("settings.wifi.modal_reveal.desc")}
               <strong className="text-slate-700 dark:text-slate-300">
                 {revealTarget.ssid}
               </strong>
@@ -639,7 +639,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
             >
               <div className="mb-4">
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                  Account password
+                  {t("settings.wifi.modal_reveal.account_password")}
                 </label>
                 <input
                   key={revealShakeKey}
@@ -676,14 +676,14 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
                   className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-600 dark:hover:bg-slate-700 transition-colors"
                   onClick={closeRevealModal}
                 >
-                  Cancel
+                  {t("settings.wifi.modal_reveal.btn_cancel")}
                 </button>
                 <button
                   type="submit"
                   className="px-4 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-blue-600 disabled:opacity-50 transition-colors"
                   disabled={revealing}
                 >
-                  {revealing ? "Verifying..." : "Reveal"}
+                  {revealing ? t("settings.wifi.modal_reveal.btn_verifying") : t("settings.wifi.modal_reveal.btn_reveal")}
                 </button>
               </div>
             </form>
@@ -693,10 +693,10 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
 
       <ConfirmModal
         isOpen={!!confirmDeleteTarget}
-        title="Delete Wi-Fi network"
-        message={`Are you sure you want to delete the Wi-Fi credential for "${confirmDeleteTarget?.ssid}"? Device builds using this network will fall back to manual setup.`}
-        confirmText="Delete network"
-        cancelText="Cancel"
+        title={t("settings.wifi.modal_delete.title")}
+        message={t("settings.wifi.modal_delete.desc").replace("{ssid}", confirmDeleteTarget?.ssid || "")}
+        confirmText={t("settings.wifi.modal_delete.btn_delete")}
+        cancelText={t("settings.wifi.modal_delete.btn_cancel")}
         type="danger"
         isLoading={!!actionId}
         onConfirm={() => void executeDelete()}

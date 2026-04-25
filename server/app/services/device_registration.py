@@ -49,63 +49,6 @@ def build_device_topics(device_id: str) -> tuple[str, str]:
     )
 
 
-def get_layout_widgets(layout: Any) -> list[dict[str, Any]]:
-    if isinstance(layout, dict) and isinstance(layout.get("widgets"), list):
-        return [widget for widget in layout["widgets"] if isinstance(widget, dict)]
-    if isinstance(layout, list):
-        return [widget for widget in layout if isinstance(widget, dict)]
-    return []
-
-
-def build_device_widgets(device: Device) -> list[dict[str, Any]]:
-    widgets: list[dict[str, Any]] = []
-    for index, pin in enumerate(device.pin_configurations):
-        pin_mode = pin.mode.value if hasattr(pin.mode, "value") else str(pin.mode)
-        widget_type = "text"
-        if pin_mode == "OUTPUT":
-            widget_type = "switch"
-        elif pin_mode == "PWM":
-            widget_type = "dimmer"
-        elif pin_mode in {"INPUT", "ADC"}:
-            widget_type = "status"
-
-        widgets.append(
-            {
-                "i": f"{device.device_id}:{pin.gpio_pin}:{index}",
-                "x": 0,
-                "y": index * 2,
-                "w": 2,
-                "h": 2,
-                "type": widget_type,
-                "deviceId": device.device_id,
-                "pin": pin.gpio_pin,
-                "label": pin.label or f"{pin.function or 'Pin'} {pin.gpio_pin}",
-            }
-        )
-
-    return widgets
-
-
-def sync_user_dashboard_widgets(user: User, device: Device) -> None:
-    existing_widgets = [
-        widget
-        for widget in get_layout_widgets(user.ui_layout)
-        if widget.get("deviceId") != device.device_id
-    ]
-    user.ui_layout = [*existing_widgets, *build_device_widgets(device)]
-
-
-def remove_device_widgets(user: User | None, device_id: str) -> None:
-    if not user:
-        return
-
-    user.ui_layout = [
-        widget
-        for widget in get_layout_widgets(user.ui_layout)
-        if widget.get("deviceId") != device_id
-    ]
-
-
 def is_room_admin(user: User) -> bool:
     role = getattr(user, "current_household_role", None)
     normalized_role = role.value if hasattr(role, "value") else role
@@ -203,8 +146,6 @@ def generate_detached_mac_address(db: Session) -> str:
 def _reclaim_stale_secure_mac_binding(db: Session, device: Device, *, target_device_id: str) -> Device:
     old_device_id = device.device_id
     original_mac = device.mac_address
-    owner = db.query(User).filter(User.user_id == device.owner_id).first()
-    remove_device_widgets(owner, old_device_id)
 
     device.mac_address = generate_detached_mac_address(db)
     db.flush()
@@ -467,11 +408,6 @@ def register_device_payload(db: Session, payload: DeviceRegister) -> DeviceRegis
 
     db.flush()
     db.refresh(device)
-
-    if device.auth_status == AuthStatus.approved:
-        owner = db.query(User).filter(User.user_id == device.owner_id).first()
-        if owner:
-            sync_user_dashboard_widgets(owner, device)
 
     db.flush()
     db.refresh(device)

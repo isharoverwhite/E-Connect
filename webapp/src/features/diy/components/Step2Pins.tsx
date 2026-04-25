@@ -3,9 +3,10 @@
 import { useState, useEffect } from "react";
 import { useTheme } from "next-themes";
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
+import { useLanguage } from "@/components/LanguageContext";
 import type { PinMode } from "@/types/device";
 import { getToken } from "@/lib/auth";
-import { type BoardPin, type BoardProfile } from "../board-profiles";
+import { getBoardPinMarkers, isBoardPinReserved, type BoardPin, type BoardProfile } from "../board-profiles";
 import { type PinMapping, PIN_FILL, type ProjectSyncState, type I2CLibrary } from "../types";
 
 export interface Step2PinsProps {
@@ -27,6 +28,7 @@ export interface Step2PinsProps {
 }
 
 export function Step2Pins({
+
     pins,
     setPins,
     board,
@@ -41,6 +43,7 @@ export function Step2Pins({
     nextDisabled = false,
     backLabel = "Back",
 }: Step2PinsProps) {
+    const { t } = useLanguage();
     const [i2cCatalog, setI2cCatalog] = useState<I2CLibrary[]>([]);
     const [showClearConfirm, setShowClearConfirm] = useState(false);
     const { resolvedTheme } = useTheme();
@@ -84,7 +87,9 @@ export function Step2Pins({
         else if (isSclDefault) otherGpio = defaults.sda;
         else {
             // Find another pin that supports I2C
-            otherGpio = boardPins.find(p => p.gpio !== currentPin.gpio && p.capabilities.includes("I2C"))?.gpio;
+            otherGpio = boardPins.find(
+                (p) => p.gpio !== currentPin.gpio && p.capabilities.includes("I2C") && !isBoardPinReserved(p),
+            )?.gpio;
         }
 
         if (otherGpio === undefined) return [];
@@ -115,6 +120,10 @@ export function Step2Pins({
     };
 
     const handleModeChange = (pin: BoardPin, mode: PinMode | "none") => {
+        if (isBoardPinReserved(pin) && mode !== "none") {
+            return;
+        }
+
         const existingMappings = pins.filter(p => p.gpio_pin !== pin.gpio);
         
         // If changing FROM I2C, clear the pair
@@ -233,6 +242,13 @@ export function Step2Pins({
     const top = 110;
     const bottom = boardHeight - 70;
     const gap = totalRows === 1 ? 0 : (bottom - top) / (totalRows - 1);
+    const sidebarPins = boardPins.filter((pin) => {
+        if (pin.capabilities.length === 0) {
+            return false;
+        }
+
+        return !isBoardPinReserved(pin) || pins.some((mapping) => mapping.gpio_pin === pin.gpio);
+    });
 
     return (
         <div className="flex flex-col md:flex-row-reverse h-full w-full bg-slate-50 text-slate-700 dark:text-slate-300 border-t border-border-light dark:border-border-dark overflow-hidden z-10">
@@ -240,83 +256,108 @@ export function Step2Pins({
             <div className="w-full md:w-[350px] lg:w-[420px] flex-shrink-0 flex flex-col h-[40vh] md:h-full bg-surface-light dark:bg-surface-dark border-b md:border-b-0 md:border-l border-border-light dark:border-border-dark z-20 shadow-[-4px_0_24px_rgba(0,0,0,0.05)] text-slate-800 dark:text-slate-200">
                 {/* Header inside sidebar */}
                 <div className="p-6 border-b border-border-light dark:border-border-dark flex-shrink-0">
-                    <h1 className="text-slate-900 dark:text-white text-2xl font-bold tracking-tight">Pin Configuration</h1>
+                    <h1 className="text-slate-900 dark:text-white text-2xl font-bold tracking-tight">{t("diy.step2pins.title")}</h1>
                 </div>
 
                 {/* Scrollable list */}
                 <div className="flex-1 overflow-y-auto p-4 custom-scrollbar flex flex-col gap-4">
                     <div className="flex items-center justify-between pl-1 pr-1 mb-1">
-                        <span className="text-xs font-bold uppercase tracking-widest text-blue-600">GPIO Pins</span>
-                        <button onClick={clearAll} className="text-slate-400 hover:text-slate-600 dark:text-slate-400 transition-colors text-[10px] uppercase font-bold tracking-wider">Reset All</button>
+                        <span className="text-xs font-bold uppercase tracking-widest text-blue-600">{t("diy.step2pins.gpio_pins")}</span>
+                        <button onClick={clearAll} className="text-slate-400 hover:text-slate-600 dark:text-slate-400 transition-colors text-[10px] uppercase font-bold tracking-wider">{t("diy.step2pins.reset_all")}</button>
                     </div>
 
-                    {boardPins.filter(pin => pin.capabilities.length > 0).map(pin => {
+                    {sidebarPins.map(pin => {
                         const assignment = pins.find(p => p.gpio_pin === pin.gpio);
                         const isSelected = selectedPinId === pin.id;
+                        const isReserved = isBoardPinReserved(pin);
 
                         return (
-                            <div key={pin.id} id={`pin-config-${pin.id}`} className={`flex flex-col gap-2 p-3 rounded-lg border transition-colors cursor-default ${isSelected ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 shadow-[0_0_12px_rgba(37,99,235,0.1)]' : 'bg-white dark:bg-slate-800/80 border-border-light dark:border-border-dark hover:border-slate-300 dark:hover:border-slate-600'}`} onClick={() => setSelectedPinId(pin.id)}>
+                            <div key={pin.id} id={`pin-config-${pin.id}`} className={`flex flex-col gap-2 p-3 rounded-lg border transition-colors cursor-default ${isReserved ? 'bg-rose-50 dark:bg-rose-900/10 border-rose-200 dark:border-rose-800/40' : isSelected ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 shadow-[0_0_12px_rgba(37,99,235,0.1)]' : 'bg-white dark:bg-slate-800/80 border-border-light dark:border-border-dark hover:border-slate-300 dark:hover:border-slate-600'}`} onClick={() => setSelectedPinId(pin.id)}>
                                 <div className="flex justify-between items-center px-1">
                                     <p className={`text-xs font-bold tracking-wider ${isSelected ? 'text-blue-600' : 'text-slate-600 dark:text-slate-400'}`}>
                                         <span className="uppercase">{pin.label}</span> <span className="text-[10px] opacity-70">(GPIO {pin.gpio})</span>
                                     </p>
-                                    {pin.bootSensitive && (
-                                        <span className="text-[10px] text-amber-600 font-bold uppercase tracking-widest bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">Boot</span>
-                                    )}
-                                </div>
-
-                                <div className="flex gap-2.5 mt-1">
-                                    <div className="relative flex-1">
-                                        <label htmlFor={`pin-mode-${pin.gpio}`} className="sr-only">
-                                            {pin.label} mode
-                                        </label>
-                                        <select
-                                            id={`pin-mode-${pin.gpio}`}
-                                            name={`pin-mode-${pin.gpio}`}
-                                            aria-label={`${pin.label} mode`}
-                                            value={assignment?.mode === 'PWM' ? 'OUTPUT' : (assignment?.mode || "none")}
-                                            onChange={(e) => {
-                                                const val = e.target.value;
-                                                handleModeChange(pin, val as PinMode | "none");
-                                            }}
-                                            className={`w-full bg-white dark:bg-slate-900 border rounded text-sm py-2.5 pl-9 pr-4 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 appearance-none cursor-pointer outline-none transition-colors ${assignment ? 'text-blue-600 dark:text-blue-400 font-medium border-blue-300 dark:border-blue-700' : 'text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'}`}
-                                        >
-                                            <option value="none">Disabled</option>
-                                            {Array.from(new Set(pin.capabilities.map(cap => cap === "PWM" ? "OUTPUT" : cap))).map(cap => (
-                                                <option key={cap} value={cap}>{cap === 'OUTPUT' ? 'Output' : cap}</option>
-                                            ))}
-                                        </select>
-                                        <span className={`material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[18px] ${assignment ? 'text-blue-600' : 'text-slate-400'}`}>
-                                            {assignment?.mode === 'OUTPUT' || assignment?.mode === 'PWM' ? 'lightbulb' : assignment?.mode === 'INPUT' ? 'radio_button_checked' : assignment?.mode === 'ADC' ? 'sensors' : assignment?.mode === 'I2C' ? 'cable' : 'block'}
-                                        </span>
-                                        <span className="material-symbols-outlined absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none text-sm">expand_more</span>
+                                    <div className="flex items-center gap-1">
+                                        {isReserved && (
+                                            <span className="text-[10px] text-rose-600 font-bold uppercase tracking-widest bg-rose-50 border border-rose-200 px-2 py-0.5 rounded">{t("diy.step2pins.reserved")}</span>
+                                        )}
+                                        {pin.bootSensitive && (
+                                            <span className="text-[10px] text-amber-600 font-bold uppercase tracking-widest bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">Boot</span>
+                                        )}
                                     </div>
-
-                                    {assignment && (
-                                        <div className="relative flex-1">
-                                            <label htmlFor={`pin-function-${pin.gpio}`} className="sr-only">
-                                                {pin.label} function
-                                            </label>
-                                            <input
-                                                id={`pin-function-${pin.gpio}`}
-                                                name={`pin-function-${pin.gpio}`}
-                                                aria-label={`${pin.label} function`}
-                                                value={assignment.function || ""}
-                                                onChange={(e) => handleFunctionChange(pin, e.target.value)}
-                                                placeholder="Function (e.g. relay)"
-                                                className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-sm text-slate-700 dark:text-slate-300 py-2.5 px-3 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
-                                            />
-                                        </div>
-                                    )}
                                 </div>
 
-                                {(assignment?.mode === "OUTPUT" || assignment?.mode === "PWM") && (
+                                {isReserved ? (
+                                    <div className="mt-1 rounded border border-rose-200 dark:border-rose-800/40 bg-rose-50 dark:bg-rose-950/20 p-3">
+                                        <p className="text-xs font-semibold text-rose-700 dark:text-rose-300">
+                                            {pin.note || `${pin.label} is reserved by the selected board profile and cannot be used for build or flash.`}
+                                        </p>
+                                        {assignment && (
+                                            <button
+                                                type="button"
+                                                onClick={(event) => {
+                                                    event.stopPropagation();
+                                                    handleModeChange(pin, "none");
+                                                }}
+                                                className="mt-3 inline-flex items-center rounded border border-rose-300 bg-white px-3 py-1.5 text-xs font-bold uppercase tracking-wider text-rose-700 transition-colors hover:bg-rose-100 dark:border-rose-700 dark:bg-slate-900 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                                            >
+                                                Remove Mapping
+                                            </button>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div className="flex gap-2.5 mt-1">
+                                        <div className="relative flex-1">
+                                            <label htmlFor={`pin-mode-${pin.gpio}`} className="sr-only">
+                                                {pin.label} mode
+                                            </label>
+                                            <select
+                                                id={`pin-mode-${pin.gpio}`}
+                                                name={`pin-mode-${pin.gpio}`}
+                                                aria-label={`${pin.label} mode`}
+                                                value={assignment?.mode === 'PWM' ? 'OUTPUT' : (assignment?.mode || "none")}
+                                                onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    handleModeChange(pin, val as PinMode | "none");
+                                                }}
+                                                className={`w-full bg-white dark:bg-slate-900 border rounded text-sm py-2.5 pl-9 pr-4 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 appearance-none cursor-pointer outline-none transition-colors ${assignment ? 'text-blue-600 dark:text-blue-400 font-medium border-blue-300 dark:border-blue-700' : 'text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700'}`}
+                                            >
+                                                <option value="none">{t("diy.step2pins.disabled")}</option>
+                                                {Array.from(new Set(pin.capabilities.map(cap => cap === "PWM" ? "OUTPUT" : cap))).map(cap => (
+                                                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                                                    <option key={cap} value={cap}>{t(`diy.step2pins.${cap.toLowerCase()}` as any)}</option>
+                                                ))}
+                                            </select>
+                                            <span className={`material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[18px] ${assignment ? 'text-blue-600' : 'text-slate-400'}`}>
+                                                {assignment?.mode === 'OUTPUT' || assignment?.mode === 'PWM' ? 'lightbulb' : assignment?.mode === 'INPUT' ? 'radio_button_checked' : assignment?.mode === 'ADC' ? 'sensors' : assignment?.mode === 'I2C' ? 'cable' : 'block'}
+                                            </span>
+                                            <span className="material-symbols-outlined absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none text-sm">expand_more</span>
+                                        </div>
+
+                                        {assignment && (
+                                            <div className="relative flex-1">
+                                                <label htmlFor={`pin-function-${pin.gpio}`} className="sr-only">
+                                                    {pin.label} function
+                                                </label>
+                                                <input
+                                                    id={`pin-function-${pin.gpio}`}
+                                                    name={`pin-function-${pin.gpio}`}
+                                                    aria-label={`${pin.label} function`}
+                                                    value={assignment.function || ""}
+                                                    onChange={(e) => handleFunctionChange(pin, e.target.value)}
+                                                    placeholder={t("diy.step2pins.function_placeholder")}
+                                                    className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded text-sm text-slate-700 dark:text-slate-300 py-2.5 px-3 focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none transition-colors"
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {!isReserved && (assignment?.mode === "OUTPUT" || assignment?.mode === "PWM") && (
                                     <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5">
                                         <div className="flex flex-col gap-3">
                                             <div className="flex items-center justify-between">
-                                                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-                                                    Control Type
-                                                </p>
+                                                <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t("diy.step2pins.control_type")}</p>
                                                 <div className="flex gap-1">
                                                     <button
                                                         type="button"
@@ -329,9 +370,7 @@ export function Step2Pins({
                                                                 ? "bg-blue-100 text-blue-700 border border-blue-200"
                                                                 : "bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-border-light dark:border-border-dark hover:text-slate-700 dark:text-slate-300"
                                                         }`}
-                                                    >
-                                                        On/Off
-                                                    </button>
+                                                    >{t("diy.step2pins.on_off")}</button>
                                                     {pin.capabilities.includes("PWM") && (
                                                         <button
                                                             type="button"
@@ -344,20 +383,16 @@ export function Step2Pins({
                                                                     ? "bg-blue-100 text-blue-700 border border-blue-200"
                                                                     : "bg-white dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-border-light dark:border-border-dark hover:text-slate-700 dark:text-slate-300"
                                                             }`}
-                                                        >
-                                                            PWM
-                                                        </button>
+                                                        >{t("diy.step2pins.pwm")}</button>
                                                     )}
                                                 </div>
                                             </div>
 
                                             {assignment.mode === "OUTPUT" && (
                                                 <div className="flex items-center justify-between">
-                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-                                                        Logic Level
-                                                    </p>
+                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t("diy.step2pins.logic_level")}</p>
                                                     <label className="flex items-center cursor-pointer gap-2">
-                                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 select-none">Reverse</span>
+                                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 select-none">{t("diy.step2pins.reverse")}</span>
                                                         <div className="relative">
                                                             <input
                                                                 type="checkbox"
@@ -376,10 +411,10 @@ export function Step2Pins({
                                     </div>
                                 )}
 
-                                {assignment?.mode === "INPUT" && (
+                                {!isReserved && assignment?.mode === "INPUT" && (
                                     <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5 flex flex-col gap-3">
                                         <div className="flex flex-col gap-1">
-                                            <label htmlFor={`pin-input-type-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">Input Type</label>
+                                            <label htmlFor={`pin-input-type-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{t("diy.step2pins.input_type")}</label>
                                             <select
                                                 id={`pin-input-type-${pin.gpio}`}
                                                 name={`pin-input-type-${pin.gpio}`}
@@ -389,14 +424,14 @@ export function Step2Pins({
                                                 }}
                                                 className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
                                             >
-                                                <option value="switch">Switch (High/Low)</option>
-                                                <option value="tachometer">Tachometer (Pulse count)</option>
-                                                <option value="dht">DHT Sensor (Temp/Hum)</option>
+                                                <option value="switch">{t("diy.step2pins.switch")}</option>
+                                                <option value="tachometer">{t("diy.step2pins.tachometer")}</option>
+                                                <option value="dht">{t("diy.step2pins.dht")}</option>
                                             </select>
                                         </div>
                                         {assignment.extra_params?.input_type === "dht" && (
                                             <div className="flex flex-col gap-1">
-                                                <label htmlFor={`pin-dht-version-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">DHT Version</label>
+                                                <label htmlFor={`pin-dht-version-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{t("diy.step2pins.dht_version")}</label>
                                                 <select
                                                     id={`pin-dht-version-${pin.gpio}`}
                                                     name={`pin-dht-version-${pin.gpio}`}
@@ -415,7 +450,7 @@ export function Step2Pins({
                                         {(assignment.extra_params?.input_type ?? "switch") === "switch" && (
                                             <div className="flex flex-col gap-3">
                                                 <div className="flex flex-col gap-1">
-                                                    <label htmlFor={`pin-switch-type-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">Switch Type</label>
+                                                    <label htmlFor={`pin-switch-type-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{t("diy.step2pins.switch_type")}</label>
                                                     <select
                                                         id={`pin-switch-type-${pin.gpio}`}
                                                         name={`pin-switch-type-${pin.gpio}`}
@@ -425,21 +460,17 @@ export function Step2Pins({
                                                         }}
                                                         className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
                                                     >
-                                                        <option value="momentary">Momentary (Push-to-make / release-to-break)</option>
-                                                        <option value="momentary_toggle">Momentary Toggle (Push-to-toggle logic)</option>
-                                                        <option value="toggle">Toggle (Classic on/off switch)</option>
+                                                        <option value="momentary">{t("diy.step2pins.momentary")}</option>
+                                                        <option value="momentary_toggle">{t("diy.step2pins.momentary_toggle")}</option>
+                                                        <option value="toggle">{t("diy.step2pins.toggle")}</option>
                                                     </select>
-                                                    <p className="text-[9px] text-slate-400 dark:text-slate-500 leading-tight">
-                                                        Momentary toggle acts as a push-button that flips the logical state each time it is pressed.
-                                                    </p>
+                                                    <p className="text-[9px] text-slate-400 dark:text-slate-500 leading-tight">{t("diy.step2pins.momentary_desc")}</p>
                                                 </div>
 
                                                 <div className="flex items-center justify-between">
-                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-                                                        Active Level
-                                                    </p>
+                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t("diy.step2pins.active_level")}</p>
                                                     <label className="flex items-center cursor-pointer gap-2">
-                                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 select-none">Active High</span>
+                                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 select-none">{t("diy.step2pins.active_high")}</span>
                                                         <div className="relative">
                                                             <input
                                                                 type="checkbox"
@@ -458,7 +489,7 @@ export function Step2Pins({
                                     </div>
                                 )}
 
-                                {assignment?.mode === "PWM" && (() => {
+                                {!isReserved && assignment?.mode === "PWM" && (() => {
                                     const rawMin = assignment.extra_params?.min_value ?? 0;
                                     const rawMax = assignment.extra_params?.max_value ?? 255;
                                     const isPwmReversed = rawMin > rawMax;
@@ -467,11 +498,9 @@ export function Step2Pins({
                                         <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5">
                                             <div className="flex flex-col gap-2.5">
                                                 <div className="flex items-center justify-between">
-                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">
-                                                        Output Map (0-255)
-                                                    </p>
+                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t("diy.step2pins.output_map")}</p>
                                                     <label className="flex items-center cursor-pointer gap-2">
-                                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 select-none">Reverse</span>
+                                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 select-none">{t("diy.step2pins.reverse")}</span>
                                                         <div className="relative">
                                                             <input
                                                                 type="checkbox"
@@ -487,7 +516,7 @@ export function Step2Pins({
                                                 </div>
                                                 <div className="grid grid-cols-2 gap-3">
                                                     <div className="flex flex-col gap-1">
-                                                        <label htmlFor={`pin-pwm-min-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Min</label>
+                                                        <label htmlFor={`pin-pwm-min-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">{t("diy.step2pins.min")}</label>
                                                         <input
                                                             id={`pin-pwm-min-${pin.gpio}`}
                                                             name={`pin-pwm-min-${pin.gpio}`}
@@ -503,7 +532,7 @@ export function Step2Pins({
                                                         />
                                                     </div>
                                                     <div className="flex flex-col gap-1">
-                                                        <label htmlFor={`pin-pwm-max-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Max</label>
+                                                        <label htmlFor={`pin-pwm-max-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">{t("diy.step2pins.max")}</label>
                                                         <input
                                                             id={`pin-pwm-max-${pin.gpio}`}
                                                             name={`pin-pwm-max-${pin.gpio}`}
@@ -524,10 +553,10 @@ export function Step2Pins({
                                     );
                                 })()}
 
-                                {assignment?.mode === "I2C" && (
+                                {!isReserved && assignment?.mode === "I2C" && (
                                     <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5 flex flex-col gap-3">
                                         <div className="flex items-center justify-between">
-                                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">Bus Role</p>
+                                            <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t("diy.step2pins.bus_role")}</p>
                                             <div className="flex gap-1">
                                                 {["SDA", "SCL"].map((role) => {
                                                     const currentRole = assignment.extra_params?.i2c_role ?? "SDA";
@@ -552,7 +581,7 @@ export function Step2Pins({
 
                                         <div className="grid grid-cols-2 gap-3">
                                             <div className="flex flex-col gap-1">
-                                                <label htmlFor={`pin-i2c-address-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">I2C Address</label>
+                                                <label htmlFor={`pin-i2c-address-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{t("diy.step2pins.i2c_address")}</label>
                                                 <input
                                                     id={`pin-i2c-address-${pin.gpio}`}
                                                     name={`pin-i2c-address-${pin.gpio}`}
@@ -564,7 +593,7 @@ export function Step2Pins({
                                                 />
                                             </div>
                                             <div className="flex flex-col gap-1">
-                                                <label htmlFor={`pin-i2c-library-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">Adafruit Lib</label>
+                                                <label htmlFor={`pin-i2c-library-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight whitespace-nowrap overflow-hidden text-ellipsis">{t("diy.step2pins.i2c_library")}</label>
                                                 <select
                                                     id={`pin-i2c-library-${pin.gpio}`}
                                                     name={`pin-i2c-library-${pin.gpio}`}
@@ -578,7 +607,7 @@ export function Step2Pins({
                                                     }}
                                                     className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
                                                 >
-                                                    <option value="">Custom...</option>
+                                                    <option value="">{t("diy.step2pins.custom")}</option>
                                                     {i2cCatalog.map(lib => (
                                                         <option key={lib.name} value={lib.name}>{lib.display_name}</option>
                                                     ))}
@@ -592,7 +621,7 @@ export function Step2Pins({
                                             if (currentLib && currentLib.versions && currentLib.versions.length > 0) {
                                                 return (
                                                     <div className="flex flex-col gap-1">
-                                                        <label htmlFor={`pin-i2c-version-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">Library Variant</label>
+                                                        <label htmlFor={`pin-i2c-version-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{t("diy.step2pins.i2c_device_version")}</label>
                                                         <select
                                                             id={`pin-i2c-version-${pin.gpio}`}
                                                             name={`pin-i2c-version-${pin.gpio}`}
@@ -621,7 +650,7 @@ export function Step2Pins({
                     <div className="mt-1 flex items-center justify-between text-[11px] px-1 text-slate-500 dark:text-slate-400">
                         <span className="flex items-center gap-1.5 font-medium tracking-wide">
                             <div className={`w-1.5 h-1.5 rounded-full ${pins.length > 0 ? "bg-blue-600 shadow-[0_0_6px_rgba(37,99,235,0.6)]" : "bg-slate-300"}`}></div>
-                            {pins.length > 0 ? `${pins.length} active maps` : "Awaiting assignment"}
+                            {pins.length > 0 ? t("diy.step2pins.active_maps").replace("{count}", pins.length.toString()) : t("diy.step2pins.awaiting")}
                         </span>
 
                         <span className={`px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider ${projectSyncState === 'saved' ? 'bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800' : 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-800'}`}>
@@ -743,7 +772,7 @@ export function Step2Pins({
 
                         {board.leftPins.map((pin, index) =>
                             renderSvgPin({
-                                pin, index, totalRows, side: "left", boardHeight,
+                                pin, board, index, totalRows, side: "left", boardHeight,
                                 isSelected: selectedPinId === pin.id,
                                 assignment: pins.find((mapping) => mapping.gpio_pin === pin.gpio),
                                 onSelect: handlePinSelection,
@@ -752,7 +781,7 @@ export function Step2Pins({
                         )}
                         {board.rightPins.map((pin, index) =>
                             renderSvgPin({
-                                pin, index, totalRows, side: "right", boardHeight,
+                                pin, board, index, totalRows, side: "right", boardHeight,
                                 isSelected: selectedPinId === pin.id,
                                 assignment: pins.find((mapping) => mapping.gpio_pin === pin.gpio),
                                 onSelect: handlePinSelection,
@@ -768,16 +797,16 @@ export function Step2Pins({
 
                 {/* Overlaid UI on Top-Left */}
                 <div className="absolute top-6 left-6 flex gap-3 pointer-events-none z-10">
-                    <LegendItem color="bg-yellow-500/80 shadow-[0_0_8px_rgba(234,179,8,0.4)]" label="Available" />
-                    <LegendItem color="bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" label="Mapped" />
-                    <LegendItem color="bg-[#00F2FF] shadow-[0_0_12px_#00F2FF]" label="Selected" />
-                    <LegendItem color="bg-slate-700" label="Reserved" />
+                    <LegendItem color="bg-yellow-500/80 shadow-[0_0_8px_rgba(234,179,8,0.4)]" label={t("diy.step2pins.available")} />
+                    <LegendItem color="bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]" label={t("diy.step2pins.mapped")} />
+                    <LegendItem color="bg-[#00F2FF] shadow-[0_0_12px_#00F2FF]" label={t("diy.step2pins.selected")} />
+                    <LegendItem color="bg-slate-700" label={t("diy.step2pins.reserved")} />
                 </div>
 
                 {/* Overlaid Label on Bottom-Right */}
                 <div className="absolute bottom-6 right-6 bg-white/90 dark:bg-slate-800/90 backdrop-blur border border-border-light dark:border-border-dark px-3 py-2 rounded shadow-xl text-xs text-slate-500 dark:text-slate-400 font-mono flex items-center gap-2 pointer-events-none">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_6px_rgba(16,185,129,0.5)]"></span>
-                    <span className="opacity-70">PROFILE:</span> <span className="text-slate-900 dark:text-white font-bold">{board.name}</span>
+                    <span className="opacity-70">{t("diy.step2pins.profile")}</span> <span className="text-slate-900 dark:text-white font-bold">{board.name}</span>
                 </div>
 
                 {/* Overlaid Pin Info Board on Top-Right */}
@@ -785,6 +814,7 @@ export function Step2Pins({
                     const selPin = boardPins.find(p => p.id === selectedPinId);
                     if (!selPin) return null;
                     const assignment = pins.find(p => p.gpio_pin === selPin.gpio);
+                    const pinMarkers = getBoardPinMarkers(board, selPin);
                     return (
                         <div className="absolute top-6 right-6 bg-white/95 dark:bg-slate-800/95 backdrop-blur border border-border-light dark:border-border-dark px-5 py-4 rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] text-slate-600 dark:text-slate-400 min-w-[240px] pointer-events-none z-20">
                             <div className="flex justify-between items-start mb-2">
@@ -793,35 +823,56 @@ export function Step2Pins({
                             </div>
                             <div className="flex flex-col gap-2 mt-4">
                                 <div className="flex justify-between text-xs">
-                                    <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">Status</span>
-                                    <span className={assignment ? "text-emerald-600 font-bold" : "text-amber-500 font-bold"}>{assignment ? "MAPPED" : "AVAILABLE"}</span>
+                                    <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">{t("diy.step2pins.status")}</span>
+                                    <span className={assignment ? "text-emerald-600 font-bold" : "text-amber-500 font-bold"}>{assignment ? t("diy.step2pins.mapped").toUpperCase() : t("diy.step2pins.available").toUpperCase()}</span>
                                 </div>
                                 {assignment && (
                                     <>
                                         <div className="flex justify-between text-xs">
-                                            <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">Mode</span>
+                                            <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">{t("diy.step2pins.mode")}</span>
                                             <span className="text-slate-800 dark:text-slate-200 font-mono font-bold">{assignment.mode}</span>
                                         </div>
                                         {assignment.function && (
                                         <div className="flex justify-between text-xs">
-                                            <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">Function</span>
+                                            <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">{t("diy.step2pins.function")}</span>
                                             <span className="text-slate-800 dark:text-slate-200 font-mono">{assignment.function}</span>
                                         </div>
                                         )}
                                     </>
                                 )}
                                 <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-border-light dark:border-border-dark">
-                                    <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">Capabilities</span>
+                                    <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">{t("diy.step2pins.capabilities")}</span>
                                     <div className="flex flex-wrap gap-1">
                                         {selPin.capabilities.length > 0 ? selPin.capabilities.map(cap => (
                                             <span key={cap} className="text-[9px] bg-slate-100 border border-border-light dark:border-border-dark px-1.5 py-0.5 rounded text-slate-500 dark:text-slate-400 uppercase font-mono">{cap}</span>
-                                        )) : <span className="text-[10px] text-slate-400 italic">None</span>}
+                                        )) : <span className="text-[10px] text-slate-400 italic">{t("diy.step2pins.none")}</span>}
                                     </div>
                                 </div>
+                                {pinMarkers.length > 0 && (
+                                    <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-border-light dark:border-border-dark">
+                                        <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">Board Markers</span>
+                                        <div className="flex flex-wrap gap-1">
+                                            {pinMarkers.map((marker) => (
+                                                <span
+                                                    key={`${selPin.id}-${marker.label}`}
+                                                    className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-mono font-bold ${
+                                                        marker.tone === "sky"
+                                                            ? "bg-sky-50 border border-sky-200 text-sky-700"
+                                                            : marker.tone === "rose"
+                                                                ? "bg-rose-50 border border-rose-200 text-rose-700"
+                                                                : "bg-amber-50 border border-amber-200 text-amber-700"
+                                                    }`}
+                                                >
+                                                    {marker.label}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                                 {selPin.bootSensitive && (
                                     <div className="mt-2 text-amber-600 text-[10px] bg-amber-50 border border-amber-200 px-2 py-1.5 rounded flex items-center gap-1.5">
                                         <span className="material-symbols-outlined text-[14px]">warning</span>
-                                        <span className="font-bold uppercase tracking-wider">Boot Sensitive</span>
+                                        <span className="font-bold uppercase tracking-wider">{t("diy.step2pins.boot_sensitive")}</span>
                                     </div>
                                 )}
                             </div>
@@ -844,21 +895,17 @@ export function Step2Pins({
                                         <path d="M12 17h.01"></path>
                                     </svg>
                                 </div>
-                                <h3 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white uppercase">Clear All Assignments?</h3>
-                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 mb-6 leading-relaxed">Are you sure you want to remove all configured pin assignments? This action cannot be undone.</p>
+                                <h3 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white uppercase">{t("diy.step2pins.clear_title")}</h3>
+                                <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 mb-6 leading-relaxed">{t("diy.step2pins.clear_desc")}</p>
                                 <div className="flex w-full gap-3">
                                     <button
                                         onClick={confirmClearAll}
                                         className="flex-1 px-4 py-3 bg-red-50 dark:bg-red-900/20 hover:bg-red-600 text-red-600 dark:text-red-400 hover:text-white text-xs font-bold uppercase tracking-wider rounded transition-colors border border-red-200 dark:border-red-900 hover:border-red-600"
-                                    >
-                                        Clear All
-                                    </button>
+                                    >{t("diy.step2pins.btn_clear")}</button>
                                     <button
                                         onClick={() => setShowClearConfirm(false)}
                                         className="flex-1 px-4 py-3 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-400 text-xs font-bold uppercase tracking-wider rounded transition-colors border border-slate-300 dark:border-slate-700"
-                                    >
-                                        Cancel
-                                    </button>
+                                    >{t("diy.step2pins.btn_cancel")}</button>
                                 </div>
                             </div>
                         </div>
@@ -884,6 +931,7 @@ function LegendItem({ color, label }: { color: string; label: string }) {
 
 function renderSvgPin({
     pin,
+    board,
     index,
     totalRows,
     side,
@@ -894,6 +942,7 @@ function renderSvgPin({
     isDark,
 }: {
     pin: BoardPin;
+    board: BoardProfile;
     index: number;
     totalRows: number;
     side: "left" | "right";
@@ -907,7 +956,7 @@ function renderSvgPin({
     const bottom = boardHeight - 70;
     const gap = totalRows === 1 ? 0 : (bottom - top) / (totalRows - 1);
     const y = top + gap * index;
-    const isReserved = pin.capabilities.length === 0;
+    const isReserved = isBoardPinReserved(pin);
     const fill = isSelected
         ? PIN_FILL.selected
         : assignment
@@ -922,10 +971,22 @@ function renderSvgPin({
     const labelX = side === "left" ? 112 : 608;
     const mappingTextX = side === "left" ? 94 : 626;
     const anchor = side === "left" ? "end" : "start";
-
-    const isBuiltInLed = pin.note?.toLowerCase().includes("led") || pin.label.toLowerCase().includes("led");
     const isI2C = pin.capabilities.includes("I2C");
     const stemCenter = side === "left" ? 171 : 549;
+    const pinMarkers = getBoardPinMarkers(board, pin);
+    const markerLabels = [
+        ...pinMarkers.map((marker) => ({
+            label: marker.label,
+            fill:
+                marker.tone === "sky"
+                    ? isDark ? "#38bdf8" : "#0284c7"
+                    : marker.tone === "rose"
+                        ? isDark ? "#fb7185" : "#e11d48"
+                        : isDark ? "#fbbf24" : "#ea580c",
+        })),
+        ...(isI2C ? [{ label: "I2C", fill: isDark ? "#38bdf8" : "#0284c7" }] : []),
+    ];
+    const markerTop = y - 4 - Math.max(0, markerLabels.length - 1) * 13;
 
     return (
         <g
@@ -943,16 +1004,20 @@ function renderSvgPin({
         >
             <line x1={stemStart} x2={stemEnd} y1={y} y2={y} stroke={isDark ? "#94a3b8" : "#475569"} strokeWidth="3" />
 
-            {isBuiltInLed && (
-                <text x={stemCenter} y={y - 4} fontSize="8.5" fill={isDark ? "#fbbf24" : "#ea580c"} textAnchor="middle" fontWeight="bold" className="pointer-events-none">
-                    LED
+            {markerLabels.map((marker, markerIndex) => (
+                <text
+                    key={`${pin.id}-${marker.label}-${markerIndex}`}
+                    x={stemCenter}
+                    y={markerTop + markerIndex * 13}
+                    fontSize="8.5"
+                    fill={marker.fill}
+                    textAnchor="middle"
+                    fontWeight="bold"
+                    className="pointer-events-none"
+                >
+                    {marker.label}
                 </text>
-            )}
-            {isI2C && (
-                <text x={stemCenter} y={isBuiltInLed ? y + 9 : y - 4} fontSize="8.5" fill={isDark ? "#38bdf8" : "#0284c7"} textAnchor="middle" fontWeight="bold" className="pointer-events-none">
-                    I2C
-                </text>
-            )}
+            ))}
 
             <rect
                 x={pinX}

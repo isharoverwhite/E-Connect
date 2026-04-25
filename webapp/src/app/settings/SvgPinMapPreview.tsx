@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
 
-import { BOARD_PROFILES, getBoardProfile, resolveBoardProfileId, type BoardPin } from "@/features/diy/board-profiles";
+import { BOARD_PROFILES, getBoardPinMarkers, getBoardProfile, isBoardPinReserved, resolveBoardProfileId, type BoardPin } from "@/features/diy/board-profiles";
 import { type PinMapping, PIN_FILL } from "@/features/diy/types";
 
 export function SvgPinMapPreview({ boardId, pins }: { boardId: string, pins: PinMapping[] }) {
@@ -26,7 +26,7 @@ export function SvgPinMapPreview({ boardId, pins }: { boardId: string, pins: Pin
     }) {
         const top = 110;
         const y = top + gap * index;
-        const isReserved = pin.capabilities.length === 0;
+        const isReserved = isBoardPinReserved(pin);
         const fill = assignment
             ? PIN_FILL.assigned
             : isReserved
@@ -39,10 +39,31 @@ export function SvgPinMapPreview({ boardId, pins }: { boardId: string, pins: Pin
         const labelX = side === "left" ? 112 : 608;
         const mappingTextX = side === "left" ? 94 : 626;
         const anchor = side === "left" ? "end" : "start";
+        const pinMarkers = [
+            ...getBoardPinMarkers(board, pin).map((marker) => ({
+                label: marker.label,
+                fill: marker.tone === "sky" ? "#38bdf8" : marker.tone === "rose" ? "#fb7185" : "#fbbf24",
+            })),
+            ...(pin.capabilities.includes("I2C") ? [{ label: "I2C", fill: "#38bdf8" }] : []),
+        ];
+        const markerTop = y - 4 - Math.max(0, pinMarkers.length - 1) * 13;
 
         return (
             <g key={pin.id}>
                 <line x1={stemStart} x2={stemEnd} y1={y} y2={y} stroke="#475569" strokeWidth="3" />
+                {pinMarkers.map((marker, markerIndex) => (
+                    <text
+                        key={`${pin.id}-${marker.label}-${markerIndex}`}
+                        x={side === "left" ? 171 : 549}
+                        y={markerTop + markerIndex * 13}
+                        fontSize="8.5"
+                        fill={marker.fill}
+                        textAnchor="middle"
+                        fontWeight="bold"
+                    >
+                        {marker.label}
+                    </text>
+                ))}
                 <rect
                     x={pinX}
                     y={y - 11}

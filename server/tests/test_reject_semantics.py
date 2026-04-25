@@ -73,21 +73,18 @@ def _seed_household(prefix: str = "reject"):
         username=f"admin-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.admin,
-        ui_layout={},
     )
     member = User(
         fullname="Member User",
         username=f"member-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.parent,
-        ui_layout={},
     )
     observer = User(
         fullname="Observer User",
         username=f"observer-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.parent,
-        ui_layout={},
     )
     db.add_all([household, admin, member, observer])
     db.commit()

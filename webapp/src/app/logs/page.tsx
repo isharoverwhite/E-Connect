@@ -7,6 +7,7 @@ import { useSearchParams } from "next/navigation";
 
 import { useAuth } from "@/components/AuthProvider";
 import Sidebar from "@/components/Sidebar";
+import { useLanguage } from "@/components/LanguageContext";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import {
     SystemLogCategory,
@@ -30,11 +31,12 @@ const severityToneMap: Record<SystemLogSeverity, string> = {
     critical: "bg-red-100 text-red-700 dark:bg-red-500/10 dark:text-red-200",
 };
 
-const categoryLabelMap: Record<SystemLogCategory, string> = {
-    lifecycle: "Lifecycle",
-    connectivity: "Connectivity",
-    firmware: "Firmware",
-    health: "Health",
+// Category map will use translation keys instead of hardcoded strings
+const categoryKeysMap: Record<SystemLogCategory, string> = {
+    lifecycle: "logs.filter.lifecycle",
+    connectivity: "logs.filter.connectivity",
+    firmware: "logs.filter.firmware",
+    health: "logs.filter.health",
 };
 
 const statusToneMap: Record<SystemStatusResponse["overall_status"], string> = {
@@ -176,6 +178,7 @@ async function requestLogsPageData(): Promise<{
 
 export default function LogsPage() {
     const { user } = useAuth();
+    const { t } = useLanguage();
     const searchParams = useSearchParams();
     const isAdmin = user?.account_type === "admin";
 
@@ -226,7 +229,7 @@ export default function LogsPage() {
                 if (cancelled) {
                     return;
                 }
-                const message = loadError instanceof Error ? loadError.message : "Failed to load logs and stats";
+                const message = loadError instanceof Error ? loadError.message : t("logs.error.load");
                 setError(message);
             } finally {
                 if (!cancelled) {
@@ -254,7 +257,7 @@ export default function LogsPage() {
             setStatus(nextStatus);
             setLogs(nextLogs);
         } catch (loadError) {
-            const message = loadError instanceof Error ? loadError.message : "Failed to load logs and stats";
+            const message = loadError instanceof Error ? loadError.message : t("logs.error.load");
             setError(message);
         } finally {
             setRefreshing(false);
@@ -275,7 +278,7 @@ export default function LogsPage() {
             setStatus(nextStatus);
             setLogs(nextLogs);
         } catch (loadError) {
-            const message = loadError instanceof Error ? loadError.message : "Failed to mark alert as read";
+            const message = loadError instanceof Error ? loadError.message : t("logs.error.mark_read");
             setError(message);
         } finally {
             setMarkingIds((current) => {
@@ -300,7 +303,7 @@ export default function LogsPage() {
             setStatus(nextStatus);
             setLogs(nextLogs);
         } catch (loadError) {
-            const message = loadError instanceof Error ? loadError.message : "Failed to mark all alerts as read";
+            const message = loadError instanceof Error ? loadError.message : t("logs.error.mark_all");
             setError(message);
         } finally {
             setMarkingAll(false);
@@ -417,23 +420,23 @@ export default function LogsPage() {
     const metrics = status
         ? [
             {
-                label: "Database",
-                value: status.database_status === "ok" ? "Connected" : "Unavailable",
+                label: t("logs.metrics.database"),
+                value: status.database_status === "ok" ? t("logs.metrics.connected") : t("logs.metrics.unavailable"),
                 tone: status.database_status === "ok" ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300",
             },
             {
-                label: "MQTT",
-                value: status.mqtt_status === "connected" ? "Connected" : "Disconnected",
+                label: t("logs.metrics.mqtt"),
+                value: status.mqtt_status === "connected" ? t("logs.metrics.connected") : t("logs.metrics.disconnected"),
                 tone: status.mqtt_status === "connected" ? "text-emerald-600 dark:text-emerald-300" : "text-rose-600 dark:text-rose-300",
             },
             {
-                label: "CPU",
+                label: t("logs.metrics.cpu"),
                 value: `${status.cpu_percent.toFixed(1)}%`,
                 tone: "text-slate-900 dark:text-white",
             },
             {
-                label: "Uptime",
-                value: formatDuration(status.uptime_seconds),
+                label: t("logs.metrics.uptime"),
+                value: formatDuration(status.uptime_seconds) === "Just started" ? t("logs.duration.just_started") : formatDuration(status.uptime_seconds),
                 tone: "text-slate-900 dark:text-white",
             },
         ]
@@ -447,10 +450,10 @@ export default function LogsPage() {
                 <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-6 py-8 lg:px-8">
                     <header className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
                         <div>
-                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Operations</p>
-                            <h1 className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">Logs & Stats</h1>
+                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("logs.operations")}</p>
+                            <h1 className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">{t("logs.title")}</h1>
                             <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                                Track server health, firmware observations, and alert-worthy events across the rolling 30-day window.
+                                {t("logs.subtitle")}
                             </p>
                         </div>
                         {isAdmin ? (
@@ -463,7 +466,7 @@ export default function LogsPage() {
                                     <span className={`material-icons-round text-[18px] ${markingAll ? "animate-spin" : ""}`}>
                                         {markingAll ? "autorenew" : "mark_email_read"}
                                     </span>
-                                    Mark All Read
+                                    {t("logs.btn.mark_all_read")}
                                 </button>
                                 <button
                                     className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 shadow-sm transition hover:border-primary hover:text-primary disabled:opacity-60 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
@@ -471,7 +474,7 @@ export default function LogsPage() {
                                     onClick={() => void handleRefresh()}
                                 >
                                     <span className={`material-icons-round text-[18px] ${refreshing ? "animate-spin" : ""}`}>refresh</span>
-                                    Refresh
+                                    {t("logs.btn.refresh")}
                                 </button>
                             </div>
                         ) : null}
@@ -484,9 +487,9 @@ export default function LogsPage() {
                                     <span className="material-icons-round text-2xl">admin_panel_settings</span>
                                 </div>
                                 <div>
-                                    <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Admin access required</h2>
+                                    <h2 className="text-xl font-semibold text-slate-900 dark:text-white">{t("logs.admin_required.title")}</h2>
                                     <p className="mt-2 text-sm text-amber-900/80 dark:text-amber-100/80">
-                                        This page contains instance diagnostics and operational alerts. Sign in with an admin account to view server history.
+                                        {t("logs.admin_required.desc")}
                                     </p>
                                 </div>
                             </div>
@@ -503,19 +506,19 @@ export default function LogsPage() {
                                 <div className={`rounded-3xl border p-6 shadow-sm ${status ? statusToneMap[status.overall_status] : "border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-950"}`}>
                                     <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
                                         <div>
-                                            <p className="text-sm font-medium uppercase tracking-[0.2em]">Current Status</p>
-                                            <h2 className="mt-2 text-3xl font-semibold capitalize">{status?.overall_status ?? "Loading"}</h2>
+                                            <p className="text-sm font-medium uppercase tracking-[0.2em]">{t("logs.status.title")}</p>
+                                            <h2 className="mt-2 text-3xl font-semibold capitalize">{status?.overall_status ?? t("logs.status.loading")}</h2>
                                             <p className="mt-3 max-w-2xl text-sm opacity-90">
                                                 {status?.latest_alert_message
                                                     ? status.latest_alert_message
-                                                    : "All current alerts are marked as read. Live dependency cards below still show the current runtime state."}
+                                                    : t("logs.status.no_alerts")}
                                             </p>
                                         </div>
                                         <div className="rounded-2xl border border-current/15 bg-white/70 px-4 py-3 text-sm shadow-sm dark:bg-slate-950/30">
-                                            <p className="text-xs uppercase tracking-[0.2em] opacity-70">Advertised host</p>
-                                            <p className="mt-2 text-lg font-semibold">{status?.advertised_host ?? "Unknown"}</p>
+                                            <p className="text-xs uppercase tracking-[0.2em] opacity-70">{t("logs.status.advertised_host")}</p>
+                                            <p className="mt-2 text-lg font-semibold">{status?.advertised_host ?? t("logs.status.unknown")}</p>
                                             <p className="mt-2 text-xs opacity-70">
-                                                Latest unread alert: {status?.latest_alert_at ? formatEventDateTime(status.latest_alert_at, effectiveTimezone) : "None"}
+                                                {t("logs.status.latest_alert").replace("{time}", status?.latest_alert_at ? formatEventDateTime(status.latest_alert_at, effectiveTimezone) : t("logs.status.none"))}
                                             </p>
                                         </div>
                                     </div>
@@ -532,21 +535,21 @@ export default function LogsPage() {
 
                                 <div className="grid gap-4">
                                     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-950">
-                                        <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Alert Window</p>
+                                        <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{t("logs.alert_window.title")}</p>
                                         <p className="mt-3 text-3xl font-bold text-slate-900 dark:text-white">
                                             {status ? status.active_alert_count.toString().padStart(2, "0") : "--"}
                                         </p>
                                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                            Unread warning, error, and critical events retained for {status?.retention_days ?? 30} days.
+                                            {t("logs.alert_window.desc").replace("{days}", (status?.retention_days ?? 30).toString())}
                                         </p>
                                     </div>
 
                                     <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-950">
-                                        <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Resource Usage</p>
+                                        <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{t("logs.resource.title")}</p>
                                         <div className="mt-4 space-y-4">
                                             <div>
                                                 <div className="flex items-center justify-between text-sm">
-                                                    <span>Memory</span>
+                                                    <span>{t("logs.resource.memory")}</span>
                                                     <span>{status ? formatUsageLabel(status.memory_used, status.memory_total) : "--"}</span>
                                                 </div>
                                                 <div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800">
@@ -562,7 +565,7 @@ export default function LogsPage() {
                                             </div>
                                             <div>
                                                 <div className="flex items-center justify-between text-sm">
-                                                    <span>Storage</span>
+                                                    <span>{t("logs.resource.storage")}</span>
                                                     <span>{status ? formatUsageLabel(status.storage_used, status.storage_total) : "--"}</span>
                                                 </div>
                                                 <div className="mt-2 h-2 rounded-full bg-slate-100 dark:bg-slate-800">
@@ -584,19 +587,19 @@ export default function LogsPage() {
                             <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-700 dark:bg-slate-950">
                                 <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
                                     <div>
-                                        <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Activity Table</h2>
+                                        <h2 className="text-xl font-semibold text-slate-900 dark:text-white">{t("logs.table.title")}</h2>
                                         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                                            Search and narrow down server history without leaving the last 30-day retention window.
+                                            {t("logs.table.desc")}
                                         </p>
                                         {status ? (
                                             <p className="mt-1 text-xs text-slate-400 dark:text-slate-500">
-                                                Timestamps and date filters use {status.effective_timezone}. Current server time: {formatEventDateTime(status.current_server_time, effectiveTimezone)}.
+                                                {t("logs.table.timezone_note").replace("{timezone}", status.effective_timezone).replace("{time}", formatEventDateTime(status.current_server_time, effectiveTimezone))}
                                             </p>
                                         ) : null}
                                     </div>
                                     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
                                         <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
-                                            <span>From date</span>
+                                            <span>{t("logs.filter.from_date")}</span>
                                             <input
                                                 className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-primary dark:border-slate-700 dark:bg-slate-900"
                                                 onChange={(event) => setFromDate(event.target.value)}
@@ -605,7 +608,7 @@ export default function LogsPage() {
                                             />
                                         </label>
                                         <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
-                                            <span>To date</span>
+                                            <span>{t("logs.filter.to_date")}</span>
                                             <input
                                                 className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-primary dark:border-slate-700 dark:bg-slate-900"
                                                 onChange={(event) => setToDate(event.target.value)}
@@ -614,40 +617,40 @@ export default function LogsPage() {
                                             />
                                         </label>
                                         <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
-                                            <span>Severity</span>
+                                            <span>{t("logs.filter.severity")}</span>
                                             <select
                                                 className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-primary dark:border-slate-700 dark:bg-slate-900"
                                                 onChange={(event) => setSeverityFilter(event.target.value as SeverityFilter)}
                                                 value={severityFilter}
                                             >
-                                                <option value="all">All events</option>
-                                                <option value="alerts">Alerts only</option>
-                                                <option value="info">Info</option>
-                                                <option value="warning">Warning</option>
-                                                <option value="error">Error</option>
-                                                <option value="critical">Critical</option>
+                                                <option value="all">{t("logs.filter.all_events")}</option>
+                                                <option value="alerts">{t("logs.filter.alerts_only")}</option>
+                                                <option value="info">{t("logs.filter.info")}</option>
+                                                <option value="warning">{t("logs.filter.warning")}</option>
+                                                <option value="error">{t("logs.filter.error")}</option>
+                                                <option value="critical">{t("logs.filter.critical")}</option>
                                             </select>
                                         </label>
                                         <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
-                                            <span>Category</span>
+                                            <span>{t("logs.filter.category")}</span>
                                             <select
                                                 className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-primary dark:border-slate-700 dark:bg-slate-900"
                                                 onChange={(event) => setCategoryFilter(event.target.value as CategoryFilter)}
                                                 value={categoryFilter}
                                             >
-                                                <option value="all">All categories</option>
-                                                <option value="lifecycle">Lifecycle</option>
-                                                <option value="connectivity">Connectivity</option>
-                                                <option value="firmware">Firmware</option>
-                                                <option value="health">Health</option>
+                                                <option value="all">{t("logs.filter.all_categories")}</option>
+                                                <option value="lifecycle">{t("logs.filter.lifecycle")}</option>
+                                                <option value="connectivity">{t("logs.filter.connectivity")}</option>
+                                                <option value="firmware">{t("logs.filter.firmware")}</option>
+                                                <option value="health">{t("logs.filter.health")}</option>
                                             </select>
                                         </label>
                                         <label className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-300">
-                                            <span>Search</span>
+                                            <span>{t("logs.filter.search")}</span>
                                             <input
                                                 className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-primary dark:border-slate-700 dark:bg-slate-900"
                                                 onChange={(event) => setSearchTerm(event.target.value)}
-                                                placeholder="event, device, firmware..."
+                                                placeholder={t("logs.filter.search_placeholder")}
                                                 type="search"
                                                 value={searchTerm}
                                             />
@@ -657,14 +660,14 @@ export default function LogsPage() {
 
                                 {loading ? (
                                     <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-400">
-                                        Loading the latest system history...
+                                        {t("logs.loading")}
                                     </div>
                                 ) : groupedLogs.length === 0 ? (
                                     <div className="mt-6 rounded-2xl border border-dashed border-slate-200 px-4 py-10 text-center dark:border-slate-700">
                                         <span className="material-icons-round text-4xl text-slate-300 dark:text-slate-600">history</span>
-                                        <h3 className="mt-3 text-lg font-semibold text-slate-900 dark:text-white">No matching events</h3>
+                                        <h3 className="mt-3 text-lg font-semibold text-slate-900 dark:text-white">{t("logs.empty.title")}</h3>
                                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                            Adjust the filters or clear the search term to inspect the full 30-day retention window.
+                                            {t("logs.empty.desc")}
                                         </p>
                                     </div>
                                 ) : (
@@ -675,18 +678,18 @@ export default function LogsPage() {
                                                     <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
                                                         {group.label}
                                                     </h3>
-                                                    <span className="text-xs text-slate-400 dark:text-slate-500">{group.entries.length} events</span>
+                                                    <span className="text-xs text-slate-400 dark:text-slate-500">{t("logs.group.events_count").replace("{count}", group.entries.length.toString())}</span>
                                                 </div>
 
                                                 <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900/40">
                                                     <table className="min-w-full text-left text-sm whitespace-nowrap">
                                                         <thead className="border-b border-slate-200 bg-slate-50/50 text-slate-500 dark:border-slate-800/80 dark:bg-slate-900/50 dark:text-slate-400">
                                                             <tr>
-                                                                <th className="px-4 py-3.5 font-medium">Time</th>
-                                                                <th className="px-4 py-3.5 font-medium">Status & Category</th>
-                                                                <th className="px-4 py-3.5 font-medium">Event Detail</th>
-                                                                <th className="px-4 py-3.5 font-medium">Source</th>
-                                                                <th className="px-4 py-3.5 font-medium text-right">Action</th>
+                                                                <th className="px-4 py-3.5 font-medium">{t("logs.th.time")}</th>
+                                                                <th className="px-4 py-3.5 font-medium">{t("logs.th.status")}</th>
+                                                                <th className="px-4 py-3.5 font-medium">{t("logs.th.detail")}</th>
+                                                                <th className="px-4 py-3.5 font-medium">{t("logs.th.source")}</th>
+                                                                <th className="px-4 py-3.5 font-medium text-right">{t("logs.th.action")}</th>
                                                             </tr>
                                                         </thead>
                                                         <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
@@ -708,11 +711,11 @@ export default function LogsPage() {
                                                                                 <span className="material-icons-round text-[14px]">
                                                                                     {entry.severity === 'info' ? 'info' : entry.severity === 'warning' ? 'warning' : entry.severity === 'error' ? 'error' : 'report'}
                                                                                 </span>
-                                                                                {entry.severity}
+                                                                                {t(`logs.filter.${entry.severity}`)}
                                                                             </span>
                                                                             <span className="inline-flex items-center gap-1 text-xs text-slate-500 dark:text-slate-400">
                                                                                 <span className="material-icons-round text-[12px] opacity-70">label</span>
-                                                                                {categoryLabelMap[entry.category]}
+                                                                                {t(categoryKeysMap[entry.category])}
                                                                             </span>
                                                                         </div>
                                                                     </td>
@@ -730,8 +733,8 @@ export default function LogsPage() {
                                                                                     <span className={`inline-flex items-center gap-1 ${entry.is_read ? "text-slate-400" : "font-medium text-blue-600 dark:text-blue-400"}`}>
                                                                                         <span className="h-1.5 w-1.5 rounded-full bg-current"></span>
                                                                                         {entry.is_read && entry.read_at
-                                                                                            ? `Read at ${formatEventTime(entry.read_at, effectiveTimezone)}`
-                                                                                            : "Unread alert"}
+                                                                                            ? t("logs.row.read_at").replace("{time}", formatEventTime(entry.read_at, effectiveTimezone))
+                                                                                            : t("logs.row.unread")}
                                                                                     </span>
                                                                                 ) : null}
                                                                             </div>
@@ -742,13 +745,13 @@ export default function LogsPage() {
                                                                         <div className="flex flex-col gap-2 text-xs text-slate-600 dark:text-slate-300">
                                                                             <span className="inline-flex items-center gap-1.5">
                                                                                 <span className="material-icons-round text-[14px] text-slate-400">memory</span>
-                                                                                {entry.device_id ?? "Server"}
+                                                                                {entry.device_id ?? t("logs.row.server")}
                                                                             </span>
                                                                             {(entry.firmware_version || entry.firmware_revision) && (
                                                                                 <span className="inline-flex items-center gap-1.5">
                                                                                     <span className="material-icons-round text-[14px] text-slate-400">system_update_alt</span>
-                                                                                    <span className="max-w-[120px] truncate" title={entry.firmware_version || "Unknown version"}>
-                                                                                        {entry.firmware_version || "Unknown"}
+                                                                                    <span className="max-w-[120px] truncate" title={entry.firmware_version || t("logs.row.unknown_version")}>
+                                                                                        {entry.firmware_version || t("logs.status.unknown")}
                                                                                     </span>
                                                                                 </span>
                                                                             )}
@@ -765,7 +768,7 @@ export default function LogsPage() {
                                                                                 <span className={`material-icons-round text-[14px] ${isMarking ? "animate-spin" : ""}`}>
                                                                                     {isMarking ? "autorenew" : entry.is_read ? "done_all" : "mark_email_read"}
                                                                                 </span>
-                                                                                {entry.is_read ? "Read" : "Mark Read"}
+                                                                                {entry.is_read ? t("logs.row.btn_read") : t("logs.row.btn_mark_read")}
                                                                             </button>
                                                                         ) : (
                                                                             <span className="block px-3 py-1.5 text-xs text-slate-400 dark:text-slate-500">—</span>

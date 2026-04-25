@@ -108,11 +108,14 @@ class AutomationGraph(BaseModel):
     edges: List[AutomationGraphEdge] = Field(default_factory=list)
 
 # --- User & Auth ---
+LanguageCode = Literal["en", "vi"]
+
+
 class UserBase(BaseModel):
     fullname: str
     username: str = Field(..., min_length=3)
     account_type: AccountType = AccountType.parent
-    ui_layout: Optional[Any] = None
+    language: LanguageCode = "en"
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=8)

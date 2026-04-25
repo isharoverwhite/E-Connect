@@ -3,7 +3,10 @@
 "use client";
 
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { fetchCurrentUser, updateUserLanguage } from "@/lib/api";
+import { getToken } from "@/lib/auth";
 import { translations, LanguageCode, TranslationKey } from "@/lib/i18n";
+
 export type { LanguageCode, TranslationKey };
 
 interface LanguageContextType {
@@ -21,6 +24,27 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         const initializeLanguage = async () => {
             try {
+                let userLanguage: LanguageCode | null = null;
+                const token = getToken();
+
+                if (token) {
+                    try {
+                        const user = await fetchCurrentUser(token);
+                        if (user && user.language && (user.language === "en" || user.language === "vi")) {
+                            userLanguage = user.language as LanguageCode;
+                        }
+                    } catch (err) {
+                        console.warn("Failed to fetch user language preference (unauthorized or network error)");
+                    }
+                }
+
+                if (userLanguage) {
+                    setLanguageState(userLanguage);
+                    localStorage.setItem("app_language", userLanguage);
+                    setIsInitialized(true);
+                    return;
+                }
+
                 // Check if user has a saved preference
                 const savedLanguage = localStorage.getItem("app_language") as LanguageCode;
                 if (savedLanguage && (savedLanguage === "en" || savedLanguage === "vi")) {
@@ -53,9 +77,32 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
         initializeLanguage();
     }, []);
 
-    const setLanguage = (lang: LanguageCode) => {
+    useEffect(() => {
+        const handleProfileLoaded = (event: Event) => {
+            const customEvent = event as CustomEvent;
+            const profile = customEvent.detail;
+            if (profile && profile.language && (profile.language === "en" || profile.language === "vi")) {
+                setLanguageState(profile.language);
+                localStorage.setItem("app_language", profile.language);
+            }
+        };
+
+        window.addEventListener('auth-profile-loaded', handleProfileLoaded);
+        return () => window.removeEventListener('auth-profile-loaded', handleProfileLoaded);
+    }, []);
+
+    const setLanguage = async (lang: LanguageCode) => {
         setLanguageState(lang);
         localStorage.setItem("app_language", lang);
+
+        const token = getToken();
+        if (token) {
+            try {
+                await updateUserLanguage(lang, token);
+            } catch (err) {
+                console.error("Failed to update user language preference", err);
+            }
+        }
     };
 
     const t = (key: TranslationKey | string, fallback?: string): string => {

@@ -12,6 +12,7 @@ import {
     getSingleBinaryOffset,
 } from "../flash-manifest";
 import { formatServerTimestamp } from "@/lib/server-time";
+import { useLanguage } from "@/components/LanguageContext";
 
 export interface Step4FlashProps {
     board: BoardProfile;
@@ -61,8 +62,8 @@ function toHex(value: number) {
     return `0x${value.toString(16).toUpperCase()}`;
 }
 
-function formatStatusLabel(value: ProjectSyncState | ServerBuildState["status"]) {
-    return value.replace(/_/g, " ");
+function formatStatusLabel(value: ProjectSyncState | ServerBuildState["status"], t: (key: string) => string) {
+    return t(`diy.step4flash.pill.${value}`) || value.replace(/_/g, " ");
 }
 
 function getPillStyles(value: ProjectSyncState | ServerBuildState["status"]) {
@@ -135,6 +136,7 @@ function SourceButton({
 }
 
 export function Step4Flash({
+
     board,
     projectId,
     projectName,
@@ -177,8 +179,10 @@ export function Step4Flash({
     flasherClosed,
     timezone,
 }: Step4FlashProps) {
+    const { t } = useLanguage();
     const previewLines = JSON.stringify(draftConfig, null, 2).split("\n");
     const readiness = getReadinessModel({
+        t,
         board,
         flashSource,
         manifestUrl,
@@ -187,24 +191,20 @@ export function Step4Flash({
     });
     const themeStyles = getReadinessThemeStyles(readiness.theme);
     const buildActionLabel = buildBusy
-        ? "Queueing..."
+        ? t("diy.step4flash.build.queueing")
         : hasActiveBuild
-            ? "Build in Progress"
-            : "Build on Server";
+            ? t("diy.step4flash.build.in_progress")
+            : t("diy.step4flash.build.start");
 
     return (
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-8">
             <div className="flex flex-col gap-2">
                 <div className="flex items-center gap-2 text-primary font-semibold text-sm uppercase tracking-wider">
-                    <span>Step 4 of 4</span>
+                    <span>{t("diy.step4flash.step_label")}</span>
                     <span className="h-px w-8 bg-primary"></span>
                 </div>
-                <h1 className="text-slate-900 dark:text-white dark:text-white text-4xl font-black leading-tight tracking-tight">
-                    Flash Firmware
-                </h1>
-                <p className="text-slate-500 dark:text-slate-400 dark:text-slate-400 text-lg">
-                    The SVG pin map is already persisted as a build config. From here we build the firmware, clear any stale serial reservation, and hand off a safe manifest to the browser flasher.
-                </p>
+                <h1 className="text-slate-900 dark:text-white dark:text-white text-4xl font-black leading-tight tracking-tight">{t("diy.step4flash.title")}</h1>
+                <p className="text-slate-500 dark:text-slate-400 dark:text-slate-400 text-lg">{t("diy.step4flash.desc")}</p>
             </div>
 
             <div className="rounded-xl border border-border-light dark:border-border-dark dark:border-slate-800 bg-surface-light dark:bg-surface-dark dark:bg-slate-900/50 p-6 shadow-sm">
@@ -213,19 +213,19 @@ export function Step4Flash({
                         <div className="space-y-2">
                             <div className="flex flex-wrap items-center gap-2">
                                 <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${getPillStyles(serverBuild.status)}`}>
-                                    {formatStatusLabel(serverBuild.status)}
+                                    {formatStatusLabel(serverBuild.status, t)}
                                 </span>
                                 <span className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${getPillStyles(projectSyncState)}`}>
-                                    {formatStatusLabel(projectSyncState)}
+                                    {formatStatusLabel(projectSyncState, t)}
                                 </span>
                                 {projectId && (
                                     <span className="rounded-full border border-border-light dark:border-border-dark px-3 py-1 font-mono text-[11px] text-slate-500 dark:text-slate-400 dark:border-slate-800 dark:text-slate-400">
-                                        project {projectId.slice(0, 8)}
+                                        {t("diy.step4flash.lbl.project").replace("{id}", projectId.slice(0, 8))}
                                     </span>
                                 )}
                                 {serverBuild.jobId && (
                                     <span className="rounded-full border border-border-light dark:border-border-dark px-3 py-1 font-mono text-[11px] text-slate-500 dark:text-slate-400 dark:border-slate-800 dark:text-slate-400">
-                                        job {serverBuild.jobId.slice(0, 8)}
+                                        {t("diy.step4flash.lbl.job").replace("{id}", serverBuild.jobId.slice(0, 8))}
                                     </span>
                                 )}
                             </div>
@@ -237,8 +237,8 @@ export function Step4Flash({
                             </p>
                             {serverBuild.updatedAt && (
                                 <p className="text-xs text-slate-500 dark:text-slate-400 dark:text-slate-400">
-                                    Last build update: {formatServerTimestamp(serverBuild.updatedAt, {
-                                        fallback: "Unknown update time",
+                                    {t("diy.step4flash.lbl.last_update")} {formatServerTimestamp(serverBuild.updatedAt, {
+                                        fallback: t("diy.step4flash.lbl.unknown_time"),
                                         options: {
                                             year: "numeric",
                                             month: "short",
@@ -278,9 +278,9 @@ export function Step4Flash({
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center justify-between gap-4">
                             <div>
-                                <h3 className="text-lg font-bold text-slate-900 dark:text-white dark:text-white">Firmware Source</h3>
-                                <p className="mt-1 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-400">
-                                    Choose which website-managed firmware source should supply the Web Serial handoff.
+                                <h3 className="text-lg font-bold text-slate-900 dark:text-white dark:text-white">{t("diy.step4flash.lbl.fw_source")}</h3>
+                                <p className="text-slate-500 text-sm mb-4">
+                                    {t("diy.step4flash.lbl.fw_source_desc")}
                                 </p>
                             </div>
                             <button
@@ -289,17 +289,17 @@ export function Step4Flash({
                                 className="inline-flex items-center gap-2 rounded-lg border border-border-light dark:border-border-dark px-4 py-2 text-sm font-semibold text-slate-600 dark:text-slate-400 transition-colors hover:bg-slate-100 dark:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
                             >
                                 <span className="material-symbols-outlined text-base">download</span>
-                                {configBusy ? "Exporting..." : "Export Config"}
+                                {configBusy ? t("diy.step4flash.build.queueing") : t("diy.step4flash.build.export")}
                             </button>
                         </div>
 
                         <div className="flex gap-2 rounded-xl bg-slate-100 dark:bg-slate-800 p-1 dark:bg-slate-950">
                             <SourceButton active={flashSource === "server"} onClick={() => setFlashSource("server")}>
-                                Server Build
+                                {t("diy.step4flash.source.server")}
                             </SourceButton>
                             {board.demoFirmware && (
                                 <SourceButton active={flashSource === "demo"} onClick={() => setFlashSource("demo")}>
-                                    Bundled Demo
+                                    {t("diy.step4flash.source.demo")}
                                 </SourceButton>
                             )}
                         </div>
@@ -309,39 +309,35 @@ export function Step4Flash({
                         {flashSource === "server" && (
                             <div className="flex flex-col gap-4 rounded-2xl border border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 p-5 dark:border-slate-800 dark:bg-slate-950">
                                 <div className="space-y-2">
-                                    <p className="text-sm font-semibold text-slate-900 dark:text-white dark:text-white">
-                                        Build the current GPIO mapping on the server
-                                    </p>
-                                    <p className="text-sm text-slate-600 dark:text-slate-400 dark:text-slate-400">
-                                        The server compiles the current SVG mapping into a `.bin` artifact and exposes logs plus a traceable job id. Custom local firmware uploads are intentionally disabled here so the website remains the source of truth for build and flash readiness.
+                                    <h3 className="text-lg font-medium text-slate-800">{t("diy.step4flash.server_build.title")}</h3>
+                                    <p className="text-sm text-slate-500">
+                                        {t("diy.step4flash.server_build.desc")}
                                     </p>
                                 </div>
 
                                 <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-800 dark:border-sky-500/20 dark:bg-sky-500/10 dark:text-sky-200">
-                                    <p className="font-semibold">
-                                        Current runtime targets for the next firmware build
-                                    </p>
+                                    <h4 className="font-medium text-slate-800 mb-2">{t("diy.step4flash.server_build.runtime_targets")}</h4>
                                     <div className="mt-2 grid gap-3 md:grid-cols-2">
                                         <div>
                                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700 dark:text-sky-300">
-                                                Server / API host
+                                                {t("diy.step4flash.server_build.api_host")}
                                             </p>
                                             <p className="mt-1 font-mono text-xs uppercase tracking-[0.18em]">
-                                                {firmwareTargetHost ?? "detecting..."}
+                                                {firmwareTargetHost ?? t("diy.step4flash.lbl.detecting")}
                                             </p>
                                         </div>
                                         <div>
                                             <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-sky-700 dark:text-sky-300">
-                                                MQTT broker
+                                                {t("diy.step4flash.server_build.mqtt_broker")}
                                             </p>
                                             <p className="mt-1 font-mono text-xs uppercase tracking-[0.18em]">
-                                                {firmwareTargetMqttBroker ?? firmwareTargetHost ?? "detecting..."}
+                                                {firmwareTargetMqttBroker ?? firmwareTargetHost ?? t("diy.step4flash.lbl.detecting")}
                                                 {firmwareTargetMqttPort ? `:${firmwareTargetMqttPort}` : ""}
                                             </p>
                                         </div>
                                     </div>
-                                    <p className="mt-2">
-                                        If the server host or MQTT broker changed, rebuild before flashing. Older artifacts keep the previous targets and the board will not reappear in Discovery until you reflash it.
+                                    <p className="text-sm text-amber-800 mt-1">
+                                        {t("diy.step4flash.server_build.warning")}
                                     </p>
                                 </div>
 
@@ -362,7 +358,7 @@ export function Step4Flash({
                                         className="inline-flex items-center gap-2 rounded-lg border border-border-light dark:border-border-dark px-4 py-2.5 text-sm font-semibold text-slate-600 dark:text-slate-400 transition-colors hover:bg-slate-100 dark:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
                                     >
                                         <span className="material-symbols-outlined text-base">sync</span>
-                                        Refresh
+                                        {t("diy.step4flash.btn.refresh")}
                                     </button>
                                     <button
                                         onClick={onDownloadArtifact}
@@ -370,7 +366,7 @@ export function Step4Flash({
                                         className="inline-flex items-center gap-2 rounded-lg border border-border-light dark:border-border-dark px-4 py-2.5 text-sm font-semibold text-slate-600 dark:text-slate-400 transition-colors hover:bg-slate-100 dark:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
                                     >
                                         <span className="material-symbols-outlined text-base">download</span>
-                                        Download .bin
+                                        {t("diy.step4flash.btn.download")}
                                     </button>
                                 </div>
 
@@ -378,7 +374,7 @@ export function Step4Flash({
                                     <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300">
                                         <div className="mb-2 flex items-center gap-2 font-semibold">
                                             <span className="material-symbols-outlined text-base">report</span>
-                                            Validation warnings
+                                            {t("diy.step4flash.lbl.warnings")}
                                         </div>
                                         {serverBuild.warnings.map((warning) => (
                                             <p key={warning}>{warning}</p>
@@ -431,9 +427,9 @@ export function Step4Flash({
                     <div className="rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
                     <div className="flex items-center justify-between gap-4">
                         <div>
-                            <h3 className="text-lg font-bold text-slate-900 dark:text-white dark:text-white">Build Config</h3>
+                            <h3 className="text-lg font-bold text-slate-900 dark:text-white dark:text-white">{t("diy.step4flash.lbl.build_config")}</h3>
                             <p className="mt-1 text-sm text-slate-600 dark:text-slate-400 dark:text-slate-400">
-                                This is the exported JSON generated from the SVG mapping and stored on the server as the build source of truth.
+                                {t("diy.step4flash.build_config.desc")}
                             </p>
                         </div>
                         <span className="rounded-full border border-border-light dark:border-border-dark px-3 py-1 font-mono text-[11px] uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400 dark:border-slate-800 dark:text-slate-400">
@@ -446,7 +442,7 @@ export function Step4Flash({
                                 <span className="material-symbols-outlined text-sm text-yellow-500">description</span>
                                 device_config.json
                             </span>
-                            <span className="text-[10px] text-gray-500 uppercase font-semibold">Read Only</span>
+                            <span className="text-[10px] text-gray-500 uppercase font-semibold">{t("diy.step4flash.lbl.read_only")}</span>
                         </div>
                         <div className="max-h-[340px] overflow-auto p-4">
                             <pre className="font-mono text-xs leading-6 text-slate-200 whitespace-pre-wrap">
@@ -458,7 +454,6 @@ export function Step4Flash({
                 </div>
             </div>
 
-            {/* Stage 2: Console Output */}
             <div className="w-full min-w-0 lg:mt-2 lg:-mx-2 lg:w-[calc(100%+16px)]">
                 <div className="rounded-xl border border-border-light dark:border-border-dark bg-slate-950 overflow-hidden shadow-2xl dark:border-slate-800">
                     <div className="bg-slate-900 px-4 py-2 border-b border-slate-800 flex items-center justify-between">
@@ -469,40 +464,38 @@ export function Step4Flash({
                         </div>
                         <div className="flex items-center gap-3">
                             <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono uppercase tracking-widest">
-                                Console Output
+                                {t("diy.step4flash.console.title")}
                             </span>
                             <button
                                 onClick={onRefreshBuild}
                                 disabled={!serverBuild.jobId}
                                 className="text-xs font-semibold text-primary disabled:cursor-not-allowed disabled:opacity-50"
                             >
-                                Refresh
+                                {t("diy.step4flash.btn.refresh")}
                             </button>
                         </div>
                     </div>
 
-                    {/* Status banner strip */}
                     {serverBuild.status === "artifact_ready" && (
                         <div className="flex items-center gap-2 border-b border-emerald-800/40 bg-emerald-950/60 px-4 py-2 text-xs font-semibold text-emerald-300">
                             <span className="material-symbols-outlined text-base text-emerald-400">check_circle</span>
-                            Build succeeded — .bin artifact is ready for download.
+                            <span className="font-medium">{t("diy.step4flash.console.success")}</span>
                         </div>
                     )}
                     {serverBuild.status === "build_failed" && (
                         <div className="flex items-start gap-2 border-b border-rose-800/40 bg-rose-950/60 px-4 py-2 text-xs font-semibold text-rose-300">
                             <span className="material-symbols-outlined text-base text-rose-400">error</span>
                             <span>
-                                Build failed.
-                                {serverBuild.errorMessage
-                                    ? ` ${serverBuild.errorMessage}`
-                                    : " Inspect the log below for details."}
+                                <span className="font-medium">{t("diy.step4flash.console.failed")}</span>
+                                <span className="text-slate-400 text-xs ml-2">{t("diy.step4flash.console.inspect_log")}</span>
+                                {serverBuild.errorMessage && <div className="mt-1">{serverBuild.errorMessage}</div>}
                             </span>
                         </div>
                     )}
                     {(serverBuild.status === "building" || serverBuild.status === "queued") && (
                         <div className="flex items-center gap-2 border-b border-amber-800/40 bg-amber-950/40 px-4 py-2 text-xs font-semibold text-amber-300">
                             <span className="material-symbols-outlined animate-spin text-base text-amber-400">progress_activity</span>
-                            {serverBuild.status === "queued" ? "Build queued on server…" : "Build in progress — logs are streaming live…"}
+                            {serverBuild.status === "queued" ? t("diy.step4flash.console.queued") : t("diy.step4flash.console.in_progress")}
                         </div>
                     )}
 
@@ -511,33 +504,31 @@ export function Step4Flash({
                         className="h-[520px] overflow-y-auto p-4 font-mono text-sm bg-black/40"
                     >
                         <pre className="whitespace-pre-wrap text-slate-300">
-                            {serverBuild.logs ||
-                                "Build logs will stream here after the server build starts.\n\nUse this console to inspect PlatformIO output, warnings, and generated artifact status."}
+                            {serverBuild.logs || t("diy.step4flash.console.empty_logs")}
                         </pre>
                     </div>
                     <div className="border-t border-slate-800 px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
                         {board.family === "ESP8266"
-                            ? `ESP8266 server builds currently expose firmware.bin only at ${toHex(getSingleBinaryOffset(board))}.`
+                            ? t("diy.step4flash.console.esp8266_info").replace("{offset}", toHex(getSingleBinaryOffset(board)))
                             : boardRequiresFullFlashBundle(board)
-                                ? `ESP32-family server builds expose a full flash bundle: bootloader @ ${toHex(getFullBundleBootloaderOffset(board))}, partitions @ 0x8000, boot_app0 @ 0xE000, firmware @ 0x10000.`
-                                : `Server builds currently expose the application binary at ${toHex(getSingleBinaryOffset(board))}.`}
+                                ? t("diy.step4flash.console.esp32_info").replace("{bootloader_offset}", toHex(getFullBundleBootloaderOffset(board)))
+                                : t("diy.step4flash.console.other_info").replace("{offset}", toHex(getSingleBinaryOffset(board)))}
                     </div>
                     </div>
             </div>
 
-            {/* Stage 3: Flashing */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1.1fr] mt-2">
                 <div className="flex flex-col gap-6 min-w-0">
                     <div className="rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
                     <div className="flex flex-col gap-2">
-                        <h3 className="text-lg font-bold text-slate-900 dark:text-white dark:text-white">Serial Coordination</h3>
-                        <p className="text-sm text-slate-600 dark:text-slate-400 dark:text-slate-400">
-                            Successful server builds release the saved serial reservation automatically and close any stale in-page flasher session. If another serial session still holds this port, release it here before flashing.
+                        <h3 className="text-lg font-bold text-slate-900 dark:text-white dark:text-white">{t("diy.step4flash.lbl.serial_coordination")}</h3>
+                        <p className="text-sm text-slate-500 mb-4">
+                            {t("diy.step4flash.serial.desc")}
                         </p>
                     </div>
 
                     <label htmlFor="serial-port-label" className="mt-5 flex flex-col gap-2">
-                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-300 dark:text-slate-300">Port label</span>
+                        <span className="text-sm font-semibold text-slate-700 dark:text-slate-300 dark:text-slate-300">{t("diy.step4flash.lbl.port_label")}</span>
                         <input
                             id="serial-port-label"
                             name="serialPort"
@@ -555,7 +546,7 @@ export function Step4Flash({
                             className="inline-flex items-center gap-2 rounded-lg border border-border-light dark:border-border-dark px-4 py-2.5 text-sm font-semibold text-slate-600 dark:text-slate-400 transition-colors hover:bg-slate-100 dark:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
                         >
                             <span className="material-symbols-outlined text-base">sync</span>
-                            Refresh Status
+                            {t("diy.step4flash.serial.refresh")}
                         </button>
                         <button
                             onClick={onReleaseSerialLock}
@@ -563,7 +554,7 @@ export function Step4Flash({
                             className="inline-flex items-center gap-2 rounded-lg border border-border-light dark:border-border-dark px-4 py-2.5 text-sm font-semibold text-slate-600 dark:text-slate-400 transition-colors hover:bg-slate-100 dark:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800"
                         >
                             <span className="material-symbols-outlined text-base">lock_open</span>
-                            Release
+                            {t("diy.step4flash.serial.release")}
                         </button>
                     </div>
 
@@ -572,11 +563,11 @@ export function Step4Flash({
                             ? "border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-300"
                             : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/20 dark:bg-emerald-500/10 dark:text-emerald-300"
                     }`}>
-                        <p className="font-semibold">{serialLocked ? "Port busy" : "Port free"}</p>
+                        <p className="font-semibold">{serialLocked ? t("diy.step4flash.serial.busy") : t("diy.step4flash.serial.free")}</p>
                         <p className="mt-1">{serialMessage}</p>
                         {serialJobId && (
                             <p className="mt-2 font-mono text-xs uppercase tracking-[0.18em]">
-                                build {serialJobId.slice(0, 8)}
+                                {t("diy.step4flash.lbl.job").replace("{id}", serialJobId.slice(0, 8))}
                             </p>
                         )}
                     </div>
@@ -593,10 +584,10 @@ export function Step4Flash({
                 </div>
                 <div className="flex flex-col gap-6 min-w-0">
                     <div className="rounded-xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900/50">
-                    <h3 className="text-lg font-bold text-slate-900 dark:text-white dark:text-white">Web Flasher</h3>
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-white dark:text-white">{t("diy.step4flash.lbl.web_flasher")}</h3>
                     <div className="mt-4 rounded-xl border border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 p-4 text-sm text-slate-600 dark:text-slate-400 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400">
-                        <p className="mb-2">
-                            Ensure your device is connected via USB. The browser asks for serial permission only after the server-side guardrails confirm the manifest is ready and the port is no longer occupied.
+                        <p className="text-sm text-slate-500 mb-4">
+                            {t("diy.step4flash.flasher.desc")}
                         </p>
                         <label htmlFor="erase-all-flash" className="mt-4 flex cursor-pointer items-center gap-3">
                             <input
@@ -608,7 +599,7 @@ export function Step4Flash({
                                 className="h-5 w-5 cursor-pointer rounded border-slate-300 dark:border-slate-600 text-primary focus:ring-primary dark:border-slate-700 dark:bg-slate-900"
                             />
                             <span className="font-medium text-slate-700 dark:text-slate-300 dark:text-slate-300">
-                                Erase all flash before installing
+                                {t("diy.step4flash.lbl.erase_first")}
                             </span>
                         </label>
                     </div>
@@ -628,10 +619,11 @@ export function Step4Flash({
                                     className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition-colors hover:bg-emerald-500"
                                 >
                                     <span className="material-symbols-outlined text-base">usb</span>
-                                    Open Web Flasher
+                                    {t("diy.step4flash.btn.open_flasher")}
                                 </button>
-                                <p className="text-center text-xs text-emerald-800 dark:text-emerald-200">
-                                    The hidden ESP Web Tools element is remounted after each successful server build so the next flash starts from a fresh browser session.
+                                <p className="text-xs text-slate-400 mt-4 flex items-start">
+                                    <span className="material-symbols-outlined text-sm mr-1.5 flex-shrink-0 mt-0.5">info</span>
+                                    <span>{t("diy.step4flash.flasher.remount_info")}</span>
                                 </p>
                                 <div className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0" aria-hidden="true">
                                     <esp-web-install-button
@@ -648,7 +640,7 @@ export function Step4Flash({
                                     download="manifest.json"
                                     className="text-center text-xs text-slate-500 dark:text-slate-400 transition-colors hover:text-primary hover:underline"
                                 >
-                                    Download Generated Manifest
+                                    {t("diy.step4flash.btn_download_manifest")}
                                 </a>
                             )}
                         </div>
@@ -662,7 +654,7 @@ export function Step4Flash({
                     onClick={onBack}
                     className="rounded-lg border border-border-light dark:border-border-dark px-6 py-2.5 font-bold text-slate-600 dark:text-slate-400 transition-colors hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-800 dark:text-slate-400 dark:hover:bg-slate-800"
                 >
-                    Back to Validation
+                    {t("diy.step4flash.btn_back_validation")}
                 </button>
 
                 {flasherClosed && (
@@ -670,7 +662,7 @@ export function Step4Flash({
                         onClick={onOpenDevices}
                         className="flex items-center gap-2 rounded-lg bg-primary px-6 py-2.5 font-bold text-white shadow-sm transition-colors hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 dark:focus:ring-offset-slate-900"
                     >
-                        Open Devices
+                        {t("diy.step4flash.btn_open_devices")}
                         <span className="material-symbols-outlined text-sm">arrow_forward</span>
                     </button>
                 )}
@@ -680,12 +672,15 @@ export function Step4Flash({
 }
 
 function getReadinessModel({
+    t,
     board,
     flashSource,
     manifestUrl,
     flashLockedReason,
     serverBuildStatus,
 }: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    t: (key: string, options?: any) => string;
     board: BoardProfile;
     flashSource: FlashSource;
     manifestUrl: string | null;
@@ -696,9 +691,9 @@ function getReadinessModel({
         return {
             progress: 100,
             theme: "green" as const,
-            headline: "Flash completed",
-            detail: "The server artifact has already been flashed successfully.",
-            subline: "Firmware handoff complete",
+            headline: t("diy.step4flash.readiness.flashed.headline"),
+            detail: t("diy.step4flash.readiness.flashed.detail"),
+            subline: t("diy.step4flash.readiness.flashed.subline"),
         };
     }
 
@@ -710,37 +705,37 @@ function getReadinessModel({
                 return {
                     progress: 32,
                     theme: "blue" as const,
-                    headline: "Build queued on the server",
-                    detail: "The persisted SVG config has been accepted and is waiting for compilation.",
-                    subline: "Waiting for PlatformIO worker",
+                    headline: t("diy.step4flash.readiness.queued.headline"),
+                    detail: t("diy.step4flash.readiness.queued.detail"),
+                    subline: t("diy.step4flash.readiness.queued.subline"),
                 };
             case "building":
                 return {
                     progress: 64,
                     theme: "blue" as const,
-                    headline: "Building firmware on the server",
-                    detail: "The current GPIO config is being converted into firmware and durable artifacts.",
-                    subline: "Compiling generated code",
+                    headline: t("diy.step4flash.readiness.building.headline"),
+                    detail: t("diy.step4flash.readiness.building.detail"),
+                    subline: t("diy.step4flash.readiness.building.subline"),
                 };
             case "artifact_ready":
                 if (manifestUrl && !flashLockedReason) {
                     return {
                         progress: 100,
                         theme: "green" as const,
-                        headline: "Ready for web flashing",
-                        detail: "Artifact, manifest, and serial access are all in place. You can open the browser flasher below.",
-                        subline: "Port free for browser flashing",
+                        headline: t("diy.step4flash.readiness.ready.headline"),
+                        detail: t("diy.step4flash.readiness.ready.detail"),
+                        subline: t("diy.step4flash.readiness.ready.subline"),
                     };
                 }
 
                 return {
                     progress: 82,
                     theme: "blue" as const,
-                    headline: "Artifact ready",
-                    detail: flashLockedReason || "The server flash artifacts are ready. Clear any lingering serial session to unlock browser flashing.",
+                    headline: t("diy.step4flash.readiness.artifact.headline"),
+                    detail: flashLockedReason || t("diy.step4flash.readiness.artifact.detail"),
                     subline: boardRequiresFullFlashBundle(board)
-                        ? "Bundle ready for clean flashing"
-                        : `Binary ready at ${toHex(getSingleBinaryOffset(board))}`,
+                        ? t("diy.step4flash.readiness.artifact.subline_full")
+                        : t("diy.step4flash.readiness.artifact.subline_binary").replace("{offset}", toHex(getSingleBinaryOffset(board))),
                 };
             case "build_failed":
             case "flash_failed":
@@ -748,9 +743,9 @@ function getReadinessModel({
                 return {
                     progress: 18,
                     theme: "red" as const,
-                    headline: "Action required",
-                    detail: flashLockedReason || "Inspect the build log, adjust the config, then retry the server build.",
-                    subline: "Build pipeline blocked",
+                    headline: t("diy.step4flash.readiness.error.headline"),
+                    detail: flashLockedReason || t("diy.step4flash.readiness.error.detail2"),
+                    subline: t("diy.step4flash.readiness.error.subline"),
                 };
             default:
                 break;
@@ -761,9 +756,9 @@ function getReadinessModel({
         return {
             progress: 100,
             theme: "green" as const,
-            headline: "Ready for web flashing",
-            detail: "The selected firmware bundle is ready and the serial port is free.",
-            subline: "Manifest and port ready",
+            headline: t("diy.step4flash.readiness.ready.headline"),
+            detail: t("diy.step4flash.readiness.ready.detail2"),
+            subline: t("diy.step4flash.readiness.ready.subline2"),
         };
     }
 
@@ -771,17 +766,17 @@ function getReadinessModel({
         return {
             progress: 76,
             theme: "blue" as const,
-            headline: "Firmware bundle prepared",
-            detail: flashLockedReason || "Clear the active serial session to continue to the browser flasher.",
-            subline: "Waiting for serial coordination",
+            headline: t("diy.step4flash.readiness.prepared.headline"),
+            detail: flashLockedReason || t("diy.step4flash.readiness.prepared.detail"),
+            subline: t("diy.step4flash.readiness.prepared.subline"),
         };
     }
 
     return {
         progress: 22,
         theme: "blue" as const,
-        headline: "Prepare the firmware bundle",
-        detail: flashLockedReason || "Choose a website-managed source, export the config if needed, then prepare a flashable manifest.",
-        subline: "No flashable manifest yet",
+        headline: t("diy.step4flash.readiness.not_ready.headline"),
+        detail: flashLockedReason || t("diy.step4flash.readiness.not_ready.detail"),
+        subline: t("diy.step4flash.readiness.not_ready.subline"),
     };
 }

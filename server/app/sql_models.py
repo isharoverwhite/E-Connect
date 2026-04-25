@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
 
-from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime, Text, ForeignKey, Enum, TIMESTAMP, UniqueConstraint, Index, Float
+from sqlalchemy import Column, Integer, String, Boolean, JSON, DateTime, Text, ForeignKey, Enum, TIMESTAMP, UniqueConstraint, Index, Float, text
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from .database import Base
@@ -80,7 +80,7 @@ class User(Base):
     username = Column(String(100), nullable=False, unique=True)
     authentication = Column(String(255), nullable=False) # hashed_password
     account_type = Column(Enum(AccountType), default=AccountType.parent)
-    ui_layout = Column(JSON, comment='Lưu cấu hình Grid Layout cá nhân của từng user')
+    language = Column(String(5), nullable=False, default="en", server_default=text("'en'"))
     created_at = Column(TIMESTAMP, server_default=func.now())
 
     rooms = relationship("Room", back_populates="user")

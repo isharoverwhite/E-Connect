@@ -6,7 +6,6 @@ import { FormEvent, useEffect, useEffectEvent, useState } from "react";
 
 
 import { useAuth } from "@/components/AuthProvider";
-import { useWebSocket } from "@/hooks/useWebSocket";
 import {
     ManagedUser,
     adminCreateUser,
@@ -17,10 +16,8 @@ import {
 } from "@/lib/auth";
 import {
     GeneralSettingsResponse,
-    RuntimeNetworkInfo,
     fetchDashboardDevices,
     fetchGeneralSettings,
-    fetchRuntimeNetworkInfo,
     updateGeneralSettings,
 } from "@/lib/api";
 import { hasDhtSensor } from "@/lib/device-config";
@@ -46,15 +43,15 @@ function formatAccountTypeLabel(accountType?: string | null) {
     return accountType === "admin" ? "admin" : "user";
 }
 
-function formatTimezoneSourceLabel(settings: GeneralSettingsResponse | null): string {
+function formatTimezoneSourceLabel(settings: GeneralSettingsResponse | null, t: (key: string) => string): string {
     if (!settings) {
-        return "Unknown";
+        return t("settings.timezone.source.unknown");
     }
 
     if (settings.timezone_source === "setting") {
-        return "Saved override";
+        return t("settings.timezone.source.saved");
     }
-    return "Current runtime timezone";
+    return t("settings.timezone.source.runtime");
 }
 
 function formatServerTimePreview(value?: string | null, timezone?: string | null): string {
@@ -105,9 +102,6 @@ export default function SettingsPage() {
     const [temperatureSourceLoading, setTemperatureSourceLoading] = useState(true);
     const [temperatureSourceError, setTemperatureSourceError] = useState("");
     const [temperatureSourceSaving, setTemperatureSourceSaving] = useState(false);
-    const [runtimeNetwork, setRuntimeNetwork] = useState<RuntimeNetworkInfo | null>(null);
-    const [networkLoading, setNetworkLoading] = useState(true);
-    const [networkError, setNetworkError] = useState("");
     const [roomFormName, setRoomFormName] = useState("");
     const [createRoomNameError, setCreateRoomNameError] = useState("");
     const [userFormErrors, setUserFormErrors] = useState<Record<string, string>>({});
@@ -122,12 +116,15 @@ export default function SettingsPage() {
         return true; // Default enabled
     });
     const [roomActionId, setRoomActionId] = useState<number | null>(null);
+    const [deleteRoomTarget, setDeleteRoomTarget] = useState<RoomRecord | null>(null);
+    const [isCreatingArea, setIsCreatingArea] = useState(false);
     const [notice, setNotice] = useState("");
     const [submitError, setSubmitError] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [actionUserId, setActionUserId] = useState<number | null>(null);
     const [revokeModalTarget, setRevokeModalTarget] = useState<ManagedUser | null>(null);
     const [promoteModalTarget, setPromoteModalTarget] = useState<ManagedUser | null>(null);
+    const [devices, setDevices] = useState<DeviceConfig[]>([]);
     const [formState, setFormState] = useState({
         fullname: "",
         username: "",
@@ -135,25 +132,6 @@ export default function SettingsPage() {
         account_type: "parent" as AccountType,
     });
     const assignableUsers = managedUsers.filter((entry) => entry.account_type !== "admin");
-
-    useWebSocket((event) => {
-        if (event.type === "system_metrics" && event.payload) {
-            const metrics = event.payload as Record<string, unknown>;
-            if (typeof metrics.cpu_percent === 'number' && typeof metrics.memory_used === 'number' && typeof metrics.memory_total === 'number') {
-                setRuntimeNetwork((prev) => {
-                    if (!prev) return prev;
-                    return {
-                        ...prev,
-                        cpu_percent: metrics.cpu_percent as number,
-                        memory_used: metrics.memory_used as number,
-                        memory_total: metrics.memory_total as number,
-                        storage_used: metrics.storage_used as number,
-                        storage_total: metrics.storage_total as number
-                    };
-                });
-            }
-        }
-    });
 
     useEffect(() => {
         setActivePanel("general");
@@ -168,7 +146,7 @@ export default function SettingsPage() {
 
         const token = getToken();
         if (!token) {
-            setUsersError("Missing session token. Please sign in again.");
+            setUsersError(t("settings.error.missing_token"));
             setUsersLoading(false);
             return;
         }
@@ -196,7 +174,7 @@ export default function SettingsPage() {
 
         const token = getToken();
         if (!token) {
-            setRoomsError("Missing session token. Please sign in again.");
+            setRoomsError(t("settings.error.missing_token"));
             setRoomsLoading(false);
             return;
         }
@@ -207,6 +185,8 @@ export default function SettingsPage() {
         try {
             const data = await fetchRooms(token);
             setRooms(data);
+            const devs = await fetchDashboardDevices();
+            setDevices(devs as DeviceConfig[]);
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to load areas";
             setRoomsError(message);
@@ -228,7 +208,7 @@ export default function SettingsPage() {
         const token = getToken();
         if (!token) {
             setGeneralSettings(null);
-            setGeneralSettingsError("Missing session token. Please sign in again.");
+            setGeneralSettingsError(t("settings.error.missing_token"));
             setGeneralSettingsLoading(false);
             return;
         }
@@ -282,38 +262,6 @@ export default function SettingsPage() {
         }
     }
 
-    async function loadRuntimeNetworkInfo() {
-        if (!isAdmin) {
-            setRuntimeNetwork(null);
-            setNetworkError("");
-            setNetworkLoading(false);
-            return;
-        }
-
-        const token = getToken();
-        if (!token) {
-            setRuntimeNetwork(null);
-            setNetworkError("Missing session token. Please sign in again.");
-            setNetworkLoading(false);
-            return;
-        }
-
-        setNetworkLoading(true);
-        setNetworkError("");
-
-        try {
-            const data = await fetchRuntimeNetworkInfo(token);
-            setRuntimeNetwork(data);
-        } catch (error) {
-            const message =
-                error instanceof Error ? error.message : "Failed to load runtime network targets";
-            setRuntimeNetwork(null);
-            setNetworkError(message);
-        } finally {
-            setNetworkLoading(false);
-        }
-    }
-
     const loadManagedUsersForEffect = useEffectEvent(() => {
         void loadManagedUsers();
     });
@@ -330,15 +278,10 @@ export default function SettingsPage() {
         void loadTemperatureSourceOptions();
     });
 
-    const loadRuntimeNetworkForEffect = useEffectEvent(() => {
-        void loadRuntimeNetworkInfo();
-    });
-
     useEffect(() => {
         if (isAdmin && activePanel === "general") {
             loadGeneralSettingsForEffect();
             loadTemperatureSourceOptionsForEffect();
-            loadRuntimeNetworkForEffect();
         }
 
         if (activePanel === "users" || activePanel === "rooms") {
@@ -355,19 +298,19 @@ export default function SettingsPage() {
 
         const errors: Record<string, string> = {};
         if (!formState.username.trim()) {
-            errors.username = "Username is required.";
+            errors.username = t("settings.error.username_required");
         } else if (formState.username.trim().length < 3) {
-            errors.username = "Username minimally 3 characters.";
+            errors.username = t("settings.error.username_length");
         }
 
         if (!formState.fullname.trim()) {
-            errors.fullname = "Full name is required.";
+            errors.fullname = t("settings.error.fullname_required");
         }
         
         if (!formState.password) {
-            errors.password = "Password is required.";
+            errors.password = t("settings.error.password_required");
         } else if (formState.password.length < 8) {
-            errors.password = "Password minimally 8 characters.";
+            errors.password = t("settings.error.password_length");
         }
 
         if (Object.keys(errors).length > 0) {
@@ -377,7 +320,7 @@ export default function SettingsPage() {
 
         const token = getToken();
         if (!token) {
-            setSubmitError("Missing session token. Please sign in again.");
+            setSubmitError(t("settings.error.missing_token"));
             return;
         }
 
@@ -390,7 +333,6 @@ export default function SettingsPage() {
                     username: formState.username,
                     password: formState.password,
                     account_type: formState.account_type,
-                    ui_layout: {},
                 },
                 token,
             );
@@ -401,7 +343,7 @@ export default function SettingsPage() {
                 password: "",
                 account_type: "parent" as AccountType,
             });
-            setNotice(`Created ${createdUser.username}. The account is active immediately.`);
+            setNotice(t("settings.notice.user_created").replace("{username}", createdUser.username));
             await loadManagedUsers();
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to create user";
@@ -414,7 +356,7 @@ export default function SettingsPage() {
     async function handleStatusChange(targetUser: ManagedUser, action: "revoke" | "promote") {
         const token = getToken();
         if (!token) {
-            setUsersError("Missing session token. Please sign in again.");
+            setUsersError(t("settings.error.missing_token"));
             return;
         }
 
@@ -442,11 +384,11 @@ export default function SettingsPage() {
 
             if (action === "promote") {
                 setNotice("");
-                const newRole = updatedUser.account_type === "admin" ? "Admin" : "User";
-                showToast(`Changed ${updatedUser.username} role to ${newRole}.`, "success");
+                const newRole = updatedUser.account_type === "admin" ? t("settings.users.form.role.admin") : t("settings.users.form.role.user");
+                showToast(t("settings.toast.role_changed").replace("{username}", updatedUser.username).replace("{role}", newRole), "success");
             } else {
                 setNotice("");
-                showToast(`Deleted ${targetUser.username}. Their account has been removed.`, "success");
+                showToast(t("settings.toast.user_deleted").replace("{username}", targetUser.username), "success");
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : `Failed to ${action} user`;
@@ -483,7 +425,7 @@ export default function SettingsPage() {
                 current.map((r) => (r.room_id === room.room_id ? updatedRoom : r))
             );
             
-            showToast(`Area access updated.`, "success");
+            showToast(t("settings.toast.area_access_updated"), "success");
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to update area access";
             setRoomsError(message);
@@ -500,12 +442,12 @@ export default function SettingsPage() {
 
         const token = getToken();
         if (!token) {
-            setRoomsError("Missing session token. Please sign in again.");
+            setRoomsError(t("settings.error.missing_token"));
             return;
         }
 
         if (!roomFormName.trim()) {
-            setCreateRoomNameError("Please enter an area name.");
+            setCreateRoomNameError(t("settings.error.area_name_required"));
             return;
         }
 
@@ -523,7 +465,7 @@ export default function SettingsPage() {
                 [...currentRooms, createdRoom].sort((left, right) => left.name.localeCompare(right.name)),
             );
             setRoomFormName("");
-            setNotice(`Created area ${createdRoom.name}.`);
+            setNotice(t("settings.notice.area_created").replace("{name}", createdRoom.name));
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to create area";
             setRoomsError(message);
@@ -540,7 +482,7 @@ export default function SettingsPage() {
 
         const token = getToken();
         if (!token) {
-            setRoomsError("Missing session token. Please sign in again.");
+            setRoomsError(t("settings.error.missing_token"));
             return;
         }
 
@@ -554,7 +496,7 @@ export default function SettingsPage() {
             setRooms((currentRooms) =>
                 currentRooms.map((entry) => (entry.room_id === updatedRoom.room_id ? updatedRoom : entry)),
             );
-            setNotice(`Renamed area to ${updatedRoom.name}.`);
+            setNotice(t("settings.notice.area_renamed").replace("{name}", updatedRoom.name));
             setEditingRoomId(null);
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to update area";
@@ -569,7 +511,7 @@ export default function SettingsPage() {
 
         const token = getToken();
         if (!token) {
-            setRoomsError("Missing session token. Please sign in again.");
+            setRoomsError(t("settings.error.missing_token"));
             return;
         }
 
@@ -581,7 +523,7 @@ export default function SettingsPage() {
             await deleteRoom(roomId, token);
 
             setRooms((currentRooms) => currentRooms.filter((entry) => entry.room_id !== roomId));
-            setNotice("Area deleted.");
+            setNotice(t("settings.toast.area_deleted"));
         } catch (error) {
             const message = error instanceof Error ? error.message : "Failed to delete area";
             setRoomsError(message);
@@ -599,7 +541,7 @@ export default function SettingsPage() {
 
         const token = getToken();
         if (!token) {
-            setGeneralSettingsError("Missing session token. Please sign in again.");
+            setGeneralSettingsError(t("settings.error.missing_token"));
             return;
         }
 
@@ -609,7 +551,7 @@ export default function SettingsPage() {
             generalSettings &&
             !generalSettings.timezone_options.includes(normalizedDraft)
         ) {
-            setGeneralSettingsError("Select a timezone from the supported Wikipedia-based IANA timezone list.");
+            setGeneralSettingsError(t("settings.error.timezone_invalid"));
             return;
         }
 
@@ -625,8 +567,8 @@ export default function SettingsPage() {
             setTimezoneDraft(nextSettings.configured_timezone ?? "");
             showToast(
                 normalizedDraft
-                    ? `Server timezone updated to ${nextSettings.effective_timezone}.`
-                    : `Server timezone reset to ${nextSettings.effective_timezone}.`,
+                    ? t("settings.toast.server_timezone_updated").replace("{timezone}", nextSettings.effective_timezone || "")
+                    : t("settings.toast.server_timezone_reset").replace("{timezone}", nextSettings.effective_timezone || ""),
                 "success",
             );
         } catch (error) {
@@ -647,7 +589,7 @@ export default function SettingsPage() {
 
         const token = getToken();
         if (!token) {
-            setTemperatureSourceError("Missing session token. Please sign in again.");
+            setTemperatureSourceError(t("settings.error.missing_token"));
             return;
         }
 
@@ -656,7 +598,7 @@ export default function SettingsPage() {
             normalizedDraft &&
             !temperatureSourceOptions.some((option) => option.device_id === normalizedDraft)
         ) {
-            setTemperatureSourceError("Select a board that already reports DHT temperature data.");
+            setTemperatureSourceError(t("settings.error.board_invalid"));
             return;
         }
 
@@ -672,8 +614,8 @@ export default function SettingsPage() {
             setHouseTemperatureDeviceDraft(nextSettings.house_temperature_device_id ?? "");
             showToast(
                 nextSettings.house_temperature_device_name
-                    ? `House temperature now follows ${nextSettings.house_temperature_device_name}.`
-                    : "House temperature block disabled.",
+                    ? t("settings.toast.house_climate_updated").replace("{name}", nextSettings.house_temperature_device_name)
+                    : t("settings.toast.house_climate_disabled"),
                 "success",
             );
         } catch (error) {
@@ -785,92 +727,81 @@ export default function SettingsPage() {
                         ) : null}
 
                         {activePanel === "general" ? (
-                            <div className="grid gap-6">
-                                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
-                                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                                        <div>
-                                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.appearance.label")}</p>
-                                            <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.appearance.title")}</h2>
-                                            <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                                                {t("settings.appearance.description")}
-                                            </p>
-                                        </div>
-                                        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                                            <div className="border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-800">
-                                                <ThemeToggle />
-                                            </div>
+                            <div className="grid gap-6 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+                                <section className="flex flex-col justify-between rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                    <div>
+                                        <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.appearance.label")}</p>
+                                        <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">{t("settings.appearance.title")}</h2>
+                                        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                                            {t("settings.appearance.description")}
+                                        </p>
+                                    </div>
+                                    <div className="mt-6 border border-slate-200 dark:border-slate-700 rounded-lg bg-slate-50 dark:bg-slate-800">
+                                        <ThemeToggle />
+                                    </div>
+                                </section>
+
+                                <section className="flex flex-col justify-between rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                    <div>
+                                        <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.language.label")}</p>
+                                        <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">{t("settings.language.title")}</h2>
+                                        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                                            {t("settings.language.description")}
+                                        </p>
+                                    </div>
+                                    <div className="mt-6 relative">
+                                        <select
+                                            className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-surface-dark dark:text-white"
+                                            value={language}
+                                            onChange={(e) => setLanguage(e.target.value as "en" | "vi")}
+                                        >
+                                            <option value="en">{t("lang.en")}</option>
+                                            <option value="vi">{t("lang.vi")}</option>
+                                        </select>
+                                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-slate-500 dark:text-slate-400">
+                                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
                                         </div>
                                     </div>
                                 </section>
 
-                                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
-                                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                                        <div>
-                                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.language.label")}</p>
-                                            <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.language.title")}</h2>
-                                            <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                                                {t("settings.language.description")}
-                                            </p>
-                                        </div>
-                                        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                                            <div className="relative">
-                                                <select
-                                                    className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-surface-dark dark:text-white"
-                                                    value={language}
-                                                    onChange={(e) => setLanguage(e.target.value as "en" | "vi")}
-                                                >
-                                                    <option value="en">{t("lang.en")}</option>
-                                                    <option value="vi">{t("lang.vi")}</option>
-                                                </select>
-                                                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3 text-slate-500 dark:text-slate-400">
-                                                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path></svg>
-                                                </div>
-                                            </div>
-                                        </div>
+                                <section className="flex flex-col justify-between rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                    <div>
+                                        <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.navigation.label")}</p>
+                                        <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">{t("settings.navigation.title")}</h2>
+                                        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                                            {t("settings.navigation.description")}
+                                        </p>
                                     </div>
-                                </section>
-
-                                <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
-                                    <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                                        <div>
-                                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.navigation.label")}</p>
-                                            <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.navigation.title")}</h2>
-                                            <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                                                {t("settings.navigation.description")}
-                                            </p>
-                                        </div>
-                                        <div className="w-full md:w-64 mt-4 md:mt-0 flex-shrink-0">
-                                            <div className="flex items-center justify-end h-full">
-                                                <label className="relative inline-flex items-center cursor-pointer cursor-allowed">
-                                                    <input
-                                                        type="checkbox"
-                                                        className="sr-only peer"
-                                                        checked={hoverToExpandSidebar}
-                                                        onChange={(e) => {
-                                                            const val = e.target.checked;
-                                                            setHoverToExpandSidebar(val);
-                                                            try { localStorage.setItem("hoverToExpandSidebar", String(val)); } catch {}
-                                                            // We could dispatch an event to let Sidebar know immediately, but a page reload is usually expected, or we can use a custom event.
-                                                            if (typeof window !== "undefined") {
-                                                                window.dispatchEvent(new Event("sidebarHoverSettingChanged"));
-                                                            }
-                                                        }}
-                                                    />
-                                                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-primary"></div>
-                                                </label>
-                                            </div>
-                                        </div>
+                                    <div className="mt-6 flex items-center">
+                                        <label className="relative inline-flex items-center cursor-pointer cursor-allowed">
+                                            <input
+                                                type="checkbox"
+                                                className="sr-only peer"
+                                                checked={hoverToExpandSidebar}
+                                                onChange={(e) => {
+                                                    const val = e.target.checked;
+                                                    setHoverToExpandSidebar(val);
+                                                    try { localStorage.setItem("hoverToExpandSidebar", String(val)); } catch {}
+                                                    // We could dispatch an event to let Sidebar know immediately, but a page reload is usually expected, or we can use a custom event.
+                                                    if (typeof window !== "undefined") {
+                                                        window.dispatchEvent(new Event("sidebarHoverSettingChanged"));
+                                                    }
+                                                }}
+                                            />
+                                            <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-primary"></div>
+                                        </label>
+                                        <span className="ml-3 text-sm font-medium text-slate-900 dark:text-white">{t("settings.navigation.enable")}</span>
                                     </div>
                                 </section>
 
                                 {isAdmin ? (
-                                    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                    <section className="md:col-span-2 lg:col-span-3 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
                                         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                                             <div>
-                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Timezone</p>
-                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Server timezone</h2>
+                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.timezone.label")}</p>
+                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.timezone.title")}</h2>
                                                 <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                                                    Save an optional timezone override for the server. This panel only shows the timezone currently active at runtime.
+                                                    {t("settings.timezone.description")}
                                                 </p>
                                             </div>
                                         </div>
@@ -883,27 +814,27 @@ export default function SettingsPage() {
 
                                         {generalSettingsLoading ? (
                                             <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-400">
-                                                Loading server timezone settings...
+                                                {t("settings.timezone.loading")}
                                             </div>
                                         ) : generalSettings ? (
                                             <div className="mt-6 space-y-6">
                                                 <div className="grid gap-4 md:grid-cols-2">
                                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Current Timezone</p>
+                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{t("settings.timezone.current")}</p>
                                                         <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{generalSettings.effective_timezone}</p>
-                                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{formatTimezoneSourceLabel(generalSettings)}</p>
+                                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{formatTimezoneSourceLabel(generalSettings, t)}</p>
                                                     </div>
                                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Current Server Time</p>
+                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{t("settings.timezone.server_time")}</p>
                                                         <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{formatServerTimePreview(generalSettings.current_server_time, generalSettings.effective_timezone)}</p>
-                                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Preview of the active runtime timezone.</p>
+                                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t("settings.timezone.preview_desc")}</p>
                                                     </div>
                                                 </div>
 
                                                 <form className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900/80" onSubmit={handleSaveTimezone}>
                                                     <div>
                                                         <label htmlFor="server-timezone" className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                                                            Timezone override
+                                                            {t("settings.timezone.override")}
                                                         </label>
                                                         <select
                                                             id="server-timezone"
@@ -911,7 +842,7 @@ export default function SettingsPage() {
                                                             onChange={(event) => setTimezoneDraft(event.target.value)}
                                                             className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                                                         >
-                                                            <option value="">Use current runtime timezone</option>
+                                                            <option value="">{t("settings.timezone.use_runtime")}</option>
                                                             {generalSettings.timezone_options.map((timezone) => (
                                                                 <option key={timezone} value={timezone}>
                                                                     {timezone}
@@ -919,7 +850,7 @@ export default function SettingsPage() {
                                                             ))}
                                                         </select>
                                                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                            Choose from the bundled Wikipedia tz database zone list validated against the server runtime. Select the runtime option above and save to clear the saved override.
+                                                            {t("settings.timezone.help_text")}
                                                         </p>
                                                     </div>
 
@@ -929,7 +860,7 @@ export default function SettingsPage() {
                                                             disabled={timezoneSaving}
                                                             className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                                                         >
-                                                            {timezoneSaving ? "Saving..." : "Save Timezone"}
+                                                            {timezoneSaving ? t("settings.timezone.saving") : t("settings.timezone.save_btn")}
                                                         </button>
                                                     </div>
                                                 </form>
@@ -939,13 +870,13 @@ export default function SettingsPage() {
                                 ) : null}
 
                                 {isAdmin ? (
-                                    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                    <section className="md:col-span-2 lg:col-span-3 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
                                         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
                                             <div>
-                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">House Climate</p>
-                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">House temperature source</h2>
+                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.climate.label")}</p>
+                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.climate.title")}</h2>
                                                 <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                                                    Choose which physical board with a configured DHT sensor should feed the shared House Temperature dashboard block.
+                                                    {t("settings.climate.description")}
                                                 </p>
                                             </div>
                                         </div>
@@ -958,27 +889,27 @@ export default function SettingsPage() {
 
                                         {temperatureSourceLoading ? (
                                             <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-400">
-                                                Loading boards with temperature sensors...
+                                                {t("settings.climate.loading")}
                                             </div>
                                         ) : (
                                             <div className="mt-6 space-y-6">
                                                 <div className="grid gap-4 md:grid-cols-2">
                                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Current Source</p>
+                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{t("settings.climate.current")}</p>
                                                         <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
-                                                            {generalSettings?.house_temperature_device_name || "Not configured"}
+                                                            {generalSettings?.house_temperature_device_name || t("settings.climate.not_configured")}
                                                         </p>
                                                         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                                                             {generalSettings?.house_temperature_device_id
-                                                                ? "Dashboard users will see this board as the household temperature source."
-                                                                : "The house temperature block stays hidden until a source board is selected."}
+                                                                ? t("settings.climate.current_desc_configured")
+                                                                : t("settings.climate.current_desc_hidden")}
                                                         </p>
                                                     </div>
                                                     <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Eligible Boards</p>
+                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{t("settings.climate.eligible")}</p>
                                                         <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{temperatureSourceOptions.length}</p>
                                                         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                                                            Only approved physical boards with at least one configured DHT sensor appear here.
+                                                            {t("settings.climate.eligible_desc")}
                                                         </p>
                                                     </div>
                                                 </div>
@@ -986,7 +917,7 @@ export default function SettingsPage() {
                                                 <form className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900/80" onSubmit={handleSaveHouseTemperatureSource}>
                                                     <div>
                                                         <label htmlFor="house-temperature-source" className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                                                            Source board
+                                                            {t("settings.climate.source_board")}
                                                         </label>
                                                         <select
                                                             id="house-temperature-source"
@@ -994,7 +925,7 @@ export default function SettingsPage() {
                                                             onChange={(event) => setHouseTemperatureDeviceDraft(event.target.value)}
                                                             className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                                                         >
-                                                            <option value="">Do not show house temperature block</option>
+                                                            <option value="">{t("settings.climate.no_show")}</option>
                                                             {temperatureSourceOptions.map((option) => (
                                                                 <option key={option.device_id} value={option.device_id}>
                                                                     {option.name}{option.room_name ? ` · ${option.room_name}` : ""}{option.board ? ` · ${option.board}` : ""}
@@ -1002,7 +933,7 @@ export default function SettingsPage() {
                                                             ))}
                                                         </select>
                                                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                            Select one board to publish a single household temperature summary block on the dashboard.
+                                                            {t("settings.climate.select_desc")}
                                                         </p>
                                                     </div>
 
@@ -1012,78 +943,12 @@ export default function SettingsPage() {
                                                             disabled={temperatureSourceSaving}
                                                             className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                                                         >
-                                                            {temperatureSourceSaving ? "Saving..." : "Save House Temperature Source"}
+                                                            {temperatureSourceSaving ? t("settings.climate.saving") : t("settings.climate.save_btn")}
                                                         </button>
                                                     </div>
                                                 </form>
                                             </div>
                                         )}
-                                    </section>
-                                ) : null}
-
-                                {isAdmin ? (
-                                    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
-                                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                                            <div>
-                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">System Health</p>
-                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Active server metrics</h2>
-                                                <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                                                    Real-time server diagnostics covering active processes, memory limits, and localized network targets.
-                                                </p>
-                                            </div>
-                                        </div>
-
-                                        {networkError ? (
-                                            <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-                                                {networkError}
-                                            </div>
-                                        ) : null}
-
-                                        {!networkError && runtimeNetwork?.warning ? (
-                                            <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-                                                <p className="font-semibold">Manual reflash attention</p>
-                                                <p className="mt-1">{runtimeNetwork.warning}</p>
-                                            </div>
-                                        ) : null}
-
-                                        {networkLoading ? (
-                                            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-400">
-                                                Loading system metrics...
-                                            </div>
-                                        ) : runtimeNetwork ? (
-                                            <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Server Host / IP</p>
-                                                    <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{runtimeNetwork.advertised_host}</p>
-                                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Current network boundary for devices.</p>
-                                                </div>
-                                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">CPU Usage</p>
-                                                    <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{runtimeNetwork.cpu_percent.toFixed(1)}%</p>
-                                                    <div className="mt-2 h-1.5 w-full rounded-full bg-slate-200 overflow-hidden dark:bg-slate-700">
-                                                        <div className={`h-full ${runtimeNetwork.cpu_percent > 80 ? 'bg-rose-500' : 'bg-primary'}`} style={{ width: `${Math.min(100, runtimeNetwork.cpu_percent)}%` }}></div>
-                                                    </div>
-                                                </div>
-                                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Memory Usage</p>
-                                                    <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
-                                                        {(runtimeNetwork.memory_used / 1024 / 1024 / 1024).toFixed(1)} GB / {(runtimeNetwork.memory_total / 1024 / 1024 / 1024).toFixed(1)} GB
-                                                    </p>
-                                                    <div className="mt-2 h-1.5 w-full rounded-full bg-slate-200 overflow-hidden dark:bg-slate-700">
-                                                        <div className={`h-full ${(runtimeNetwork.memory_used / runtimeNetwork.memory_total) > 0.8 ? 'bg-rose-500' : 'bg-primary'}`} style={{ width: `${Math.min(100, (runtimeNetwork.memory_used / runtimeNetwork.memory_total) * 100)}%` }}></div>
-                                                    </div>
-                                                </div>
-                                                <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                    <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Storage Usage</p>
-                                                    <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
-                                                        {(runtimeNetwork.storage_used / 1024 / 1024 / 1024).toFixed(1)} GB / {(runtimeNetwork.storage_total / 1024 / 1024 / 1024).toFixed(1)} GB
-                                                    </p>
-                                                    <div className="mt-2 h-1.5 w-full rounded-full bg-slate-200 overflow-hidden dark:bg-slate-700">
-                                                        <div className={`h-full ${(runtimeNetwork.storage_used / runtimeNetwork.storage_total) > 0.8 ? 'bg-rose-500' : 'bg-primary'}`} style={{ width: `${Math.min(100, (runtimeNetwork.storage_used / runtimeNetwork.storage_total) * 100)}%` }}></div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ) : null}
                                     </section>
                                 ) : null}
                             </div>
@@ -1099,8 +964,8 @@ export default function SettingsPage() {
                                     <section className="max-w-5xl">
                                         <div className="flex justify-between items-start mb-6">
                                             <div>
-                                                <h3 className="text-xl font-bold dark:text-white text-slate-900">Provision a new household account</h3>
-                                                <p className="text-sm text-slate-500 dark:text-slate-400">Add a new user to your IoT ecosystem and assign their role.</p>
+                                                <h3 className="text-xl font-bold dark:text-white text-slate-900">{t("settings.users.provision.title")}</h3>
+                                                <p className="text-sm text-slate-500 dark:text-slate-400">{t("settings.users.provision.desc")}</p>
                                             </div>
                                             {submitError ? (
                                                 <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300 max-w-xs text-right">
@@ -1110,7 +975,7 @@ export default function SettingsPage() {
                                         </div>
                                         <form className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-6 bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl" onSubmit={handleCreateUser} noValidate>
                                             <div className="flex flex-col gap-2">
-                                                <label className={`text-sm font-medium ${userFormErrors.username ? 'text-rose-500' : 'dark:text-slate-300 text-slate-700'}`}>Username</label>
+                                                <label className={`text-sm font-medium ${userFormErrors.username ? 'text-rose-500' : 'dark:text-slate-300 text-slate-700'}`}>{t("settings.users.form.username")}</label>
                                                 <input 
                                                     className={`bg-white dark:bg-slate-800 border rounded-lg px-4 py-2.5 text-sm focus:ring-primary focus:border-primary outline-none transition-shadow text-slate-900 dark:text-white ${userFormErrors.username ? 'border-rose-500 focus:ring-rose-500/20' : 'border-slate-200 dark:border-slate-700/50'}`} 
                                                     placeholder="e.g. jdoe" 
@@ -1129,7 +994,7 @@ export default function SettingsPage() {
                                                 ) : null}
                                             </div>
                                             <div className="flex flex-col gap-2">
-                                                <label className={`text-sm font-medium ${userFormErrors.fullname ? 'text-rose-500' : 'dark:text-slate-300 text-slate-700'}`}>Full Name</label>
+                                                <label className={`text-sm font-medium ${userFormErrors.fullname ? 'text-rose-500' : 'dark:text-slate-300 text-slate-700'}`}>{t("settings.users.form.fullname")}</label>
                                                 <input 
                                                     className={`bg-white dark:bg-slate-800 border rounded-lg px-4 py-2.5 text-sm focus:ring-primary focus:border-primary outline-none transition-shadow text-slate-900 dark:text-white ${userFormErrors.fullname ? 'border-rose-500 focus:ring-rose-500/20' : 'border-slate-200 dark:border-slate-700/50'}`} 
                                                     placeholder="John Doe" 
@@ -1148,7 +1013,7 @@ export default function SettingsPage() {
                                                 ) : null}
                                             </div>
                                             <div className="flex flex-col gap-2">
-                                                <label className={`text-sm font-medium ${userFormErrors.password ? 'text-rose-500' : 'dark:text-slate-300 text-slate-700'}`}>Initial Password</label>
+                                                <label className={`text-sm font-medium ${userFormErrors.password ? 'text-rose-500' : 'dark:text-slate-300 text-slate-700'}`}>{t("settings.users.form.password")}</label>
                                                 <input 
                                                     className={`bg-white dark:bg-slate-800 border rounded-lg px-4 py-2.5 text-sm focus:ring-primary focus:border-primary outline-none transition-shadow text-slate-900 dark:text-white ${userFormErrors.password ? 'border-rose-500 focus:ring-rose-500/20' : 'border-slate-200 dark:border-slate-700/50'}`} 
                                                     placeholder="••••••••" 
@@ -1167,14 +1032,14 @@ export default function SettingsPage() {
                                                 ) : null}
                                             </div>
                                             <div className="flex flex-col gap-2">
-                                                <label className="text-sm font-medium dark:text-slate-300 text-slate-700">Role Selection</label>
+                                                <label className="text-sm font-medium dark:text-slate-300 text-slate-700">{t("settings.users.form.role")}</label>
                                                 <select 
                                                     className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/50 rounded-lg px-4 py-2.5 text-sm focus:ring-primary focus:border-primary outline-none transition-shadow text-slate-900 dark:text-white"
                                                     value={formState.account_type}
                                                     onChange={(event) => setFormState((current) => ({ ...current, account_type: event.target.value as AccountType }))}
                                                 >
-                                                    <option value="parent">User</option>
-                                                    <option value="admin">Admin</option>
+                                                    <option value="parent">{t("settings.users.form.role.user")}</option>
+                                                    <option value="admin">{t("settings.users.form.role.admin")}</option>
                                                 </select>
                                             </div>
                                             <div className="lg:col-span-4 flex justify-end mt-2">
@@ -1184,7 +1049,7 @@ export default function SettingsPage() {
                                                     className="bg-primary hover:bg-blue-600 text-white font-semibold py-2.5 px-6 rounded-lg text-sm shadow-lg shadow-primary/20 transition-all flex items-center gap-2 disabled:opacity-50"
                                                 >
                                                     {isSubmitting ? <span className="material-icons-round text-[18px] animate-spin">refresh</span> : null}
-                                                    Create Account
+                                                    {t("settings.users.form.create_btn")}
                                                 </button>
                                             </div>
                                         </form>
@@ -1195,14 +1060,14 @@ export default function SettingsPage() {
                                             <div className="mb-4">
                                                 <div className="flex justify-between items-center pr-2">
                                                     <div>
-                                                        <h3 className="text-xl font-bold dark:text-white text-slate-900">Active household members</h3>
-                                                        <p className="text-sm text-slate-500 dark:text-slate-400">Manage existing access controls.</p>
+                                                        <h3 className="text-xl font-bold dark:text-white text-slate-900">{t("settings.users.active.title")}</h3>
+                                                        <p className="text-sm text-slate-500 dark:text-slate-400">{t("settings.users.active.desc")}</p>
                                                     </div>
                                                     <button 
                                                         onClick={() => void loadManagedUsers()}
                                                         className="text-slate-500 hover:text-primary transition-colors flex items-center gap-1 text-sm font-medium"
                                                     >
-                                                        <span className="material-icons-round text-lg">refresh</span> Refresh
+                                                        <span className="material-icons-round text-lg">refresh</span> {t("settings.users.active.refresh")}
                                                     </button>
                                                 </div>
                                             </div>
@@ -1210,9 +1075,9 @@ export default function SettingsPage() {
                                                 <table className="w-full text-left whitespace-nowrap">
                                                     <thead className="bg-slate-50 dark:bg-slate-800/50 border-b border-slate-200 dark:border-slate-800">
                                                         <tr>
-                                                            <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">User</th>
-                                                            <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Role</th>
-                                                            <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 text-right">Actions</th>
+                                                            <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t("settings.users.table.user")}</th>
+                                                            <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">{t("settings.users.table.role")}</th>
+                                                            <th className="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 text-right">{t("settings.users.table.actions")}</th>
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
@@ -1227,7 +1092,7 @@ export default function SettingsPage() {
                                                                 <td colSpan={3} className="px-6 py-12 text-center">
                                                                     <div className="flex flex-col items-center justify-center opacity-50">
                                                                         <span className="material-icons-round text-4xl mb-2 text-slate-400">group</span>
-                                                                        <p className="text-sm font-medium text-slate-500 dark:text-slate-400">No active users yet.</p>
+                                                                        <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{t("settings.users.table.empty")}</p>
                                                                     </div>
                                                                 </td>
                                                             </tr>
@@ -1243,7 +1108,7 @@ export default function SettingsPage() {
                                                                                 <div className="flex items-center gap-2">
                                                                                     <p className="text-sm font-bold truncate dark:text-white text-slate-900">{managedUser.username}</p>
                                                                                     {managedUser.user_id === user?.user_id ? (
-                                                                                        <span className="bg-primary/10 text-primary text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider whitespace-nowrap">You</span>
+                                                                                        <span className="bg-primary/10 text-primary text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider whitespace-nowrap">{t("settings.users.table.you")}</span>
                                                                                     ) : null}
                                                                                 </div>
                                                                                 <p className="text-xs text-slate-500 dark:text-slate-400 truncate w-full">{managedUser.fullname}</p>
@@ -1264,7 +1129,7 @@ export default function SettingsPage() {
                                                                                     onClick={() => setPromoteModalTarget(managedUser)}
                                                                                     disabled={actionUserId === managedUser.user_id}
                                                                                     className="text-slate-400 hover:text-blue-500 transition-colors disabled:opacity-30 p-2 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-500/10 inline-flex items-center justify-center"
-                                                                                    title={managedUser.account_type === "admin" ? "Demote to user" : "Promote to admin"}
+                                                                                    title={managedUser.account_type === "admin" ? t("settings.users.table.demote_title") : t("settings.users.table.promote_title")}
                                                                                 >
                                                                                     {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">{managedUser.account_type === "admin" ? "arrow_downward" : "arrow_upward"}</span>}
                                                                                 </button>
@@ -1274,7 +1139,7 @@ export default function SettingsPage() {
                                                                                     onClick={() => setRevokeModalTarget(managedUser)}
                                                                                     disabled={actionUserId === managedUser.user_id || managedUser.user_id === user?.user_id}
                                                                                     className="text-slate-400 hover:text-rose-500 transition-colors disabled:opacity-30 p-2 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-500/10 inline-flex items-center justify-center"
-                                                                                    title="Delete account"
+                                                                                    title={t("settings.users.table.delete_title")}
                                                                                 >
                                                                                     {actionUserId === managedUser.user_id ? <span className="material-icons-round text-lg animate-spin">refresh</span> : <span className="material-icons-round text-lg">delete</span>}
                                                                                 </button>
@@ -1295,9 +1160,9 @@ export default function SettingsPage() {
                                     <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300">
                                         <span className="material-icons-round text-4xl">admin_panel_settings</span>
                                     </div>
-                                    <h2 className="mt-5 text-2xl font-semibold text-slate-900 dark:text-white">Admin access required</h2>
+                                    <h2 className="mt-5 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.users.admin_req.title")}</h2>
                                     <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">
-                                        This menu only appears for accounts with admin privileges. Sign in with an admin account if you need to manage household users.
+                                        {t("settings.users.admin_req.desc")}
                                     </p>
                                 </section>
                             )
@@ -1305,64 +1170,14 @@ export default function SettingsPage() {
 
                         {activePanel === "rooms" ? (
                             isAdmin ? (
-                                <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+                                <div className="space-y-6">
                                     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
-                                        <div className="flex items-start justify-between gap-4">
+                                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                                             <div>
-                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Create area</p>
-                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Define an area</h2>
+                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.areas.matrix.label")}</p>
+                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.areas.matrix.title")}</h2>
                                                 <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                    New areas start private by default. Only admins retain access until you explicitly grant control to other household users.
-                                                </p>
-                                            </div>
-                                            <span className="material-icons-round rounded-2xl bg-primary/10 p-3 text-2xl text-primary">meeting_room</span>
-                                        </div>
-
-                                        <form className="mt-6 space-y-5" onSubmit={handleCreateRoom} noValidate>
-                                            <div>
-                                                <label className={`mb-1.5 block text-sm font-medium ${createRoomNameError ? 'text-rose-500' : 'text-slate-700 dark:text-slate-300'}`}>Area name</label>
-                                                <input
-                                                    type="text"
-                                                    value={roomFormName}
-                                                    onChange={(event) => {
-                                                        setRoomFormName(event.target.value);
-                                                        if (createRoomNameError) setCreateRoomNameError("");
-                                                    }}
-                                                    className={`w-full rounded-2xl border bg-white px-4 py-3 text-slate-900 outline-none transition dark:bg-slate-900/80 dark:text-white ${createRoomNameError ? 'border-rose-500 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20' : 'border-slate-300 focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700'}`}
-                                                    placeholder="Living area"
-                                                />
-                                                {createRoomNameError ? (
-                                                    <p className="mt-2 text-sm font-medium text-rose-500 flex items-center">
-                                                        <span className="material-icons-round text-[18px] mr-1">error_outline</span>
-                                                        {createRoomNameError}
-                                                    </p>
-                                                ) : null}
-                                            </div>
-
-                                            <button
-                                                type="submit"
-                                                disabled={roomSubmitting}
-                                                className="flex w-full items-center justify-center rounded-2xl bg-primary px-4 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-70"
-                                            >
-                                                {roomSubmitting ? (
-                                                    <span className="material-icons-round animate-spin">refresh</span>
-                                                ) : (
-                                                    <>
-                                                        <span className="material-icons-round mr-2 text-[18px]">add_home</span>
-                                                        Create Area
-                                                    </>
-                                                )}
-                                            </button>
-                                        </form>
-                                    </section>
-
-                                    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
-                                        <div className="flex flex-wrap items-start justify-between gap-3">
-                                            <div>
-                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">Access matrix</p>
-                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">Area-level control assignments</h2>
-                                                <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                    Decide exactly which household users may operate devices inside each area.
+                                                    {t("settings.areas.matrix.desc")}
                                                 </p>
                                             </div>
                                             <button
@@ -1370,150 +1185,240 @@ export default function SettingsPage() {
                                                 className="inline-flex items-center rounded-2xl border border-slate-300 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
                                             >
                                                 <span className="material-icons-round mr-2 text-[18px]">refresh</span>
-                                                Refresh
+                                                {t("settings.areas.matrix.refresh")}
                                             </button>
                                         </div>
+                                    </section>
 
-                                        <div className="mt-6">
-                                            {roomsLoading ? (
-                                                <div className="flex min-h-64 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/50">
-                                                    <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
-                                                        <span className="material-icons-round animate-spin">refresh</span>
-                                                        Loading areas...
+                                    <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-6">
+                                        {/* Create Area Interactive Card */}
+                                        <article className="flex min-h-[350px] flex-col rounded-3xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-surface-dark overflow-hidden">
+                                            {!isCreatingArea ? (
+                                                <button 
+                                                    onClick={() => setIsCreatingArea(true)}
+                                                    className="flex h-full w-full flex-col items-center justify-center p-6 text-slate-500 transition-all hover:bg-slate-50 hover:text-primary dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-primary group"
+                                                >
+                                                    <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 group-hover:bg-primary/10 transition-colors dark:bg-slate-800 dark:group-hover:bg-primary/20">
+                                                        <span className="material-icons-round text-3xl">add</span>
                                                     </div>
-                                                </div>
-                                            ) : rooms.length === 0 ? (
-                                                <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-6 py-14 text-center dark:border-slate-700 dark:bg-slate-900/50">
-                                                    <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
-                                                        <span className="material-icons-round text-3xl">meeting_room</span>
-                                                    </div>
-                                                    <h3 className="mt-4 text-lg font-semibold text-slate-900 dark:text-white">No areas created yet</h3>
-                                                    <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                        Create the first area on the left to start assigning device control boundaries.
-                                                    </p>
-                                                </div>
+                                                    <span className="text-lg font-semibold">{t("settings.areas.create.title")}</span>
+                                                    <span className="mt-2 text-sm text-center px-4">{t("settings.areas.create.desc")}</span>
+                                                </button>
                                             ) : (
-                                                <div className="grid gap-4">
-                                                    {rooms.map((room) => {
-                                                        return (
-                                                            <article
-                                                                key={room.room_id}
-                                                                className="rounded-3xl border border-slate-200 bg-slate-50/70 p-5 transition hover:border-slate-300 hover:bg-white dark:border-slate-700 dark:bg-slate-900/50 dark:hover:border-slate-600 dark:hover:bg-slate-900/80"
+                                                <div className="flex h-full flex-col p-6">
+                                                    <div className="mb-6 flex items-center gap-3">
+                                                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                                                            <span className="material-icons-round">meeting_room</span>
+                                                        </div>
+                                                        <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{t("settings.areas.create.title")}</h3>
+                                                    </div>
+                                                    
+                                                    <form className="flex flex-1 flex-col justify-between" onSubmit={(e) => {
+                                                        void handleCreateRoom(e);
+                                                        if (!createRoomNameError && roomFormName.trim()) {
+                                                            setIsCreatingArea(false);
+                                                        }
+                                                    }} noValidate>
+                                                        <div>
+                                                            <label className={`mb-1.5 block text-sm font-medium ${createRoomNameError ? 'text-rose-500' : 'text-slate-700 dark:text-slate-300'}`}>{t("settings.areas.form.name")}</label>
+                                                            <input
+                                                                type="text"
+                                                                value={roomFormName}
+                                                                autoFocus
+                                                                onChange={(event) => {
+                                                                    setRoomFormName(event.target.value);
+                                                                    if (createRoomNameError) setCreateRoomNameError("");
+                                                                }}
+                                                                className={`w-full rounded-2xl border bg-white px-4 py-3 text-slate-900 outline-none transition dark:bg-slate-900/80 dark:text-white ${createRoomNameError ? 'border-rose-500 focus:border-rose-500 focus:ring-2 focus:ring-rose-500/20' : 'border-slate-300 focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700'}`}
+                                                                placeholder={t("settings.areas.form.placeholder")}
+                                                            />
+                                                            {createRoomNameError ? (
+                                                                <p className="mt-2 text-sm font-medium text-rose-500 flex items-center">
+                                                                    <span className="material-icons-round text-[18px] mr-1">error_outline</span>
+                                                                    {createRoomNameError}
+                                                                </p>
+                                                            ) : null}
+                                                        </div>
+                                                        <div className="mt-6 flex gap-3">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setIsCreatingArea(false);
+                                                                    setRoomFormName("");
+                                                                    setCreateRoomNameError("");
+                                                                }}
+                                                                className="flex-1 rounded-2xl bg-slate-100 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
                                                             >
-                                                                <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                                                    <div className="min-w-0 flex-1">
-                                                                        {editingRoomId === room.room_id ? (
-                                                                            <input
-                                                                                type="text"
-                                                                                value={editingRoomName}
-                                                                                onChange={(e) => setEditingRoomName(e.target.value)}
-                                                                                autoFocus
-                                                                                disabled={roomActionId === room.room_id}
-                                                                                className="block w-full rounded-2xl border border-slate-300 bg-white px-4 py-3 text-[15px] font-medium text-slate-900 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/10 transition-all dark:border-slate-600 dark:bg-slate-800 dark:text-white dark:focus:border-primary"
-                                                                                onKeyDown={(e) => {
-                                                                                    if (e.key === "Enter") void handleUpdateRoom(room);
-                                                                                    if (e.key === "Escape") setEditingRoomId(null);
-                                                                                }}
-                                                                            />
-                                                                        ) : (
-                                                                            <div className="flex flex-wrap items-center gap-2">
-                                                                                <h3 className="text-lg font-semibold text-slate-900 dark:text-white">{room.name}</h3>
-                                                                                <span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
-                                                                                    area #{room.room_id}
-                                                                                </span>
-                                                                            </div>
-                                                                        )}
-                                                                        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                                            Area configuration and assigned devices.
-                                                                        </p>
-                                                                    </div>
-
-                                                                    <div className="flex items-center gap-2">
-                                                                        {editingRoomId === room.room_id ? (
-                                                                            <>
-                                                                                <button
-                                                                                    onClick={() => void handleUpdateRoom(room)}
-                                                                                    disabled={roomActionId === room.room_id}
-                                                                                    className="inline-flex h-10 items-center justify-center rounded-2xl bg-primary px-4 text-sm font-medium text-white transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-70"
-                                                                                >
-                                                                                    {roomActionId === room.room_id ? (
-                                                                                        <span className="material-icons-round animate-spin">refresh</span>
-                                                                                    ) : (
-                                                                                        "Save"
-                                                                                    )}
-                                                                                </button>
-                                                                                <button
-                                                                                    onClick={() => setEditingRoomId(null)}
-                                                                                    disabled={roomActionId === room.room_id}
-                                                                                    className="inline-flex h-10 items-center justify-center rounded-2xl bg-slate-100 px-4 text-sm font-medium text-slate-700 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-                                                                                >
-                                                                                    Cancel
-                                                                                </button>
-                                                                            </>
-                                                                        ) : (
-                                                                            <>
-                                                                                <button
-                                                                                    onClick={() => {
-                                                                                        setEditingRoomId(room.room_id);
-                                                                                        setEditingRoomName(room.name);
-                                                                                    }}
-                                                                                    className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-slate-100 text-slate-600 transition hover:bg-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700"
-                                                                                    title="Edit Area Name"
-                                                                                >
-                                                                                    <span className="material-icons-round text-xl">edit</span>
-                                                                                </button>
-                                                                                <button
-                                                                                    onClick={() => void handleDeleteRoom(room.room_id)}
-                                                                                    disabled={roomActionId === room.room_id}
-                                                                                    className="inline-flex h-10 w-10 items-center justify-center rounded-2xl bg-red-50 text-red-600 transition hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-red-900/20 dark:text-red-400 dark:hover:bg-red-900/40"
-                                                                                    title="Delete Area"
-                                                                                >
-                                                                                    {roomActionId === room.room_id ? (
-                                                                                        <span className="material-icons-round animate-spin">refresh</span>
-                                                                                    ) : (
-                                                                                        <span className="material-icons-round text-xl">delete</span>
-                                                                                    )}
-                                                                                </button>
-                                                                            </>
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-
-                                                                <div className="mt-6 border-t border-slate-200 dark:border-slate-800/60 pt-5">
-                                                                    <div className="mb-3 flex items-center justify-between">
-                                                                        <h4 className="text-sm font-semibold text-slate-900 dark:text-white">Accessible by</h4>
-                                                                        <p className="text-xs text-slate-500 dark:text-slate-400">Admins always have full access</p>
-                                                                    </div>
-                                                                    <div className="flex flex-wrap gap-2">
-                                                                        {assignableUsers.length === 0 ? (
-                                                                            <p className="text-sm text-slate-500 dark:text-slate-400 italic">No household users available.</p>
-                                                                        ) : (
-                                                                            assignableUsers.map((u) => {
-                                                                                    const isAllowed = room.allowed_user_ids?.includes(u.user_id) ?? false;
-                                                                                    return (
-                                                                                        <button
-                                                                                            key={u.user_id}
-                                                                                            onClick={() => void handleToggleRoomUser(room, u.user_id)}
-                                                                                            disabled={roomActionId === room.room_id}
-                                                                                            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm font-medium border transition-colors disabled:opacity-50 ${isAllowed ? 'bg-primary/10 border-primary/20 text-primary dark:bg-primary/20 dark:text-white hover:bg-primary/20 dark:hover:bg-primary/30' : 'bg-slate-50 border-slate-200 text-slate-600 dark:bg-slate-800/50 dark:border-slate-700/60 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
-                                                                                        >
-                                                                                            <span className="material-icons-round text-[16px]">
-                                                                                                {isAllowed ? 'check_circle' : 'radio_button_unchecked'}
-                                                                                            </span>
-                                                                                            {u.username}
-                                                                                        </button>
-                                                                                    )
-                                                                                })
-                                                                        )}
-                                                                    </div>
-                                                                </div>
-                                                            </article>
-                                                        );
-                                                    })}
+                                                                {t("settings.areas.card.btn_cancel")}
+                                                            </button>
+                                                            <button
+                                                                type="submit"
+                                                                disabled={roomSubmitting}
+                                                                className="flex flex-1 items-center justify-center rounded-2xl bg-primary px-4 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-70"
+                                                            >
+                                                                {roomSubmitting ? (
+                                                                    <span className="material-icons-round animate-spin">refresh</span>
+                                                                ) : (
+                                                                    t("settings.areas.form.btn_create")
+                                                                )}
+                                                            </button>
+                                                        </div>
+                                                    </form>
                                                 </div>
                                             )}
-                                        </div>
-                                    </section>
+                                        </article>
+
+                                        {roomsLoading ? (
+                                            <div className="col-span-full flex min-h-64 items-center justify-center rounded-3xl border border-dashed border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/50">
+                                                <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
+                                                    <span className="material-icons-round animate-spin">refresh</span>
+                                                    {t("settings.areas.matrix.loading")}
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            rooms.map((room) => {
+                                                return (
+                                                    <article
+                                                        key={room.room_id}
+                                                        className="flex min-h-[350px] flex-col rounded-3xl border border-slate-200 bg-white shadow-sm transition hover:border-slate-300 hover:shadow-md dark:border-slate-700 dark:bg-surface-dark dark:hover:border-slate-600"
+                                                    >
+                                                        {/* Header */}
+                                                        <div className="flex items-center justify-between border-b border-slate-100 p-5 dark:border-slate-800">
+                                                            {editingRoomId === room.room_id ? (
+                                                                <input
+                                                                    type="text"
+                                                                    value={editingRoomName}
+                                                                    onChange={(e) => setEditingRoomName(e.target.value)}
+                                                                    autoFocus
+                                                                    disabled={roomActionId === room.room_id}
+                                                                    className="block w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-900 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 transition-all dark:border-slate-600 dark:bg-slate-800 dark:text-white"
+                                                                    onKeyDown={(e) => {
+                                                                        if (e.key === "Enter") void handleUpdateRoom(room);
+                                                                        if (e.key === "Escape") setEditingRoomId(null);
+                                                                    }}
+                                                                />
+                                                            ) : (
+                                                                <div className="flex flex-col">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <h3 className="text-lg font-semibold text-slate-900 dark:text-white line-clamp-1">{room.name}</h3>
+                                                                    </div>
+                                                                    <span className="mt-1 w-fit rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                                                                        {t("settings.areas.card.area_label").replace("{id}", room.room_id.toString())}
+                                                                    </span>
+                                                                </div>
+                                                            )}
+
+                                                            <div className="ml-3 flex shrink-0 items-center gap-1">
+                                                                {editingRoomId === room.room_id ? (
+                                                                    <>
+                                                                        <button
+                                                                            onClick={() => void handleUpdateRoom(room)}
+                                                                            disabled={roomActionId === room.room_id}
+                                                                            className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-primary text-white transition hover:bg-blue-600 disabled:opacity-70"
+                                                                            title={t("settings.areas.card.btn_save")}
+                                                                        >
+                                                                            {roomActionId === room.room_id ? <span className="material-icons-round text-sm animate-spin">refresh</span> : <span className="material-icons-round text-sm">check</span>}
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => setEditingRoomId(null)}
+                                                                            disabled={roomActionId === room.room_id}
+                                                                            className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-slate-100 text-slate-600 transition hover:bg-slate-200 disabled:opacity-70 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                                                                            title={t("settings.areas.card.btn_cancel")}
+                                                                        >
+                                                                            <span className="material-icons-round text-sm">close</span>
+                                                                        </button>
+                                                                    </>
+                                                                ) : (
+                                                                    <>
+                                                                        <button
+                                                                            onClick={() => {
+                                                                                setEditingRoomId(room.room_id);
+                                                                                setEditingRoomName(room.name);
+                                                                            }}
+                                                                            className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-slate-50 text-slate-500 transition hover:bg-slate-200 hover:text-slate-700 dark:bg-slate-800 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-slate-200"
+                                                                            title={t("settings.areas.card.btn_edit")}
+                                                                        >
+                                                                            <span className="material-icons-round text-sm">edit</span>
+                                                                        </button>
+                                                                        <button
+                                                                            onClick={() => setDeleteRoomTarget(room)}
+                                                                            disabled={roomActionId === room.room_id}
+                                                                            className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-rose-50 text-rose-500 transition hover:bg-rose-100 hover:text-rose-600 disabled:opacity-50 dark:bg-rose-500/10 dark:text-rose-400 dark:hover:bg-rose-500/20"
+                                                                            title={t("settings.areas.card.btn_delete")}
+                                                                        >
+                                                                            {roomActionId === room.room_id ? <span className="material-icons-round text-sm animate-spin">refresh</span> : <span className="material-icons-round text-sm">delete</span>}
+                                                                        </button>
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* Body */}
+                                                        <div className="flex flex-1 flex-col divide-y divide-slate-100 dark:divide-slate-800">
+                                                            <div className="p-5">
+                                                                <h4 className="flex items-center text-sm font-semibold text-slate-900 dark:text-white">
+                                                                    <span className="material-icons-round mr-2 text-[18px] text-slate-400">group</span>
+                                                                    {t("settings.areas.card.accessible_by")}
+                                                                </h4>
+                                                                <div className="mt-3 flex flex-wrap gap-2">
+                                                                    {assignableUsers.length === 0 ? (
+                                                                        <p className="text-sm italic text-slate-400">{t("settings.areas.card.no_users")}</p>
+                                                                    ) : (
+                                                                        assignableUsers.map((u) => {
+                                                                            const isAllowed = room.allowed_user_ids?.includes(u.user_id) ?? false;
+                                                                            return (
+                                                                                <button
+                                                                                    key={u.user_id}
+                                                                                    onClick={() => void handleToggleRoomUser(room, u.user_id)}
+                                                                                    disabled={roomActionId === room.room_id}
+                                                                                    className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors disabled:opacity-50 ${isAllowed ? 'bg-primary/10 border-primary/20 text-primary dark:bg-primary/20 dark:text-white hover:bg-primary/20 dark:hover:bg-primary/30' : 'bg-slate-50 border-slate-200 text-slate-600 dark:bg-slate-800/50 dark:border-slate-700/60 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}
+                                                                                >
+                                                                                    <span className="material-icons-round text-[14px]">
+                                                                                        {isAllowed ? 'check_circle' : 'radio_button_unchecked'}
+                                                                                    </span>
+                                                                                    {u.username}
+                                                                                    {u.user_id === user?.user_id && (
+                                                                                        <span className="ml-0.5 rounded bg-primary/10 px-1 py-0.5 text-[9px] font-bold uppercase text-primary">
+                                                                                            {t("settings.users.you_badge")}
+                                                                                        </span>
+                                                                                    )}
+                                                                                </button>
+                                                                            )
+                                                                        })
+                                                                    )}
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="flex-1 p-5">
+                                                                <h4 className="flex items-center text-sm font-semibold text-slate-900 dark:text-white">
+                                                                    <span className="material-icons-round mr-2 text-[18px] text-slate-400">devices</span>
+                                                                    {t("settings.areas.card.assigned_devices")}
+                                                                </h4>
+                                                                <div className="mt-3 flex flex-col gap-2">
+                                                                    {devices.length === 0 ? (
+                                                                        <p className="text-sm italic text-slate-400">{t("settings.areas.card.no_devices")}</p>
+                                                                    ) : (
+                                                                        (() => {
+                                                                            const roomDevices = devices.filter(d => d.room_id === room.room_id);
+                                                                            if (roomDevices.length === 0) {
+                                                                                return <p className="text-xs italic text-slate-400">{t("settings.areas.card.no_devices")}</p>;
+                                                                            }
+                                                                            return roomDevices.map((device) => (
+                                                                                <div key={device.device_id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2 text-sm dark:bg-slate-800/50">
+                                                                                    <span className="text-slate-700 dark:text-slate-300">{device.name}</span>
+                                                                                    <span className="text-[10px] uppercase tracking-wide text-slate-400">{device.device_type ?? (device.is_external ? 'External' : 'Device')}</span>
+                                                                                </div>
+                                                                            ));
+                                                                        })()
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </article>
+                                                );
+                                            })
+                                        )}
+                                    </div>
                                 </div>
                             ) : (
                                 <section className="rounded-3xl border border-slate-200 bg-white p-10 text-center shadow-sm dark:border-slate-700 dark:bg-surface-dark">
@@ -1539,52 +1444,24 @@ export default function SettingsPage() {
                 </div>
             </main>
 
-            {revokeModalTarget && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
-                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fade-in pointer-events-auto" onClick={() => setRevokeModalTarget(null)}></div>
-                    <div className="flex flex-col gap-6 w-full max-w-sm pointer-events-auto z-10">
-                        <div className="p-6 bg-slate-900 text-white rounded-[12px] shadow-2xl border border-slate-700 animate-scale-in">
-                            <div className="flex flex-col items-center text-center">
-                                <div className="w-14 h-14 flex items-center justify-center rounded-full bg-red-500/20 text-red-500 mb-4">
-                                    <svg fill="none" height="28" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="28" xmlns="http://www.w3.org/2000/svg"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>
-                                </div>
-                                <h3 className="text-lg font-semibold">Delete User?</h3>
-                                <p className="text-sm text-slate-400 mt-2 mb-6">Are you sure you want to delete {revokeModalTarget.username}? This action cannot be undone.</p>
-                                <div className="flex w-full gap-3">
-                                    <button 
-                                        onClick={() => {
-                                            void handleStatusChange(revokeModalTarget, "revoke");
-                                            setRevokeModalTarget(null);
-                                        }}
-                                        className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-700 text-white text-sm font-semibold rounded-lg transition-all"
-                                    >
-                                        Delete User
-                                    </button>
-                                    <button 
-                                        onClick={() => setRevokeModalTarget(null)}
-                                        className="flex-1 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-semibold rounded-lg transition-all border border-slate-700"
-                                    >
-                                        Cancel
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
-            
+            {/* Promote Modal */}
             {promoteModalTarget && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
-                    <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm animate-fade-in pointer-events-auto" onClick={() => setPromoteModalTarget(null)}></div>
-                    <div className="flex flex-col gap-6 w-full max-w-sm pointer-events-auto z-10">
-                        <div className="p-6 bg-slate-900 text-white rounded-[12px] shadow-2xl border border-slate-700 animate-scale-in">
-                            <div className="flex items-start">
-                                <div className="flex-shrink-0 w-12 h-12 flex items-center justify-center rounded-full bg-blue-500/20 text-blue-500">
-                                    <svg fill="none" height="24" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" viewBox="0 0 24 24" width="24" xmlns="http://www.w3.org/2000/svg"><path d="M20 6 9 17l-5-5"></path></svg>
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm transition-all dark:bg-slate-900/60">
+                    <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl dark:bg-surface-dark dark:border dark:border-slate-800">
+                        <div className="p-6">
+                            <div className="flex items-start gap-4">
+                                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-400">
+                                    <span className="material-icons-round">manage_accounts</span>
                                 </div>
-                                <div className="ml-4 flex-1">
-                                    <h3 className="text-lg font-semibold text-white">{promoteModalTarget.account_type === "admin" ? "Demote to User?" : "Promote to Admin?"}</h3>
-                                    <p className="text-sm text-slate-400 mt-1 mb-6">Are you sure you want to change {promoteModalTarget.username}&apos;s role to {promoteModalTarget.account_type === "admin" ? "user" : "an admin"}?</p>
+                                <div className="flex-1">
+                                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+                                        {promoteModalTarget.account_type === "admin" ? t("settings.users.modal.promote.title_demote") : t("settings.users.modal.promote.title_promote")}
+                                    </h3>
+                                    <p className="text-sm text-slate-500 mt-1 mb-6 dark:text-slate-400">
+                                        {promoteModalTarget.account_type === "admin" 
+                                            ? t("settings.users.modal.promote.desc_demote").replace("{username}", promoteModalTarget.username) 
+                                            : t("settings.users.modal.promote.desc_promote").replace("{username}", promoteModalTarget.username)}
+                                    </p>
                                     <div className="flex gap-3">
                                         <button 
                                             onClick={() => {
@@ -1593,13 +1470,93 @@ export default function SettingsPage() {
                                             }}
                                             className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-all"
                                         >
-                                            Confirm
+                                            {t("settings.users.modal.promote.btn_confirm")}
                                         </button>
                                         <button 
                                             onClick={() => setPromoteModalTarget(null)}
-                                            className="px-6 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm font-semibold rounded-lg transition-all border border-slate-700"
+                                            className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 text-sm font-semibold rounded-lg transition-all"
                                         >
-                                            Cancel
+                                            {t("settings.users.modal.promote.btn_cancel")}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Revoke User Modal */}
+            {revokeModalTarget && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm transition-all dark:bg-slate-900/60">
+                    <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl dark:bg-surface-dark dark:border dark:border-slate-800">
+                        <div className="p-6">
+                            <div className="flex items-start gap-4">
+                                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400">
+                                    <span className="material-icons-round">delete_forever</span>
+                                </div>
+                                <div className="flex-1">
+                                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+                                        {t("settings.users.modal.delete.title")}
+                                    </h3>
+                                    <p className="text-sm text-slate-500 mt-1 mb-6 dark:text-slate-400">
+                                        {t("settings.users.modal.delete.desc").replace("{username}", revokeModalTarget.username)}
+                                    </p>
+                                    <div className="flex gap-3">
+                                        <button 
+                                            onClick={() => {
+                                                void handleStatusChange(revokeModalTarget, "revoke");
+                                                setRevokeModalTarget(null);
+                                            }}
+                                            className="px-6 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold rounded-lg transition-all"
+                                        >
+                                            {t("settings.users.modal.delete.btn_confirm")}
+                                        </button>
+                                        <button 
+                                            onClick={() => setRevokeModalTarget(null)}
+                                            className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 text-sm font-semibold rounded-lg transition-all"
+                                        >
+                                            {t("settings.users.modal.delete.btn_cancel")}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Room Modal */}
+            {deleteRoomTarget && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4 backdrop-blur-sm transition-all dark:bg-slate-900/60">
+                    <div className="w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-xl dark:bg-surface-dark dark:border dark:border-slate-800">
+                        <div className="p-6">
+                            <div className="flex items-start gap-4">
+                                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-rose-50 text-rose-600 dark:bg-rose-500/10 dark:text-rose-400">
+                                    <span className="material-icons-round">delete_forever</span>
+                                </div>
+                                <div className="flex-1">
+                                    <h3 className="text-lg font-semibold text-slate-900 dark:text-white">
+                                        {t("settings.areas.modal.delete.title")}
+                                    </h3>
+                                    <p className="text-sm text-slate-500 mt-1 mb-6 dark:text-slate-400">
+                                        {t("settings.areas.modal.delete.desc").replace("{name}", deleteRoomTarget.name)}
+                                    </p>
+                                    <div className="flex gap-3">
+                                        <button 
+                                            onClick={() => {
+                                                void handleDeleteRoom(deleteRoomTarget.room_id);
+                                                setDeleteRoomTarget(null);
+                                            }}
+                                            className="px-6 py-2.5 bg-rose-600 hover:bg-rose-700 text-white text-sm font-semibold rounded-lg transition-all"
+                                        >
+                                            {t("settings.areas.modal.delete.btn_confirm")}
+                                        </button>
+                                        <button 
+                                            onClick={() => setDeleteRoomTarget(null)}
+                                            className="px-6 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-300 text-sm font-semibold rounded-lg transition-all"
+                                        >
+                                            {t("general.cancel")}
                                         </button>
                                     </div>
                                 </div>

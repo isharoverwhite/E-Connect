@@ -314,7 +314,7 @@ export async function fetchCurrentUser(token?: string): Promise<Record<string, u
 
   if (!res.ok) {
     if (res.status === 401) {
-      if (!token) removeToken();
+      removeToken();
       throw new Error("Unauthorized");
     }
     const err = await res.json().catch(() => ({}));
@@ -324,26 +324,26 @@ export async function fetchCurrentUser(token?: string): Promise<Record<string, u
   return res.json();
 }
 
-export async function updateUiLayout(layout: Record<string, unknown>, token?: string): Promise<Record<string, unknown>> {
+export async function updateUserLanguage(language: string, token?: string): Promise<Record<string, unknown>> {
   const t = token || getToken();
   if (!t) throw new Error("No token provided");
 
-  const res = await fetch(`${API_URL}/users/me/layout`, {
+  const res = await fetch(`${API_URL}/users/me/language`, {
     method: "PUT",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${t}`,
     },
-    body: JSON.stringify(layout),
+    body: JSON.stringify({ language }),
   });
 
   if (!res.ok) {
     if (res.status === 401) {
-      if (!token) removeToken();
+      removeToken();
       throw new Error("Unauthorized");
     }
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.detail?.message || err.detail || "Failed to update layout");
+    throw new Error(err.detail?.message || err.detail || "Failed to update language");
   }
 
   return res.json();

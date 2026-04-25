@@ -2,9 +2,11 @@
 
 "use client";
 
+import { useLanguage } from "@/components/LanguageContext";
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/AuthProvider";
+import { useToast } from "@/components/ToastContext";
 import { getToken, removeToken } from "@/lib/auth";
 import { API_URL, fetchServerTimeContext, type ServerTimeContextResponse } from "@/lib/api";
 import { createRoom, fetchRooms, type RoomRecord } from "@/lib/rooms";
@@ -34,7 +36,7 @@ import { Step3Validate } from "@/features/diy/components/Step3Validate";
 import { Step4Flash } from "@/features/diy/components/Step4Flash";
 import { boardRequiresFullFlashBundle, buildFlashManifest } from "@/features/diy/flash-manifest";
 import { validatePinMappings } from "@/features/diy/validation";
-
+import PromptModal from "@/components/PromptModal";
 const FLASHER_SCRIPT =
   "https://unpkg.com/esp-web-tools@10.1.0/dist/web/install-button.js?module";
 const DEFAULT_BOARD_ID = "dfrobot-beetle-esp32-c3";
@@ -342,9 +344,11 @@ function normalizeFlashSource(source: unknown, hasDemoFirmware: boolean): FlashS
 }
 
 export default function DIYBuilderPage() {
+  const { t } = useLanguage();
   const router = useRouter();
   const { user, logout } = useAuth();
   const isAdmin = user?.account_type === "admin";
+  const { showToast } = useToast();
 
   const [currentStep, setCurrentStep] = useState(1);
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -385,7 +389,7 @@ export default function DIYBuilderPage() {
   const [browserIsSecureContext, setBrowserIsSecureContext] = useState(false);
   const [configBusy, setConfigBusy] = useState(false);
   const [projectSyncState, setProjectSyncState] = useState<ProjectSyncState>("loading");
-  const [projectSyncMessage, setProjectSyncMessage] = useState("Loading server draft...");
+  const [projectSyncMessage, setProjectSyncMessage] = useState(t("diy.sync_msg.loading"));
   const [attachedConfigBoardId, setAttachedConfigBoardId] = useState<string | null>(null);
   const [buildBusy, setBuildBusy] = useState(false);
   const [serverBuild, setServerBuild] = useState<ServerBuildState>(() => createEmptyBuildState());
@@ -398,6 +402,15 @@ export default function DIYBuilderPage() {
   const [serialMessage, setSerialMessage] = useState(
     "Successful server builds release this port automatically. Flash becomes available when the port is free.",
   );
+  const [promptModalConfig, setPromptModalConfig] = useState<{
+    isOpen: boolean;
+    initialValue: string;
+    resolve: (value: string | null) => void;
+  }>({
+    isOpen: false,
+    initialValue: "",
+    resolve: () => {},
+  });
   const [serialError, setSerialError] = useState<string | null>(null);
   const [webFlasherResetKey, setWebFlasherResetKey] = useState(0);
   const [flasherClosed, setFlasherClosed] = useState(false);
@@ -554,7 +567,10 @@ export default function DIYBuilderPage() {
   const highlightedBoardConfigId = activeBoardConfigId ?? templateConfigId;
   const selectedConfigMode =
     activeBoardConfigId !== null ? "saved" : highlightedBoardConfigId !== null ? "template" : null;
-  const canContinueToPinMapping = Boolean(highlightedBoardConfigId) && Boolean(projectName.trim());
+  const canContinueToPinMapping = useMemo(() => {
+    const nameValid = selectedConfigMode !== null || projectName.trim().length > 0;
+    return nameValid && roomId !== null && selectedWifiCredentialId !== null;
+  }, [selectedConfigMode, projectName, roomId, selectedWifiCredentialId]);
 
   const lastSavedPayloadRef = useRef<string | null>(null);
   const latestBoardConfigRequestRef = useRef(0);
@@ -734,19 +750,19 @@ export default function DIYBuilderPage() {
   ) => {
     if (!projectName.trim()) {
       setProjectSyncState("idle");
-      setProjectSyncMessage("Enter a project name before saving this device config.");
+      setProjectSyncMessage(t("diy.sync_msg.no_project_name_save"));
       return null;
     }
 
     if (!roomId) {
       setProjectSyncState("idle");
-      setProjectSyncMessage("Select an area before syncing this device project to the server.");
+      setProjectSyncMessage(t("diy.sync_msg.no_area"));
       return null;
     }
 
     if (!selectedWifiCredentialId) {
       setProjectSyncState("idle");
-      setProjectSyncMessage("Select a saved Wi-Fi credential before syncing this device project to the server.");
+      setProjectSyncMessage(t("diy.sync_msg.no_wifi"));
       return null;
     }
 
@@ -767,10 +783,10 @@ export default function DIYBuilderPage() {
     setProjectSyncState("saving");
     setProjectSyncMessage(
       targetProjectId
-        ? "Saving server draft..."
+        ? t("diy.sync_msg.saving")
         : options?.forceCreate
-          ? "Creating a new saved config..."
-          : "Creating server draft...",
+          ? t("diy.sync_msg.creating_new")
+          : t("diy.sync_msg.creating_draft"),
     );
 
     try {
@@ -807,8 +823,8 @@ export default function DIYBuilderPage() {
       setProjectSyncState("saved");
       setProjectSyncMessage(
         options?.forceCreate
-          ? `Saved new config ${savedProject.name}.`
-          : `Server draft saved as ${savedProject.name}.`,
+          ? t("diy.sync_msg.saved_new").replace("{name}", savedProject.name)
+          : t("diy.sync_msg.saved_draft").replace("{name}", savedProject.name),
       );
       return savedProject.id;
     } catch (error) {
@@ -1065,8 +1081,10 @@ export default function DIYBuilderPage() {
       setSerialJobId(payload.job_id ?? null);
       setSerialMessage(
         payload.locked
-          ? `Port ${payload.port} is currently busy${payload.job_id ? ` for build ${shortId(payload.job_id)}` : ""}. Release it before flashing.`
-          : options?.freeMessage ?? `Port ${payload.port} is free for browser flashing.`,
+          ? t("diy.step4flash.serial.busy_msg")
+              .replace("{port}", payload.port)
+              .replace("{jobInfo}", payload.job_id ? t("diy.step4flash.serial.busy_job_info").replace("{jobId}", shortId(payload.job_id)) : "")
+          : options?.freeMessage ?? t("diy.step4flash.serial.free_msg").replace("{port}", payload.port),
       );
     } catch (error) {
       setSerialError(getErrorMessage(error));
@@ -1158,9 +1176,7 @@ export default function DIYBuilderPage() {
     setProjectId(asTemplate ? null : project.id);
     setTemplateConfigId(asTemplate ? project.id : null);
     setAttachedConfigBoardId(nextBoard.id);
-    if (!asTemplate) {
-      setProjectName(nextProjectName);
-    }
+    setProjectName(nextProjectName);
     setRoomId((currentRoomId) =>
       currentRoomId ??
       (typeof project.room_id === "number"
@@ -1190,7 +1206,7 @@ export default function DIYBuilderPage() {
       lastSavedPayloadRef.current = null;
       setProjectSyncState("idle");
       setProjectSyncMessage(
-        `Loaded ${project.name} as a template. Keep or edit your current project name, then save this as a new config before continuing.`,
+        t("diy.sync_msg.loaded_template").replace("{name}", project.name)
       );
     } else {
       setServerBuild({
@@ -1225,7 +1241,7 @@ export default function DIYBuilderPage() {
       );
       lastSavedPayloadRef.current = shouldRewriteFlashSource ? null : normalizedPayload;
       setProjectSyncState("saved");
-      setProjectSyncMessage(`Loaded saved config ${project.name}.`);
+      setProjectSyncMessage(t("diy.sync_msg.loaded_saved").replace("{name}", project.name));
     }
     setBoardConfigsError("");
 
@@ -1292,7 +1308,7 @@ export default function DIYBuilderPage() {
       if (!token) {
         if (!cancelled) {
           setProjectSyncState("error");
-          setProjectSyncMessage("Missing auth token. Sign in again before syncing DIY projects.");
+          setProjectSyncMessage(t("diy.sync_msg.missing_auth"));
           setRoomsLoading(false);
           setDraftLoaded(true);
           setProjectHydrated(true);
@@ -1305,7 +1321,7 @@ export default function DIYBuilderPage() {
 
       if (!cancelled) {
         setProjectSyncState("idle");
-        setProjectSyncMessage("Choose a board, enter a project name, then create or template a saved config.");
+        setProjectSyncMessage(t("diy.sync_msg.choose_board"));
         setDraftLoaded(true);
         setProjectHydrated(true);
       }
@@ -1343,7 +1359,7 @@ export default function DIYBuilderPage() {
     setServerBuild(createEmptyBuildState());
     setProjectSyncState("idle");
     setProjectSyncMessage(
-      "The original config stays attached to its saved board profile. Load a saved config as a template or create a new one for this board before continuing.",
+      t("diy.sync_msg.original_config")
     );
   }, [attachedConfigBoardId, board.id, draftLoaded, projectHydrated]);
 
@@ -1603,7 +1619,7 @@ export default function DIYBuilderPage() {
         setSerialLocked(false);
         setSerialJobId(null);
         setSerialMessage(
-          options?.nextMessage ?? `Released ${serialPort.trim()}. The browser flasher can claim it now.`,
+          options?.nextMessage ?? t("diy.step4flash.serial.released_msg").replace("{port}", serialPort.trim()),
         );
 
         if (options?.resetFlasher !== false) {
@@ -1630,7 +1646,7 @@ export default function DIYBuilderPage() {
       return;
     }
 
-    const freeMessage = `Build ${shortId(serverBuild.jobId)} is ready. Port ${serialPort.trim()} is free for browser flashing.`;
+    const freeMessage = t("diy.step4flash.serial.ready_free_msg").replace("{jobId}", shortId(serverBuild.jobId)).replace("{port}", serialPort.trim());
     serialArtifactRefreshRef.current = serverBuild.jobId;
     void refreshSerialStatus({
       silent: true,
@@ -1648,7 +1664,7 @@ export default function DIYBuilderPage() {
       return;
     }
 
-    const freeMessage = `Build ${shortId(serverBuild.jobId)} is ready. Port ${serialPort.trim()} is free for browser flashing.`;
+    const freeMessage = t("diy.step4flash.serial.ready_free_msg").replace("{jobId}", shortId(serverBuild.jobId)).replace("{port}", serialPort.trim());
     artifactSerialReleaseRef.current = serverBuild.jobId;
     void (async () => {
       await releaseSerialLock({
@@ -1685,26 +1701,42 @@ export default function DIYBuilderPage() {
   }, [persistProject, projectPayloadJson]);
 
   const saveProjectAsNewConfig = useCallback(async () => {
-    await persistProject(projectPayloadJson, { forceCreate: true });
-  }, [persistProject, projectPayloadJson]);
+    const newName = await new Promise<string | null>((resolve) => {
+      setPromptModalConfig({
+        isOpen: true,
+        initialValue: projectName + " (Copy)",
+        resolve,
+      });
+    });
+
+    setPromptModalConfig((prev) => ({ ...prev, isOpen: false }));
+
+    if (!newName || !newName.trim()) {
+      return;
+    }
+
+    const payloadObj = JSON.parse(projectPayloadJson);
+    payloadObj.name = newName.trim();
+    const newPayloadJson = JSON.stringify(payloadObj);
+
+    try {
+      await persistProject(newPayloadJson, { forceCreate: true });
+      setProjectName(newName.trim());
+      showToast(t("diy.step2configs.toast.clone_success").replace("{name}", newName.trim()), "success");
+    } catch (error) {
+      showToast(t("diy.step2configs.toast.clone_error"), "error");
+    }
+  }, [projectName, projectPayloadJson, persistProject, showToast, t]);
 
   const continueToPinMapping = useCallback(async () => {
     if (!projectName.trim()) {
       setProjectSyncState("idle");
-      setProjectSyncMessage("Enter a project name before continuing to Pin Mapping.");
+      setProjectSyncMessage(t("diy.sync_msg.no_project_name_next"));
       return;
     }
 
     if (activeBoardConfigId) {
       setCurrentStep(3);
-      return;
-    }
-
-    if (!templateConfigId) {
-      setProjectSyncState("idle");
-      setProjectSyncMessage(
-        "Choose a saved config template or create one first before continuing to Pin Mapping.",
-      );
       return;
     }
 
@@ -1714,7 +1746,16 @@ export default function DIYBuilderPage() {
     }
 
     setCurrentStep(3);
-  }, [activeBoardConfigId, persistProject, projectName, projectPayloadJson, templateConfigId]);
+  }, [activeBoardConfigId, persistProject, projectName, projectPayloadJson, t]);
+
+  const handleCreateNewConfig = useCallback(() => {
+    setProjectId(null);
+    setTemplateConfigId(null);
+    setProjectName("");
+    setPins([]);
+    setProjectSyncMessage("");
+    setProjectSyncState("idle");
+  }, []);
 
   const loadBoardConfig = useCallback(async (configId: string) => {
     const selectedConfig = boardConfigs.find((project) => project.id === configId);
@@ -1722,11 +1763,10 @@ export default function DIYBuilderPage() {
       return;
     }
 
-    const shouldLoadAsTemplate = configId !== projectId;
     await applyProjectToWorkspace(selectedConfig, {
-      asTemplate: shouldLoadAsTemplate,
+      asTemplate: false,
     });
-  }, [applyProjectToWorkspace, boardConfigs, projectId]);
+  }, [applyProjectToWorkspace, boardConfigs]);
 
   const triggerServerBuild = async () => {
     if (hasActiveServerBuild && serverBuild.jobId) {
@@ -1735,7 +1775,7 @@ export default function DIYBuilderPage() {
         ...previous,
         error: null,
       }));
-      setProjectSyncMessage(`Build ${shortId(serverBuild.jobId)} is already in progress.`);
+      setProjectSyncMessage(t("diy.sync_msg.build_in_progress").replace("{jobId}", shortId(serverBuild.jobId)));
       await refreshBuildJob(serverBuild.jobId, serverBuild.configKey ?? currentBuildConfigKey);
       return;
     }
@@ -1810,7 +1850,7 @@ export default function DIYBuilderPage() {
         updatedAt: job.updated_at,
       });
       setProjectSyncState("saving");
-      setProjectSyncMessage(`Build ${shortId(job.id)} queued on the server.`);
+      setProjectSyncMessage(t("diy.sync_msg.build_queued").replace("{jobId}", shortId(job.id)));
       setSerialMessage(
         `Build ${shortId(job.id)} queued. Port ${serialPort.trim() || DEFAULT_SERIAL_PORT} will be released automatically when the artifact is ready.`,
       );
@@ -1905,7 +1945,7 @@ export default function DIYBuilderPage() {
     setCurrentStep(1);
     lastSavedPayloadRef.current = null;
     setProjectSyncState("idle");
-    setProjectSyncMessage("Choose a board, enter a project name, then create or template a saved config.");
+    setProjectSyncMessage(t("diy.sync_msg.choose_board"));
   };
 
   const flashLockedReason = getFlashLockedReason({
@@ -1922,6 +1962,7 @@ export default function DIYBuilderPage() {
     serverBuildError: serverBuild.error,
     serverBuildIsStale,
     serverBuildHasFullBundle,
+    t,
   });
 
   if (!isAdmin) {
@@ -1967,12 +2008,8 @@ export default function DIYBuilderPage() {
               <span className="material-symbols-outlined">developer_board</span>
             </div>
             <div className="flex flex-col gap-0.5">
-              <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">
-                IoT Configurator
-              </h2>
-              <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">
-                SVG to server build pipeline
-              </p>
+              <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">{t("diy.wizard.title")}</h2>
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">{t("diy.wizard.subtitle")}</p>
             </div>
           </div>
 
@@ -2000,9 +2037,7 @@ export default function DIYBuilderPage() {
                         ? "text-slate-700 dark:text-slate-200"
                         : "text-slate-400 dark:text-slate-500"
                       }`}
-                  >
-                    {step.label}
-                  </span>
+                  >{t(`diy.wizard.step${step.id}`)}</span>
                 </div>
               );
             })}
@@ -2011,10 +2046,10 @@ export default function DIYBuilderPage() {
           <div className="flex items-center gap-4">
             <div className="hidden flex-col items-end md:flex">
               <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
-                Step {currentStep} of {WIZARD_STEPS.length}
+                {t("diy.wizard.step_x_of_y").replace("{current}", currentStep.toString()).replace("{total}", WIZARD_STEPS.length.toString())}
               </span>
               <span className="text-xs text-slate-500 dark:text-slate-400">
-                {Math.round((currentStep / WIZARD_STEPS.length) * 100)}% complete
+                {t("diy.wizard.percent_complete").replace("{percent}", Math.round((currentStep / WIZARD_STEPS.length) * 100).toString())}
               </span>
             </div>
             <span className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1 font-mono text-xs font-bold uppercase tracking-widest text-slate-500 dark:border-slate-700 dark:bg-slate-800 sm:inline-block">
@@ -2101,6 +2136,7 @@ export default function DIYBuilderPage() {
             projectSyncState={projectSyncState}
             projectSyncMessage={projectSyncMessage}
             onSelectConfig={loadBoardConfig}
+            onCreateNewConfig={handleCreateNewConfig}
             onSaveConfig={saveProjectNow}
             onSaveAsNewConfig={saveProjectAsNewConfig}
             onBack={() => setCurrentStep(1)}
@@ -2184,6 +2220,14 @@ export default function DIYBuilderPage() {
           />
         )}
       </main>
+      <PromptModal
+        isOpen={promptModalConfig.isOpen}
+        title={t("diy.step2configs.prompt.new_name")}
+        message=""
+        initialValue={promptModalConfig.initialValue}
+        onConfirm={promptModalConfig.resolve}
+        onCancel={() => promptModalConfig.resolve(null)}
+      />
     </div>
   );
 }
@@ -2214,6 +2258,7 @@ function getFlashLockedReason({
   serverBuildError,
   serverBuildIsStale,
   serverBuildHasFullBundle,
+  t,
 }: {
   validation: ValidationResult;
   browserSupportsSerial: boolean;
@@ -2228,6 +2273,8 @@ function getFlashLockedReason({
   serverBuildError: string | null;
   serverBuildIsStale: boolean;
   serverBuildHasFullBundle: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  t: (key: string, options?: any) => string;
 }) {
   if (validation.errors.length > 0) {
     return "Fix the blocking GPIO validation errors before the web flasher becomes available.";
@@ -2251,13 +2298,13 @@ function getFlashLockedReason({
     }
 
     if (boardRequiresFullFlashBundle(board) && !serverBuildHasFullBundle) {
-      return "ESP32-family server builds require the full flash bundle (bootloader, partition table, boot data, firmware). Wait for all artifacts before flashing.";
+      return t("diy.step4flash.flash_locked.esp32_bundle");
     }
 
     if (eraseFirst && !serverBuildHasFullBundle) {
       return board.family === "ESP8266"
         ? "ESP8266 server builds expose a single firmware.bin only. Leave 'erase all flash' disabled."
-        : "ESP32-family boards must use the full server flash bundle before enabling 'erase all flash'.";
+        : t("diy.step4flash.flash_locked.esp32_erase");
     }
 
     if (serverBuildStatus !== "artifact_ready") {

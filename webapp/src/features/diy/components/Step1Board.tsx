@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useLanguage } from "@/components/LanguageContext";
 import { BOARD_PROFILES, BOARD_FAMILIES, type ChipFamily, type BoardProfile } from "../board-profiles";
 import type { ProjectSyncState } from "../types";
 import type { RoomRecord } from "@/lib/rooms";
@@ -56,6 +57,7 @@ interface Step1BoardProps {
 }
 
 export function Step1Board({
+
     projectName,
     setProjectName,
     wifiCredentials,
@@ -88,12 +90,12 @@ export function Step1Board({
     psramSize,
     setPsramSize,
 }: Step1BoardProps) {
+    const { t } = useLanguage();
     const totalGpios = [...board.leftPins, ...board.rightPins].filter((pin) => pin.gpio >= 0).length;
     const defaultCpu = board.defaultCpuMhz || (board.family.includes("C2") ? 120 : board.family.includes("H2") ? 96 : board.family.includes("C3") || board.family.includes("C6") ? 160 : 240);
     const defaultFlash = board.defaultFlashSize || "4MB";
     const defaultPsram = board.defaultPsram || "None";
 
-    const [projectNameTouched, setProjectNameTouched] = useState(false);
 
     const cpuOptions = useMemo(() => {
         let maxCpu = 240;
@@ -147,15 +149,19 @@ export function Step1Board({
         }
     }, [board.id, cpuOptions, flashOptions, psramOptions, cpuMhz, flashSize, psramSize, setCpuMhz, setFlashSize, setPsramSize]);
 
+    const missingFields: string[] = [];
+    if (!projectName.trim()) missingFields.push(t("diy.step1.hint_project"));
+    if (!selectedRoomId) missingFields.push(t("diy.step1.hint_room"));
+    if (!selectedWifiCredentialId) missingFields.push(t("diy.step1.hint_wifi"));
+    const missingFieldsString = missingFields.join(", ");
+
     return (
         <div className="flex flex-col gap-4">
             <div className="flex flex-col gap-4 mb-10">
                 <label
                     htmlFor="diy-project-name"
                     className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider relative"
-                >
-                    Project Name
-                    <span className="text-rose-500 ml-1">*</span>
+                >{t("diy.step1.project_name")}<span className="text-rose-500 ml-1">*</span>
                 </label>
                 <input
                     id="diy-project-name"
@@ -163,20 +169,18 @@ export function Step1Board({
                     value={projectName}
                     onChange={(event) => {
                         setProjectName(event.target.value);
-                        if (!projectNameTouched) setProjectNameTouched(true);
                     }}
-                    onBlur={() => setProjectNameTouched(true)}
                     className={`w-full rounded-xl border-2 ${
-                        projectNameTouched && !projectName.trim() 
+                        !projectName.trim() 
                         ? "border-rose-500 focus:border-rose-500 focus:ring-rose-500/20 bg-rose-50/50 dark:bg-rose-950/20 dark:border-rose-500/50" 
                         : "border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 focus:border-primary focus:ring-primary/10 dark:border-slate-800"
                     } px-4 py-3 text-lg text-slate-900 dark:text-white outline-none transition focus:ring-4 dark:text-white`}
-                    placeholder="e.g. Kitchen Relay Node"
+                    placeholder={t("diy.step1.project_name.placeholder")}
                     required
                 />
-                {projectNameTouched && !projectName.trim() && (
+                {!projectName.trim() && (
                     <p className="text-sm font-medium text-rose-500 dark:text-rose-400 mt-1">
-                        Project Name is required to continue.
+                        {t("diy.step1.missing_project_name")}
                     </p>
                 )}
             </div>
@@ -219,9 +223,9 @@ export function Step1Board({
                             <svg className="mb-3 h-10 w-10 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                             </svg>
-                            <h3 className="mb-2 text-base font-bold text-amber-800 dark:text-amber-300">No Wi-Fi Networks Configured</h3>
+                            <h3 className="mb-2 text-base font-bold text-amber-800 dark:text-amber-300">{t("diy.step1.wifi.none")}</h3>
                             <p className="text-sm text-amber-700 dark:text-amber-200/80">
-                                You must add at least one Wi-Fi network before you can build a device. Click here to go to the Settings page to add a Wi-Fi credential, then return here.
+                                {t("diy.step1.wifi.create")}
                             </p>
                         </Link>
                     ) : (
@@ -257,9 +261,7 @@ export function Step1Board({
                         <label
                             htmlFor="diy-room-id"
                             className="block text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider"
-                        >
-                            Device Area
-                        </label>
+                        >{t("diy.step1.room")}</label>
                         <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
                             New devices must be assigned to an area before the server build can be approved and paired.
                         </p>
@@ -286,7 +288,7 @@ export function Step1Board({
                             value={newRoomName}
                             onChange={(event) => setNewRoomName(event.target.value)}
                             className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-base text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
-                            placeholder="Create a new area here"
+                            placeholder={t("diy.step1.new_room.placeholder")}
                         />
                         <button
                             type="button"
@@ -348,9 +350,7 @@ export function Step1Board({
             </div>
 
             <div className="mt-2 mb-8">
-                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 dark:text-slate-300 uppercase tracking-wider mb-4">
-                    Specific Board Profile
-                </label>
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 dark:text-slate-300 uppercase tracking-wider mb-4">{t("diy.step1.board")}</label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {familyOptions.map((profile) => (
                         <button
@@ -378,12 +378,10 @@ export function Step1Board({
             </div>
 
             <div className="mt-2 mb-8">
-                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 dark:text-slate-300 uppercase tracking-wider mb-4">
-                    Detailed Board Config
-                </label>
+                <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 dark:text-slate-300 uppercase tracking-wider mb-4">{t("diy.step1.specs")}</label>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-5 rounded-2xl border border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark dark:border-slate-800 dark:bg-slate-900/50">
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider mb-2">CPU Frequency</label>
+                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider mb-2">{t("diy.step1.cpu_freq")}</label>
                         <select
                             value={cpuMhz === null ? "" : cpuMhz}
                             onChange={(e) => setCpuMhz(e.target.value ? Number(e.target.value) : null)}
@@ -396,7 +394,7 @@ export function Step1Board({
                         </select>
                     </div>
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider mb-2">Flash Size</label>
+                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider mb-2">{t("diy.step1.flash_size")}</label>
                         <select
                             value={flashSize === null ? "" : flashSize}
                             onChange={(e) => setFlashSize(e.target.value || null)}
@@ -409,7 +407,7 @@ export function Step1Board({
                         </select>
                     </div>
                     <div>
-                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider mb-2">PSRAM</label>
+                        <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 dark:text-slate-400 uppercase tracking-wider mb-2">{t("diy.step1.psram")}</label>
                         <select
                             value={psramSize === null ? "" : psramSize}
                             onChange={(e) => setPsramSize(e.target.value || null)}
@@ -443,22 +441,29 @@ export function Step1Board({
                         </p>
                     </div>
                 </div>
-                <div className="flex gap-4 w-full md:w-auto">
-                    <button
-                        onClick={() => void onSaveDraft()}
-                        disabled={projectSyncState === "saving" || !projectName.trim()}
-                        className="flex-1 md:flex-none px-6 py-3 rounded-lg border border-slate-300 dark:border-slate-600 dark:border-slate-700 text-slate-600 dark:text-slate-400 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-800 transition-all disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                        {projectSyncState === "saving" ? "Saving..." : "Save Draft"}
-                    </button>
-                    <button
-                        onClick={onNext}
-                        disabled={!projectName.trim() || !selectedRoomId || !selectedWifiCredentialId}
-                        className="flex-1 md:flex-none px-8 py-3 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                        <span>Next: Choose Config</span>
-                        <span className="material-symbols-outlined text-sm">arrow_forward</span>
-                    </button>
+                <div className="flex flex-col items-end gap-3 w-full md:w-auto">
+                    {missingFields.length > 0 && (
+                        <p className="text-sm font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-500/10 px-3 py-1.5 rounded border border-amber-200 dark:border-amber-500/30">
+                            {t("diy.step1.hint_missing").replace("{fields}", missingFieldsString)}
+                        </p>
+                    )}
+                    <div className="flex gap-4 w-full md:w-auto">
+                        <button
+                            onClick={() => void onSaveDraft()}
+                            disabled={projectSyncState === "saving" || !projectName.trim()}
+                            className="flex-1 md:flex-none px-6 py-3 rounded-lg border border-slate-300 dark:border-slate-600 dark:border-slate-700 text-slate-600 dark:text-slate-400 dark:text-slate-300 font-bold hover:bg-slate-200 dark:hover:bg-slate-800 transition-all disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            {projectSyncState === "saving" ? "Saving..." : t("diy.step1.save_draft")}
+                        </button>
+                        <button
+                            onClick={onNext}
+                            disabled={missingFields.length > 0}
+                            className="flex-1 md:flex-none px-8 py-3 rounded-lg bg-primary text-white font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all flex items-center justify-center gap-2 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                            <span>{t("diy.step1.next")}</span>
+                            <span className="material-symbols-outlined text-sm">arrow_forward</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>

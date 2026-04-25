@@ -4,7 +4,10 @@ import logging
 import os
 import time
 import json
+import importlib
+import sys
 import uuid
+from contextlib import suppress
 from datetime import datetime, timezone
 
 from sqlalchemy import create_engine, text
@@ -30,6 +33,12 @@ if DATABASE_URL == DEFAULT_DATABASE_URL:
     )
 
 engine_options = {"pool_pre_ping": True}
+MARIADB_RETRYABLE_SCHEMA_ERROR_CODES = {1205, 1213}
+MARIADB_DUPLICATE_COLUMN_ERROR_CODES = {1060}
+MARIADB_MISSING_COLUMN_ERROR_CODES = {1091}
+SCHEMA_GUARD_MAX_ATTEMPTS = max(1, int(os.getenv("SCHEMA_GUARD_MAX_ATTEMPTS", "3")))
+SCHEMA_GUARD_RETRY_DELAY = max(0.0, float(os.getenv("SCHEMA_GUARD_RETRY_DELAY", "1.0")))
+SCHEMA_GUARD_LOCK_WAIT_TIMEOUT = max(1, int(os.getenv("SCHEMA_GUARD_LOCK_WAIT_TIMEOUT", "5")))
 
 if DATABASE_URL.startswith("sqlite"):
     engine_options["connect_args"] = {"check_same_thread": False}
@@ -49,9 +58,69 @@ LEGACY_CONFIG_BUILD_POINTER_KEYS = ("latest_build_job_id", "latest_build_config_
 CONFIG_HISTORY_DELETED_AT_KEY = "_history_deleted_at"
 INTERNAL_CONFIG_METADATA_KEYS = (CONFIG_HISTORY_DELETED_AT_KEY,)
 
+def _load_sql_model_metadata() -> None:
+    # Ensure Base metadata is populated even when callers import app.database directly
+    # or the module has been reloaded in tests.
+    package_name = __package__ or "app"
+    module_name = f"{package_name}.sql_models"
+    existing_module = sys.modules.get(module_name)
+
+    if existing_module is not None and getattr(existing_module, "Base", None) is Base:
+        return
+
+    package_module = sys.modules.get(package_name)
+    if package_module is not None and hasattr(package_module, "sql_models"):
+        delattr(package_module, "sql_models")
+
+    sys.modules.pop(module_name, None)
+    loaded_module = importlib.import_module(".sql_models", package_name)
+
+    if getattr(loaded_module, "Base", None) is not Base:
+        raise RuntimeError("Failed to load SQLAlchemy metadata into the active database Base")
+
 def _format_operational_error(exc: OperationalError) -> str:
     original_error = getattr(exc, "orig", None)
     return str(original_error or exc)
+
+
+def _get_operational_error_code(exc: OperationalError) -> int | None:
+    original_error = getattr(exc, "orig", None)
+    args = getattr(original_error, "args", ())
+    if not args:
+        return None
+
+    error_code = args[0]
+    return error_code if isinstance(error_code, int) else None
+
+
+def _is_retryable_schema_operational_error(exc: OperationalError) -> bool:
+    return _get_operational_error_code(exc) in MARIADB_RETRYABLE_SCHEMA_ERROR_CODES
+
+
+def _is_duplicate_column_operational_error(exc: OperationalError) -> bool:
+    return _get_operational_error_code(exc) in MARIADB_DUPLICATE_COLUMN_ERROR_CODES
+
+
+def _is_missing_column_operational_error(exc: OperationalError) -> bool:
+    return _get_operational_error_code(exc) in MARIADB_MISSING_COLUMN_ERROR_CODES
+
+
+def _configure_mariadb_schema_session(conn) -> None:
+    conn.execute(
+        text("SET SESSION lock_wait_timeout = :timeout_seconds"),
+        {"timeout_seconds": SCHEMA_GUARD_LOCK_WAIT_TIMEOUT},
+    )
+    conn.execute(
+        text("SET SESSION innodb_lock_wait_timeout = :timeout_seconds"),
+        {"timeout_seconds": SCHEMA_GUARD_LOCK_WAIT_TIMEOUT},
+    )
+
+
+def _reset_failed_schema_connection(conn) -> None:
+    with suppress(Exception):
+        conn.rollback()
+    with suppress(Exception):
+        conn.invalidate()
 
 def check_database_connection():
     try:
@@ -109,20 +178,47 @@ def _index_exists(table_name: str, index_name: str) -> bool:
         return bool(result.scalar())
 
 def _ensure_column(table_name: str, column_name: str, sqlite_definition: str, maria_definition: str):
-    with engine.connect() as conn:
-        if DATABASE_URL.startswith("sqlite"):
+    if DATABASE_URL.startswith("sqlite"):
+        with engine.connect() as conn:
             if not _column_exists(table_name, column_name):
                 conn.execute(text(
                     f"ALTER TABLE {table_name} ADD COLUMN {column_name} {sqlite_definition}"
                 ))
                 conn.commit()
-            return
+        return
 
-        if not _column_exists(table_name, column_name):
+    if _column_exists(table_name, column_name):
+        return
+
+    for attempt in range(1, SCHEMA_GUARD_MAX_ATTEMPTS + 1):
+        conn = engine.connect()
+        try:
+            _configure_mariadb_schema_session(conn)
             conn.execute(text(
                 f"ALTER TABLE {table_name} ADD COLUMN {column_name} {maria_definition}"
             ))
             conn.commit()
+            return
+        except OperationalError as exc:
+            _reset_failed_schema_connection(conn)
+            if _column_exists(table_name, column_name) or _is_duplicate_column_operational_error(exc):
+                return
+
+            if _is_retryable_schema_operational_error(exc) and attempt < SCHEMA_GUARD_MAX_ATTEMPTS:
+                logger.warning(
+                    "Retrying schema additive guard for %s.%s after MariaDB error %s on attempt %s/%s",
+                    table_name,
+                    column_name,
+                    _get_operational_error_code(exc),
+                    attempt,
+                    SCHEMA_GUARD_MAX_ATTEMPTS,
+                )
+                time.sleep(SCHEMA_GUARD_RETRY_DELAY)
+                continue
+            raise
+        finally:
+            with suppress(Exception):
+                conn.close()
 
 def _ensure_index(table_name: str, index_name: str, sqlite_sql: str, maria_sql: str) -> None:
     if _index_exists(table_name, index_name):
@@ -136,9 +232,39 @@ def _drop_column_if_exists(table_name: str, column_name: str):
     if not _column_exists(table_name, column_name):
         return
 
-    with engine.connect() as conn:
-        conn.execute(text(f"ALTER TABLE {table_name} DROP COLUMN {column_name}"))
-        conn.commit()
+    if DATABASE_URL.startswith("sqlite"):
+        with engine.connect() as conn:
+            conn.execute(text(f"ALTER TABLE {table_name} DROP COLUMN {column_name}"))
+            conn.commit()
+        return
+
+    for attempt in range(1, SCHEMA_GUARD_MAX_ATTEMPTS + 1):
+        conn = engine.connect()
+        try:
+            _configure_mariadb_schema_session(conn)
+            conn.execute(text(f"ALTER TABLE {table_name} DROP COLUMN {column_name}"))
+            conn.commit()
+            return
+        except OperationalError as exc:
+            _reset_failed_schema_connection(conn)
+            if not _column_exists(table_name, column_name) or _is_missing_column_operational_error(exc):
+                return
+
+            if _is_retryable_schema_operational_error(exc) and attempt < SCHEMA_GUARD_MAX_ATTEMPTS:
+                logger.warning(
+                    "Retrying schema cleanup for %s.%s after MariaDB error %s on attempt %s/%s",
+                    table_name,
+                    column_name,
+                    _get_operational_error_code(exc),
+                    attempt,
+                    SCHEMA_GUARD_MAX_ATTEMPTS,
+                )
+                time.sleep(SCHEMA_GUARD_RETRY_DELAY)
+                continue
+            raise
+        finally:
+            with suppress(Exception):
+                conn.close()
 
 def _drop_table_if_exists(table_name: str) -> bool:
     if not _table_exists(table_name):
@@ -567,6 +693,12 @@ def _ensure_additive_columns():
             "DATETIME",
             "DATETIME NULL",
         ),
+        (
+            "users",
+            "language",
+            "VARCHAR(5) NOT NULL DEFAULT 'en'",
+            "VARCHAR(5) NOT NULL DEFAULT 'en'",
+        ),
     ]
 
     for table_name, column_name, sqlite_definition, maria_definition in column_guards:
@@ -890,6 +1022,33 @@ def _cleanup_legacy_user_approval_status():
         logger.warning("Legacy users.approval_status cleanup failed (non-fatal): %s", exc)
 
 
+def _cleanup_legacy_user_ui_layout():
+    try:
+        _drop_column_if_exists("users", "ui_layout")
+    except Exception as exc:
+        logger.warning("Legacy users.ui_layout cleanup failed (non-fatal): %s", exc)
+
+
+def _backfill_user_language_defaults():
+    if not _column_exists("users", "language"):
+        return
+
+    with engine.connect() as conn:
+        try:
+            conn.execute(
+                text(
+                    """
+                    UPDATE users
+                    SET language = 'en'
+                    WHERE language IS NULL OR TRIM(language) = ''
+                    """
+                )
+            )
+            conn.commit()
+        except Exception as exc:
+            logger.warning("User language backfill failed (non-fatal): %s", exc)
+
+
 def _cleanup_legacy_unused_tables():
     for table_name in ("firmwares",):
         try:
@@ -1015,6 +1174,7 @@ def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
 
     for attempt in range(1, max_attempts + 1):
         try:
+            _load_sql_model_metadata()
             Base.metadata.create_all(bind=engine)
             _cleanup_legacy_unused_tables()
             _ensure_additive_columns()
@@ -1025,6 +1185,8 @@ def initialize_database(max_attempts: int = 3, retry_delay: float = 1.0):
             _cleanup_project_board_config_data()
             _backfill_saved_project_configs()
             _cleanup_legacy_user_approval_status()
+            _cleanup_legacy_user_ui_layout()
+            _backfill_user_language_defaults()
             logger.info("Database schema is ready")
             return True, None
         except SQLAlchemyError as exc:

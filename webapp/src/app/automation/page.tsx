@@ -9,8 +9,10 @@ import Sidebar from "@/components/Sidebar";
 import { AutomationRecord, AutomationListFilter, AutomationScheduleContext, AutomationMutationPayload } from "@/types/automation";
 import { fetchAutomations, fetchAutomationScheduleContext, deleteAutomation, updateAutomation } from "@/lib/api-automation";
 import { getAutomationGraphSummary, getAutomationGraphReadiness, getReadinessClasses, formatAutomationRunTime } from "@/lib/automation-utils";
+import { useLanguage } from "@/components/LanguageContext";
 
 function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  const { t } = useLanguage();
   return (
     <div className="flex items-start gap-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 dark:border-rose-500/30 dark:bg-rose-500/10 mb-6">
       <span className="material-icons-round mt-0.5 text-rose-500 dark:text-rose-400">error</span>
@@ -19,7 +21,7 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => vo
       </div>
       {onRetry && (
         <button type="button" onClick={onRetry} className="shrink-0 text-xs font-bold text-rose-600 underline dark:text-rose-300">
-          Retry
+          {t("automation.retry")}
         </button>
       )}
     </div>
@@ -27,28 +29,30 @@ function ErrorBanner({ message, onRetry }: { message: string; onRetry?: () => vo
 }
 
 function EmptyState({ onCreate }: { onCreate: () => void }) {
+  const { t } = useLanguage();
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-6 p-12 text-center">
       <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10">
         <span className="material-icons-round text-4xl text-primary">account_tree</span>
       </div>
       <div>
-        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">No automations yet</h2>
+        <h2 className="text-2xl font-bold text-slate-900 dark:text-white">{t("automation.empty.title")}</h2>
         <p className="mt-2 text-slate-500 dark:text-slate-400 max-w-sm">
-          Create an automation graph. Build rules to react to your devices in real-time.
+          {t("automation.empty.desc")}
         </p>
       </div>
       <button
         onClick={onCreate}
         className="inline-flex items-center gap-2 rounded-lg bg-primary px-4 py-2 font-medium text-white transition hover:bg-blue-600 shadow"
       >
-        <span className="material-icons-round text-sm">add</span> Create Automation
+        <span className="material-icons-round text-sm">add</span> {t("automation.btn.create_empty")}
       </button>
     </div>
   );
 }
 
 export default function AutomationListPage() {
+  const { t } = useLanguage();
   const router = useRouter();
   const [automations, setAutomations] = useState<AutomationRecord[]>([]);
   const [scheduleContext, setScheduleContext] = useState<AutomationScheduleContext | null>(null);
@@ -73,7 +77,7 @@ export default function AutomationListPage() {
       setAutomations(data);
       setScheduleContext(nextScheduleContext);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load automations");
+      setError(e instanceof Error ? e.message : t("automation.error.load"));
     } finally {
       setLoading(false);
     }
@@ -87,7 +91,7 @@ export default function AutomationListPage() {
       setAutomations((prev) => prev.filter((a) => a.id !== deletingId));
       setDeletingId(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to delete automation");
+      setError(err instanceof Error ? err.message : t("automation.error.delete"));
       setDeletingId(null);
     } finally {
       setIsDeleting(false);
@@ -117,7 +121,7 @@ export default function AutomationListPage() {
       const updated = await updateAutomation(automation.id, payload);
       setAutomations((prev) => prev.map((a) => (a.id === updated.id ? updated : a)));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to toggle automation");
+      setError(err instanceof Error ? err.message : t("automation.error.toggle"));
     } finally {
       setTogglingId(null);
     }
@@ -149,7 +153,7 @@ export default function AutomationListPage() {
       <div className="space-y-3 mb-8">
         <div className="flex items-center justify-between px-2">
           <span className="text-xs font-bold uppercase tracking-[0.18em] text-slate-400">{sectionTitle}</span>
-          <span className="text-[11px] font-medium text-slate-400">{items.length} items</span>
+          <span className="text-[11px] font-medium text-slate-400">{t("automation.items_count").replace("{count}", items.length.toString())}</span>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {items.map((automation) => {
@@ -190,8 +194,8 @@ export default function AutomationListPage() {
                           ? "text-slate-400 hover:bg-amber-50 hover:text-amber-600 dark:hover:bg-amber-500/10 dark:hover:text-amber-400 focus:ring-amber-500/50"
                           : "text-slate-400 hover:bg-emerald-50 hover:text-emerald-600 dark:hover:bg-emerald-500/10 dark:hover:text-emerald-400 focus:ring-emerald-500/50"
                       }`}
-                      title={automation.is_enabled ? "Pause rule" : "Start rule"}
-                      aria-label={automation.is_enabled ? "Pause rule" : "Start rule"}
+                      title={automation.is_enabled ? t("automation.card.pause_rule") : t("automation.card.start_rule")}
+                      aria-label={automation.is_enabled ? t("automation.card.pause_rule") : t("automation.card.start_rule")}
                     >
                       {togglingId === automation.id ? (
                         <div className="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600 dark:border-slate-600 dark:border-t-slate-300"></div>
@@ -208,8 +212,8 @@ export default function AutomationListPage() {
                         setDeletingId(automation.id);
                       }}
                       className="opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity h-6 w-6 rounded-lg flex items-center justify-center text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-500/10 dark:hover:text-rose-400 focus:outline-none focus:ring-2 focus:ring-rose-500/50"
-                      title="Delete rule"
-                      aria-label="Delete rule"
+                      title={t("automation.card.delete_rule")}
+                      aria-label={t("automation.card.delete_rule")}
                     >
                       <span className="material-icons-round text-[16px]">delete_outline</span>
                     </button>
@@ -223,10 +227,10 @@ export default function AutomationListPage() {
                 <div className="mt-auto flex items-center justify-between border-t border-slate-100 pt-3 dark:border-slate-800 w-full text-[11px] text-slate-500 font-medium select-none">
                   <span className="flex items-center gap-1.5">
                     <span className={`h-1.5 w-1.5 rounded-full ${automation.is_enabled ? "bg-emerald-500" : "bg-slate-300 dark:bg-slate-600"}`}></span>
-                    {automation.is_enabled ? "Enabled" : "Paused"}
+                    {automation.is_enabled ? t("automation.card.enabled") : t("automation.card.paused")}
                   </span>
-                  <span className={`truncate ${automation.last_execution ? (automation.last_execution.status === 'failed' ? 'text-rose-600 dark:text-rose-400 font-semibold' : 'text-emerald-600 dark:text-emerald-400 font-semibold') : ''}`} title={automation.last_triggered ? formatAutomationRunTime(automation.last_triggered, effectiveTimezone) : "Never run"}>
-                    {automation.last_execution ? `Run: ${automation.last_execution.status}` : (automation.last_triggered ? formatAutomationRunTime(automation.last_triggered, effectiveTimezone) : "Never")}
+                  <span className={`truncate ${automation.last_execution ? (automation.last_execution.status === 'failed' ? 'text-rose-600 dark:text-rose-400 font-semibold' : 'text-emerald-600 dark:text-emerald-400 font-semibold') : ''}`} title={automation.last_triggered ? formatAutomationRunTime(automation.last_triggered, effectiveTimezone) : t("automation.card.never_run")}>
+                    {automation.last_execution ? t("automation.card.run").replace("{status}", automation.last_execution.status) : (automation.last_triggered ? formatAutomationRunTime(automation.last_triggered, effectiveTimezone) : t("automation.card.never_run"))}
                   </span>
                 </div>
               </div>
@@ -246,14 +250,14 @@ export default function AutomationListPage() {
             <div>
               <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-3">
                 <span className="material-icons-round text-primary text-[32px]">account_tree</span>
-                Automations
+                {t("automation.title")}
               </h1>
               <p className="mt-2 max-w-2xl text-base text-slate-500 dark:text-slate-400">
-                Create and manage rules to orchestrate your smart home devices automatically.
+                {t("automation.subtitle")}
               </p>
               {effectiveTimezone && (
                 <p className="mt-2 text-sm text-slate-400 dark:text-slate-500">
-                  Run timestamps use {effectiveTimezone}.
+                  {t("automation.timezone_note").replace("{timezone}", effectiveTimezone)}
                 </p>
               )}
             </div>
@@ -262,7 +266,7 @@ export default function AutomationListPage() {
                 onClick={() => router.push('/automation/new')}
                 className="shrink-0 inline-flex items-center justify-center gap-2 rounded-xl bg-primary px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-blue-600 shadow-sm"
               >
-                <span className="material-icons-round text-[18px]">add</span> Create Rule
+                <span className="material-icons-round text-[18px]">add</span> {t("automation.btn.create")}
               </button>
             )}
           </header>
@@ -283,9 +287,9 @@ export default function AutomationListPage() {
               <div className="flex flex-col sm:flex-row items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-2 shadow-sm dark:border-slate-800 dark:bg-slate-900">
                 <div className="flex flex-wrap items-center gap-1">
                   {([
-                    ["all", "All Rules"],
-                    ["enabled", "Enabled"],
-                    ["disabled", "Paused"],
+                    ["all", t("automation.filter.all")],
+                    ["enabled", t("automation.filter.enabled")],
+                    ["disabled", t("automation.filter.paused")],
                   ] as const).map(([value, label]) => (
                     <button
                       key={value}
@@ -309,7 +313,7 @@ export default function AutomationListPage() {
                     type="text"
                     value={search}
                     onChange={e => setSearch(e.target.value)}
-                    placeholder="Search automations..."
+                    placeholder={t("automation.search.placeholder")}
                     className="w-full sm:w-64 rounded-xl border-none bg-slate-50 dark:bg-slate-950 px-10 py-2.5 text-sm text-slate-900 transition focus:ring-2 focus:ring-primary dark:text-white placeholder:text-slate-400"
                   />
                 </div>
@@ -320,15 +324,15 @@ export default function AutomationListPage() {
                 {filteredAutomations.length === 0 ? (
                   <div className="flex flex-col items-center justify-center p-12 text-center rounded-2xl border border-dashed border-slate-300 dark:border-slate-700">
                     <span className="material-icons-round text-4xl text-slate-300 dark:text-slate-600 mb-3">search_off</span>
-                    <p className="text-slate-500 dark:text-slate-400 font-medium tracking-wide">No rules match your filters.</p>
+                    <p className="text-slate-500 dark:text-slate-400 font-medium tracking-wide">{t("automation.search.empty")}</p>
                   </div>
                 ) : filter === "all" ? (
                   <>
-                    {renderAutomationRows(enabledAutomations, "Active Automations")}
-                    {renderAutomationRows(disabledAutomations, "Paused Automations")}
+                    {renderAutomationRows(enabledAutomations, t("automation.section.active"))}
+                    {renderAutomationRows(disabledAutomations, t("automation.section.paused"))}
                   </>
                 ) : (
-                  renderAutomationRows(filteredAutomations, filter === "enabled" ? "Active Automations" : "Paused Automations")
+                  renderAutomationRows(filteredAutomations, filter === "enabled" ? t("automation.section.active") : t("automation.section.paused"))
                 )}
               </div>
             </div>
@@ -338,10 +342,10 @@ export default function AutomationListPage() {
 
       <ConfirmModal
         isOpen={deletingId !== null}
-        title="Delete Automation"
-        message="Are you sure you want to delete this automation rule? This action cannot be undone."
-        confirmText="Delete"
-        cancelText="Cancel"
+        title={t("automation.modal.delete_title")}
+        message={t("automation.modal.delete_message")}
+        confirmText={t("automation.modal.btn_delete")}
+        cancelText={t("automation.modal.btn_cancel")}
         type="danger"
         isLoading={isDeleting}
         onCancel={() => {

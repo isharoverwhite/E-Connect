@@ -668,7 +668,7 @@ def test_initial_server_setup():
         "username": "admin",
         "password": "securepassword",
         "householdName": "My Home",
-        "ui_layout": {},
+        "language": "en",
         "home_location": {
             "latitude": 21.0285,
             "longitude": 105.8542,
@@ -1451,6 +1451,38 @@ def test_resolve_board_definition_supports_explicit_esp8266_variants():
 
     # Existing ESP32 alias resolution must remain intact.
     assert resolve_board_definition("esp32-c3-super-mini").platformio_board == "esp32-c3-devkitm-1"
+    assert resolve_board_definition("dfrobot-beetle-esp32-c3").platformio_board == "dfrobot_beetle_esp32c3"
+
+
+def test_validate_diy_config_uses_board_specific_c3_rules():
+    from app.services.diy_validation import validate_diy_config
+
+    wifi_config = {"wifi_ssid": "ssid", "wifi_password": "pass"}
+
+    board, errors, warnings = validate_diy_config(
+        "dfrobot-beetle-esp32-c3",
+        {
+            **wifi_config,
+            "pins": [
+                {"gpio": 10, "mode": "OUTPUT", "label": "Onboard LED"},
+            ],
+        },
+    )
+    assert board.canonical_id == "dfrobot-beetle-esp32-c3"
+    assert errors == []
+    assert warnings == []
+
+    board, errors, _ = validate_diy_config(
+        "esp32-c3-devkitm-1",
+        {
+            **wifi_config,
+            "pins": [
+                {"gpio": 20, "mode": "OUTPUT", "label": "UART RX"},
+            ],
+        },
+    )
+    assert board.canonical_id == "esp32-c3-devkitm-1"
+    assert "Invalid config: GPIO 20 is reserved for esp32-c3-devkitm-1" in errors
 
 def test_validate_diy_config_is_board_aware_for_esp8266():
     from app.services.diy_validation import validate_diy_config

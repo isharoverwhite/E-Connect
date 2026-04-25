@@ -5,6 +5,7 @@ import json
 import sys
 
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import OperationalError
 
 
 def _reload_database_module():
@@ -87,6 +88,16 @@ def test_initialize_database_runs_cleanup_backfills_and_approval_drop(monkeypatc
         "_cleanup_legacy_user_approval_status",
         lambda: call_order.append("cleanup_legacy_user_approval_status"),
     )
+    monkeypatch.setattr(
+        database_module,
+        "_cleanup_legacy_user_ui_layout",
+        lambda: call_order.append("cleanup_legacy_user_ui_layout"),
+    )
+    monkeypatch.setattr(
+        database_module,
+        "_backfill_user_language_defaults",
+        lambda: call_order.append("backfill_user_language_defaults"),
+    )
 
     ok, error = database_module.initialize_database(max_attempts=1, retry_delay=0)
 
@@ -103,7 +114,152 @@ def test_initialize_database_runs_cleanup_backfills_and_approval_drop(monkeypatc
         "cleanup_project_board_config_data",
         "backfill_saved_project_configs",
         "cleanup_legacy_user_approval_status",
+        "cleanup_legacy_user_ui_layout",
+        "backfill_user_language_defaults",
     ]
+
+
+def test_ensure_column_retries_retryable_mariadb_schema_lock_timeout(monkeypatch):
+    database_module = _reload_database_module()
+    monkeypatch.setattr(database_module, "DATABASE_URL", "mysql+pymysql://user:pass@127.0.0.1:3306/e_connect_db")
+    monkeypatch.setattr(database_module, "SCHEMA_GUARD_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(database_module, "SCHEMA_GUARD_RETRY_DELAY", 0.25)
+    monkeypatch.setattr(database_module, "SCHEMA_GUARD_LOCK_WAIT_TIMEOUT", 5)
+
+    column_exists_checks: list[tuple[str, str]] = []
+    column_exists_results = iter([False, False])
+
+    def fake_column_exists(table_name: str, column_name: str) -> bool:
+        column_exists_checks.append((table_name, column_name))
+        return next(column_exists_results, False)
+
+    monkeypatch.setattr(database_module, "_column_exists", fake_column_exists)
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(database_module.time, "sleep", lambda delay: sleep_calls.append(delay))
+
+    execute_calls: list[str] = []
+    commit_calls: list[str] = []
+    rollback_calls: list[str] = []
+    invalidate_calls: list[str] = []
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, statement, params=None):
+            execute_calls.append(str(statement))
+            if str(statement).startswith("ALTER TABLE") and execute_calls.count(str(statement)) == 1:
+                original_error = type(
+                    "FakeMariaDbError",
+                    (),
+                    {"args": (1205, "Lock wait timeout exceeded; try restarting transaction")},
+                )()
+                raise OperationalError(str(statement), params, original_error)
+
+        def commit(self):
+            commit_calls.append("commit")
+
+        def rollback(self):
+            rollback_calls.append("rollback")
+
+        def invalidate(self):
+            invalidate_calls.append("invalidate")
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(database_module.engine, "connect", lambda: FakeConnection())
+
+    database_module._ensure_column(
+        "users",
+        "language",
+        "VARCHAR(5) NOT NULL DEFAULT 'en'",
+        "VARCHAR(5) NOT NULL DEFAULT 'en'",
+    )
+
+    assert execute_calls == [
+        "SET SESSION lock_wait_timeout = :timeout_seconds",
+        "SET SESSION innodb_lock_wait_timeout = :timeout_seconds",
+        "ALTER TABLE users ADD COLUMN language VARCHAR(5) NOT NULL DEFAULT 'en'",
+        "SET SESSION lock_wait_timeout = :timeout_seconds",
+        "SET SESSION innodb_lock_wait_timeout = :timeout_seconds",
+        "ALTER TABLE users ADD COLUMN language VARCHAR(5) NOT NULL DEFAULT 'en'",
+    ]
+    assert commit_calls == ["commit"]
+    assert rollback_calls == ["rollback"]
+    assert invalidate_calls == ["invalidate"]
+    assert sleep_calls == [0.25]
+    assert column_exists_checks == [("users", "language"), ("users", "language")]
+
+
+def test_drop_column_if_exists_retries_retryable_mariadb_schema_lock_timeout(monkeypatch):
+    database_module = _reload_database_module()
+    monkeypatch.setattr(database_module, "DATABASE_URL", "mysql+pymysql://user:pass@127.0.0.1:3306/e_connect_db")
+    monkeypatch.setattr(database_module, "SCHEMA_GUARD_MAX_ATTEMPTS", 2)
+    monkeypatch.setattr(database_module, "SCHEMA_GUARD_RETRY_DELAY", 0.25)
+    monkeypatch.setattr(database_module, "SCHEMA_GUARD_LOCK_WAIT_TIMEOUT", 5)
+
+    column_exists_checks: list[tuple[str, str]] = []
+    column_exists_results = iter([True, True])
+
+    def fake_column_exists(table_name: str, column_name: str) -> bool:
+        column_exists_checks.append((table_name, column_name))
+        return next(column_exists_results, True)
+
+    monkeypatch.setattr(database_module, "_column_exists", fake_column_exists)
+
+    sleep_calls: list[float] = []
+    monkeypatch.setattr(database_module.time, "sleep", lambda delay: sleep_calls.append(delay))
+
+    execute_calls: list[str] = []
+    commit_calls: list[str] = []
+    rollback_calls: list[str] = []
+    invalidate_calls: list[str] = []
+
+    class FakeConnection:
+        def execute(self, statement, params=None):
+            execute_calls.append(str(statement))
+            if str(statement).startswith("ALTER TABLE") and execute_calls.count(str(statement)) == 1:
+                original_error = type(
+                    "FakeMariaDbError",
+                    (),
+                    {"args": (1205, "Lock wait timeout exceeded; try restarting transaction")},
+                )()
+                raise OperationalError(str(statement), params, original_error)
+
+        def commit(self):
+            commit_calls.append("commit")
+
+        def rollback(self):
+            rollback_calls.append("rollback")
+
+        def invalidate(self):
+            invalidate_calls.append("invalidate")
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(database_module.engine, "connect", lambda: FakeConnection())
+
+    database_module._drop_column_if_exists("users", "ui_layout")
+
+    assert execute_calls == [
+        "SET SESSION lock_wait_timeout = :timeout_seconds",
+        "SET SESSION innodb_lock_wait_timeout = :timeout_seconds",
+        "ALTER TABLE users DROP COLUMN ui_layout",
+        "SET SESSION lock_wait_timeout = :timeout_seconds",
+        "SET SESSION innodb_lock_wait_timeout = :timeout_seconds",
+        "ALTER TABLE users DROP COLUMN ui_layout",
+    ]
+    assert commit_calls == ["commit"]
+    assert rollback_calls == ["rollback"]
+    assert invalidate_calls == ["invalidate"]
+    assert sleep_calls == [0.25]
+    assert column_exists_checks == [("users", "ui_layout"), ("users", "ui_layout")]
 
 
 def test_ensure_runtime_indexes_recreates_device_history_lookup_index(monkeypatch, tmp_path):
@@ -395,6 +551,71 @@ def test_initialize_database_creates_extension_registry_tables(monkeypatch, tmp_
     inspector = inspect(database_module.engine)
     assert inspector.has_table("installed_extensions") is True
     assert inspector.has_table("external_devices") is True
+
+
+def test_initialize_database_loads_sql_model_metadata_for_clean_database(monkeypatch, tmp_path):
+    explicit_db = tmp_path / "autoload.sqlite3"
+    explicit_url = f"sqlite:///{explicit_db}"
+
+    monkeypatch.setenv("DATABASE_URL", explicit_url)
+    monkeypatch.delenv("LOCAL_DATABASE_PATH", raising=False)
+
+    database_module = _reload_database_module()
+
+    ok, error = database_module.initialize_database(max_attempts=1, retry_delay=0)
+
+    assert ok is True
+    assert error is None
+
+    inspector = inspect(database_module.engine)
+    assert inspector.has_table("users") is True
+    assert inspector.has_table("diy_projects") is True
+    assert inspector.has_table("build_jobs") is True
+
+
+def test_initialize_database_upgrades_legacy_user_ui_layout_to_language_default(monkeypatch, tmp_path):
+    explicit_db = tmp_path / "legacy-users.sqlite3"
+    explicit_url = f"sqlite:///{explicit_db}"
+
+    monkeypatch.setenv("DATABASE_URL", explicit_url)
+    monkeypatch.delenv("LOCAL_DATABASE_PATH", raising=False)
+
+    database_module = _reload_database_module()
+    sql_models = importlib.import_module("app.sql_models")
+    database_module.Base.metadata.create_all(bind=database_module.engine)
+
+    with database_module.engine.begin() as connection:
+        connection.execute(text("ALTER TABLE users ADD COLUMN ui_layout TEXT"))
+        connection.execute(text("ALTER TABLE users DROP COLUMN language"))
+        connection.execute(
+            text(
+                """
+                INSERT INTO users (fullname, username, authentication, account_type, ui_layout)
+                VALUES (:fullname, :username, :authentication, :account_type, :ui_layout)
+                """
+            ),
+            {
+                "fullname": "Legacy Admin",
+                "username": "legacy-admin",
+                "authentication": "hashed",
+                "account_type": "admin",
+                "ui_layout": json.dumps({"widgets": []}),
+            },
+        )
+
+    ok, error = database_module.initialize_database(max_attempts=1, retry_delay=0)
+
+    assert ok is True
+    assert error is None
+    assert database_module._column_exists("users", "ui_layout") is False
+    assert database_module._column_exists("users", "language") is True
+
+    db = database_module.SessionLocal()
+    try:
+        user = db.query(sql_models.User).filter_by(username="legacy-admin").one()
+        assert user.language == "en"
+    finally:
+        db.close()
 
 
 def test_initialize_database_drops_legacy_unused_firmwares_table(monkeypatch, tmp_path):

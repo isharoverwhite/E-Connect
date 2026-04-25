@@ -4,11 +4,14 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/components/AuthProvider';
+
+import { useLanguage } from '@/components/LanguageContext';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 export default function Sidebar() {
     const { user, logout } = useAuth();
+    const { t } = useLanguage();
     const pathname = usePathname();
     const [isCollapsed, setIsCollapsed] = useState(() => {
         if (typeof window !== 'undefined') {
@@ -55,21 +58,21 @@ export default function Sidebar() {
     const formatAccountTypeLabel = (type: string | undefined) => {
         switch (type) {
             case 'admin':
-                return 'Master Node';
+                return t('sidebar.role.admin');
             case 'support':
-                return 'Tech Ops';
+                return t('sidebar.role.support');
             case 'member':
             default:
-                return 'Local Node';
+                return t('sidebar.role.member');
         }
     };
 
     const navItems = [
-        { href: '/', icon: 'dashboard', label: 'Dashboard' },
-        { href: '/devices', icon: 'devices_other', label: 'Devices' },
-        { href: '/automation', icon: 'account_tree', label: 'Automation' },
-        { href: '/logs', icon: 'analytics', label: 'Logs & Stats' },
-        { href: '/extensions', icon: 'extension', label: 'Extensions' },
+        { href: '/', icon: 'dashboard', label: t('sidebar.nav.dashboard') },
+        { href: '/devices', icon: 'devices_other', label: t('sidebar.nav.devices') },
+        { href: '/automation', icon: 'account_tree', label: t('sidebar.nav.automation') },
+        { href: '/logs', icon: 'analytics', label: t('sidebar.nav.logs') },
+        { href: '/extensions', icon: 'extension', label: t('sidebar.nav.extensions') },
     ];
 
     const getLinkClass = (href: string) => {
@@ -100,7 +103,7 @@ export default function Sidebar() {
                         <button
                             onClick={toggleSidebar}
                             className={`flex shrink-0 items-center justify-center rounded-md p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-700 dark:hover:text-white ${isMobile ? 'hidden' : ''}`}
-                            title={isEffectivelyCollapsed ? "Expand Sidebar" : (isCollapsed ? "Pin Sidebar Open" : "Collapse Sidebar")}
+                            title={isEffectivelyCollapsed ? t('sidebar.action.expand') : (isCollapsed ? t('sidebar.action.pin') : t('sidebar.action.collapse'))}
                         >
                             <span className="material-icons-round text-[20px]">
                                 {isCollapsed ? 'keyboard_double_arrow_right' : 'keyboard_double_arrow_left'}
@@ -126,18 +129,18 @@ export default function Sidebar() {
 
             {/* Bottom Actions */}
             <div className="border-t border-slate-200 dark:border-slate-700 py-4 flex flex-col gap-1 w-full overflow-hidden shrink-0">
-                <Link href="/settings" className={getLinkClass('/settings')} title={isEffectivelyCollapsed ? "Settings" : undefined}>
+                <Link href="/settings" className={getLinkClass('/settings')} title={isEffectivelyCollapsed ? t('sidebar.nav.settings') : undefined}>
                     <div className={`flex h-11 shrink-0 items-center justify-center transition-all duration-300 ${isEffectivelyCollapsed ? 'w-14' : 'w-12'}`}>
                         <span className="material-icons-round text-[24px]">settings</span>
                     </div>
                     <span className={`transition-all duration-300 whitespace-nowrap ${isEffectivelyCollapsed ? 'opacity-0 translate-x-4' : 'opacity-100 translate-x-0'}`}>
-                        Settings
+                        {t('sidebar.nav.settings')}
                     </span>
                 </Link>
 
                 <div className={`group flex items-center mx-3 my-1 rounded-lg transition-all duration-300 overflow-hidden relative ${isEffectivelyCollapsed ? 'h-11' : 'h-16'}`}>
                     <div className={`flex shrink-0 items-center justify-center transition-all duration-300 ${isEffectivelyCollapsed ? 'w-14' : 'w-12'}`}>
-                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-tr from-primary to-purple-500 text-xs font-bold uppercase text-white" title={isEffectivelyCollapsed ? (user?.fullname || "E-Connect User") : undefined}>
+                        <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-tr from-primary to-purple-500 text-xs font-bold uppercase text-white" title={isEffectivelyCollapsed ? (user?.fullname || t('sidebar.user.default')) : undefined}>
                             {user?.fullname?.substring(0, 2) || "EC"}
                         </div>
                     </div>
@@ -145,11 +148,11 @@ export default function Sidebar() {
                     <div className={`flex-1 min-w-0 transition-all duration-300 overflow-hidden ${isEffectivelyCollapsed ? 'opacity-0 translate-x-4' : 'opacity-100 translate-x-0'}`}>
                         <div className="relative">
                             <p className="text-sm font-medium leading-tight truncate text-slate-900 dark:text-white">
-                                {user?.fullname || "E-Connect User"}
+                                {user?.fullname || t('sidebar.user.default')}
                             </p>
-                            {(user?.fullname || "E-Connect User").length > 10 && !isEffectivelyCollapsed && (
+                            {(user?.fullname || t('sidebar.user.default')).length > 10 && !isEffectivelyCollapsed && (
                                 <p className="text-sm font-medium leading-tight absolute top-0 left-0 bg-surface-light dark:bg-surface-dark z-[100] opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap overflow-visible w-max pr-2 pointer-events-none text-slate-900 dark:text-white">
-                                    {user?.fullname || "E-Connect User"}
+                                    {user?.fullname || t('sidebar.user.default')}
                                 </p>
                             )}
                         </div>
@@ -160,7 +163,7 @@ export default function Sidebar() {
                         <button
                             onClick={logout}
                             className="rounded-md p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-500/10"
-                            title="Logout"
+                            title={t('sidebar.action.logout')}
                         >
                             <span className="material-icons-round text-[18px]">logout</span>
                         </button>

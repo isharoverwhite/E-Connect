@@ -4,6 +4,7 @@ import React, { memo, useCallback, useEffect, useRef, useState } from "react";
 import { DeviceCommandResponse, sendDeviceCommand } from "@/lib/api";
 import { getActivePinConfigurations, getStatePins as readStatePins } from "@/lib/device-config";
 import { getExternalCardType } from "@/lib/device-display";
+import { useLanguage } from "@/components/LanguageContext";
 import { DeviceConfig, DeviceStatePin, DeviceStateSnapshot, PinConfig } from "@/types/device";
 
 export const getCardMinHeight = (config: DeviceConfig) => {
@@ -63,9 +64,6 @@ export const getCardMinHeight = (config: DeviceConfig) => {
 };
 
 export const getCardMinWidth = (config: DeviceConfig) => {
-  if (getExternalCardType(config) !== null) {
-    return 280;
-  }
   return 320;
 };
 
@@ -93,12 +91,13 @@ export function DeviceToggle({
       : (readOnly ? "bg-slate-200 border-slate-200 dark:bg-slate-700 dark:border-slate-700" : "bg-slate-300 border-slate-300 dark:bg-slate-600 dark:border-slate-600");
 
   const cursorClass = disabled ? "cursor-not-allowed opacity-70" : (readOnly ? "cursor-default" : "cursor-pointer");
+  const { t } = useLanguage();
 
   return (
     <div className="flex items-center gap-2">
       {!hideSyncLabel && loading ? (
         <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300 animate-pulse">
-          Syncing...
+          {t("devices.card.syncing")}
         </span>
       ) : null}
       <label
@@ -464,6 +463,7 @@ function isConfirmedStateSnapshot(state: DeviceStateSnapshot | null | undefined)
 }
 
 export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig, pin: PinConfig, isOnline: boolean }) {
+  const { t } = useLanguage();
   const [requestPending, setRequestPending] = useState(false);
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
@@ -647,7 +647,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
           <div className="flex items-center gap-3">
              {sliderLoading ? (
                <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300 animate-pulse">
-                 Syncing...
+                 {t("devices.card.syncing")}
                </span>
              ) : (
                <span className="text-xs font-bold text-primary">
@@ -723,7 +723,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
       return (
         <div className="py-3 border-t border-slate-100 dark:border-slate-800/50">
           <div className="flex justify-between items-center">
-            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Temperature</span>
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{t("devices.card.temperature")}</span>
             <div className="flex items-baseline space-x-1">
               <span className="text-lg font-bold text-slate-800 dark:text-white">
                 {formatClimateReading(temperature)}
@@ -732,7 +732,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
             </div>
           </div>
           <div className="mt-3 flex justify-between items-center border-t border-slate-100 pt-3 dark:border-slate-800/50">
-            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Humidity</span>
+            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{t("devices.card.humidity")}</span>
             <div className="flex items-baseline space-x-1">
               <span className="text-lg font-bold text-slate-800 dark:text-white">
                 {formatClimateReading(humidity)}
@@ -763,7 +763,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
         <div className="flex justify-between items-center">
           <div className="flex flex-col">
             <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
-            <span className="text-[10px] text-slate-400">I2C &middot; {pin.extra_params?.i2c_address || 'Auto'}</span>
+            <span className="text-[10px] text-slate-400">I2C &middot; {pin.extra_params?.i2c_address || t("devices.card.auto")}</span>
           </div>
           <div className="flex items-baseline space-x-1">
             <span className="text-lg font-bold text-slate-800 dark:text-white">
@@ -1049,6 +1049,7 @@ function getPreferredExtensionAdvancedMode(config: DeviceConfig): ExtensionAdvan
 }
 
 export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
+  const { t } = useLanguage();
   const [requestPending, setRequestPending] = useState(false);
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
@@ -1110,7 +1111,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
   const supportsTone = effectiveCaps.includes("color_temperature");
   const hasAdvanced = supportsRgb || supportsTone;
   const preferredAdvancedMode = getPreferredExtensionAdvancedMode(config);
-  const statusLabel = isOnline ? "Online" : "Offline";
+  const statusLabel = isOnline ? t("devices.card.online") : t("devices.card.offline");
   const visibleAdvancedMode: ExtensionAdvancedMode = supportsRgb && !supportsTone
     ? "color"
     : !supportsRgb && supportsTone
@@ -1285,7 +1286,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
       <div className="flex justify-between items-start mb-3">
         <div className="flex-1 min-w-0 pr-4">
           <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
-          <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Unassigned area'}>{config.room_name || 'Unassigned area'}</p>
+          <p className="text-xs text-slate-500 truncate" title={config.room_name || t("devices.card.unassigned_area")}>{config.room_name || t("devices.card.unassigned_area")}</p>
         </div>
         <span className="flex items-center text-xs text-slate-500 flex-shrink-0 mt-0.5">
           <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'} mr-1`}></span>
@@ -1297,11 +1298,11 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
       <div className="mb-4">
         <div className="flex justify-between items-end mb-2">
           <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-            Brightness
+            {t("devices.card.brightness")}
           </label>
           {sliderLoading ? (
             <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300 animate-pulse">
-              Syncing...
+              {t("devices.card.syncing")}
             </span>
           ) : (
             <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5">
@@ -1336,7 +1337,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
                 disabled={!controlReady}
               >
                   <span className="material-icons-round text-[14px]">tune</span>
-                  {isExpanded ? 'Show Less' : 'Tune'}
+                  {isExpanded ? t("devices.card.show_less") : t("devices.card.tune")}
               </button>
           </div>
       )}
@@ -1360,7 +1361,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
                     onClick={() => switchMode("color")}
                     disabled={valueControlDisabled}
                   >
-                    Color
+                    {t("devices.card.color")}
                   </button>
                   <button
                     type="button"
@@ -1368,7 +1369,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
                     onClick={() => switchMode("temperature")}
                     disabled={valueControlDisabled}
                   >
-                    White
+                    {t("devices.card.white")}
                   </button>
                 </div>
               </div>
@@ -1387,7 +1388,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
                   <div className={`${supportsRgb && supportsTone ? 'w-1/2' : 'w-full'} flex flex-col items-center flex-shrink-0`}>
                     <div className="flex justify-between items-center w-full mb-3 px-1">
                        <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-2">
-                         Color
+                         {t("devices.card.color")}
                          <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-sm ${valueControlDisabled ? 'opacity-50' : ''}`}>
                            <div className="w-5 h-5 rounded-full shadow-sm border border-slate-200 dark:border-slate-700" style={{ backgroundColor: `rgb(${rgbValue[0]}, ${rgbValue[1]}, ${rgbValue[2]})` }} />
                            <span className="text-[10px] uppercase font-mono tracking-wider font-bold text-slate-600 dark:text-slate-300">
@@ -1410,11 +1411,11 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
                     <div className="mb-2 pb-2">
                         <div className="flex justify-between items-end mb-2">
                         <label className="text-xs font-medium text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
-                            Light Temperature
+                            {t("devices.card.light_temperature")}
                         </label>
                         {toneLoading ? (
                           <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300 animate-pulse">
-                            Syncing...
+                            {t("devices.card.syncing")}
                           </span>
                         ) : (
                           <span className={`text-xs font-bold text-orange-600 dark:text-orange-400 flex items-center gap-1.5 ${valueControlDisabled ? 'opacity-50' : ''}`}>
@@ -1450,6 +1451,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
 }
 
 function ExternalSwitchCard({ config, isOnline }: { config: DeviceConfig; isOnline: boolean }) {
+  const { t } = useLanguage();
   const [requestPending, setRequestPending] = useState(false);
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
@@ -1533,15 +1535,15 @@ function ExternalSwitchCard({ config, isOnline }: { config: DeviceConfig; isOnli
             <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>
               {config.name}
             </h3>
-            <p className="text-xs text-slate-500 truncate" title={config.room_name || "Unassigned area"}>
-              {config.room_name || "Unassigned area"}
+            <p className="text-xs text-slate-500 truncate" title={config.room_name || t("devices.card.unassigned_area")}>
+              {config.room_name || t("devices.card.unassigned_area")}
             </p>
           </div>
         </div>
         <div className="flex flex-col items-end gap-2 pr-7">
           <span className="flex items-center text-xs text-slate-500">
             <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-red-500"} mr-1`} />
-            {isOnline ? "Online" : "Offline"}
+            {isOnline ? t("devices.card.online") : t("devices.card.offline")}
           </span>
           <DeviceToggle
             id={`ext-switch-${config.device_id}`}
@@ -1553,11 +1555,11 @@ function ExternalSwitchCard({ config, isOnline }: { config: DeviceConfig; isOnli
         </div>
       </div>
       <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
-        <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Switch State</div>
+        <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">{t("devices.card.switch_state")}</div>
         <div className="mt-2 flex items-end justify-between gap-3">
-          <div className="text-lg font-semibold text-slate-900 dark:text-white">{toggleState ? "On" : "Off"}</div>
+          <div className="text-lg font-semibold text-slate-900 dark:text-white">{toggleState ? t("devices.card.on") : t("devices.card.off")}</div>
           <span className="text-xs text-slate-500 dark:text-slate-400">
-            {supportsPower ? "Runtime-backed toggle" : "Power control unavailable"}
+            {supportsPower ? t("devices.card.runtime_backed_toggle") : t("devices.card.power_control_unavailable")}
           </span>
         </div>
       </div>
@@ -1566,6 +1568,7 @@ function ExternalSwitchCard({ config, isOnline }: { config: DeviceConfig; isOnli
 }
 
 function ExternalFanCard({ config, isOnline }: { config: DeviceConfig; isOnline: boolean }) {
+  const { t } = useLanguage();
   const [requestPending, setRequestPending] = useState(false);
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
@@ -1686,15 +1689,15 @@ function ExternalFanCard({ config, isOnline }: { config: DeviceConfig; isOnline:
             <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>
               {config.name}
             </h3>
-            <p className="text-xs text-slate-500 truncate" title={config.room_name || "Unassigned area"}>
-              {config.room_name || "Unassigned area"}
+            <p className="text-xs text-slate-500 truncate" title={config.room_name || t("devices.card.unassigned_area")}>
+              {config.room_name || t("devices.card.unassigned_area")}
             </p>
           </div>
         </div>
         <div className="flex flex-col items-end gap-2 pr-7">
           <span className="flex items-center text-xs text-slate-500">
             <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-red-500"} mr-1`} />
-            {isOnline ? "Online" : "Offline"}
+            {isOnline ? t("devices.card.online") : t("devices.card.offline")}
           </span>
           {supportsPower ? (
             <DeviceToggle
@@ -1710,11 +1713,11 @@ function ExternalFanCard({ config, isOnline }: { config: DeviceConfig; isOnline:
       <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
         <div className="flex items-end justify-between gap-3 mb-2">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Fan Speed</div>
+            <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">{t("devices.card.fan_speed")}</div>
             <div className="mt-1 text-lg font-semibold text-slate-900 dark:text-white">{speedValue}%</div>
           </div>
           <span className="text-xs text-slate-500 dark:text-slate-400">
-            {supportsSpeed ? (toggleState ? "Running" : "Idle") : "Speed control unavailable"}
+            {supportsSpeed ? (toggleState ? t("devices.card.running") : t("devices.card.idle")) : t("devices.card.speed_control_unavailable")}
           </span>
         </div>
         <input
@@ -1735,11 +1738,12 @@ function ExternalFanCard({ config, isOnline }: { config: DeviceConfig; isOnline:
 }
 
 function ExternalSensorCard({ config, isOnline }: { config: DeviceConfig; isOnline: boolean }) {
+  const { t } = useLanguage();
   const effectiveCaps = getEffectiveExtensionCapabilities(config);
   const sensorMetrics = [
     {
       key: "temperature",
-      label: "Temperature",
+      label: t("devices.card.temperature"),
       icon: "device_thermostat",
       value: typeof config.last_state?.temperature === "number" ? config.last_state.temperature : null,
       unit: "°C",
@@ -1748,7 +1752,7 @@ function ExternalSensorCard({ config, isOnline }: { config: DeviceConfig; isOnli
     },
     {
       key: "humidity",
-      label: "Humidity",
+      label: t("devices.card.humidity"),
       icon: "humidity_percentage",
       value: typeof config.last_state?.humidity === "number" ? config.last_state.humidity : null,
       unit: "%",
@@ -1757,7 +1761,7 @@ function ExternalSensorCard({ config, isOnline }: { config: DeviceConfig; isOnli
     },
     {
       key: "value",
-      label: "Value",
+      label: t("devices.card.value"),
       icon: "sensors",
       value: getExternalSensorValue(config.last_state?.value),
       unit: typeof config.last_state?.unit === "string" ? config.last_state.unit : null,
@@ -1780,19 +1784,19 @@ function ExternalSensorCard({ config, isOnline }: { config: DeviceConfig; isOnli
             <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>
               {config.name}
             </h3>
-            <p className="text-xs text-slate-500 truncate" title={config.room_name || "Unassigned area"}>
-              {config.room_name || "Unassigned area"}
+            <p className="text-xs text-slate-500 truncate" title={config.room_name || t("devices.card.unassigned_area")}>
+              {config.room_name || t("devices.card.unassigned_area")}
             </p>
           </div>
         </div>
         <span className="flex items-center text-xs text-slate-500 pr-7">
           <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-500" : "bg-red-500"} mr-1`} />
-          {isOnline ? "Online" : "Offline"}
+          {isOnline ? t("devices.card.online") : t("devices.card.offline")}
         </span>
       </div>
       {sensorMetrics.length === 0 ? (
         <div className="flex-1 rounded-xl border border-dashed border-slate-200 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-          Waiting for the first sensor reading from the extension runtime.
+          {t("devices.card.waiting_for_sensor")}
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1815,6 +1819,7 @@ function ExternalSensorCard({ config, isOnline }: { config: DeviceConfig; isOnli
 }
 
 export const DynamicDeviceCard = memo(function DynamicDeviceCard({ config, isOnline }: { config: DeviceConfig, isOnline: boolean }) {
+  const { t } = useLanguage();
   switch (getExternalCardType(config)) {
     case "light":
       return <ExtensionCard config={config} isOnline={isOnline} />;
@@ -1848,17 +1853,17 @@ export const DynamicDeviceCard = memo(function DynamicDeviceCard({ config, isOnl
       <div className="flex justify-between items-start mb-4">
         <div className="flex-1 min-w-0 pr-4">
           <h3 className="text-base font-semibold text-slate-900 dark:text-white truncate" title={config.name}>{config.name}</h3>
-          <p className="text-xs text-slate-500 truncate" title={config.room_name || 'Unassigned area'}>{config.room_name || 'Unassigned area'}</p>
+          <p className="text-xs text-slate-500 truncate" title={config.room_name || t("devices.card.unassigned_area")}>{config.room_name || t("devices.card.unassigned_area")}</p>
         </div>
         <span className="flex items-center text-xs text-slate-500 flex-shrink-0">
           <span className={`w-2 h-2 rounded-full ${isOnline ? 'bg-green-500' : 'bg-red-500'} mr-1`}></span>
-          {isOnline ? 'Online' : 'Offline'}
+          {isOnline ? t("devices.card.online") : t("devices.card.offline")}
         </span>
       </div>
       
       <div className="flex flex-col mt-2">
         {displayPins.length === 0 ? (
-           <div className="py-4 text-xs text-slate-400 text-center border-t border-slate-100 dark:border-slate-800/50">No pins configured</div>
+           <div className="py-4 text-xs text-slate-400 text-center border-t border-slate-100 dark:border-slate-800/50">{t("devices.card.no_pins_configured")}</div>
         ) : (
            displayPins.map(pin => (
              <PinControlItem key={pin.gpio_pin} config={config} pin={pin} isOnline={isOnline} />

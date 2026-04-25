@@ -61,6 +61,38 @@
     animation: slide-in-right 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   }
 
+  @keyframes dashboard-area-swipe-right {
+    from {
+      opacity: 0;
+      transform: translate3d(42px, 0, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes dashboard-area-swipe-left {
+    from {
+      opacity: 0;
+      transform: translate3d(-42px, 0, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  .animate-dashboard-area-swipe-right {
+    animation: dashboard-area-swipe-right 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+    will-change: transform, opacity;
+  }
+
+  .animate-dashboard-area-swipe-left {
+    animation: dashboard-area-swipe-left 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+    will-change: transform, opacity;
+  }
+
   .animate-fade-out {
     animation: fade-out 0.2s ease-out forwards;
   }
@@ -94,6 +126,16 @@
     100% { transform: rotate(15deg) translateY(10px); opacity: 0; }
   }
 
+  @keyframes weather-sun-rays-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes weather-moon-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+  }
+
   .animate-weather-cloud {
     animation: weather-cloud-move 1.5s ease-in-out 2 forwards;
   }
@@ -108,6 +150,14 @@
   .animate-weather-rain-3 {
     animation: weather-rain-fall 1s linear 3;
     animation-delay: 0.4s;
+  }
+
+  .animate-weather-sun-rays {
+    animation: weather-sun-rays-spin 3s linear forwards;
+  }
+
+  .animate-weather-moon {
+    animation: weather-moon-float 2.4s ease-in-out infinite;
   }
 
   @keyframes stripe-slide {

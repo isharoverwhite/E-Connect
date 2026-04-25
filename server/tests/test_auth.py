@@ -56,7 +56,7 @@ def initial_server_payload(**overrides):
         "fullname": "Admin",
         "username": "admin",
         "password": "password",
-        "ui_layout": {},
+        "language": "en",
         "home_location": dict(HOME_LOCATION_PAYLOAD),
     }
     payload.update(overrides)
@@ -87,13 +87,14 @@ def test_initialserver_success():
             username="admin",
             password="securepassword",
             account_type="parent",  # Even if user tries to set non-admin
-            ui_layout={},
+            language="vi",
         ),
     )
     assert response.status_code == 200
     data = response.json()
     assert data["user"]["username"] == "admin"
     assert data["user"]["account_type"] == AccountType.admin.value
+    assert data["user"]["language"] == "vi"
     assert data["household"]["name"] == "Admin User's Household"
     assert data["home_location"]["latitude"] == HOME_LOCATION_PAYLOAD["latitude"]
     assert data["home_location"]["longitude"] == HOME_LOCATION_PAYLOAD["longitude"]
@@ -177,13 +178,14 @@ def test_admin_can_create_user():
             "username": "child1",
             "password": "password123",
             "account_type": "parent",
-            "ui_layout": {}
+            "language": "vi",
         }
     )
     assert create_resp.status_code == 200
     data = create_resp.json()
     assert data["username"] == "child1"
     assert data["account_type"] == "parent"
+    assert data["language"] == "vi"
 
 def test_non_admin_cannot_create_user():
     # 1. Setup Admin
@@ -359,7 +361,7 @@ def test_refresh_endpoint_rotates_non_persistent_session():
     assert me_resp.json()["username"] == "admin"
 
 
-def test_users_me_layout_update_persists_canvas_layout():
+def test_users_me_language_update_persists_preference():
     client.post(
         "/api/v1/auth/initialserver",
         json=initial_server_payload()
@@ -370,26 +372,22 @@ def test_users_me_layout_update_persists_canvas_layout():
         data={"username": "admin", "password": "password"}
     )
     token = login_resp.json()["access_token"]
-    layout = {
-        "device-living": {"x": 12, "y": 24, "w": 320, "h": 180},
-        "device-kitchen": {"x": 360, "y": 24, "w": 280, "h": 180},
-    }
 
     update_resp = client.put(
-        "/api/v1/users/me/layout",
+        "/api/v1/users/me/language",
         headers={"Authorization": f"Bearer {token}"},
-        json=layout,
+        json={"language": "vi"},
     )
 
     assert update_resp.status_code == 200
-    assert update_resp.json()["ui_layout"] == layout
+    assert update_resp.json()["language"] == "vi"
 
     me_resp = client.get(
         "/api/v1/users/me",
         headers={"Authorization": f"Bearer {token}"},
     )
     assert me_resp.status_code == 200
-    assert me_resp.json()["ui_layout"] == layout
+    assert me_resp.json()["language"] == "vi"
 
 
 def test_refresh_endpoint_rejects_access_token_payload():

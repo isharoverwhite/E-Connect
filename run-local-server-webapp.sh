@@ -379,7 +379,7 @@ check_port_is_free "$WEBAPP_INTERNAL_HTTP_PORT" "webapp internal HTTP"
 echo "Starting backend on http://$SERVER_HOST:$SERVER_PORT"
 (
   cd "$SERVER_DIR"
-  exec "$SERVER_PYTHON" -m uvicorn main:app --host "$SERVER_HOST" --port "$SERVER_PORT"
+  exec "$SERVER_PYTHON" -m uvicorn main:app --reload --host "$SERVER_HOST" --port "$SERVER_PORT"
 ) &
 SERVER_PID="$!"
 

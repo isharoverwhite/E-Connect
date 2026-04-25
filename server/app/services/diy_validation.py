@@ -93,8 +93,30 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
             39: _pin_rule(INPUT_ADC),
         },
     ),
-    "esp32-c3": BoardDefinition(
-        canonical_id="esp32-c3",
+    "esp32-c3-devkitm-1": BoardDefinition(
+        canonical_id="esp32-c3-devkitm-1",
+        platformio_board="esp32-c3-devkitm-1",
+        platform="espressif32",
+        pins={
+            0: _pin_rule(IO_ADC, boot_sensitive=True),
+            1: _pin_rule(IO_ADC),
+            2: _pin_rule(IO_ADC),
+            3: _pin_rule(IO_ADC),
+            4: _pin_rule(IO_ADC),
+            5: _pin_rule(IO_ADC),
+            6: _pin_rule(I2C_IO),
+            7: _pin_rule(I2C_IO),
+            8: _pin_rule(IO, boot_sensitive=True),
+            9: _pin_rule(IO, reserved=True, boot_sensitive=True),
+            10: _pin_rule(IO),
+            18: _pin_rule(IO, reserved=True),
+            19: _pin_rule(IO, reserved=True),
+            20: _pin_rule(IO, reserved=True),
+            21: _pin_rule(IO, reserved=True),
+        },
+    ),
+    "esp32-c3-super-mini": BoardDefinition(
+        canonical_id="esp32-c3-super-mini",
         platformio_board="esp32-c3-devkitm-1",
         platform="espressif32",
         pins={
@@ -109,8 +131,26 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
             8: _pin_rule(IO, boot_sensitive=True),
             9: _pin_rule(IO, reserved=True, boot_sensitive=True),
             10: _pin_rule(IO, reserved=True),
-            18: _pin_rule(IO),
-            19: _pin_rule(IO),
+            20: _pin_rule(IO, reserved=True),
+            21: _pin_rule(IO, reserved=True),
+        },
+    ),
+    "dfrobot-beetle-esp32-c3": BoardDefinition(
+        canonical_id="dfrobot-beetle-esp32-c3",
+        platformio_board="dfrobot_beetle_esp32c3",
+        platform="espressif32",
+        pins={
+            0: _pin_rule(IO_ADC),
+            1: _pin_rule(IO_ADC),
+            2: _pin_rule(IO_ADC, boot_sensitive=True),
+            3: _pin_rule(IO_ADC),
+            4: _pin_rule(IO_ADC),
+            5: _pin_rule(IO_ADC),
+            6: _pin_rule(IO),
+            7: _pin_rule(IO),
+            8: _pin_rule(I2C_IO, boot_sensitive=True),
+            9: _pin_rule(IO, reserved=True, boot_sensitive=True),
+            10: _pin_rule(IO),
             20: _pin_rule(IO, reserved=True),
             21: _pin_rule(IO, reserved=True),
         },
@@ -137,8 +177,9 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
             15: _pin_rule(IO_ADC),
             16: _pin_rule(I2C_IO),
             17: _pin_rule(I2C_IO),
-            18: _pin_rule(IO, reserved=True),
-            19: _pin_rule(IO, reserved=True),
+            18: _pin_rule(IO_ADC),
+            19: _pin_rule(IO_ADC, reserved=True),
+            20: _pin_rule(IO_ADC, reserved=True),
         },
     ),
     "esp32-s3": BoardDefinition(
@@ -228,10 +269,10 @@ BOARD_ALIASES = {
     "esp32-devkit-v1": "esp32",
     "esp32-wrover-kit": "esp32",
     "esp32-cam": "esp32",
-    "esp32-c3": "esp32-c3",
-    "esp32-c3-devkitm-1": "esp32-c3",
-    "esp32-c3-super-mini": "esp32-c3",
-    "dfrobot-beetle-esp32-c3": "esp32-c3",
+    "esp32-c3": "esp32-c3-devkitm-1",
+    "esp32-c3-devkitm-1": "esp32-c3-devkitm-1",
+    "esp32-c3-super-mini": "esp32-c3-super-mini",
+    "dfrobot-beetle-esp32-c3": "dfrobot-beetle-esp32-c3",
     "esp32-s2": "esp32-s2",
     "esp32-s2-saola-1": "esp32-s2",
     "esp32-s3": "esp32-s3",
@@ -286,7 +327,7 @@ def resolve_board_definition(board_profile: str) -> BoardDefinition:
         return BOARD_DEFINITIONS["nodemcuv2"]
     if normalized.startswith("esp32"):
         if "c3" in normalized:
-            return BOARD_DEFINITIONS["esp32-c3"]
+            return BOARD_DEFINITIONS["esp32-c3-devkitm-1"]
         if "s3" in normalized:
             return BOARD_DEFINITIONS["esp32-s3"]
         if "s2" in normalized:

@@ -1576,59 +1576,6 @@ def _rename_config_payload(payload: Any, *, config_name: str) -> tuple[Any, bool
     return payload, False
 
 
-def _get_layout_widgets(layout: Any) -> list[dict[str, Any]]:
-    if isinstance(layout, dict) and isinstance(layout.get("widgets"), list):
-        return [widget for widget in layout["widgets"] if isinstance(widget, dict)]
-    if isinstance(layout, list):
-        return [widget for widget in layout if isinstance(widget, dict)]
-    return []
-
-
-def _build_device_widgets(device: Device) -> list[dict[str, Any]]:
-    widgets: list[dict[str, Any]] = []
-    for index, pin in enumerate(device.pin_configurations):
-        pin_mode = pin.mode.value if hasattr(pin.mode, "value") else str(pin.mode)
-        widget_type = "text"
-        if pin_mode == "OUTPUT":
-            widget_type = "switch"
-        elif pin_mode == "PWM":
-            widget_type = "dimmer"
-        elif pin_mode in {"INPUT", "ADC"}:
-            widget_type = "status"
-
-        widgets.append({
-            "i": f"{device.device_id}:{pin.gpio_pin}:{index}",
-            "x": 0,
-            "y": index * 2,
-            "w": 2,
-            "h": 2,
-            "type": widget_type,
-            "deviceId": device.device_id,
-            "pin": pin.gpio_pin,
-            "label": pin.label or f"{pin.function or 'Pin'} {pin.gpio_pin}",
-        })
-
-    return widgets
-
-
-def _sync_user_dashboard_widgets(user: User, device: Union[Device, ExternalDevice]):
-    existing_widgets = [
-        widget for widget in _get_layout_widgets(user.ui_layout)
-        if widget.get("deviceId") != device.device_id
-    ]
-    user.ui_layout = [*existing_widgets, *_build_device_widgets(device)] if getattr(device, "pin_configurations", None) is not None else existing_widgets
-
-
-def _remove_device_widgets(user: Optional[User], device_id: str):
-    if not user:
-        return
-
-    user.ui_layout = [
-        widget for widget in _get_layout_widgets(user.ui_layout)
-        if widget.get("deviceId") != device_id
-    ]
-
-
 def _build_device_topics(device_id: str) -> tuple[str, str]:
     namespace = os.getenv("MQTT_NAMESPACE", "local")
     return (
@@ -2856,7 +2803,7 @@ async def initialserver(payload: InitialServerRequest, db: Session = Depends(get
         username=payload.username,
         authentication=hashed_password,
         account_type=AccountType.admin, # Force admin
-        ui_layout=payload.ui_layout or {}
+        language=payload.language,
     )
     db.add(new_user)
     try:
@@ -2916,7 +2863,7 @@ async def create_user(user_data: UserCreate, db: Session = Depends(get_db), admi
         username=user_data.username,
         authentication=hashed_password,
         account_type=user_data.account_type,
-        ui_layout=user_data.ui_layout or {}
+        language=user_data.language,
     )
     db.add(new_user)
     try:
@@ -3113,14 +3060,16 @@ async def revoke_api_key(
     return _serialize_api_key(api_key)
 
 
-@router.put("/users/me/layout", response_model=UserResponse)
-async def update_layout(layout: dict[str, Any] = Body(...), db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+@router.put("/users/me/language", response_model=UserResponse)
+async def update_language(
+    language: Literal["en", "vi"] = Body(..., embed=True),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """
-    Update User's Dashboard Grid Layout.
+    Update User's preferred language.
     """
-    from sqlalchemy.orm.attributes import flag_modified
-    current_user.ui_layout = layout
-    flag_modified(current_user, "ui_layout")
+    current_user.language = language
     db.commit()
     db.refresh(current_user)
     return current_user
@@ -3972,8 +3921,6 @@ async def approve_device(
     device.auth_status = AuthStatus.approved
     device.pairing_requested_at = None
     device.room_id = room.room_id
-    owner = db.query(User).filter(User.user_id == device.owner_id).first()
-    _sync_user_dashboard_widgets(owner or admin, device)
 
     db.commit()
     _broadcast_pairing_queue_updated(device, reason="approved")
@@ -4466,15 +4413,11 @@ async def update_device_visibility(
     if device is not None:
         device.show_on_dashboard = payload.show_on_dashboard
         db.commit()
-        owner = db.query(User).filter(User.user_id == device.owner_id).first()
-        _sync_user_dashboard_widgets(owner or current_user, device)
         return {"status": "success", "device_id": device_id, "show_on_dashboard": device.show_on_dashboard}
 
     external_device = _get_external_device_in_household_or_404(db, current_user, device_id)
     external_device.show_on_dashboard = payload.show_on_dashboard
     db.commit()
-    owner = db.query(User).filter(User.user_id == external_device.owner_id).first()
-    _sync_user_dashboard_widgets(owner or current_user, external_device)
     return {"status": "success", "device_id": device_id, "show_on_dashboard": external_device.show_on_dashboard}
 
 @router.delete("/device/{device_id}")
@@ -4490,13 +4433,11 @@ async def delete_device(device_id: str, db: Session = Depends(get_db), current_u
         device = None
 
     if device is not None:
-        owner = db.query(User).filter(User.user_id == device.owner_id).first()
         device.mac_address = generate_detached_mac_address(db)
         device.auth_status = AuthStatus.pending
         device.conn_status = ConnStatus.offline
         device.ip_address = None
         device.pairing_requested_at = None
-        _remove_device_widgets(owner, device.device_id)
         db.commit()
         _broadcast_pairing_queue_updated(device, reason="unpaired")
         return {"status": "unpaired", "detail": f"Device {device_id} removed from the dashboard and is ready to pair again."}
@@ -6231,7 +6172,7 @@ async def system_backup_endpoint(db: Session = Depends(get_db), admin: User = De
 
     backup_data = {
         "timestamp": str(datetime.now(timezone.utc).replace(tzinfo=None)),
-        "users": [{"username": u.username, "layout": u.ui_layout} for u in users],
+        "users": [{"username": u.username, "language": u.language} for u in users],
         "devices": [{"id": d.device_id, "name": d.name, "mac": d.mac_address} for d in devices],
         "automations": [{"name": a.name, "graph": serialize_automation(a)["graph"]} for a in automations]
     }

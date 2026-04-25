@@ -20,7 +20,7 @@ interface User {
     username: string;
     fullname: string;
     account_type: string;
-    ui_layout?: unknown;
+    language?: "en" | "vi" | null;
 }
 
 interface AuthContextType {
@@ -203,6 +203,7 @@ export default function AuthProvider({ children }: { children: React.ReactNode }
             }
 
             setUser(profile);
+            window.dispatchEvent(new CustomEvent('auth-profile-loaded', { detail: profile }));
         } catch (err: unknown) {
             if (!isCurrentRun()) {
                 return;

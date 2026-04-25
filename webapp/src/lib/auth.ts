@@ -21,7 +21,7 @@ export interface ManagedUser {
     account_type: "admin" | "parent" | "child";
     household_role?: ManagedHouseholdRole | null;
     created_at?: string | null;
-    ui_layout?: unknown;
+    language?: "en" | "vi" | null;
 }
 
 export interface AuthSession {
@@ -249,7 +249,7 @@ export async function promoteManagedUser(userId: number, token: string): Promise
     return res.json();
 }
 
-export async function fetchMyProfile() {
+export async function fetchMyProfile(): Promise<ManagedUser> {
     const token = getToken();
     if (!token) {
         throw new Error("No token available");

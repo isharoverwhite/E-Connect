@@ -53,8 +53,8 @@ export default function HomeLocationPicker({
   isOpen = true,
   selectedLocation,
   onLocationChange,
-  title,
-  description,
+  title: _title,
+  description: _description,
   isSaving = false,
   labels,
   actions,
@@ -166,46 +166,30 @@ export default function HomeLocationPicker({
   const currentLocation = selectedLocation ?? DEFAULT_MAP_LOCATION;
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-[1fr_340px] gap-5">
-      <div className="space-y-3">
-        <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-950 h-[320px] sm:h-[420px]">
-          <HomeLocationMap
-            latitude={currentLocation.latitude}
-            longitude={currentLocation.longitude}
-            onPick={handleMapPick}
-          />
-        </div>
-        <p className="text-xs text-slate-500 dark:text-slate-400">{mergedLabels.dragHint}</p>
-      </div>
-
-      <div className="space-y-4">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900 dark:text-white">{title}</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{description}</p>
-        </div>
-
+    <div className="space-y-6 flex flex-col">
+      {/* Top Controls: Use Device Location & Search */}
+      <div className="flex flex-col sm:flex-row gap-4">
         <button
           type="button"
           onClick={requestBrowserLocation}
           disabled={isLocating || isSaving}
-          className="flex w-full items-center justify-center rounded-lg bg-primary py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-600 disabled:opacity-70"
+          className="group flex-1 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 py-3 px-4 text-sm font-bold text-slate-700 dark:text-slate-200 shadow-sm transition-all duration-300 disabled:opacity-70 border border-slate-200/50 dark:border-slate-700/50 hover:shadow-md active:scale-[0.98]"
         >
-          <span className={`material-icons-round mr-2 text-lg ${isLocating ? "animate-spin" : ""}`}>
+          <span className={`material-icons-round mr-2 text-lg transition-transform group-hover:scale-110 ${isLocating ? "animate-spin text-primary" : "text-primary dark:text-blue-400"}`}>
             {isLocating ? "autorenew" : "my_location"}
           </span>
           {isLocating ? mergedLabels.requestingLocation : mergedLabels.useDevice}
         </button>
 
-        <form onSubmit={searchLocations} className="space-y-2">
-          <label className="block text-xs font-semibold uppercase tracking-wide text-slate-700 dark:text-slate-300">{mergedLabels.searchLabel}</label>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <span className="material-icons-round absolute left-3 top-2.5 text-[18px] text-slate-400">search</span>
+        <form onSubmit={searchLocations} className="flex-1 relative">
+          <div className="flex gap-3">
+            <div className="relative flex-1 group">
+              <span className="material-icons-round absolute left-3.5 top-3 text-[18px] text-slate-400 transition-colors group-focus-within:text-primary z-10">search</span>
               <input
                 type="search"
                 value={locationSearch}
                 onChange={(event) => setLocationSearch(event.target.value)}
-                className="w-full rounded-lg border border-slate-300 bg-slate-50 py-2 pl-10 pr-3 text-sm text-slate-900 placeholder-slate-400 transition-all focus:border-transparent focus:outline-none focus:ring-2 focus:ring-primary dark:border-slate-700 dark:bg-black/20 dark:text-white"
+                className="w-full h-full bg-slate-50/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700/70 hover:border-slate-300 dark:hover:border-slate-600 rounded-xl py-3 pl-11 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400/70 transition-all duration-300 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary/20 shadow-sm"
                 placeholder={mergedLabels.searchPlaceholder}
                 disabled={isSaving}
               />
@@ -213,54 +197,88 @@ export default function HomeLocationPicker({
             <button
               type="submit"
               disabled={isSearchingLocation || isSaving}
-              className="rounded-lg bg-slate-900 px-3 text-sm font-semibold text-white disabled:opacity-60 dark:bg-white dark:text-slate-900"
+              className="flex items-center justify-center w-[46px] h-[46px] rounded-xl bg-slate-800 dark:bg-white hover:bg-slate-900 dark:hover:bg-slate-100 text-white dark:text-slate-900 transition-all duration-300 shadow-sm hover:shadow-md active:scale-95 disabled:opacity-60"
               aria-label={mergedLabels.searchAriaLabel}
             >
-              <span className={`material-icons-round text-lg ${isSearchingLocation ? "animate-spin" : ""}`}>
-                {isSearchingLocation ? "autorenew" : "search"}
+              <span className={`material-icons-round text-[20px] ${isSearchingLocation ? "animate-spin" : ""}`}>
+                {isSearchingLocation ? "autorenew" : "arrow_forward"}
               </span>
             </button>
           </div>
-          {error ? (
-            <p className="flex items-center text-xs font-medium text-red-500">
-              <span className="material-icons-round mr-1 text-[14px]">error</span>
-              {error}
-            </p>
-          ) : null}
         </form>
+      </div>
 
-        {locationResults.length > 0 ? (
-          <div className="max-h-36 space-y-2 overflow-auto pr-1">
-            {locationResults.map((result) => (
-              <button
-                key={result.place_id}
-                type="button"
-                onClick={() => selectSearchResult(result)}
-                disabled={isSaving}
-                className="w-full rounded-lg border border-slate-200 bg-slate-50 p-3 text-left transition hover:border-primary/70 disabled:opacity-60 dark:border-slate-700 dark:bg-black/20"
-              >
-                <span className="line-clamp-2 block text-sm font-semibold text-slate-900 dark:text-white">{summarizePlace(result)}</span>
-                <span className="mt-1 block text-[11px] text-slate-500 dark:text-slate-400">{Number(result.lat).toFixed(5)}, {Number(result.lon).toFixed(5)}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
+      {/* Errors & Search Results */}
+      {error ? (
+        <p className="flex items-center text-xs font-medium text-red-500 animate-fade-in -mt-2">
+          <span className="material-icons-round mr-1.5 text-[16px]">error</span>
+          {error}
+        </p>
+      ) : null}
 
-        <div className="min-h-[116px] rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-black/20">
-          <div className="flex items-start gap-3">
-            <span className={`material-icons-round mt-0.5 ${selectedLocation ? "text-emerald-500" : "text-slate-400"}`}>
-              {selectedLocation ? "check_circle" : "home_pin"}
-            </span>
-            <div>
-              <p className="text-sm font-semibold text-slate-900 dark:text-white">{selectedLocation ? selectedLocation.label : mergedLabels.noneSelected}</p>
-              <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                {selectedLocation
-                  ? `${formatCoordinate(selectedLocation.latitude)}, ${formatCoordinate(selectedLocation.longitude)}`
-                  : mergedLabels.noneDescription}
-              </p>
+      {locationResults.length > 0 ? (
+        <div className="max-h-48 grid grid-cols-1 sm:grid-cols-2 gap-2 overflow-auto custom-scrollbar -mt-2">
+          {locationResults.map((result) => (
+            <button
+              key={result.place_id}
+              type="button"
+              onClick={() => selectSearchResult(result)}
+              disabled={isSaving}
+              className="w-full group text-left transition-all duration-300 disabled:opacity-60"
+            >
+              <div className="rounded-xl border border-slate-200/70 bg-slate-50/80 p-3 hover:border-primary/50 hover:bg-white dark:border-slate-700/50 dark:bg-slate-800/40 dark:hover:border-primary/50 dark:hover:bg-slate-800 hover:shadow-sm">
+                  <span className="line-clamp-2 block text-sm font-semibold text-slate-900 dark:text-white group-hover:text-primary dark:group-hover:text-blue-400 transition-colors">{summarizePlace(result)}</span>
+                  <span className="mt-1 block text-[11px] text-slate-500 dark:text-slate-400">{Number(result.lat).toFixed(5)}, {Number(result.lon).toFixed(5)}</span>
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {/* Map Area */}
+      <div className="space-y-3">
+        <div className="overflow-hidden w-full rounded-2xl border border-slate-200/80 dark:border-slate-700/50 bg-slate-100 dark:bg-slate-900/50 h-[320px] sm:h-[420px] shadow-md relative group">
+          <div className="absolute inset-0 pointer-events-none ring-1 ring-inset ring-black/5 dark:ring-white/5 rounded-2xl z-10"></div>
+          <HomeLocationMap
+            latitude={currentLocation.latitude}
+            longitude={currentLocation.longitude}
+            onPick={handleMapPick}
+          />
+        </div>
+        <div className="flex justify-between items-center px-1">
+            <p className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1.5 opacity-80"><span className="material-icons-round text-[14px]">touch_app</span>{mergedLabels.dragHint}</p>
+            <a
+                href="https://www.openstreetmap.org/copyright"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex text-[11px] font-medium text-slate-400 hover:text-primary transition-colors"
+            >
+                © OpenStreetMap
+            </a>
+        </div>
+      </div>
+
+      {/* Selected Location & Actions */}
+      <div className="space-y-4 pt-2">
+        <div className={`rounded-2xl border p-4 transition-all duration-500 ${selectedLocation ? 'bg-primary/5 border-primary/20 dark:bg-primary/10 dark:border-primary/20 shadow-[inset_0_0_20px_rgba(59,130,246,0.05)]' : 'bg-slate-50/50 border-slate-200 dark:bg-slate-900/50 dark:border-slate-700/50'}`}>
+          <div className="flex items-start gap-4">
+            <div className={`flex items-center justify-center w-10 h-10 rounded-full shrink-0 transition-colors duration-500 ${selectedLocation ? 'bg-primary text-white shadow-md shadow-primary/30' : 'bg-slate-200 dark:bg-slate-800 text-slate-400'}`}>
+                <span className="material-icons-round text-[20px]">
+                {selectedLocation ? "check" : "place"}
+                </span>
+            </div>
+            <div className="pt-0.5 flex-1 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <p className={`text-sm font-bold transition-colors duration-300 ${selectedLocation ? 'text-primary dark:text-blue-400' : 'text-slate-900 dark:text-white'}`}>{selectedLocation ? selectedLocation.label : mergedLabels.noneSelected}</p>
+                <p className="mt-1 text-[13px] text-slate-500 dark:text-slate-400 leading-snug">
+                  {selectedLocation
+                    ? `${formatCoordinate(selectedLocation.latitude)}, ${formatCoordinate(selectedLocation.longitude)}`
+                    : mergedLabels.noneDescription}
+                </p>
+              </div>
               {isResolvingCoordinates ? (
-                <p className="mt-2 inline-flex items-center text-[11px] font-medium text-primary">
-                  <span className="material-icons-round mr-1 animate-spin text-[14px]">autorenew</span>
+                <p className="inline-flex items-center text-[12px] font-bold text-primary animate-pulse whitespace-nowrap">
+                  <span className="material-icons-round mr-1.5 animate-spin text-[16px]">autorenew</span>
                   {mergedLabels.resolvingCoordinates}
                 </p>
               ) : null}
@@ -268,16 +286,9 @@ export default function HomeLocationPicker({
           </div>
         </div>
 
-        {actions}
-
-        <a
-          href="https://www.openstreetmap.org/copyright"
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex text-[11px] text-slate-500 hover:text-primary"
-        >
-          © OpenStreetMap contributors
-        </a>
+        <div>
+            {actions}
+        </div>
       </div>
     </div>
   );

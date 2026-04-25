@@ -150,7 +150,7 @@ export default function SetupPage() {
                 password,
                 fullname,
                 householdName,
-                ui_layout: {},
+                language,
                 home_location: {
                     latitude: homeLocation.latitude,
                     longitude: homeLocation.longitude,
@@ -243,52 +243,45 @@ export default function SetupPage() {
                 </div>
             )}
 
-            <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center p-4 relative">
+            <div className="min-h-screen bg-slate-50 dark:bg-[#090e17] flex items-center justify-center p-4 relative overflow-hidden">
+                {/* Decorative background glows */}
+                <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-primary/20 dark:bg-primary/15 rounded-full blur-[120px] pointer-events-none mix-blend-screen dark:mix-blend-lighten"></div>
+                <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-emerald-500/15 dark:bg-emerald-500/10 rounded-full blur-[100px] pointer-events-none mix-blend-screen dark:mix-blend-lighten"></div>
+
                 <div className="absolute top-4 right-4 sm:top-8 sm:right-8 z-50">
                     <select
                         value={language}
                         onChange={(e) => setLanguage(e.target.value as LanguageCode)}
-                        className="bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700/50 rounded-lg px-3 py-1.5 text-sm font-medium text-slate-700 dark:text-slate-300 focus:outline-none focus:ring-2 focus:ring-primary/50 shadow-sm transition"
+                        className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl border border-white/40 dark:border-slate-700/50 rounded-xl px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/50 shadow-sm transition-all hover:bg-white/90 dark:hover:bg-slate-800/90 cursor-pointer"
                     >
                         <option value="en">English</option>
                         <option value="vi">Tiếng Việt</option>
                     </select>
                 </div>
 
-                <div className="bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700/50 rounded-2xl p-6 sm:p-8 w-full max-w-5xl shadow-xl grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6 sm:gap-8">
-                    <div className="hidden lg:flex flex-col justify-between border-r border-slate-200 dark:border-slate-700 pr-8">
-                        <div>
-                            <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-6 relative">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary/40 opacity-20"></span>
-                                <span className="material-icons-round text-primary text-4xl relative z-10">{step === 1 ? "admin_panel_settings" : "home_pin"}</span>
+                <div className="bg-white/70 dark:bg-slate-900/60 backdrop-blur-2xl border border-white/50 dark:border-slate-700/50 rounded-[2rem] p-8 sm:p-12 w-full max-w-4xl shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] dark:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.5)] flex flex-col relative z-10 mx-auto">
+                    
+                    <div className="w-full flex flex-col justify-center">
+                        <div className="mb-10 flex items-center justify-between text-xs font-bold tracking-wider">
+                            <div className="flex items-center gap-3">
+                                <span className={`flex items-center justify-center w-8 h-8 rounded-full transition-all duration-500 ${step === 1 ? "bg-gradient-to-br from-primary to-blue-600 text-white shadow-lg shadow-primary/30" : "bg-emerald-500/15 text-emerald-500"}`}>{step > 1 ? <span className="material-icons-round text-[18px]">check</span> : "1"}</span>
+                                <span className={`hidden sm:block ${step === 1 ? "text-slate-900 dark:text-white" : "text-slate-500"}`}>{t("setup.step1.title")}</span>
                             </div>
-                            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">{t("setup.title")}</h2>
-                            <p className="text-slate-500 dark:text-slate-400 text-xs leading-relaxed">
-                                {step === 1 ? t("setup.step1.description") : t("setup.step2.description")}
-                            </p>
-                        </div>
-                        <div className="space-y-3 text-sm">
-                            <div className={`flex items-center gap-3 ${step === 1 ? "text-primary" : "text-emerald-500"}`}>
-                                <span className="material-icons-round text-lg">{step === 1 ? "radio_button_checked" : "check_circle"}</span>
-                                <span className="font-semibold">{t("setup.step1.title")}</span>
+                            <div className="h-0.5 flex-1 bg-gradient-to-r from-slate-200 to-slate-100 dark:from-slate-700/50 dark:to-slate-800/50 rounded-full overflow-hidden mx-4">
+                                <div className={`h-full bg-primary transition-all duration-700 ${step > 1 ? "w-full" : "w-0"}`}></div>
                             </div>
-                            <div className={`flex items-center gap-3 ${step === 2 ? "text-primary" : "text-slate-400"}`}>
-                                <span className="material-icons-round text-lg">{step === 2 ? "radio_button_checked" : "radio_button_unchecked"}</span>
-                                <span className="font-semibold">{t("setup.step2.title")}</span>
+                            <div className="flex items-center gap-3">
+                                <span className={`hidden sm:block ${step === 2 ? "text-slate-900 dark:text-white" : "text-slate-500"}`}>{t("setup.step2.title")}</span>
+                                <span className={`flex items-center justify-center w-8 h-8 rounded-full transition-all duration-500 delay-100 ${step === 2 ? "bg-gradient-to-br from-primary to-blue-600 text-white shadow-lg shadow-primary/30" : "bg-slate-100 dark:bg-slate-800 text-slate-400"}`}>2</span>
                             </div>
-                        </div>
-                    </div>
-
-                    <div className="w-full">
-                        <div className="mb-6 lg:hidden">
-                            <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">{step === 1 ? t("setup.step1.title") : t("setup.step2.title")}</h1>
-                            <p className="text-slate-500 dark:text-slate-400 text-xs">{step === 1 ? t("setup.step1.description") : t("setup.step2.description")}</p>
                         </div>
 
-                        <div className="mb-6 flex items-center gap-3 text-xs font-semibold">
-                            <span className={`px-3 py-1 rounded-full ${step === 1 ? "bg-primary text-white" : "bg-emerald-500/10 text-emerald-500"}`}>1</span>
-                            <div className="h-px flex-1 bg-slate-200 dark:bg-slate-700"></div>
-                            <span className={`px-3 py-1 rounded-full ${step === 2 ? "bg-primary text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-500"}`}>2</span>
+                        <div className="mb-10 flex flex-col items-center text-center">
+                            <div className="w-16 h-16 bg-gradient-to-tr from-primary/20 to-primary/5 dark:from-primary/30 dark:to-primary/5 border border-primary/20 rounded-2xl flex items-center justify-center mb-6 relative shadow-inner">
+                                <span className="material-icons-round text-primary text-3xl relative z-10 drop-shadow-md">{step === 1 ? "admin_panel_settings" : "home_pin"}</span>
+                            </div>
+                            <h1 className="text-3xl font-extrabold text-slate-900 dark:text-white mb-3 tracking-tight">{step === 1 ? t("setup.step1.title") : t("setup.step2.title")}</h1>
+                            <p className="text-slate-500 dark:text-slate-400 text-sm leading-relaxed max-w-lg">{step === 1 ? t("setup.step1.description") : t("setup.step2.description")}</p>
                         </div>
 
                         {error && (
@@ -299,11 +292,13 @@ export default function SetupPage() {
                         )}
 
                         {step === 1 ? (
-                            <form onSubmit={handleAdminContinue} noValidate className="w-full space-y-4">
-                                <div>
-                                    <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${fieldErrors.householdName ? "text-red-500" : "text-slate-700 dark:text-slate-300"}`}>{t("setup.form.household_name")}</label>
-                                    <div className="relative">
-                                        <span className={`material-icons-round absolute left-3 top-2.5 text-[18px] ${fieldErrors.householdName ? "text-red-500" : "text-slate-400"}`}>home</span>
+                            <form onSubmit={handleAdminContinue} noValidate className="w-full space-y-6">
+                                <div className="group">
+                                    <label className={`block text-xs font-bold mb-2 uppercase tracking-wider transition-colors ${fieldErrors.householdName ? "text-red-500" : "text-slate-600 dark:text-slate-400 group-focus-within:text-primary"}`}>{t("setup.form.household_name")}</label>
+                                    <div className="relative flex items-center">
+                                        <div className={`absolute left-0 pl-4 flex items-center pointer-events-none transition-colors ${fieldErrors.householdName ? "text-red-500" : "text-slate-400 group-focus-within:text-primary"}`}>
+                                            <span className="material-icons-round text-xl">home_work</span>
+                                        </div>
                                         <input
                                             type="text"
                                             value={householdName}
@@ -311,18 +306,20 @@ export default function SetupPage() {
                                                 setHouseholdName(e.target.value);
                                                 clearFieldError("householdName");
                                             }}
-                                            className={`w-full bg-slate-50 dark:bg-black/20 border rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent transition-all ${fieldErrors.householdName ? "border-red-500 focus:ring-red-500" : "border-slate-300 dark:border-slate-700 focus:ring-primary"}`}
+                                            className={`w-full bg-slate-50/50 dark:bg-slate-900/50 border rounded-xl py-3 pl-12 pr-4 text-base text-slate-900 dark:text-white placeholder-slate-400/70 focus:outline-none focus:ring-4 focus:border-transparent transition-all duration-300 shadow-sm ${fieldErrors.householdName ? "border-red-500/50 focus:ring-red-500/20" : "border-slate-200 dark:border-slate-700/70 hover:border-slate-300 dark:hover:border-slate-600 focus:ring-primary/20 focus:border-primary"}`}
                                             placeholder={t("setup.form.household_name.placeholder")}
                                         />
                                     </div>
-                                    {fieldErrors.householdName && <p className="text-red-500 text-xs mt-1.5 flex items-center font-medium"><span className="material-icons-round text-[14px] mr-1">error</span>{fieldErrors.householdName}</p>}
+                                    {fieldErrors.householdName && <p className="text-red-500 text-xs mt-2 flex items-center font-medium animate-fade-in"><span className="material-icons-round text-[16px] mr-1.5">error</span>{fieldErrors.householdName}</p>}
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                        <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${fieldErrors.fullname ? "text-red-500" : "text-slate-700 dark:text-slate-300"}`}>{t("setup.form.fullname")}</label>
-                                        <div className="relative">
-                                            <span className={`material-icons-round absolute left-3 top-2.5 text-[18px] ${fieldErrors.fullname ? "text-red-500" : "text-slate-400"}`}>badge</span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="group">
+                                        <label className={`block text-xs font-bold mb-2 uppercase tracking-wider transition-colors ${fieldErrors.fullname ? "text-red-500" : "text-slate-600 dark:text-slate-400 group-focus-within:text-primary"}`}>{t("setup.form.fullname")}</label>
+                                        <div className="relative flex items-center">
+                                            <div className={`absolute left-0 pl-4 flex items-center pointer-events-none transition-colors ${fieldErrors.fullname ? "text-red-500" : "text-slate-400 group-focus-within:text-primary"}`}>
+                                                <span className="material-icons-round text-xl">badge</span>
+                                            </div>
                                             <input
                                                 type="text"
                                                 value={fullname}
@@ -330,17 +327,19 @@ export default function SetupPage() {
                                                     setFullname(e.target.value);
                                                     clearFieldError("fullname");
                                                 }}
-                                                className={`w-full bg-slate-50 dark:bg-black/20 border rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent transition-all ${fieldErrors.fullname ? "border-red-500 focus:ring-red-500" : "border-slate-300 dark:border-slate-700 focus:ring-primary"}`}
+                                                className={`w-full bg-slate-50/50 dark:bg-slate-900/50 border rounded-xl py-3 pl-12 pr-4 text-base text-slate-900 dark:text-white placeholder-slate-400/70 focus:outline-none focus:ring-4 focus:border-transparent transition-all duration-300 shadow-sm ${fieldErrors.fullname ? "border-red-500/50 focus:ring-red-500/20" : "border-slate-200 dark:border-slate-700/70 hover:border-slate-300 dark:hover:border-slate-600 focus:ring-primary/20 focus:border-primary"}`}
                                                 placeholder={t("setup.form.fullname.placeholder")}
                                             />
                                         </div>
-                                        {fieldErrors.fullname && <p className="text-red-500 text-xs mt-1.5 flex items-center font-medium"><span className="material-icons-round text-[14px] mr-1">error</span>{fieldErrors.fullname}</p>}
+                                        {fieldErrors.fullname && <p className="text-red-500 text-xs mt-2 flex items-center font-medium animate-fade-in"><span className="material-icons-round text-[16px] mr-1.5">error</span>{fieldErrors.fullname}</p>}
                                     </div>
 
-                                    <div>
-                                        <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${fieldErrors.username ? "text-red-500" : "text-slate-700 dark:text-slate-300"}`}>{t("setup.form.username")}</label>
-                                        <div className="relative">
-                                            <span className={`material-icons-round absolute left-3 top-2.5 text-[18px] ${fieldErrors.username ? "text-red-500" : "text-slate-400"}`}>admin_panel_settings</span>
+                                    <div className="group">
+                                        <label className={`block text-xs font-bold mb-2 uppercase tracking-wider transition-colors ${fieldErrors.username ? "text-red-500" : "text-slate-600 dark:text-slate-400 group-focus-within:text-primary"}`}>{t("setup.form.username")}</label>
+                                        <div className="relative flex items-center">
+                                            <div className={`absolute left-0 pl-4 flex items-center pointer-events-none transition-colors ${fieldErrors.username ? "text-red-500" : "text-slate-400 group-focus-within:text-primary"}`}>
+                                                <span className="material-icons-round text-xl">account_circle</span>
+                                            </div>
                                             <input
                                                 type="text"
                                                 value={username}
@@ -348,21 +347,21 @@ export default function SetupPage() {
                                                     setUsername(e.target.value);
                                                     clearFieldError("username");
                                                 }}
-                                                className={`w-full bg-slate-50 dark:bg-black/20 border rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent transition-all ${fieldErrors.username ? "border-red-500 focus:ring-red-500" : "border-slate-300 dark:border-slate-700 focus:ring-primary"}`}
+                                                className={`w-full bg-slate-50/50 dark:bg-slate-900/50 border rounded-xl py-3 pl-12 pr-4 text-base text-slate-900 dark:text-white placeholder-slate-400/70 focus:outline-none focus:ring-4 focus:border-transparent transition-all duration-300 shadow-sm ${fieldErrors.username ? "border-red-500/50 focus:ring-red-500/20" : "border-slate-200 dark:border-slate-700/70 hover:border-slate-300 dark:hover:border-slate-600 focus:ring-primary/20 focus:border-primary"}`}
                                                 placeholder={t("setup.form.username.placeholder")}
                                             />
                                         </div>
-                                        {fieldErrors.username && <p className="text-red-500 text-xs mt-1.5 flex items-center font-medium"><span className="material-icons-round text-[14px] mr-1">error</span>{fieldErrors.username}</p>}
+                                        {fieldErrors.username && <p className="text-red-500 text-xs mt-2 flex items-center font-medium animate-fade-in"><span className="material-icons-round text-[16px] mr-1.5">error</span>{fieldErrors.username}</p>}
                                     </div>
                                 </div>
 
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div>
-                                        <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${fieldErrors.password ? "text-red-500" : (password.length >= 8 ? "text-emerald-500 dark:text-emerald-400" : "text-slate-700 dark:text-slate-300")}`}>{t("setup.form.password")}</label>
-                                        <div className="relative">
-                                            <span className={`material-icons-round absolute left-3 top-2.5 text-[18px] transition-colors ${fieldErrors.password ? "text-red-500" : (password.length >= 8 ? "text-emerald-500" : "text-slate-400")}`}>
-                                                {password.length >= 8 ? "check_circle" : "lock"}
-                                            </span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div className="group">
+                                        <label className={`block text-xs font-bold mb-2 uppercase tracking-wider transition-colors ${fieldErrors.password ? "text-red-500" : (password.length >= 8 ? "text-emerald-500 dark:text-emerald-400" : "text-slate-600 dark:text-slate-400 group-focus-within:text-primary")}`}>{t("setup.form.password")}</label>
+                                        <div className="relative flex items-center">
+                                            <div className={`absolute left-0 pl-4 flex items-center pointer-events-none transition-colors ${fieldErrors.password ? "text-red-500" : (password.length >= 8 ? "text-emerald-500" : "text-slate-400 group-focus-within:text-primary")}`}>
+                                                <span className="material-icons-round text-xl">{password.length >= 8 ? "verified_user" : "lock_outline"}</span>
+                                            </div>
                                             <input
                                                 type="password"
                                                 value={password}
@@ -380,19 +379,19 @@ export default function SetupPage() {
                                                         clearFieldError("repassword");
                                                     }
                                                 }}
-                                                className={`w-full bg-slate-50 dark:bg-black/20 border rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent transition-all ${fieldErrors.password ? "border-red-500 focus:ring-red-500" : (password.length >= 8 ? "border-emerald-500 focus:ring-emerald-500" : "border-slate-300 dark:border-slate-700 focus:ring-primary")}`}
+                                                className={`w-full bg-slate-50/50 dark:bg-slate-900/50 border rounded-xl py-3 pl-12 pr-4 text-base text-slate-900 dark:text-white placeholder-slate-400/70 focus:outline-none focus:ring-4 focus:border-transparent transition-all duration-300 shadow-sm ${fieldErrors.password ? "border-red-500/50 focus:ring-red-500/20" : (password.length >= 8 ? "border-emerald-500/50 focus:ring-emerald-500/20 focus:border-emerald-500" : "border-slate-200 dark:border-slate-700/70 hover:border-slate-300 dark:hover:border-slate-600 focus:ring-primary/20 focus:border-primary")}`}
                                                 placeholder="••••••••"
                                             />
                                         </div>
-                                        {fieldErrors.password && <p className="text-red-500 text-xs mt-1.5 flex items-center font-medium"><span className="material-icons-round text-[14px] mr-1">error</span>{fieldErrors.password}</p>}
+                                        {fieldErrors.password && <p className="text-red-500 text-xs mt-2 flex items-center font-medium animate-fade-in"><span className="material-icons-round text-[16px] mr-1.5">error</span>{fieldErrors.password}</p>}
                                     </div>
 
-                                    <div>
-                                        <label className={`block text-xs font-semibold mb-1.5 uppercase tracking-wide ${fieldErrors.repassword ? "text-red-500" : (repassword && password === repassword ? "text-emerald-500 dark:text-emerald-400" : "text-slate-700 dark:text-slate-300")}`}>{t("setup.form.repassword")}</label>
-                                        <div className="relative">
-                                            <span className={`material-icons-round absolute left-3 top-2.5 text-[18px] transition-colors ${fieldErrors.repassword ? "text-red-500" : (repassword && password === repassword ? "text-emerald-500" : "text-slate-400")}`}>
-                                                {repassword && password === repassword ? "check_circle" : "lock"}
-                                            </span>
+                                    <div className="group">
+                                        <label className={`block text-xs font-bold mb-2 uppercase tracking-wider transition-colors ${fieldErrors.repassword ? "text-red-500" : (repassword && password === repassword ? "text-emerald-500 dark:text-emerald-400" : "text-slate-600 dark:text-slate-400 group-focus-within:text-primary")}`}>{t("setup.form.repassword")}</label>
+                                        <div className="relative flex items-center">
+                                            <div className={`absolute left-0 pl-4 flex items-center pointer-events-none transition-colors ${fieldErrors.repassword ? "text-red-500" : (repassword && password === repassword ? "text-emerald-500" : "text-slate-400 group-focus-within:text-primary")}`}>
+                                                <span className="material-icons-round text-xl">{repassword && password === repassword ? "verified" : "password"}</span>
+                                            </div>
                                             <input
                                                 type="password"
                                                 value={repassword}
@@ -405,21 +404,21 @@ export default function SetupPage() {
                                                         clearFieldError("repassword");
                                                     }
                                                 }}
-                                                className={`w-full bg-slate-50 dark:bg-black/20 border rounded-lg py-2 pl-10 pr-4 text-sm text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:border-transparent transition-all ${fieldErrors.repassword ? "border-red-500 focus:ring-red-500" : (repassword && password === repassword ? "border-emerald-500 focus:ring-emerald-500" : "border-slate-300 dark:border-slate-700 focus:ring-primary")}`}
+                                                className={`w-full bg-slate-50/50 dark:bg-slate-900/50 border rounded-xl py-3 pl-12 pr-4 text-base text-slate-900 dark:text-white placeholder-slate-400/70 focus:outline-none focus:ring-4 focus:border-transparent transition-all duration-300 shadow-sm ${fieldErrors.repassword ? "border-red-500/50 focus:ring-red-500/20" : (repassword && password === repassword ? "border-emerald-500/50 focus:ring-emerald-500/20 focus:border-emerald-500" : "border-slate-200 dark:border-slate-700/70 hover:border-slate-300 dark:hover:border-slate-600 focus:ring-primary/20 focus:border-primary")}`}
                                                 placeholder="••••••••"
                                             />
                                         </div>
-                                        {fieldErrors.repassword && <p className="text-red-500 text-xs mt-1.5 flex items-center font-medium"><span className="material-icons-round text-[14px] mr-1">error</span>{fieldErrors.repassword}</p>}
+                                        {fieldErrors.repassword && <p className="text-red-500 text-xs mt-2 flex items-center font-medium animate-fade-in"><span className="material-icons-round text-[16px] mr-1.5">error</span>{fieldErrors.repassword}</p>}
                                     </div>
                                 </div>
 
-                                <div className="pt-2">
+                                <div className="pt-4">
                                     <button
                                         type="submit"
-                                        className="w-full sm:w-auto bg-primary hover:bg-blue-600 text-white font-medium px-5 py-2.5 rounded-lg transition shadow-sm hover:shadow flex justify-center items-center text-sm"
+                                        className="w-full lg:w-auto ml-auto bg-gradient-to-r from-primary to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold px-8 py-3 rounded-xl transition-all duration-300 shadow-[0_8px_20px_-6px_rgba(59,130,246,0.5)] hover:shadow-[0_12px_25px_-6px_rgba(59,130,246,0.7)] hover:-translate-y-0.5 flex justify-center items-center text-sm"
                                     >
                                         {t("setup.form.continue")}
-                                        <span className="material-icons-round text-lg ml-2">arrow_forward</span>
+                                        <span className="material-icons-round text-xl ml-2 transition-transform group-hover:translate-x-1">arrow_forward</span>
                                     </button>
                                 </div>
                             </form>
@@ -442,25 +441,28 @@ export default function SetupPage() {
                                 }}
                                 actions={
                                     <>
-                                        <div className="flex flex-col sm:flex-row gap-3 pt-1">
+                                        <div className="flex flex-col sm:flex-row gap-4 pt-4">
                                             <button
                                                 type="button"
                                                 onClick={() => setStep(1)}
-                                                className="sm:flex-1 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium py-2.5 rounded-lg transition hover:bg-slate-50 dark:hover:bg-slate-800 flex justify-center items-center text-sm"
+                                                className="sm:flex-1 border-2 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-bold py-3 rounded-xl transition-all duration-300 hover:bg-slate-50 dark:hover:bg-slate-800/50 hover:border-slate-300 dark:hover:border-slate-600 flex justify-center items-center text-sm"
                                             >
-                                                <span className="material-icons-round text-lg mr-2">arrow_back</span>
+                                                <span className="material-icons-round text-xl mr-2">arrow_back</span>
                                                 {t("setup.form.back")}
                                             </button>
                                             <button
                                                 type="button"
                                                 onClick={handleSubmit}
                                                 disabled={isLoading || !homeLocation}
-                                                className="sm:flex-1 bg-primary hover:bg-blue-600 text-white font-medium py-2.5 rounded-lg transition shadow-sm hover:shadow flex justify-center items-center disabled:opacity-70 text-sm"
+                                                className="sm:flex-[2] bg-gradient-to-r from-primary to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-3 rounded-xl transition-all duration-300 shadow-[0_8px_20px_-6px_rgba(59,130,246,0.5)] hover:shadow-[0_12px_25px_-6px_rgba(59,130,246,0.7)] hover:-translate-y-0.5 flex justify-center items-center disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-[0_8px_20px_-6px_rgba(59,130,246,0.5)] text-sm"
                                             >
                                                 {isLoading ? (
                                                     <span className="material-icons-round animate-spin">refresh</span>
                                                 ) : (
-                                                    t("setup.form.submit")
+                                                    <>
+                                                        <span className="material-icons-round text-xl mr-2">rocket_launch</span>
+                                                        {t("setup.form.submit")}
+                                                    </>
                                                 )}
                                             </button>
                                         </div>

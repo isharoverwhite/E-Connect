@@ -42,7 +42,6 @@ def override_get_db():
         db.close()
 
 
-app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
 
@@ -75,14 +74,12 @@ def _seed_household(prefix: str = "api-key"):
         username=f"admin-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.admin,
-        ui_layout={},
     )
     member = User(
         fullname="Member User",
         username=f"member-{prefix}",
         authentication="hashed-pass",
         account_type=AccountType.parent,
-        ui_layout={},
     )
     db.add_all([household, admin, member])
     db.commit()
@@ -134,8 +131,13 @@ def _create_room(headers: dict[str, str], *, name: str, allowed_user_ids: list[i
 
 
 def setup_function():
+    app.dependency_overrides[get_db] = override_get_db
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+
+
+def teardown_function():
+    app.dependency_overrides.clear()
 
 
 def test_user_can_create_multiple_api_keys_and_revoke_one_independently():

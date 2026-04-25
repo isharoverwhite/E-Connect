@@ -195,9 +195,6 @@ def test_put_device_config_success():
     db.refresh(device)
     assert len(device.pin_configurations) == 0
 
-    db.refresh(user)
-    assert not user.ui_layout
-
 
 def test_put_device_config_stages_device_name_until_flash():
     db = TestingSessionLocal()
@@ -259,19 +256,6 @@ def test_put_device_config_preserves_board_reported_pin_map_until_reconnect():
             extra_params={"min_value": 0, "max_value": 255},
         )
     )
-    user.ui_layout = [
-        {
-            "i": f"{device.device_id}:8:0",
-            "x": 0,
-            "y": 0,
-            "w": 2,
-            "h": 2,
-            "type": "dimmer",
-            "deviceId": device.device_id,
-            "pin": 8,
-            "label": "Active Dimmer",
-        }
-    ]
     db.commit()
 
     response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
@@ -302,10 +286,6 @@ def test_put_device_config_preserves_board_reported_pin_map_until_reconnect():
     assert device.pin_configurations[0].gpio_pin == 8
     assert device.pin_configurations[0].mode == "PWM"
     assert device.pin_configurations[0].label == "Active Dimmer"
-
-    db.refresh(user)
-    assert user.ui_layout[0]["pin"] == 8
-    assert user.ui_layout[0]["label"] == "Active Dimmer"
 
 def test_put_device_config_prefers_forwarded_host_for_firmware_target():
     db = TestingSessionLocal()

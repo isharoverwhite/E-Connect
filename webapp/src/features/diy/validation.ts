@@ -1,6 +1,6 @@
 /* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
 
-import type { BoardPin, BoardProfile } from "./board-profiles";
+import { isBoardPinReserved, type BoardPin, type BoardProfile } from "./board-profiles";
 import type { PinMapping, ValidationResult } from "./types";
 
 interface ValidatePinMappingsOptions {
@@ -45,7 +45,10 @@ export function validatePinMappings(
       errors.push(`GPIO ${mapping.gpio_pin} is input-only and cannot drive outputs.`);
     }
 
-    // Removed check for reserved pins as they can now be mapped if they have capabilities
+    if (isBoardPinReserved(boardPin)) {
+      errors.push(`GPIO ${mapping.gpio_pin} is reserved on ${board.name} and cannot be used for build or flash.`);
+      continue;
+    }
 
     if (boardPin.bootSensitive && (mapping.mode === "OUTPUT" || mapping.mode === "PWM")) {
       warnings.push(

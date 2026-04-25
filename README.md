@@ -8,9 +8,9 @@
 
 ## Mở Đầu / Product Intro
 
-Tiếng Việt: **E-Connect** là nền tảng smart home `self-hosted`, `local-first` giúp bạn dựng và vận hành hệ thống IoT trong LAN mà không phụ thuộc cloud. Dự án kết hợp dashboard quản lý thiết bị, luồng onboarding và phê duyệt node DIY `ESP32/ESP8266`, lưu Wi-Fi tập trung, builder map GPIO bằng `SVG`, build firmware phía server, flash qua trình duyệt, automation graph trực quan, API key cho tích hợp ngoài và cơ chế `MQTT-first` để điều khiển nhanh, ổn định, riêng tư trên hạ tầng do chính bạn sở hữu.
+Tiếng Việt: **E-Connect** là nền tảng smart home `self-hosted`, `local-first` giúp bạn dựng và vận hành hệ thống IoT trong LAN mà không phụ thuộc cloud. Dự án kết hợp dashboard quản lý thiết bị theo area, luồng onboarding và phê duyệt node DIY `ESP32/ESP8266`, lưu Wi-Fi tập trung, builder map GPIO bằng `SVG`, build firmware phía server, flash qua trình duyệt, automation graph trực quan, API key cho tích hợp ngoài, preference ngôn ngữ giao diện theo user và cơ chế `MQTT-first` để điều khiển nhanh, ổn định, riêng tư trên hạ tầng do chính bạn sở hữu.
 
-English: **E-Connect** is a `self-hosted`, `local-first` smart home platform for LAN-native control, DIY `ESP32/ESP8266` onboarding, centralized Wi-Fi provisioning, `SVG` GPIO mapping, server-side firmware builds, browser flashing, visual automations, API-key-based integrations, and `MQTT-first` messaging, all in a private stack you run yourself.
+English: **E-Connect** is a `self-hosted`, `local-first` smart home platform for LAN-native control, area-based device dashboards, DIY `ESP32/ESP8266` onboarding, centralized Wi-Fi provisioning, `SVG` GPIO mapping, server-side firmware builds, browser flashing, visual automations, API-key-based integrations, per-user interface language preferences, and `MQTT-first` messaging, all in a private stack you run yourself.
 
 ## Phụ Lục / Appendix
 
@@ -22,7 +22,7 @@ English: **E-Connect** is a `self-hosted`, `local-first` smart home platform for
 
 | Layer | Stack |
 |---|---|
-| Frontend | `Next.js 16`, `React 19`, `Tailwind CSS 4`, `react-rnd`, `react-zoom-pan-pinch` |
+| Frontend | `Next.js 16`, `React 19`, `Tailwind CSS 4`, `react-zoom-pan-pinch` |
 | Backend | `FastAPI`, `SQLAlchemy`, `Pydantic`, `Uvicorn`, `python-jose`, `passlib` |
 | IoT & Provisioning | `MQTT`, `Mosquitto`, `PlatformIO`, `Zeroconf/mDNS`, browser-based flash and serial tooling |
 | Data & Persistence | `MariaDB`, `PyMySQL`, durable storage for devices, configs, automations, and logs |
@@ -44,9 +44,9 @@ English: Users enter the system through the real authentication form, with an op
 ### 2. Dashboard
 ![E-Connect Dashboard](./docs/screenshots/readme/dashboard.png)
 
-Tiếng Việt: Dashboard là trung tâm quan sát thiết bị, cảnh báo hệ thống, trạng thái online/offline và các thao tác vận hành chính.
+Tiếng Việt: Dashboard là trung tâm quan sát thiết bị, cảnh báo hệ thống, trạng thái online/offline và các thao tác vận hành chính với card layout responsive theo area.
 
-English: The dashboard is the command surface for device status, system alerts, online/offline visibility, and day-to-day operations.
+English: The dashboard is the command surface for device status, system alerts, online/offline visibility, and day-to-day operations through an area-based responsive card layout.
 
 ### 3. Device Management
 ![E-Connect Device Management](./docs/screenshots/readme/devices-empty.png)
@@ -100,9 +100,9 @@ English: The `Extensions` area manages external integration packages, showing in
 ### 10. Settings And Wi-Fi Credentials
 ![E-Connect Settings Wi-Fi](./docs/screenshots/readme/settings-wifi.png)
 
-Tiếng Việt: `Settings` tập trung phần quản trị instance như timezone, user management, areas, DIY configs, và danh sách Wi-Fi dùng lại cho provisioning.
+Tiếng Việt: `Settings` tập trung phần quản trị instance như timezone, language preference, user management, areas, DIY configs, và danh sách Wi-Fi dùng lại cho provisioning.
 
-English: `Settings` centralizes instance administration, including timezone, user management, areas, DIY configs, and reusable Wi-Fi credentials for provisioning.
+English: `Settings` centralizes instance administration, including timezone, language preference, user management, areas, DIY configs, and reusable Wi-Fi credentials for provisioning.
 
 ---
 

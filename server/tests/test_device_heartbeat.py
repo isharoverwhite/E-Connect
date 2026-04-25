@@ -52,7 +52,6 @@ def _seed_device(*, last_seen: datetime) -> tuple[str, int]:
             username=f"heartbeat-{uuid.uuid4()}",
             authentication="hashed-pass",
             account_type=AccountType.admin,
-            ui_layout={},
         )
         db.add_all([household, user])
         db.commit()
