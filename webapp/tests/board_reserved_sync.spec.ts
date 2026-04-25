@@ -2,8 +2,27 @@
 
 import { expect, test } from "@playwright/test";
 
-import { BOARD_PROFILES, getBoardPinMarkers, getBoardProfile, isBoardPinReserved, type BoardPin } from "../src/features/diy/board-profiles";
+import { getBoardPinMarkers, getBoardProfile, isBoardPinReserved, type BoardPin } from "../src/features/diy/board-profiles";
 import { validatePinMappings } from "../src/features/diy/validation";
+
+const EXPLICIT_BACKEND_BOARD_IDS = [
+  "esp32-devkit-v1",
+  "esp32-wrover-devkit",
+  "esp32-cam",
+  "esp32-s2-saola-1",
+  "esp32-s3-devkitc-1",
+  "esp32-s3-zero",
+  "esp32-c2-reference",
+  "esp32-c3-devkitm-1",
+  "esp32-c3-super-mini",
+  "dfrobot-beetle-esp32-c3",
+  "esp32-c6-devkitc-1",
+  "nodemcuv2",
+  "d1_mini",
+  "d1_mini_pro",
+  "esp01_1m",
+  "esp12e",
+] as const;
 
 type BackendBoardSnapshot = {
   canonical_id: string;
@@ -105,6 +124,64 @@ test("frontend validation follows the board-specific C3 reserved-pin model befor
   );
 
   expect(devkitResult.errors.some((message) => message.includes("GPIO 20") && message.includes("reserved"))).toBeTruthy();
+
+  const superMiniBoard = getBoardProfile("esp32-c3-super-mini");
+  expect(superMiniBoard).toBeTruthy();
+
+  const superMiniResult = validatePinMappings(
+    superMiniBoard!,
+    [
+      {
+        gpio_pin: 20,
+        mode: "OUTPUT",
+        label: "Secondary UART RX reused as GPIO",
+      },
+    ],
+    {
+      requireWifiCredentials: true,
+      hasWifiCredential: true,
+    },
+  );
+
+  expect(superMiniResult.errors).toEqual([]);
+});
+
+test("boot-sensitive pins warn instead of blocking valid mappings", () => {
+  const cases = [
+    { boardId: "esp32-devkit-v1", gpio: 0, mode: "OUTPUT" as const },
+    { boardId: "esp32-c3-devkitm-1", gpio: 9, mode: "OUTPUT" as const },
+    { boardId: "dfrobot-beetle-esp32-c3", gpio: 9, mode: "OUTPUT" as const },
+    { boardId: "esp32-c2-reference", gpio: 8, mode: "OUTPUT" as const },
+    { boardId: "esp32-c6-devkitc-1", gpio: 8, mode: "OUTPUT" as const },
+    { boardId: "esp32-cam", gpio: 0, mode: "OUTPUT" as const },
+    { boardId: "d1_mini", gpio: 2, mode: "OUTPUT" as const },
+  ];
+
+  for (const testCase of cases) {
+    const board = getBoardProfile(testCase.boardId);
+    expect(board, `Missing board ${testCase.boardId}`).toBeTruthy();
+
+    const result = validatePinMappings(
+      board!,
+      [
+        {
+          gpio_pin: testCase.gpio,
+          mode: testCase.mode,
+          label: `GPIO ${testCase.gpio}`,
+        },
+      ],
+      {
+        requireWifiCredentials: true,
+        hasWifiCredential: true,
+      },
+    );
+
+    expect(result.errors, `${testCase.boardId} GPIO ${testCase.gpio} should not hard-fail`).toEqual([]);
+    expect(
+      result.warnings.some((message) => message.includes(`GPIO ${testCase.gpio}`) && message.includes("Disconnect")),
+      `${testCase.boardId} GPIO ${testCase.gpio} should warn before flashing`,
+    ).toBeTruthy();
+  }
 });
 
 test("board-specific LED markers stay explicit instead of relying on note heuristics", () => {
@@ -125,14 +202,20 @@ test("board-specific LED markers stay explicit instead of relying on note heuris
 });
 
 test("frontend SVG board profiles mark every backend-reserved shared pin as reserved", async () => {
-  const backendBoards = await loadBackendBoardSnapshots(BOARD_PROFILES.map((board) => board.id));
+  const backendBoards = await loadBackendBoardSnapshots([...EXPLICIT_BACKEND_BOARD_IDS]);
   const mismatches: Array<{
     boardId: string;
     canonicalId: string;
     gpio: number;
   }> = [];
 
-  for (const board of BOARD_PROFILES) {
+  for (const boardId of EXPLICIT_BACKEND_BOARD_IDS) {
+    const board = getBoardProfile(boardId);
+    expect(board, `Missing board ${boardId}`).toBeTruthy();
+    if (!board) {
+      continue;
+    }
+
     const backendBoard = backendBoards[board.id];
     if (!backendBoard) {
       continue;

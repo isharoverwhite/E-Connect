@@ -724,7 +724,7 @@ export default function DevicesPage() {
                                     onClick={() => setIsScanModalOpen(true)}
                                     className={`${secondaryActionButtonClassName} !min-h-9 !py-1.5 relative`}
                                 >
-                                    <span className="material-icons-round text-sm">radar</span>
+                                    <span className="material-icons-round text-sm">wifi_tethering</span>
                                     <span className="hidden sm:inline">{t("devices.btn_scan_device")}</span>
                                     <span className="sm:hidden">{t("devices.btn_scan")}</span>
                                     {pairingRequests.length > 0 && (
@@ -917,7 +917,7 @@ export default function DevicesPage() {
                                             onClick={() => setIsScanModalOpen(true)}
                                             className="relative flex min-w-44 items-center justify-center rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition-all hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
                                         >
-                                            <span className="material-icons-round mr-2 text-sm">radar</span>
+                                            <span className="material-icons-round mr-2 text-sm">wifi_tethering</span>
                                             {t("devices.btn_scan_device")}
                                             {pairingRequests.length > 0 && (
                                                 <span className="absolute -top-1 -right-1 flex h-3 w-3">

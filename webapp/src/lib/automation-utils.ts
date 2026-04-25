@@ -502,7 +502,7 @@ function hasNonEmptyText(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
-export function getAutomationGraphSaveIssues(graph: AutomationGraph): string[] {
+export function getAutomationGraphSaveIssues(graph: AutomationGraph, t: (key: string, fallback?: string) => string): string[] {
   const issues = new Set<string>();
   const nodeById = new Map<string, AutomationGraphNode>();
   const outgoing = new Map<string, AutomationGraphEdge[]>();
@@ -510,7 +510,7 @@ export function getAutomationGraphSaveIssues(graph: AutomationGraph): string[] {
 
   for (const node of graph.nodes) {
     if (nodeById.has(node.id)) {
-      issues.add(`Duplicate node id "${node.id}" blocks saving.`);
+      issues.add(t("automation.validation.duplicate_node_id").replace("{{id}}", node.id));
       continue;
     }
     nodeById.set(node.id, node);
@@ -521,17 +521,17 @@ export function getAutomationGraphSaveIssues(graph: AutomationGraph): string[] {
   const triggers = graph.nodes.filter((node) => node.type === "trigger");
   const actions = graph.nodes.filter((node) => node.type === "action");
   if (triggers.length !== 1) {
-    issues.add("Automation graphs require exactly one trigger block.");
+    issues.add(t("automation.validation.one_trigger"));
   }
   if (actions.length === 0) {
-    issues.add("Automation graphs require at least one action block.");
+    issues.add(t("automation.validation.at_least_one_action"));
   }
 
   for (const edge of graph.edges) {
     const source = nodeById.get(edge.source_node_id);
     const target = nodeById.get(edge.target_node_id);
     if (!source || !target) {
-      issues.add("Every connection must point to blocks that still exist on the canvas.");
+      issues.add(t("automation.validation.connection_exist"));
       continue;
     }
 
@@ -540,7 +540,7 @@ export function getAutomationGraphSaveIssues(graph: AutomationGraph): string[] {
 
 
     if (target.type === "trigger") {
-      issues.add("Trigger blocks cannot receive incoming connections.");
+      issues.add(t("automation.validation.trigger_no_incoming"));
     }
   }
 
@@ -550,14 +550,14 @@ export function getAutomationGraphSaveIssues(graph: AutomationGraph): string[] {
 
     if (node.type === "trigger") {
       if (nodeOutgoing.length === 0) {
-        issues.add("Connect the trigger block to at least one downstream block before saving.");
+        issues.add(t("automation.validation.trigger_downstream"));
       }
     } else if (incoming !== 1) {
-      issues.add(`Block "${getNodeDisplayName(node)}" must have exactly one incoming connection.`);
+      issues.add(t("automation.validation.block_one_incoming").replace("{{name}}", getNodeDisplayName(node)));
     }
 
     if (node.type === "condition" && nodeOutgoing.length === 0) {
-      issues.add(`Condition block "${getNodeDisplayName(node)}" must connect to at least one action.`);
+      issues.add(t("automation.validation.condition_action").replace("{{name}}", getNodeDisplayName(node)));
     }
 
     if (node.type === "trigger") {
@@ -565,43 +565,43 @@ export function getAutomationGraphSaveIssues(graph: AutomationGraph): string[] {
         const hour = node.config.hour;
         const minute = node.config.minute;
         if (!hasFiniteNumber(hour) || hour < 0 || hour > 23) {
-          issues.add("Choose a valid trigger hour between 00 and 23.");
+          issues.add(t("automation.validation.hour_0_23"));
         }
         if (!hasFiniteNumber(minute) || minute < 0 || minute > 59) {
-          issues.add("Choose a valid trigger minute between 00 and 59.");
+          issues.add(t("automation.validation.minute_0_59"));
         }
       } else {
         if (!hasNonEmptyText(node.config.device_id)) {
-          issues.add("Choose a source device before saving the automation.");
+          issues.add(t("automation.validation.choose_source_device"));
         }
         if (!hasFiniteNumber(node.config.pin)) {
-          issues.add("Choose a trigger pin before saving the automation.");
+          issues.add(t("automation.validation.choose_trigger_pin"));
         }
       }
       continue;
     }
 
     if (!hasNonEmptyText(node.config.device_id)) {
-      issues.add(`Choose a device for "${getNodeDisplayName(node)}" before saving.`);
+      issues.add(t("automation.validation.choose_device").replace("{{name}}", getNodeDisplayName(node)));
     }
     if (!hasFiniteNumber(node.config.pin)) {
-      issues.add(`Choose a GPIO pin for "${getNodeDisplayName(node)}" before saving.`);
+      issues.add(t("automation.validation.choose_gpio_pin").replace("{{name}}", getNodeDisplayName(node)));
     }
 
     if (node.type === "condition") {
       if (node.kind === "state_equals") {
         if (!hasNonEmptyText(node.config.expected) || !["on", "off"].includes(node.config.expected.toLowerCase())) {
-          issues.add(`Condition "${getNodeDisplayName(node)}" must expect either on or off.`);
+          issues.add(t("automation.validation.condition_on_off").replace("{{name}}", getNodeDisplayName(node)));
         }
       } else {
         if (!hasNonEmptyText(node.config.operator)) {
-          issues.add(`Condition "${getNodeDisplayName(node)}" needs a comparison operator.`);
+          issues.add(t("automation.validation.condition_operator").replace("{{name}}", getNodeDisplayName(node)));
         }
         if (node.config.value === undefined || node.config.value === null || Number.isNaN(Number(node.config.value))) {
-          issues.add(`Condition "${getNodeDisplayName(node)}" needs a numeric target value.`);
+          issues.add(t("automation.validation.condition_numeric").replace("{{name}}", getNodeDisplayName(node)));
         }
         if (node.config.operator === "between" && (node.config.secondary_value === undefined || node.config.secondary_value === null || Number.isNaN(Number(node.config.secondary_value)))) {
-          issues.add(`Condition "${getNodeDisplayName(node)}" needs both numeric bounds.`);
+          issues.add(t("automation.validation.condition_bounds").replace("{{name}}", getNodeDisplayName(node)));
         }
       }
       continue;
@@ -610,29 +610,29 @@ export function getAutomationGraphSaveIssues(graph: AutomationGraph): string[] {
     if (node.kind === "set_output") {
       const value = Number(node.config.value);
       if (!Number.isInteger(value) || (value !== 0 && value !== 1)) {
-        issues.add(`Action "${getNodeDisplayName(node)}" must send an on/off value.`);
+        issues.add(t("automation.validation.action_on_off").replace("{{name}}", getNodeDisplayName(node)));
       }
       continue;
     }
 
     if (node.config.value === undefined || node.config.value === null || Number.isNaN(Number(node.config.value))) {
-      issues.add(`Action "${getNodeDisplayName(node)}" needs a numeric output value.`);
+      issues.add(t("automation.validation.action_numeric").replace("{{name}}", getNodeDisplayName(node)));
     }
   }
 
   return [...issues];
 }
 
-export function getTriggerKindLabel(kind: string): string {
+export function getTriggerKindLabel(kind: string, t: (key: string, fallback?: string) => string): string {
   switch (kind) {
     case TIME_TRIGGER_KIND:
-      return "Time";
+      return t("automation.editor.time");
     case DEVICE_VALUE_TRIGGER_KIND:
-      return "Device Value";
+      return t("automation.editor.device_value");
     case DEVICE_ON_OFF_TRIGGER_KIND:
-      return "On/Off Event";
+      return t("automation.editor.on_off_event");
     default:
-      return "Any Device Update";
+      return t("automation.editor.any_device_update");
   }
 }
 

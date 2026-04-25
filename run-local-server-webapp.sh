@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 
 set -Eeuo pipefail
 

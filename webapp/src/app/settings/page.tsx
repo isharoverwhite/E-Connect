@@ -38,6 +38,7 @@ import { WifiCredentialsPanel } from "./WifiCredentialsPanel";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastContext";
 import { useLanguage } from "@/components/LanguageContext";
+import ConfirmModal from "@/components/ConfirmModal";
 
 function formatAccountTypeLabel(accountType?: string | null) {
     return accountType === "admin" ? "admin" : "user";
@@ -627,6 +628,29 @@ export default function SettingsPage() {
         }
     }
 
+    const [locationDeleting, setLocationDeleting] = useState(false);
+    const [isResetLocationModalOpen, setIsResetLocationModalOpen] = useState(false);
+    async function handleDeleteLocation() {
+        setIsResetLocationModalOpen(false);
+        setLocationDeleting(true);
+        try {
+            const token = getToken();
+            if (!token) throw new Error(t("settings.error.missing_token"));
+
+            const { deleteHouseholdLocation } = await import("@/lib/api");
+            await deleteHouseholdLocation(token);
+            
+            showToast(t("settings.toast.location_reset") || "Home location has been reset", "success");
+            // Navigate back to dashboard
+            window.location.href = "/";
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to reset location";
+            showToast(message, "error");
+        } finally {
+            setLocationDeleting(false);
+        }
+    }
+
     return (
         <div className="flex h-screen w-full bg-background-light text-slate-800 dark:bg-background-dark dark:text-slate-200 overflow-hidden font-sans selection:bg-primary selection:text-white">
             <Sidebar />
@@ -750,8 +774,11 @@ export default function SettingsPage() {
                                         </p>
                                     </div>
                                     <div className="mt-6 relative">
+                                        <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-slate-500 dark:text-slate-400">
+                                            <span className="material-icons-round text-[20px]">language</span>
+                                        </div>
                                         <select
-                                            className="w-full appearance-none rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-surface-dark dark:text-white"
+                                            className="w-full appearance-none rounded-lg border border-slate-200 bg-white pl-10 pr-10 py-2.5 text-sm font-medium text-slate-900 shadow-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-slate-700 dark:bg-surface-dark dark:text-white"
                                             value={language}
                                             onChange={(e) => setLanguage(e.target.value as "en" | "vi")}
                                         >
@@ -795,77 +822,23 @@ export default function SettingsPage() {
                                 </section>
 
                                 {isAdmin ? (
-                                    <section className="md:col-span-2 lg:col-span-3 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
-                                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-                                            <div>
-                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.timezone.label")}</p>
-                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.timezone.title")}</h2>
-                                                <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
-                                                    {t("settings.timezone.description")}
-                                                </p>
-                                            </div>
+                                    <section className="flex flex-col justify-between rounded-3xl border border-rose-200 bg-rose-50/30 p-6 shadow-sm dark:border-rose-900/50 dark:bg-rose-900/10">
+                                        <div>
+                                            <p className="text-sm font-medium uppercase tracking-[0.2em] text-rose-600 dark:text-rose-400">{t("settings.location.label") || "HOME LOCATION"}</p>
+                                            <h2 className="mt-2 text-xl font-semibold text-slate-900 dark:text-white">{t("settings.location.title") || "Reset Home Location"}</h2>
+                                            <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                                                {t("settings.location.description") || "Clear the current home location. You will be prompted to set it again on the dashboard."}
+                                            </p>
                                         </div>
-
-                                        {generalSettingsError ? (
-                                            <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
-                                                {generalSettingsError}
-                                            </div>
-                                        ) : null}
-
-                                        {generalSettingsLoading ? (
-                                            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-400">
-                                                {t("settings.timezone.loading")}
-                                            </div>
-                                        ) : generalSettings ? (
-                                            <div className="mt-6 space-y-6">
-                                                <div className="grid gap-4 md:grid-cols-2">
-                                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{t("settings.timezone.current")}</p>
-                                                        <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{generalSettings.effective_timezone}</p>
-                                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{formatTimezoneSourceLabel(generalSettings, t)}</p>
-                                                    </div>
-                                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
-                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{t("settings.timezone.server_time")}</p>
-                                                        <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{formatServerTimePreview(generalSettings.current_server_time, generalSettings.effective_timezone)}</p>
-                                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t("settings.timezone.preview_desc")}</p>
-                                                    </div>
-                                                </div>
-
-                                                <form className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900/80" onSubmit={handleSaveTimezone}>
-                                                    <div>
-                                                        <label htmlFor="server-timezone" className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                                                            {t("settings.timezone.override")}
-                                                        </label>
-                                                        <select
-                                                            id="server-timezone"
-                                                            value={timezoneDraft}
-                                                            onChange={(event) => setTimezoneDraft(event.target.value)}
-                                                            className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-                                                        >
-                                                            <option value="">{t("settings.timezone.use_runtime")}</option>
-                                                            {generalSettings.timezone_options.map((timezone) => (
-                                                                <option key={timezone} value={timezone}>
-                                                                    {timezone}
-                                                                </option>
-                                                            ))}
-                                                        </select>
-                                                        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-                                                            {t("settings.timezone.help_text")}
-                                                        </p>
-                                                    </div>
-
-                                                    <div className="flex flex-wrap gap-3">
-                                                        <button
-                                                            type="submit"
-                                                            disabled={timezoneSaving}
-                                                            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
-                                                        >
-                                                            {timezoneSaving ? t("settings.timezone.saving") : t("settings.timezone.save_btn")}
-                                                        </button>
-                                                    </div>
-                                                </form>
-                                            </div>
-                                        ) : null}
+                                        <div className="mt-6">
+                                            <button
+                                                onClick={() => setIsResetLocationModalOpen(true)}
+                                                disabled={locationDeleting}
+                                                className="w-full sm:w-auto rounded-xl bg-rose-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-600 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-60 dark:bg-rose-600 dark:hover:bg-rose-500"
+                                            >
+                                                {locationDeleting ? (t("settings.location.resetting") || "Resetting...") : (t("settings.location.reset_btn") || "Reset Location")}
+                                            </button>
+                                        </div>
                                     </section>
                                 ) : null}
 
@@ -949,6 +922,81 @@ export default function SettingsPage() {
                                                 </form>
                                             </div>
                                         )}
+                                    </section>
+                                ) : null}
+
+                                {isAdmin ? (
+                                    <section className="md:col-span-2 lg:col-span-3 rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                                            <div>
+                                                <p className="text-sm font-medium uppercase tracking-[0.2em] text-primary">{t("settings.timezone.label")}</p>
+                                                <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.timezone.title")}</h2>
+                                                <p className="mt-2 max-w-3xl text-sm text-slate-500 dark:text-slate-400">
+                                                    {t("settings.timezone.description")}
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        {generalSettingsError ? (
+                                            <div className="mt-6 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-300">
+                                                {generalSettingsError}
+                                            </div>
+                                        ) : null}
+
+                                        {generalSettingsLoading ? (
+                                            <div className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-400">
+                                                {t("settings.timezone.loading")}
+                                            </div>
+                                        ) : generalSettings ? (
+                                            <div className="mt-6 space-y-6">
+                                                <div className="grid gap-4 md:grid-cols-2">
+                                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
+                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{t("settings.timezone.current")}</p>
+                                                        <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{generalSettings.effective_timezone}</p>
+                                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{formatTimezoneSourceLabel(generalSettings, t)}</p>
+                                                    </div>
+                                                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-900/80">
+                                                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">{t("settings.timezone.server_time")}</p>
+                                                        <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">{formatServerTimePreview(generalSettings.current_server_time, generalSettings.effective_timezone)}</p>
+                                                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{t("settings.timezone.preview_desc")}</p>
+                                                    </div>
+                                                </div>
+
+                                                <form className="grid gap-4 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-900/80" onSubmit={handleSaveTimezone}>
+                                                    <div>
+                                                        <label htmlFor="server-timezone" className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                                                            {t("settings.timezone.override")}
+                                                        </label>
+                                                        <select
+                                                            id="server-timezone"
+                                                            value={timezoneDraft}
+                                                            onChange={(event) => setTimezoneDraft(event.target.value)}
+                                                            className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                                                        >
+                                                            <option value="">{t("settings.timezone.use_runtime")}</option>
+                                                            {generalSettings.timezone_options.map((timezone) => (
+                                                                <option key={timezone} value={timezone}>
+                                                                    {timezone}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                                                            {t("settings.timezone.help_text")}
+                                                        </p>
+                                                    </div>
+
+                                                    <div className="flex flex-wrap gap-3">
+                                                        <button
+                                                            type="submit"
+                                                            disabled={timezoneSaving}
+                                                            className="rounded-xl bg-primary px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                                                        >
+                                                            {timezoneSaving ? t("settings.timezone.saving") : t("settings.timezone.save_btn")}
+                                                        </button>
+                                                    </div>
+                                                </form>
+                                            </div>
+                                        ) : null}
                                     </section>
                                 ) : null}
                             </div>
@@ -1443,6 +1491,19 @@ export default function SettingsPage() {
                     </div>
                 </div>
             </main>
+
+            <ConfirmModal
+                isOpen={isResetLocationModalOpen}
+                title={t("settings.location.reset_btn") || "Reset Location"}
+                message={t("settings.location.confirm_reset") || "Are you sure you want to reset your home location?"}
+                onConfirm={handleDeleteLocation}
+                onCancel={() => setIsResetLocationModalOpen(false)}
+                confirmText={t("settings.location.reset_btn") || "Reset Location"}
+                cancelText={t("settings.location.cancel_btn") || "Cancel"}
+                type="danger"
+                isLoading={locationDeleting}
+            />
+
 
             {/* Promote Modal */}
             {promoteModalTarget && (

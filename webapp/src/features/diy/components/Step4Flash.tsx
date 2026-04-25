@@ -16,6 +16,7 @@ import { useLanguage } from "@/components/LanguageContext";
 
 export interface Step4FlashProps {
     board: BoardProfile;
+    bootSensitivePins: number[];
     projectId: string | null;
     projectName: string;
     flashSource: FlashSource;
@@ -138,6 +139,7 @@ function SourceButton({
 export function Step4Flash({
 
     board,
+    bootSensitivePins,
     projectId,
     projectName,
     flashSource,
@@ -270,6 +272,20 @@ export function Step4Flash({
                     </div>
                 </div>
             </div>
+
+            {bootSensitivePins.length > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-amber-900 shadow-sm dark:border-amber-500/20 dark:bg-amber-500/10 dark:text-amber-100">
+                    <div className="flex items-start gap-3">
+                        <span className="material-symbols-outlined mt-0.5 text-xl">warning</span>
+                        <div className="space-y-2">
+                            <h3 className="text-sm font-bold uppercase tracking-[0.18em]">Boot-Sensitive Pins In Use</h3>
+                            <p className="text-sm leading-6">
+                                GPIO {bootSensitivePins.join(", ")} are boot-sensitive on {board.name}. Before flashing or resetting, disconnect any sensors, relays, pull-downs, or other attached devices from these pins. Reconnect them only after the board boots normally.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Stage 1: Build & Config */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1.1fr]">

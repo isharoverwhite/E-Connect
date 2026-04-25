@@ -244,7 +244,7 @@ const classicEsp32Left = [
   pin(25, "GPIO25", "left", IO_ADC),
   pin(26, "GPIO26", "left", IO_ADC),
   pin(27, "GPIO27", "left", IO),
-  pin(14, "GPIO14", "left", IO, { bootSensitive: true, note: "Boot strap pin. Avoid hard pull-ups." }),
+  pin(14, "GPIO14", "left", IO),
   pin(12, "GPIO12", "left", IO, { bootSensitive: true, note: "Flash voltage strap pin." }),
   pin(13, "GPIO13", "left", IO),
 ];
@@ -258,10 +258,10 @@ const classicEsp32Right = [
   pin(5, "GPIO5", "right", IO, { bootSensitive: true, note: "Keep state stable during boot." }),
   pin(17, "GPIO17", "right", IO),
   pin(16, "GPIO16", "right", IO),
-  pin(4, "GPIO4", "right", IO_ADC, { bootSensitive: true }),
+  pin(4, "GPIO4", "right", IO_ADC),
   pin(2, "GPIO2", "right", IO_ADC, { bootSensitive: true, note: "Boot strap pin. Some vendor boards also route a status LED here." }),
   pin(15, "GPIO15", "right", IO, { bootSensitive: true }),
-  pin(0, "GPIO0", "right", IO_ADC, { reserved: true, bootSensitive: true, note: "Boot button / download mode pin." }),
+  pin(0, "GPIO0", "right", IO_ADC, { bootSensitive: true, note: "Boot button / download mode pin. Disconnect attached devices before flashing or resetting." }),
 ];
 
 const esp32S2Left = [
@@ -298,13 +298,13 @@ const esp32S3Left = [
   pin(15, "GPIO15", "left", IO),
   pin(16, "GPIO16", "left", IO),
   pin(17, "GPIO17", "left", IO),
-  pin(18, "GPIO18", "left", IO, { reserved: true, note: "USB / default peripheral wiring on some variants." }),
+  pin(18, "GPIO18", "left", IO),
   pin(8, "GPIO8", "left", IO),
-  pin(3, "GPIO3", "left", IO),
+  pin(3, "GPIO3", "left", IO, { bootSensitive: true, note: "Strapping pin on ESP32-S3. Disconnect attached devices before flashing or resetting." }),
 ];
 
 const esp32S3Right = [
-  pin(46, "GPIO46", "right", INPUT_ONLY, { inputOnly: true, reserved: true, note: "Input-only strapping pin." }),
+  pin(46, "GPIO46", "right", INPUT_ONLY, { inputOnly: true, bootSensitive: true, note: "Input-only strapping pin. Disconnect attached devices before flashing or resetting." }),
   pin(9, "GPIO9", "right", IO),
   pin(10, "GPIO10", "right", IO),
   pin(11, "GPIO11", "right", IO),
@@ -317,7 +317,7 @@ const esp32S3Right = [
 ];
 
 const esp32C2Left = [
-  pin(0, "GPIO0", "left", IO_ADC, { reserved: true, bootSensitive: true, note: "Boot strap pin." }),
+  pin(0, "GPIO0", "left", IO_ADC),
   pin(1, "GPIO1", "left", IO),
   pin(2, "GPIO2", "left", IO),
   pin(3, "GPIO3", "left", IO_ADC),
@@ -328,12 +328,12 @@ const esp32C2Right = [
   pin(5, "GPIO5", "right", I2C_IO),
   pin(6, "GPIO6", "right", IO),
   pin(7, "GPIO7", "right", IO),
-  pin(8, "GPIO8", "right", IO),
+  pin(8, "GPIO8", "right", IO, { bootSensitive: true, note: "Strapping pin on ESP32-C2. Disconnect attached devices before flashing or resetting." }),
   pin(10, "GPIO10", "right", IO_ADC),
 ];
 
 const esp32C3Left = [
-  pin(2, "GPIO2", "left", IO_ADC, { note: "ADC capable and common relay output." }),
+  pin(2, "GPIO2", "left", IO_ADC, { bootSensitive: true, note: "Strapping pin on ESP32-C3 boards. Disconnect attached devices before flashing or resetting." }),
   pin(3, "GPIO3", "left", IO_ADC),
   pin(4, "GPIO4", "left", IO_ADC),
   pin(5, "GPIO5", "left", IO_ADC),
@@ -348,13 +348,13 @@ const esp32C3SuperMiniLeft = [
   pin(-3, "3.3V", "left", [], { reserved: true, note: "3.3V Power Output" }),
   pin(4, "GPIO4", "left", IO_ADC),
   pin(3, "GPIO3", "left", IO_ADC),
-  pin(2, "GPIO2", "left", IO_ADC),
+  pin(2, "GPIO2", "left", IO_ADC, { bootSensitive: true, note: "Strapping pin on ESP32-C3 Super Mini boards." }),
   pin(1, "GPIO1", "left", IO_ADC),
-  pin(0, "GPIO0", "left", IO_ADC, { bootSensitive: true }),
+  pin(0, "GPIO0", "left", IO_ADC),
 ];
 
 const esp32C3Right = [
-  pin(9, "GPIO9", "right", IO, { reserved: true, bootSensitive: true, note: "Boot button pin on many C3 boards." }),
+  pin(9, "GPIO9", "right", IO, { bootSensitive: true, note: "Boot button / strapping pin on many C3 boards. Disconnect attached devices before flashing or resetting." }),
   pin(10, "GPIO10", "right", IO, { note: "General-purpose GPIO on the official DevKitM-1 layout." }),
   pin(18, "GPIO18", "right", IO, { reserved: true, note: "Native USB D- / USB-JTAG on ESP32-C3." }),
   pin(19, "GPIO19", "right", IO, { reserved: true, note: "Native USB D+ / USB-JTAG on ESP32-C3." }),
@@ -366,11 +366,11 @@ const esp32C3SuperMiniRight = [
   pin(5, "GPIO5", "right", IO_ADC),
   pin(6, "GPIO6", "right", I2C_IO),
   pin(7, "GPIO7", "right", I2C_IO),
-  pin(8, "GPIO8", "right", IO, { note: "Connected to Built-in LED (Blue)." }),
-  pin(9, "GPIO9", "right", IO, { reserved: true, bootSensitive: true, note: "Boot button." }),
-  pin(10, "GPIO10", "right", IO, { reserved: true, note: "USB serial bridge or onboard routing on many variants." }),
-  pin(20, "GPIO20", "right", IO, { reserved: true, note: "USB D+ / RX." }),
-  pin(21, "GPIO21", "right", IO, { reserved: true, note: "USB D- / TX." }),
+  pin(8, "GPIO8", "right", IO, { bootSensitive: true, note: "Built-in blue LED and strapping pin on many Super Mini variants." }),
+  pin(9, "GPIO9", "right", IO, { bootSensitive: true, note: "BOOT button / strapping pin." }),
+  pin(10, "GPIO10", "right", IO, { note: "Usable GPIO. Often labeled as SPI CS or RX on clone pinouts." }),
+  pin(20, "GPIO20", "right", IO, { note: "Usable GPIO. Commonly used as UART RX on Super Mini pinouts." }),
+  pin(21, "GPIO21", "right", IO, { note: "Usable GPIO. Commonly used as UART TX on Super Mini pinouts." }),
 ];
 
 const dfrobotBeetleEsp32C3Left = [
@@ -380,8 +380,8 @@ const dfrobotBeetleEsp32C3Left = [
   pin(20, "GPIO20 / RX", "left", IO, { reserved: true, note: "UART RX on the Beetle header." }),
   pin(21, "GPIO21 / TX", "left", IO, { reserved: true, note: "UART TX on the Beetle header." }),
   pin(8, "GPIO8 / SDA", "left", I2C_IO, { bootSensitive: true, note: "Header silk labels this as SDA." }),
-  pin(9, "GPIO9 / SCL", "left", IO, { reserved: true, bootSensitive: true, note: "BOOT button and SCL silk label share GPIO9." }),
-  pin(2, "GPIO2", "left", IO_ADC),
+  pin(9, "GPIO9 / SCL", "left", IO, { bootSensitive: true, note: "BOOT button and SCL silk label share GPIO9. Disconnect attached devices before flashing or resetting." }),
+  pin(2, "GPIO2", "left", IO_ADC, { bootSensitive: true, note: "Strapping pin on ESP32-C3 boards. Disconnect attached devices before flashing or resetting." }),
 ];
 
 const dfrobotBeetleEsp32C3Right = [
@@ -398,9 +398,9 @@ const dfrobotBeetleEsp32C3Right = [
 ];
 
 const esp32C5Left = [
-  pin(0, "GPIO0", "left", IO_ADC, { reserved: true, bootSensitive: true }),
+  pin(0, "GPIO0", "left", IO_ADC),
   pin(1, "GPIO1", "left", IO),
-  pin(2, "GPIO2", "left", IO),
+  pin(2, "GPIO2", "left", IO, { bootSensitive: true, note: "Strapping pin on ESP32-C5. Disconnect attached devices before flashing or resetting." }),
   pin(3, "GPIO3", "left", I2C_IO),
   pin(4, "GPIO4", "left", I2C_IO),
   pin(5, "GPIO5", "left", IO),
@@ -408,7 +408,7 @@ const esp32C5Left = [
 
 const esp32C5Right = [
   pin(6, "GPIO6", "right", IO),
-  pin(7, "GPIO7", "right", IO),
+  pin(7, "GPIO7", "right", IO, { bootSensitive: true, note: "Strapping pin on ESP32-C5. Disconnect attached devices before flashing or resetting." }),
   pin(8, "GPIO8", "right", IO),
   pin(9, "GPIO9", "right", IO),
   pin(10, "GPIO10", "right", IO_ADC),
@@ -416,7 +416,7 @@ const esp32C5Right = [
 ];
 
 const esp32C6Left = [
-  pin(0, "GPIO0", "left", IO_ADC, { reserved: true, bootSensitive: true }),
+  pin(0, "GPIO0", "left", IO_ADC),
   pin(1, "GPIO1", "left", IO),
   pin(2, "GPIO2", "left", IO),
   pin(3, "GPIO3", "left", I2C_IO),
@@ -427,8 +427,8 @@ const esp32C6Left = [
 
 const esp32C6Right = [
   pin(7, "GPIO7", "right", IO),
-  pin(8, "GPIO8", "right", IO),
-  pin(9, "GPIO9", "right", IO),
+  pin(8, "GPIO8", "right", IO, { bootSensitive: true, note: "Strapping pin on ESP32-C6. Disconnect attached devices before flashing or resetting." }),
+  pin(9, "GPIO9", "right", IO, { bootSensitive: true, note: "Strapping pin on ESP32-C6. Disconnect attached devices before flashing or resetting." }),
   pin(10, "GPIO10", "right", IO),
   pin(18, "GPIO18", "right", IO),
   pin(19, "GPIO19", "right", IO),
@@ -436,7 +436,7 @@ const esp32C6Right = [
 ];
 
 const esp32C61Left = [
-  pin(0, "GPIO0", "left", IO_ADC, { reserved: true, bootSensitive: true }),
+  pin(0, "GPIO0", "left", IO_ADC),
   pin(1, "GPIO1", "left", IO),
   pin(2, "GPIO2", "left", IO),
   pin(3, "GPIO3", "left", I2C_IO),
@@ -446,18 +446,18 @@ const esp32C61Left = [
 
 const esp32C61Right = [
   pin(6, "GPIO6", "right", IO),
-  pin(7, "GPIO7", "right", IO),
-  pin(8, "GPIO8", "right", IO),
-  pin(9, "GPIO9", "right", IO),
+  pin(7, "GPIO7", "right", IO, { bootSensitive: true, note: "Strapping pin on ESP32-C61. Disconnect attached devices before flashing or resetting." }),
+  pin(8, "GPIO8", "right", IO, { bootSensitive: true, note: "Strapping pin on ESP32-C61. Disconnect attached devices before flashing or resetting." }),
+  pin(9, "GPIO9", "right", IO, { bootSensitive: true, note: "Strapping pin on ESP32-C61. Disconnect attached devices before flashing or resetting." }),
   pin(10, "GPIO10", "right", IO),
   pin(11, "GPIO11", "right", IO),
 ];
 
 const esp32H2Left = [
-  pin(0, "GPIO0", "left", IO, { reserved: true, bootSensitive: true }),
+  pin(0, "GPIO0", "left", IO),
   pin(1, "GPIO1", "left", IO),
-  pin(2, "GPIO2", "left", IO),
-  pin(3, "GPIO3", "left", I2C_IO),
+  pin(2, "GPIO2", "left", IO, { bootSensitive: true, note: "Strapping pin on ESP32-H2. Disconnect attached devices before flashing or resetting." }),
+  pin(3, "GPIO3", "left", I2C_IO, { bootSensitive: true, note: "Strapping pin on ESP32-H2. Disconnect attached devices before flashing or resetting." }),
   pin(4, "GPIO4", "left", I2C_IO),
 ];
 
@@ -465,12 +465,12 @@ const esp32H2Right = [
   pin(5, "GPIO5", "right", IO),
   pin(6, "GPIO6", "right", IO),
   pin(7, "GPIO7", "right", IO),
-  pin(8, "GPIO8", "right", IO),
-  pin(9, "GPIO9", "right", IO),
+  pin(8, "GPIO8", "right", IO, { bootSensitive: true, note: "Strapping pin on ESP32-H2. Disconnect attached devices before flashing or resetting." }),
+  pin(9, "GPIO9", "right", IO, { bootSensitive: true, note: "Strapping pin on ESP32-H2. Disconnect attached devices before flashing or resetting." }),
 ];
 
 const esp32P4Left = [
-  pin(0, "GPIO0", "left", IO, { reserved: true, bootSensitive: true }),
+  pin(0, "GPIO0", "left", IO),
   pin(1, "GPIO1", "left", IO),
   pin(2, "GPIO2", "left", IO),
   pin(3, "GPIO3", "left", IO),
@@ -739,7 +739,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
       pin(15, "GPIO15", "right", IO, { bootSensitive: true }),
       pin(16, "GPIO16", "right", IO),
       pin(2, "GPIO2", "right", IO, { bootSensitive: true }),
-      pin(0, "GPIO0", "right", IO, { reserved: true, bootSensitive: true }),
+      pin(0, "GPIO0", "right", IO, { bootSensitive: true, note: "Boot button / flashing strap pin. Disconnect attached devices before flashing or resetting." }),
       pin(33, "GPIO33", "right", IO),
       pin(32, "GPIO32", "right", IO),
     ],
@@ -860,13 +860,13 @@ export const BOARD_PROFILES: BoardProfile[] = [
     layoutLabel: "Super Mini 2x8 layout",
     serialBridge: "Native USB CDC",
     warnings: [
-      "GPIO 8 is connected to the built-in LED.",
-      "GPIO 9 is boot-sensitive.",
+      "GPIO 2, 8, and 9 are strapping pins. Use them only if the attached circuit will not disturb boot.",
+      "GPIO 8 also drives the built-in LED. GPIO 20 and 21 are commonly used as UART RX/TX but remain usable GPIOs.",
     ],
     leftPins: esp32C3SuperMiniLeft,
     rightPins: esp32C3SuperMiniRight,
     pinMarkers: [{ gpio: 8, label: "LED", tone: "amber" }],
-    i2cDefaults: { sda: 8, scl: 9 },
+    i2cDefaults: { sda: 6, scl: 7 },
   },
   {
     id: "dfrobot-beetle-esp32-c3",

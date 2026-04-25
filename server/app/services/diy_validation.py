@@ -67,13 +67,13 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
         platformio_board="esp32dev",
         platform="espressif32",
         pins={
-            0: _pin_rule(IO_ADC, reserved=True, boot_sensitive=True),
+            0: _pin_rule(IO_ADC, boot_sensitive=True),
             2: _pin_rule(IO_ADC, boot_sensitive=True),
-            4: _pin_rule(IO_ADC, boot_sensitive=True),
+            4: _pin_rule(IO_ADC),
             5: _pin_rule(IO, boot_sensitive=True),
             12: _pin_rule(IO, boot_sensitive=True),
             13: _pin_rule(IO),
-            14: _pin_rule(IO, boot_sensitive=True),
+            14: _pin_rule(IO),
             15: _pin_rule(IO, boot_sensitive=True),
             16: _pin_rule(IO),
             17: _pin_rule(IO),
@@ -98,16 +98,16 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
         platformio_board="esp32-c3-devkitm-1",
         platform="espressif32",
         pins={
-            0: _pin_rule(IO_ADC, boot_sensitive=True),
+            0: _pin_rule(IO_ADC),
             1: _pin_rule(IO_ADC),
-            2: _pin_rule(IO_ADC),
+            2: _pin_rule(IO_ADC, boot_sensitive=True),
             3: _pin_rule(IO_ADC),
             4: _pin_rule(IO_ADC),
             5: _pin_rule(IO_ADC),
             6: _pin_rule(I2C_IO),
             7: _pin_rule(I2C_IO),
             8: _pin_rule(IO, boot_sensitive=True),
-            9: _pin_rule(IO, reserved=True, boot_sensitive=True),
+            9: _pin_rule(IO, boot_sensitive=True),
             10: _pin_rule(IO),
             18: _pin_rule(IO, reserved=True),
             19: _pin_rule(IO, reserved=True),
@@ -120,19 +120,19 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
         platformio_board="esp32-c3-devkitm-1",
         platform="espressif32",
         pins={
-            0: _pin_rule(IO_ADC, boot_sensitive=True),
+            0: _pin_rule(IO_ADC),
             1: _pin_rule(IO_ADC),
-            2: _pin_rule(IO_ADC),
+            2: _pin_rule(IO_ADC, boot_sensitive=True),
             3: _pin_rule(IO_ADC),
             4: _pin_rule(IO_ADC),
             5: _pin_rule(IO_ADC),
             6: _pin_rule(I2C_IO),
             7: _pin_rule(I2C_IO),
             8: _pin_rule(IO, boot_sensitive=True),
-            9: _pin_rule(IO, reserved=True, boot_sensitive=True),
-            10: _pin_rule(IO, reserved=True),
-            20: _pin_rule(IO, reserved=True),
-            21: _pin_rule(IO, reserved=True),
+            9: _pin_rule(IO, boot_sensitive=True),
+            10: _pin_rule(IO),
+            20: _pin_rule(IO),
+            21: _pin_rule(IO),
         },
     ),
     "dfrobot-beetle-esp32-c3": BoardDefinition(
@@ -149,7 +149,7 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
             6: _pin_rule(IO),
             7: _pin_rule(IO),
             8: _pin_rule(I2C_IO, boot_sensitive=True),
-            9: _pin_rule(IO, reserved=True, boot_sensitive=True),
+            9: _pin_rule(IO, boot_sensitive=True),
             10: _pin_rule(IO),
             20: _pin_rule(IO, reserved=True),
             21: _pin_rule(IO, reserved=True),
@@ -187,7 +187,7 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
         platformio_board="esp32-s3-devkitc-1",
         platform="espressif32",
         pins={
-            3: _pin_rule(IO),
+            3: _pin_rule(IO, boot_sensitive=True),
             4: _pin_rule(IO),
             5: _pin_rule(IO),
             6: _pin_rule(IO),
@@ -202,9 +202,9 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
             15: _pin_rule(IO),
             16: _pin_rule(IO),
             17: _pin_rule(IO),
-            18: _pin_rule(IO, reserved=True),
+            18: _pin_rule(IO),
             21: _pin_rule(IO_ADC),
-            46: _pin_rule(["INPUT"], reserved=True),
+            46: _pin_rule(["INPUT"], boot_sensitive=True),
             47: _pin_rule(IO),
             48: _pin_rule(IO),
         },
@@ -214,7 +214,7 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
         platformio_board="esp32-c2-devkitm-1",
         platform="espressif32",
         pins={
-            0: _pin_rule(IO_ADC, reserved=True, boot_sensitive=True),
+            0: _pin_rule(IO_ADC),
             1: _pin_rule(IO),
             2: _pin_rule(IO),
             3: _pin_rule(IO_ADC),
@@ -222,8 +222,29 @@ BOARD_DEFINITIONS: dict[str, BoardDefinition] = {
             5: _pin_rule(I2C_IO),
             6: _pin_rule(IO),
             7: _pin_rule(IO),
-            8: _pin_rule(IO),
+            8: _pin_rule(IO, boot_sensitive=True),
             10: _pin_rule(IO_ADC),
+        },
+    ),
+    "esp32-c6-devkitc-1": BoardDefinition(
+        canonical_id="esp32-c6-devkitc-1",
+        platformio_board="esp32-c6-devkitc-1",
+        platform="espressif32",
+        pins={
+            0: _pin_rule(IO_ADC),
+            1: _pin_rule(IO),
+            2: _pin_rule(IO),
+            3: _pin_rule(I2C_IO),
+            4: _pin_rule(I2C_IO),
+            5: _pin_rule(IO),
+            6: _pin_rule(IO),
+            7: _pin_rule(IO),
+            8: _pin_rule(IO, boot_sensitive=True),
+            9: _pin_rule(IO, boot_sensitive=True),
+            10: _pin_rule(IO),
+            18: _pin_rule(IO),
+            19: _pin_rule(IO),
+            20: _pin_rule(IO),
         },
     ),
     "nodemcuv2": BoardDefinition(
@@ -280,6 +301,8 @@ BOARD_ALIASES = {
     "esp32-s3-zero": "esp32-s3",
     "esp32-c2": "esp32-c2",
     "esp32-c2-devkitm-1": "esp32-c2",
+    "esp32-c6": "esp32-c6-devkitc-1",
+    "esp32-c6-devkitc-1": "esp32-c6-devkitc-1",
     "esp8266": "nodemcuv2",
     "esp8266-nodemcu": "nodemcuv2",
     "nodemcu": "nodemcuv2",
@@ -334,6 +357,8 @@ def resolve_board_definition(board_profile: str) -> BoardDefinition:
             return BOARD_DEFINITIONS["esp32-s2"]
         if "c2" in normalized:
             return BOARD_DEFINITIONS["esp32-c2"]
+        if "c6" in normalized:
+            return BOARD_DEFINITIONS["esp32-c6-devkitc-1"]
         return BOARD_DEFINITIONS["esp32"]
 
     raise ValueError(f"Unsupported board profile: {board_profile}")
@@ -402,7 +427,10 @@ def validate_diy_config(board_profile: str, config: dict[str, Any] | None) -> tu
             continue
 
         if rule.boot_sensitive:
-            warnings.append(f"Warning: GPIO {raw_gpio} is boot-sensitive on {board.canonical_id}")
+            warnings.append(
+                f"Warning: GPIO {raw_gpio} is boot-sensitive on {board.canonical_id}. "
+                "Disconnect anything attached to this pin before flashing or resetting."
+            )
 
         raw_extra_params = pin.get("extra_params")
         if raw_extra_params is not None and not isinstance(raw_extra_params, dict):

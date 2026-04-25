@@ -442,6 +442,26 @@ export async function updateHouseholdLocation(
     return response.json();
 }
 
+export async function deleteHouseholdLocation(token?: string): Promise<{ message: string }> {
+    const authToken = token ?? getToken();
+    if (!authToken) {
+        throw new Error("Missing session token. Please sign in again.");
+    }
+
+    const response = await fetch(`${API_URL}/settings/location`, {
+        method: "DELETE",
+        headers: {
+            Authorization: `Bearer ${authToken}`,
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error(await parseApiError(response, "Failed to delete home location"));
+    }
+
+    return response.json();
+}
+
 export async function fetchSystemStatus(token?: string): Promise<SystemStatusResponse> {
     const authToken = token ?? getToken();
     if (!authToken) {

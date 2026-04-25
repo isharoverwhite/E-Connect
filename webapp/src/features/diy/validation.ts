@@ -50,9 +50,9 @@ export function validatePinMappings(
       continue;
     }
 
-    if (boardPin.bootSensitive && (mapping.mode === "OUTPUT" || mapping.mode === "PWM")) {
+    if (boardPin.bootSensitive) {
       warnings.push(
-        `GPIO ${mapping.gpio_pin} is boot-sensitive. Confirm the connected circuit will not pull the line during reset.`,
+        `GPIO ${mapping.gpio_pin} is boot-sensitive on ${board.name}. Disconnect anything attached to this pin before flashing or resetting, then reconnect it after boot completes.`,
       );
     }
 

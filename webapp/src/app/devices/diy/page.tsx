@@ -2175,6 +2175,7 @@ export default function DIYBuilderPage() {
         {currentStep === 5 && (
           <Step4Flash
             board={board}
+            bootSensitivePins={[...new Set(pins.filter((mapping) => boardPins.find((pin) => pin.gpio === mapping.gpio_pin)?.bootSensitive).map((mapping) => mapping.gpio_pin))].sort((left, right) => left - right)}
             projectId={projectId}
             projectName={projectName}
             flashSource={flashSource}

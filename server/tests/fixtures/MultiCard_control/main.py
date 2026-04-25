@@ -1,3 +1,5 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 # Copyright (c) 2026 Dinh Trung Kien. All rights reserved.
 
 from __future__ import annotations

@@ -1452,6 +1452,7 @@ def test_resolve_board_definition_supports_explicit_esp8266_variants():
     # Existing ESP32 alias resolution must remain intact.
     assert resolve_board_definition("esp32-c3-super-mini").platformio_board == "esp32-c3-devkitm-1"
     assert resolve_board_definition("dfrobot-beetle-esp32-c3").platformio_board == "dfrobot_beetle_esp32c3"
+    assert resolve_board_definition("esp32-c6-devkitc-1").platformio_board == "esp32-c6-devkitc-1"
 
 
 def test_validate_diy_config_uses_board_specific_c3_rules():
@@ -1483,6 +1484,48 @@ def test_validate_diy_config_uses_board_specific_c3_rules():
     )
     assert board.canonical_id == "esp32-c3-devkitm-1"
     assert "Invalid config: GPIO 20 is reserved for esp32-c3-devkitm-1" in errors
+
+    board, errors, warnings = validate_diy_config(
+        "esp32-c3-super-mini",
+        {
+            **wifi_config,
+            "pins": [
+                {"gpio": 20, "mode": "OUTPUT", "label": "Reusable UART RX GPIO"},
+            ],
+        },
+    )
+    assert board.canonical_id == "esp32-c3-super-mini"
+    assert errors == []
+    assert warnings == []
+
+
+def test_validate_diy_config_boot_sensitive_pins_warn_without_blocking():
+    from app.services.diy_validation import validate_diy_config
+
+    wifi_config = {"wifi_ssid": "ssid", "wifi_password": "pass"}
+    cases = [
+        ("esp32-devkit-v1", 0),
+        ("esp32-c3-devkitm-1", 9),
+        ("dfrobot-beetle-esp32-c3", 9),
+        ("esp32-c2-reference", 8),
+        ("esp32-c6-devkitc-1", 8),
+        ("esp32-cam", 0),
+        ("d1_mini", 2),
+    ]
+
+    for board_id, gpio in cases:
+        board, errors, warnings = validate_diy_config(
+            board_id,
+            {
+                **wifi_config,
+                "pins": [
+                    {"gpio": gpio, "mode": "OUTPUT", "label": f"GPIO {gpio}"},
+                ],
+            },
+        )
+        assert board.canonical_id
+        assert errors == []
+        assert any(f"GPIO {gpio}" in warning and "Disconnect anything attached" in warning for warning in warnings)
 
 def test_validate_diy_config_is_board_aware_for_esp8266():
     from app.services.diy_validation import validate_diy_config

@@ -3240,6 +3240,38 @@ async def update_household_location(
     return _serialize_household_location(location)
 
 
+@router.delete("/settings/location")
+async def delete_household_location(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    household = _get_current_household_or_404(db, current_user)
+    location = (
+        db.query(HouseholdLocation)
+        .filter(HouseholdLocation.household_id == household.household_id)
+        .first()
+    )
+    if location is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "home_location_missing", "message": "Home location has not been configured."},
+        )
+    
+    db.delete(location)
+    
+    create_system_log(
+        db,
+        severity=SqlSystemLogSeverity.info,
+        category=SqlSystemLogCategory.health,
+        event_code="home_location_deleted",
+        message="Home location was reset.",
+        details={},
+    )
+    
+    db.commit()
+    return {"message": "Home location deleted successfully"}
+
+
 @router.get("/weather/current", response_model=CurrentWeatherResponse)
 def get_current_weather(
     db: Session = Depends(get_db),

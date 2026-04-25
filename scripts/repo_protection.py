@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
 """Apply and audit repository-wide copyright notices."""
 
 from __future__ import annotations
@@ -13,7 +15,7 @@ OWNER = "Đinh Trung Kiên"
 YEAR = "2026"
 NOTICE = f"Copyright (c) {YEAR} {OWNER}. All rights reserved."
 LICENSE_FILE = ROOT / "LICENSE"
-TARGET_ROOTS = ("server", "webapp", "find_website")
+TARGET_ROOTS = (".",)
 SKIP_PARTS = {
     "node_modules",
     ".next",
@@ -34,6 +36,9 @@ COMMENT_STYLES = {
     ".css": "block",
     ".cpp": "block",
     ".h": "block",
+    ".sh": "#",
+    ".yaml": "#",
+    ".yml": "#",
 }
 
 

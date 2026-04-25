@@ -95,21 +95,16 @@ function HomeLocationSetupPrompt({
   }
 
   return (
-    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/45 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-5xl overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
-        <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-700">
-          <div className="flex items-start gap-3">
-            <span className="material-icons-round mt-0.5 text-2xl text-primary">home_pin</span>
-            <div>
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white">Set home location</h2>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                This server was initialized before home weather existed. Choose the house location once so weather follows the home, not this browser.
-              </p>
-            </div>
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-slate-950/45 p-2 sm:p-4 backdrop-blur-sm">
+      <div className="flex w-full max-w-5xl flex-col h-[95vh] sm:h-[85vh] max-h-[800px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+        <div className="shrink-0 border-b border-slate-200 px-4 py-3 sm:px-5 sm:py-3 dark:border-slate-700">
+          <div className="flex items-center gap-3">
+            <span className="material-icons-round text-2xl text-primary">home_pin</span>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white">Set home location</h2>
           </div>
         </div>
 
-        <div className="max-h-[82vh] overflow-y-auto p-5">
+        <div className="flex flex-1 flex-col overflow-hidden p-3 sm:p-5">
           <HomeLocationPicker
             isOpen={isOpen}
             selectedLocation={homeLocation}
@@ -1034,7 +1029,7 @@ export default function Dashboard() {
                 onClick={() => setIsScanModalOpen(true)}
                 className="relative flex items-center bg-primary text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-blue-600 transition-all shadow-md hover:shadow-lg"
               >
-                <span className="material-icons-round text-sm mr-2">radar</span>
+                <span className="material-icons-round text-sm mr-2">wifi_tethering</span>
                 {t("dashboard.scan_device")}
                 {pairingRequests.length > 0 && (
                   <span className="absolute -top-1 -right-1 flex h-3 w-3">

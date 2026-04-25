@@ -318,7 +318,7 @@ export default function DeviceScanConnectPanel({
           <h2 className="flex items-center text-lg font-bold text-slate-900 dark:text-white">
             {scanState === "scanning" ? (
               <>
-                <span className="material-icons-round mr-2 animate-spin-slow text-blue-500">radar</span>
+                <span className="material-icons-round mr-2 animate-spin-slow text-blue-500">wifi_tethering</span>
                 Waiting For Pair Request
               </>
             ) : scanState === "found" ? (
@@ -546,7 +546,7 @@ export default function DeviceScanConnectPanel({
                 onClick={beginScan}
                 className="flex w-full items-center justify-center rounded-xl border border-slate-200 bg-white px-4 py-3 font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
               >
-                <span className="material-icons-round mr-2">radar</span>
+                <span className="material-icons-round mr-2">wifi_tethering</span>
                 Wait For Another Device
               </button>
             </div>
@@ -565,7 +565,7 @@ export default function DeviceScanConnectPanel({
                 onClick={beginScan}
                 className="flex w-full items-center justify-center rounded-lg bg-blue-100 px-6 py-3 font-medium text-blue-700 shadow-sm transition-colors hover:bg-blue-200"
               >
-                <span className="material-icons-round mr-2">radar</span>
+                <span className="material-icons-round mr-2">wifi_tethering</span>
                 Start Live Scan
               </button>
               <button
