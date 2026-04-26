@@ -2,7 +2,7 @@
 
 "use client";
 
-import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fetchCurrentHouseTemperature, fetchCurrentWeather, fetchDashboardDevices, fetchDevices, fetchSystemLogs, markSystemLogRead, markAllSystemLogsRead, SystemLogEntry, fetchSystemStatus, SystemStatusResponse, CurrentWeatherResponse, HouseTemperatureResponse, updateHouseholdLocation } from "@/lib/api";
 import { useAuth } from "@/components/AuthProvider";
@@ -607,51 +607,49 @@ export default function Dashboard() {
       return;
     }
 
-    startTransition(() => {
-      setDevices((prev) => {
-        let didChange = false;
+    setDevices((prev) => {
+      let didChange = false;
 
-        const next = prev.map((device): DeviceConfig => {
-          if (device.device_id !== event.device_id) {
-            return device;
-          }
-
-          didChange = true;
-
-          if (event.type === "device_online") {
-            const reportedAt =
-              typeof event.payload?.reported_at === "string" ? event.payload.reported_at : null;
-            return {
-              ...device,
-              conn_status: "online",
-              last_seen: reportedAt ?? device.last_seen,
-            };
-          }
-          if (event.type === "device_offline") {
-            return { ...device, conn_status: "offline" };
-          }
-          if (event.type === "device_state") {
-            const reportedAt =
-              typeof event.payload?.reported_at === "string" ? event.payload.reported_at : null;
-            return {
-              ...device,
-              conn_status: "online",
-              last_state: (event.payload ?? null) as DeviceConfig["last_state"],
-              last_seen: reportedAt ?? device.last_seen,
-            };
-          }
-          if (event.type === "command_delivery") {
-            return {
-              ...device,
-              last_delivery: (event.payload ?? null) as DeviceConfig["last_delivery"],
-            };
-          }
-
+      const next = prev.map((device): DeviceConfig => {
+        if (device.device_id !== event.device_id) {
           return device;
-        });
+        }
 
-        return didChange ? next : prev;
+        didChange = true;
+
+        if (event.type === "device_online") {
+          const reportedAt =
+            typeof event.payload?.reported_at === "string" ? event.payload.reported_at : null;
+          return {
+            ...device,
+            conn_status: "online",
+            last_seen: reportedAt ?? device.last_seen,
+          };
+        }
+        if (event.type === "device_offline") {
+          return { ...device, conn_status: "offline" };
+        }
+        if (event.type === "device_state") {
+          const reportedAt =
+            typeof event.payload?.reported_at === "string" ? event.payload.reported_at : null;
+          return {
+            ...device,
+            conn_status: "online",
+            last_state: (event.payload ?? null) as DeviceConfig["last_state"],
+            last_seen: reportedAt ?? device.last_seen,
+          };
+        }
+        if (event.type === "command_delivery") {
+          return {
+            ...device,
+            last_delivery: (event.payload ?? null) as DeviceConfig["last_delivery"],
+          };
+        }
+
+        return device;
       });
+
+      return didChange ? next : prev;
     });
 
     if (event.type === "device_offline" && isAdmin) {

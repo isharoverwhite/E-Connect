@@ -743,9 +743,16 @@ class FakeBoardHarness:
         self.publish_state_payload(payload)
 
     def publish_state_payload(self, payload: dict[str, Any]) -> None:
-        if self._publish_raw(self._mqtt_topic("state"), json.dumps(payload)):
+        payload_to_publish = copy.deepcopy(payload)
+        board_timing = payload_to_publish.get("board_timing")
+        if not isinstance(board_timing, dict):
+            board_timing = {}
+        board_timing["state_published_at"] = datetime.now(timezone.utc).isoformat()
+        payload_to_publish["board_timing"] = board_timing
+
+        if self._publish_raw(self._mqtt_topic("state"), json.dumps(payload_to_publish)):
             with self._condition:
-                self._last_state_payload = payload
+                self._last_state_payload = payload_to_publish
             self._last_action = "State payload published"
 
     def _build_registration_payload(

@@ -19,7 +19,7 @@ import paho.mqtt.client as mqtt
 from dotenv import load_dotenv
 from fastapi import HTTPException
 from pydantic import ValidationError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 import asyncio
 from app.database import SessionLocal
@@ -1771,7 +1771,12 @@ class MQTTClientManager:
 
         db = SessionLocal()
         try:
-            device = db.query(Device).filter(Device.device_id == device_id).first()
+            device = (
+                db.query(Device)
+                .options(joinedload(Device.pin_configurations))
+                .filter(Device.device_id == device_id)
+                .first()
+            )
             if not device:
                 logger.warning(
                     "Ignoring MQTT state for unknown device %s",

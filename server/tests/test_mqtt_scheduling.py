@@ -57,6 +57,9 @@ class FakeQuery:
     def __init__(self, result):
         self.result = result
 
+    def options(self, *_args, **_kwargs):
+        return self
+
     def filter(self, *_args, **_kwargs):
         return self
 
@@ -315,6 +318,72 @@ def test_process_state_message_enqueues_persistence_and_keeps_broadcast_trace_ea
     assert cached_state == broadcast_payload
     assert fake_session.commits == 0
     assert fake_session.closed is True
+
+
+def test_process_state_message_carries_board_timing_trace_into_broadcast(monkeypatch) -> None:
+    manager = MQTTClientManager()
+    fake_device = SimpleNamespace(
+        device_id="device-123",
+        auth_status=AuthStatus.approved,
+        conn_status=ConnStatus.online,
+        last_seen=None,
+        firmware_revision=None,
+        firmware_version=None,
+        pin_configurations=[],
+        room_id=99,
+        ip_address=None,
+        pairing_requested_at=None,
+        name="Trace Device",
+    )
+    fake_session = FakeSession(device=fake_device)
+    ws_mock = Mock()
+
+    monkeypatch.setattr("app.mqtt.SessionLocal", lambda: fake_session)
+    monkeypatch.setattr(
+        "app.mqtt.load_latest_device_state_payload",
+        lambda _db, _device_id: (None, None),
+    )
+    monkeypatch.setattr(
+        "app.mqtt.enrich_reported_mqtt_state",
+        lambda _previous_state, _pin_configurations, _state_payload: {
+            "kind": "state",
+            "pin": 3,
+            "value": 7195,
+            "latency_trace": {"server": {}},
+        },
+    )
+    monkeypatch.setattr("app.mqtt.ws_manager.broadcast_device_event_sync", ws_mock)
+    manager.resolve_command_ack = Mock(return_value=None)
+    manager._enqueue_state_persistence_job = Mock()
+
+    manager.process_state_message(
+        "device-123",
+        json.dumps(
+            {
+                "kind": "state",
+                "pin": 3,
+                "value": 7195,
+                "board_timing": {
+                    "state_published_at": "2026-04-27T03:00:00.000000+00:00",
+                },
+            }
+        ),
+        mqtt_callback_entered_at="2026-04-27T03:00:00.010000+00:00",
+        mqtt_callback_enqueued_at="2026-04-27T03:00:00.011000+00:00",
+        state_worker_started_at="2026-04-27T03:00:00.012000+00:00",
+        state_worker_index=1,
+        state_queue_depth_at_enqueue=1,
+        state_pending_device_count_at_enqueue=1,
+        state_queue_depth_at_worker_start=0,
+        state_pending_device_count_at_worker_start=0,
+    )
+
+    broadcast_payload = next(
+        call.args[3]
+        for call in ws_mock.call_args_list
+        if call.args[:3] == ("device_state", "device-123", 99)
+    )
+    assert broadcast_payload["latency_trace"]["board"]["state_published_at"] == "2026-04-27T03:00:00.000000+00:00"
 
 
 def test_persist_state_job_records_worker_tail_trace(monkeypatch) -> None:
