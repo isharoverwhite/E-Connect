@@ -411,83 +411,97 @@ export function Step2Pins({
                                     </div>
                                 )}
 
-                                {!isReserved && assignment?.mode === "INPUT" && (
-                                    <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5 flex flex-col gap-3">
-                                        <div className="flex flex-col gap-1">
-                                            <label htmlFor={`pin-input-type-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{t("diy.step2pins.input_type")}</label>
-                                            <select
-                                                id={`pin-input-type-${pin.gpio}`}
-                                                name={`pin-input-type-${pin.gpio}`}
-                                                value={assignment.extra_params?.input_type ?? "switch"}
-                                                onChange={(e) => {
-                                                    handleExtraParamChange(pin, { input_type: e.target.value as "switch" | "tachometer" | "dht" });
-                                                }}
-                                                className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
-                                            >
-                                                <option value="switch">{t("diy.step2pins.switch")}</option>
-                                                <option value="tachometer">{t("diy.step2pins.tachometer")}</option>
-                                                <option value="dht">{t("diy.step2pins.dht")}</option>
-                                            </select>
-                                        </div>
-                                        {assignment.extra_params?.input_type === "dht" && (
+                                {!isReserved && assignment?.mode === "INPUT" && (() => {
+                                    const selectedInputType = assignment.extra_params?.input_type ?? "switch";
+                                    const selectedSwitchType = assignment.extra_params?.switch_type ?? "momentary";
+                                    const switchBehaviorDescription =
+                                        selectedSwitchType === "momentary_toggle"
+                                            ? t("diy.step2pins.momentary_toggle_desc")
+                                            : selectedSwitchType === "toggle"
+                                                ? t("diy.step2pins.toggle_desc")
+                                                : t("diy.step2pins.momentary_desc");
+
+                                    return (
+                                        <div className="mt-2 rounded bg-slate-50 dark:bg-slate-800/40 border border-border-light dark:border-border-dark p-2.5 flex flex-col gap-3">
                                             <div className="flex flex-col gap-1">
-                                                <label htmlFor={`pin-dht-version-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{t("diy.step2pins.dht_version")}</label>
+                                                <label htmlFor={`pin-input-type-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{t("diy.step2pins.input_type")}</label>
                                                 <select
-                                                    id={`pin-dht-version-${pin.gpio}`}
-                                                    name={`pin-dht-version-${pin.gpio}`}
-                                                    value={assignment.extra_params?.dht_version ?? "DHT11"}
+                                                    id={`pin-input-type-${pin.gpio}`}
+                                                    name={`pin-input-type-${pin.gpio}`}
+                                                    value={selectedInputType}
                                                     onChange={(e) => {
-                                                        handleExtraParamChange(pin, { dht_version: e.target.value as "DHT11" | "DHT22" | "DHT21" });
+                                                        handleExtraParamChange(pin, { input_type: e.target.value as "switch" | "tachometer" | "dht" });
                                                     }}
                                                     className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
                                                 >
-                                                    <option value="DHT11">DHT11</option>
-                                                    <option value="DHT22">DHT22</option>
-                                                    <option value="DHT21">DHT21</option>
+                                                    <option value="switch">{t("diy.step2pins.switch")}</option>
+                                                    <option value="tachometer">{t("diy.step2pins.tachometer")}</option>
+                                                    <option value="dht">{t("diy.step2pins.dht")}</option>
                                                 </select>
+                                                {selectedInputType === "switch" && (
+                                                    <p className="text-[9px] text-slate-400 dark:text-slate-500 leading-tight">{t("diy.step2pins.switch_desc")}</p>
+                                                )}
                                             </div>
-                                        )}
-                                        {(assignment.extra_params?.input_type ?? "switch") === "switch" && (
-                                            <div className="flex flex-col gap-3">
+                                            {selectedInputType === "dht" && (
                                                 <div className="flex flex-col gap-1">
-                                                    <label htmlFor={`pin-switch-type-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{t("diy.step2pins.switch_type")}</label>
+                                                    <label htmlFor={`pin-dht-version-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{t("diy.step2pins.dht_version")}</label>
                                                     <select
-                                                        id={`pin-switch-type-${pin.gpio}`}
-                                                        name={`pin-switch-type-${pin.gpio}`}
-                                                        value={assignment.extra_params?.switch_type ?? "momentary"}
+                                                        id={`pin-dht-version-${pin.gpio}`}
+                                                        name={`pin-dht-version-${pin.gpio}`}
+                                                        value={assignment.extra_params?.dht_version ?? "DHT11"}
                                                         onChange={(e) => {
-                                                            handleExtraParamChange(pin, { switch_type: e.target.value as "momentary" | "momentary_toggle" | "toggle" });
+                                                            handleExtraParamChange(pin, { dht_version: e.target.value as "DHT11" | "DHT22" | "DHT21" });
                                                         }}
                                                         className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
                                                     >
-                                                        <option value="momentary">{t("diy.step2pins.momentary")}</option>
-                                                        <option value="momentary_toggle">{t("diy.step2pins.momentary_toggle")}</option>
-                                                        <option value="toggle">{t("diy.step2pins.toggle")}</option>
+                                                        <option value="DHT11">DHT11</option>
+                                                        <option value="DHT22">DHT22</option>
+                                                        <option value="DHT21">DHT21</option>
                                                     </select>
-                                                    <p className="text-[9px] text-slate-400 dark:text-slate-500 leading-tight">{t("diy.step2pins.momentary_desc")}</p>
                                                 </div>
+                                            )}
+                                            {selectedInputType === "switch" && (
+                                                <div className="flex flex-col gap-3">
+                                                    <div className="flex flex-col gap-1">
+                                                        <label htmlFor={`pin-switch-type-${pin.gpio}`} className="text-[10px] text-slate-500 dark:text-slate-400 font-medium tracking-tight">{t("diy.step2pins.switch_type")}</label>
+                                                        <select
+                                                            id={`pin-switch-type-${pin.gpio}`}
+                                                            name={`pin-switch-type-${pin.gpio}`}
+                                                            value={selectedSwitchType}
+                                                            onChange={(e) => {
+                                                                handleExtraParamChange(pin, { switch_type: e.target.value as "momentary" | "momentary_toggle" | "toggle" });
+                                                            }}
+                                                            className="bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded py-1.5 px-2 text-xs appearance-none outline-none focus:border-blue-500"
+                                                        >
+                                                            <option value="momentary">{t("diy.step2pins.momentary")}</option>
+                                                            <option value="momentary_toggle">{t("diy.step2pins.momentary_toggle")}</option>
+                                                            <option value="toggle">{t("diy.step2pins.toggle")}</option>
+                                                        </select>
+                                                        <p className="text-[9px] text-slate-400 dark:text-slate-500 leading-tight">{switchBehaviorDescription}</p>
+                                                    </div>
 
-                                                <div className="flex items-center justify-between">
-                                                    <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t("diy.step2pins.active_level")}</p>
-                                                    <label className="flex items-center cursor-pointer gap-2">
-                                                        <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 select-none">{t("diy.step2pins.active_high")}</span>
-                                                        <div className="relative">
-                                                            <input
-                                                                type="checkbox"
-                                                                className="sr-only peer"
-                                                                checked={assignment.extra_params?.active_level === 1 || assignment.extra_params?.active_level === undefined /* default to active high for UX */}
-                                                                onChange={(e) => {
-                                                                    handleExtraParamChange(pin, { active_level: e.target.checked ? 1 : 0 });
-                                                                }}
-                                                            />
-                                                            <div className="w-8 h-4 bg-slate-300 dark:bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 dark:after:border-slate-600 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-4 peer-checked:after:border-white"></div>
-                                                        </div>
-                                                    </label>
+                                                    <div className="flex items-center justify-between">
+                                                        <p className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400">{t("diy.step2pins.active_level")}</p>
+                                                        <label className="flex items-center cursor-pointer gap-2">
+                                                            <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 dark:text-slate-400 select-none">{t("diy.step2pins.active_high")}</span>
+                                                            <div className="relative">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    className="sr-only peer"
+                                                                    checked={assignment.extra_params?.active_level === 1 || assignment.extra_params?.active_level === undefined /* default to active high for UX */}
+                                                                    onChange={(e) => {
+                                                                        handleExtraParamChange(pin, { active_level: e.target.checked ? 1 : 0 });
+                                                                    }}
+                                                                />
+                                                                <div className="w-8 h-4 bg-slate-300 dark:bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:bg-blue-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 dark:after:border-slate-600 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-4 peer-checked:after:border-white"></div>
+                                                            </div>
+                                                        </label>
+                                                    </div>
                                                 </div>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
+                                            )}
+                                        </div>
+                                    );
+                                })()}
 
                                 {!isReserved && assignment?.mode === "PWM" && (() => {
                                     const rawMin = assignment.extra_params?.min_value ?? 0;
