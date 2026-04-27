@@ -8,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.api import DEVICE_HEARTBEAT_TIMEOUT, expire_stale_online_devices_once
+from app.api import DEVICE_HEARTBEAT_TIMEOUT, expire_stale_online_devices_once, mqtt_manager
 from app.database import Base
 from app.sql_models import (
     AccountType,
@@ -41,6 +41,9 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engin
 def setup_function():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    mqtt_manager._latest_device_runtime_cache.clear()
+    mqtt_manager._latest_state_cache.clear()
+    mqtt_manager._latest_state_sequence = 0
 
 
 def _seed_device(*, last_seen: datetime) -> tuple[str, int]:
@@ -95,7 +98,9 @@ def test_expire_stale_online_devices_once_marks_old_devices_offline(monkeypatch)
     stale_seen_at = datetime.now(timezone.utc) - DEVICE_HEARTBEAT_TIMEOUT - timedelta(seconds=1)
     device_id, room_id = _seed_device(last_seen=stale_seen_at)
     broadcast_mock = Mock()
+    remember_connectivity_mock = Mock()
     monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", broadcast_mock)
+    monkeypatch.setattr("app.api.mqtt_manager.remember_runtime_connectivity", remember_connectivity_mock)
 
     expired_count = expire_stale_online_devices_once(session_factory=TestingSessionLocal)
 
@@ -136,12 +141,56 @@ def test_expire_stale_online_devices_once_marks_old_devices_offline(monkeypatch)
         room_id,
         {"reason": "heartbeat_timeout"},
     )
+    remember_connectivity_mock.assert_called_once()
+    assert remember_connectivity_mock.call_args.args == (device_id,)
+    assert remember_connectivity_mock.call_args.kwargs["conn_status"] == ConnStatus.offline
 
 
 def test_expire_stale_online_devices_once_leaves_recent_devices_online(monkeypatch):
     device_id, _ = _seed_device(last_seen=datetime.now(timezone.utc))
     broadcast_mock = Mock()
     monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", broadcast_mock)
+
+    expired_count = expire_stale_online_devices_once(session_factory=TestingSessionLocal)
+
+    assert expired_count == 0
+
+    db = TestingSessionLocal()
+    try:
+        device = db.query(Device).filter(Device.device_id == device_id).one()
+        assert device.conn_status == ConnStatus.online
+
+        history_count = (
+            db.query(DeviceHistory)
+            .filter(
+                DeviceHistory.device_id == device_id,
+                DeviceHistory.event_type == EventType.offline,
+            )
+            .count()
+        )
+        assert history_count == 0
+    finally:
+        db.close()
+
+    broadcast_mock.assert_not_called()
+
+
+def test_expire_stale_online_devices_once_prefers_fresh_runtime_activity(monkeypatch):
+    stale_seen_at = datetime.now(timezone.utc) - DEVICE_HEARTBEAT_TIMEOUT - timedelta(seconds=1)
+    device_id, _ = _seed_device(last_seen=stale_seen_at)
+    broadcast_mock = Mock()
+    monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", broadcast_mock)
+    monkeypatch.setattr(
+        "app.api.mqtt_manager.latest_device_runtime_metadata",
+        lambda incoming_device_id: (
+            {
+                "conn_status": ConnStatus.online,
+                "last_seen": datetime.now(timezone.utc),
+            }
+            if incoming_device_id == device_id
+            else None
+        ),
+    )
 
     expired_count = expire_stale_online_devices_once(session_factory=TestingSessionLocal)
 

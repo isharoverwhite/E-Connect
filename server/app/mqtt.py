@@ -69,6 +69,7 @@ OTA_FLASHING_RECONCILIATION_TIMEOUT = timedelta(
 OTA_RECENT_FLASH_CONFIRMATION_WINDOW = timedelta(
     seconds=max(120, int(os.getenv("OTA_RECENT_FLASH_CONFIRMATION_WINDOW_SECONDS", "180")))
 )
+OTA_TIMEOUT_RECONCILIATION_ERROR_PREFIX = "OTA timeout/reconciliation:"
 _PENDING_COMMAND_MISSING = object()
 _STATE_PERSISTENCE_RETRY_DELAY_SECONDS = 0.5
 
@@ -201,6 +202,23 @@ def _mark_ota_job_failed(job, *, now: datetime, message: str) -> None:
     job.updated_at = now
 
 
+def _mark_ota_job_flashed(job, *, now: datetime) -> None:
+    job.status = JobStatus.flashed
+    job.error_message = None
+    job.finished_at = now
+    job.updated_at = now
+    promote_build_job_project_config(job)
+    cleanup_job_build_outputs(job.id)
+
+
+def _is_recoverable_ota_timeout_failure(job) -> bool:
+    return (
+        job.status == JobStatus.flash_failed
+        and isinstance(job.error_message, str)
+        and job.error_message.startswith(OTA_TIMEOUT_RECONCILIATION_ERROR_PREFIX)
+    )
+
+
 def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> str:
     if not device.provisioning_project_id or not reported_version:
         return "noop"
@@ -220,11 +238,7 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> s
             break
 
     if matched_job:
-        matched_job.status = JobStatus.flashed
-        matched_job.finished_at = now
-        matched_job.updated_at = now
-        promote_build_job_project_config(matched_job)
-        cleanup_job_build_outputs(matched_job.id)
+        _mark_ota_job_flashed(matched_job, now=now)
         logger.info("Reconciled OTA job %s to flashed via firmware_version match.", matched_job.id)
         return "confirmed"
 
@@ -245,7 +259,7 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> s
                 job,
                 now=now,
                 message=(
-                    f"OTA timeout/reconciliation: device reported version '{reported_version}' "
+                    f"{OTA_TIMEOUT_RECONCILIATION_ERROR_PREFIX} device reported version '{reported_version}' "
                     f"after reboot, expected '{expected_version}'"
                 ),
             )
@@ -253,6 +267,34 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> s
             return "timeout_mismatch"
 
         return "pending"
+
+    recent_timeout_failed_jobs = sorted(
+        db.query(BuildJob)
+        .filter(
+            BuildJob.project_id == device.provisioning_project_id,
+            BuildJob.status == JobStatus.flash_failed,
+        )
+        .all(),
+        key=lambda job: _job_reference_time(job, reference_time=now),
+        reverse=True,
+    )
+    recent_timeout_failed_job = next(
+        (
+            job
+            for job in recent_timeout_failed_jobs
+            if _is_recoverable_ota_timeout_failure(job)
+            and now - _job_reference_time(job, reference_time=now) <= OTA_RECENT_FLASH_CONFIRMATION_WINDOW
+            and reported_version == build_job_firmware_version(job.id)
+        ),
+        None,
+    )
+    if recent_timeout_failed_job:
+        _mark_ota_job_flashed(recent_timeout_failed_job, now=now)
+        logger.info(
+            "Recovered OTA job %s from timeout mismatch after late firmware_version confirmation.",
+            recent_timeout_failed_job.id,
+        )
+        return "late_confirmed"
 
     recent_flashed_jobs = sorted(
         db.query(BuildJob)
@@ -277,8 +319,7 @@ def _reconcile_ota_jobs(db: Session, device: Device, reported_version: str) -> s
 
     expected_version = build_job_firmware_version(recent_flashed_job.id)
     if reported_version == expected_version:
-        promote_build_job_project_config(recent_flashed_job)
-        cleanup_job_build_outputs(recent_flashed_job.id)
+        _mark_ota_job_flashed(recent_flashed_job, now=now)
         return "confirmed"
 
     _mark_ota_job_failed(
@@ -1048,6 +1089,32 @@ class MQTTClientManager:
             if cached_runtime is not None and cached_runtime[0] > state_sequence:
                 return
             self._latest_device_runtime_cache[device_id] = (state_sequence, copied_metadata)
+
+    def remember_runtime_connectivity(
+        self,
+        device_id: str,
+        *,
+        conn_status: ConnStatus | str,
+        last_seen: datetime | None = None,
+    ) -> None:
+        runtime_metadata = self.latest_device_runtime_metadata(device_id) or {}
+        if not isinstance(runtime_metadata, dict):
+            runtime_metadata = {}
+
+        normalized_last_seen = last_seen
+        if isinstance(normalized_last_seen, datetime) and normalized_last_seen.tzinfo is not None:
+            normalized_last_seen = normalized_last_seen.astimezone(timezone.utc).replace(tzinfo=None)
+
+        next_runtime_metadata = dict(runtime_metadata)
+        next_runtime_metadata["conn_status"] = conn_status
+        if normalized_last_seen is not None:
+            next_runtime_metadata["last_seen"] = normalized_last_seen
+
+        self._remember_latest_device_runtime_metadata(
+            device_id,
+            next_runtime_metadata,
+            state_sequence=self._next_state_sequence(),
+        )
 
     def _start_state_persistence_workers(self) -> None:
         with self._state_persistence_worker_lock:

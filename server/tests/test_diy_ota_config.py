@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from app.api import DEVICE_HEARTBEAT_TIMEOUT, expire_stale_online_devices_once, router
 from app.database import Base, CONFIG_HISTORY_DELETED_AT_KEY, get_db
 from app.mqtt import mqtt_manager
-from app.sql_models import AuthStatus, ConnStatus, User, Household, HouseholdMembership, HouseholdRole, Room, DiyProject, DiyProjectConfig, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration, WifiCredential, DeviceHistory
+from app.sql_models import AuthStatus, ConnStatus, User, Household, HouseholdMembership, HouseholdRole, Room, DiyProject, DiyProjectConfig, BuildJob, JobStatus, Device, DeviceMode, PinConfiguration, WifiCredential, DeviceHistory, SystemLog
 from app.auth import get_password_hash, create_ota_token
 from app.services.builder import get_durable_artifact_path
 from app.services.command_ordering import command_ordering_manager
@@ -539,6 +539,117 @@ def test_get_build_job_reconciles_online_version_mismatch_with_local_db_timestam
 
     db.refresh(job)
     assert job.status == JobStatus.flash_failed
+
+
+def test_repair_build_job_promotes_failed_job_when_device_runs_expected_firmware():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    project.config = {"wifi_ssid": "test", "wifi_password": "test", "pins": [{"gpio": 8, "mode": "OUTPUT", "label": "Committed Relay"}]}
+    project.pending_config = {"wifi_ssid": "test", "wifi_password": "test", "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}]}
+
+    saved_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Recovered OTA Config",
+        config=dict(project.pending_config),
+    )
+    db.add(saved_config)
+    db.flush()
+
+    job_id = str(uuid.uuid4())
+    expected_version = f"build-{job_id[:8]}"
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        saved_config_id=saved_config.id,
+        status=JobStatus.flash_failed,
+        staged_project_config=dict(project.pending_config),
+        error_message="OTA timeout/reconciliation: stale mismatch",
+    )
+    project.pending_config_id = saved_config.id
+    project.pending_build_job_id = job_id
+    device.provisioning_project_id = project.id
+    device.firmware_version = expected_version
+    db.add(job)
+    db.commit()
+
+    res = client.post(
+        f"/api/v1/diy/build/{job_id}/repair",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 200, res.text
+    payload = res.json()
+    assert payload["status"] == JobStatus.flashed.value
+    assert payload["error_message"] is None
+
+    db.refresh(job)
+    db.refresh(project)
+    db.refresh(saved_config)
+    assert job.status == JobStatus.flashed
+    assert job.error_message is None
+    assert project.pending_build_job_id is None
+    assert project.pending_config is None
+    assert project.pending_config_id is None
+    assert project.config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}]
+    assert saved_config.last_applied_at is not None
+
+    system_log = (
+        db.query(SystemLog)
+        .filter(SystemLog.event_code == "ota_manual_repair")
+        .order_by(SystemLog.id.desc())
+        .first()
+    )
+    assert system_log is not None
+    assert system_log.device_id == device.device_id
+    assert system_log.firmware_version == expected_version
+    assert "manually repaired OTA job" in system_log.message
+
+
+def test_repair_build_job_rejects_when_device_firmware_does_not_match():
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    response = client.post("/api/v1/auth/token", data={"username": "admin", "password": "password"})
+    token = response.json()["access_token"]
+
+    job_id = str(uuid.uuid4())
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.flash_failed,
+        error_message="OTA timeout/reconciliation: stale mismatch",
+    )
+    device.provisioning_project_id = project.id
+    device.firmware_version = "build-old1234"
+    db.add(job)
+    db.commit()
+
+    res = client.post(
+        f"/api/v1/diy/build/{job_id}/repair",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert res.status_code == 409, res.text
+    detail = res.json()["detail"]
+    assert detail["error"] == "firmware_mismatch"
+    assert detail["expected_firmware_version"] == f"build-{job_id[:8]}"
+    assert detail["actual_firmware_version"] == "build-old1234"
+
+    db.refresh(job)
+    assert job.status == JobStatus.flash_failed
+    assert (
+        db.query(SystemLog)
+        .filter(SystemLog.event_code == "ota_manual_repair")
+        .count()
+        == 0
+    )
 
 
 def test_get_diy_project_reconciles_flashing_ota_when_device_reports_expected_firmware(tmp_path, monkeypatch):
@@ -1461,6 +1572,37 @@ def test_ota_download_unauthenticated_not_ready():
     # Should say artifact not ready
     assert res.status_code == 400
     assert "Artifact not ready" in res.json()["detail"]
+
+
+def test_ota_download_returns_buffered_binary_payload():
+    db = TestingSessionLocal()
+    _user, _room, project, _device = create_test_data(db)
+
+    job_id = str(uuid.uuid4())
+    artifact_bytes = b"\xe9\x05\x02/test-firmware-image"
+    durable_artifact_path = get_durable_artifact_path(job_id, "firmware")
+    with open(durable_artifact_path, "wb") as handle:
+        handle.write(artifact_bytes)
+
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.artifact_ready,
+        artifact_path=f"/data/builds/artifacts/{job_id}.bin",
+    )
+    db.add(job)
+    db.commit()
+
+    valid_token = create_ota_token(job_id)
+    res = client.get(f"/api/v1/diy/ota/download/{job_id}/firmware.bin?token={valid_token}")
+
+    assert res.status_code == 200
+    assert res.content == artifact_bytes
+    assert res.headers["content-type"] == "application/octet-stream"
+    assert res.headers["content-length"] == str(len(artifact_bytes))
+    assert "accept-ranges" not in res.headers
+    assert "etag" not in res.headers
+    assert "last-modified" not in res.headers
 
 
 def test_delete_old_device_config_history_removes_saved_config_and_keeps_build_snapshot():
@@ -2962,6 +3104,107 @@ def test_mqtt_reconcile_ota_mismatch_stale_with_local_db_timestamp(monkeypatch):
     db.refresh(job)
     assert job.status == JobStatus.flash_failed
     assert "OTA timeout/reconciliation" in job.error_message
+
+
+def test_mqtt_reconcile_timeout_failed_job_recovers_on_late_expected_version():
+    from app.mqtt import MQTTClientManager
+    import json
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+    project.config = {"wifi_ssid": "test", "wifi_password": "test", "pins": [{"gpio": 8, "mode": "OUTPUT", "label": "Committed Relay"}]}
+    project.pending_config = {"wifi_ssid": "test", "wifi_password": "test", "pins": [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}]}
+
+    saved_config = DiyProjectConfig(
+        id=str(uuid.uuid4()),
+        project_id=project.id,
+        device_id=device.device_id,
+        board_profile=project.board_profile,
+        name="Recovered OTA Config",
+        config=dict(project.pending_config),
+    )
+    db.add(saved_config)
+    db.flush()
+
+    job_id = str(uuid.uuid4())
+    expected_version = f"build-{job_id[:8]}"
+    failed_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=10)
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        saved_config_id=saved_config.id,
+        status=JobStatus.flash_failed,
+        staged_project_config=dict(project.pending_config),
+        error_message=(
+            "OTA timeout/reconciliation: device reported version 'build-old1234' "
+            f"after reboot, expected '{expected_version}'"
+        ),
+        finished_at=failed_at,
+    )
+    job.updated_at = failed_at
+    project.pending_config_id = saved_config.id
+    project.pending_build_job_id = job_id
+    device.provisioning_project_id = project.id
+    db.add(job)
+    db.commit()
+
+    mgr = MQTTClientManager()
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps({"firmware_version": expected_version})
+    with patch('app.mqtt.SessionLocal', return_value=db_mock):
+        mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
+
+    db.refresh(job)
+    db.refresh(project)
+    db.refresh(saved_config)
+    assert job.status == JobStatus.flashed
+    assert job.error_message is None
+    assert project.pending_build_job_id is None
+    assert project.pending_config is None
+    assert project.pending_config_id is None
+    assert project.config["pins"] == [{"gpio": 2, "mode": "OUTPUT", "label": "Desired Relay"}]
+    assert saved_config.last_applied_at is not None
+
+
+def test_mqtt_reconcile_non_timeout_failed_job_does_not_recover_on_matching_version():
+    from app.mqtt import MQTTClientManager
+    import json
+    from unittest.mock import MagicMock
+
+    db = TestingSessionLocal()
+    user, room, project, device = create_test_data(db)
+
+    job_id = str(uuid.uuid4())
+    expected_version = f"build-{job_id[:8]}"
+    failed_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(seconds=10)
+    job = BuildJob(
+        id=job_id,
+        project_id=project.id,
+        status=JobStatus.flash_failed,
+        error_message="Invalid OTA signature",
+        finished_at=failed_at,
+    )
+    job.updated_at = failed_at
+    device.provisioning_project_id = project.id
+    db.add(job)
+    db.commit()
+
+    mgr = MQTTClientManager()
+    db_mock = MagicMock(wraps=db)
+    db_mock.close = MagicMock()
+
+    payload = json.dumps({"firmware_version": expected_version})
+    with patch('app.mqtt.SessionLocal', return_value=db_mock):
+        mgr.process_state_message(device.device_id, payload)
+    _wait_for_mqtt_state_persistence(mgr)
+
+    db.refresh(job)
+    assert job.status == JobStatus.flash_failed
+    assert job.error_message == "Invalid OTA signature"
 
 
 def test_mqtt_state_recent_flashed_job_mismatch_fails_immediately():

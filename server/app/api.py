@@ -1,7 +1,7 @@
 # Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
 
 from fastapi import APIRouter, HTTPException, Depends, UploadFile, File, BackgroundTasks, Form, Query, Request, WebSocket, WebSocketDisconnect, Body
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload, sessionmaker
@@ -22,6 +22,7 @@ from pathlib import Path
 
 from .mqtt import (
     OTA_FLASHING_RECONCILIATION_TIMEOUT,
+    _mark_ota_job_flashed,
     _reconcile_ota_jobs,
     build_pairing_rejected_ack_payload,
     build_predicted_mqtt_state,
@@ -762,12 +763,38 @@ def _build_job_reference_time(job: BuildJob, *, fallback: datetime) -> datetime:
     )
 
 
+def _resolve_device_activity_timestamp(
+    device: Device,
+    *,
+    reference_time: datetime,
+) -> datetime | None:
+    latest_seen_at = (
+        normalize_utc_naive_timestamp(device.last_seen, fallback=reference_time)
+        if device.last_seen is not None
+        else None
+    )
+
+    runtime_metadata = mqtt_manager.latest_device_runtime_metadata(device.device_id)
+    if isinstance(runtime_metadata, dict):
+        runtime_last_seen = _coerce_optional_runtime_reported_at(runtime_metadata.get("last_seen"))
+        if runtime_last_seen is None:
+            runtime_last_seen = _coerce_optional_runtime_reported_at(runtime_metadata.get("reported_at"))
+        if runtime_last_seen is not None:
+            normalized_runtime_last_seen = normalize_utc_naive_timestamp(
+                runtime_last_seen,
+                fallback=reference_time,
+            )
+            if latest_seen_at is None or normalized_runtime_last_seen > latest_seen_at:
+                latest_seen_at = normalized_runtime_last_seen
+
+    return latest_seen_at
+
+
 def _device_has_recent_heartbeat(device: Device, *, reference_time: datetime) -> bool:
-    if device.conn_status != ConnStatus.online or device.last_seen is None:
+    latest_seen_at = _resolve_device_activity_timestamp(device, reference_time=reference_time)
+    if latest_seen_at is None:
         return False
-    return (
-        reference_time - normalize_utc_naive_timestamp(device.last_seen, fallback=reference_time)
-    ) <= DEVICE_HEARTBEAT_TIMEOUT
+    return (reference_time - latest_seen_at) <= DEVICE_HEARTBEAT_TIMEOUT
 
 
 def _reconcile_stale_flashing_job(
@@ -798,11 +825,8 @@ def _reconcile_stale_flashing_job(
     ) <= OTA_FLASHING_RECONCILIATION_TIMEOUT:
         return False
 
-    last_seen = (
-        normalize_utc_naive_timestamp(bound_device.last_seen, fallback=reference_time).isoformat()
-        if bound_device.last_seen is not None
-        else None
-    )
+    latest_seen_at = _resolve_device_activity_timestamp(bound_device, reference_time=reference_time)
+    last_seen = latest_seen_at.isoformat() if latest_seen_at is not None else None
     expected_version = build_job_firmware_version(job.id)
     job.status = JobStatus.flash_failed
     job.error_message = (
@@ -850,10 +874,25 @@ def _expire_device_if_stale(db: Session, device: Device, *, reference_time: date
     if device.conn_status == ConnStatus.offline:
         return False
 
-    if device.last_seen and (reference_time - device.last_seen) <= DEVICE_HEARTBEAT_TIMEOUT:
+    latest_seen_at = _resolve_device_activity_timestamp(device, reference_time=reference_time)
+    if latest_seen_at is not None:
+        current_last_seen = (
+            normalize_utc_naive_timestamp(device.last_seen, fallback=reference_time)
+            if device.last_seen is not None
+            else None
+        )
+        if current_last_seen is None or latest_seen_at > current_last_seen:
+            device.last_seen = latest_seen_at
+
+    if latest_seen_at is not None and (reference_time - latest_seen_at) <= DEVICE_HEARTBEAT_TIMEOUT:
         return False
 
     device.conn_status = ConnStatus.offline
+    mqtt_manager.remember_runtime_connectivity(
+        device.device_id,
+        conn_status=ConnStatus.offline,
+        last_seen=latest_seen_at,
+    )
     db.add(
         DeviceHistory(
             device_id=device.device_id,
@@ -862,7 +901,7 @@ def _expire_device_if_stale(db: Session, device: Device, *, reference_time: date
                 {
                     "reason": "heartbeat_timeout",
                     "timeout_seconds": DEVICE_HEARTBEAT_TIMEOUT_SECONDS,
-                    "last_seen": device.last_seen.isoformat() if device.last_seen else None,
+                    "last_seen": latest_seen_at.isoformat() if latest_seen_at else None,
                     "evaluated_at": reference_time.isoformat(),
                 }
             ),
@@ -880,7 +919,7 @@ def _expire_device_if_stale(db: Session, device: Device, *, reference_time: date
         details={
             "reason": "heartbeat_timeout",
             "timeout_seconds": DEVICE_HEARTBEAT_TIMEOUT_SECONDS,
-            "last_seen": device.last_seen.isoformat() if device.last_seen else None,
+            "last_seen": latest_seen_at.isoformat() if latest_seen_at else None,
             "evaluated_at": reference_time.isoformat(),
         },
     )
@@ -988,6 +1027,44 @@ def _resolve_build_artifact_path(job: BuildJob, artifact_name: Literal["firmware
             return candidate
 
     return None
+
+
+def _resolve_build_job_target_device(db: Session, job: BuildJob) -> Device | None:
+    device = (
+        db.query(Device)
+        .filter(Device.provisioning_project_id == job.project_id)
+        .first()
+    )
+    if device is not None:
+        return device
+
+    if job.saved_config_id:
+        saved_config = db.query(DiyProjectConfig).filter(DiyProjectConfig.id == job.saved_config_id).first()
+        if saved_config is not None:
+            return db.query(Device).filter(Device.device_id == saved_config.device_id).first()
+
+    project = db.query(DiyProject).filter(DiyProject.id == job.project_id).first()
+    if project is None:
+        return None
+
+    resolved_device_id, _resolved_name = _resolve_project_bound_device_identity(project)
+    return db.query(Device).filter(Device.device_id == resolved_device_id).first()
+
+
+def _resolve_effective_device_firmware_version(device: Device) -> str | None:
+    runtime_metadata = mqtt_manager.latest_device_runtime_metadata(device.device_id)
+    if isinstance(runtime_metadata, dict):
+        runtime_version = _trimmed_string(runtime_metadata.get("firmware_version"))
+        if runtime_version:
+            return runtime_version
+
+    latest_state = mqtt_manager.latest_reported_state(device.device_id)
+    if isinstance(latest_state, dict):
+        state_version = _trimmed_string(latest_state.get("firmware_version"))
+        if state_version:
+            return state_version
+
+    return _trimmed_string(device.firmware_version)
 
 
 def _trimmed_string(value: Any) -> Optional[str]:
@@ -5572,6 +5649,83 @@ async def get_build_job(
     job.ota_download_url = _resolve_job_ota_download_url(job, job.ota_token, request)
     return _build_job_response_model(job, ota_token=job.ota_token, ota_download_url=job.ota_download_url)
 
+
+@router.post("/diy/build/{job_id}/repair", response_model=BuildJobResponse)
+async def repair_build_job(
+    job_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    job = _get_build_job_in_household_or_404(db, current_user, job_id)
+    device = _resolve_build_job_target_device(db, job)
+    if device is None:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "missing_device", "message": "No bound device could be resolved for this build job."},
+        )
+
+    expected_version = build_job_firmware_version(job.id)
+    actual_version = _resolve_effective_device_firmware_version(device)
+    if actual_version != expected_version:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "firmware_mismatch",
+                "message": "Manual repair is only allowed when the bound device is already running the expected firmware.",
+                "expected_firmware_version": expected_version,
+                "actual_firmware_version": actual_version,
+                "device_id": device.device_id,
+            },
+        )
+
+    project = db.query(DiyProject).filter(DiyProject.id == job.project_id).first()
+    if project is not None:
+        pending_job_id = _trimmed_string(project.pending_build_job_id)
+        if pending_job_id is not None and pending_job_id != job.id:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error": "conflict",
+                    "message": "Another pending build job exists for this project. Resolve it before repairing an older job.",
+                    "pending_build_job_id": pending_job_id,
+                },
+            )
+
+    previous_status = job.status
+    previous_error_message = job.error_message
+    repaired_at = _utcnow_naive()
+    if job.status != JobStatus.flashed or job.error_message is not None:
+        _mark_ota_job_flashed(job, now=repaired_at)
+
+    create_system_log(
+        db,
+        event_code="ota_manual_repair",
+        message=(
+            f"Admin {current_user.username} manually repaired OTA job {job.id} "
+            f"after verifying device {device.device_id} is running firmware {expected_version}."
+        ),
+        severity=SqlSystemLogSeverity.info,
+        category=SqlSystemLogCategory.firmware,
+        device_id=device.device_id,
+        firmware_version=expected_version,
+        firmware_revision=_trimmed_string(device.firmware_revision),
+        details={
+            "job_id": job.id,
+            "project_id": job.project_id,
+            "device_id": device.device_id,
+            "expected_firmware_version": expected_version,
+            "actual_firmware_version": actual_version,
+            "previous_status": previous_status.value if hasattr(previous_status, "value") else str(previous_status),
+            "previous_error_message": previous_error_message,
+            "repaired_by_user_id": current_user.user_id,
+            "repaired_by_username": current_user.username,
+            "repaired_at": repaired_at.isoformat(),
+        },
+    )
+    db.commit()
+    db.refresh(job)
+    return _build_job_response_model(job)
+
 @router.get("/diy/build/{job_id}/artifact")
 async def get_build_artifact(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
     job = _get_build_job_in_household_or_404(db, current_user, job_id)
@@ -5622,11 +5776,16 @@ async def get_ota_firmware(job_id: str, token: str, db: Session = Depends(get_db
     if job.status not in allowed_statuses or not artifact_path or not os.path.exists(artifact_path):
         raise HTTPException(status_code=400, detail="Artifact not ready or missing")
 
-    return FileResponse(
-        artifact_path,
-        media_type="application/octet-stream",
-        filename=f"firmware_{job_id}.bin",
-    )
+    # ESP32 HTTPUpdate peeks the first byte immediately after GET() completes.
+    # Buffering the OTA artifact in memory avoids FileResponse deferring the body
+    # into a later socket read, which can trip "Verify Bin Header Failed".
+    try:
+        payload = Path(artifact_path).read_bytes()
+    except OSError as exc:
+        logger.exception("Failed to read OTA artifact for job %s from %s", job_id, artifact_path)
+        raise HTTPException(status_code=500, detail="Failed to read OTA artifact") from exc
+
+    return Response(content=payload, media_type="application/octet-stream")
 
 @router.get("/diy/build/{job_id}/logs")
 async def get_build_logs(job_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)):
