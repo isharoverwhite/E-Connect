@@ -1,514 +1,84 @@
-# E-Connect
+# E-Connect 🏠
+**E-Connect** is a self-hosted, local-first smart home platform designed for LAN-native control. It allows you to seamlessly build, provision, and manage DIY ESP32/ESP8266 devices, create visual automations, and organize your smart home without relying on the cloud! 🔌✨
 
-> Self-hosted, local-first smart home control for LAN devices, MQTT workflows, and DIY ESP32/ESP8266 provisioning.
+[English](#english) • [Tiếng Việt](#tiếng-việt)
 
-[Tiếng Việt](#tiếng-việt) • [English](#english)
-
----
-
-## Mở Đầu / Product Intro
-
-Tiếng Việt: **E-Connect** là nền tảng smart home `self-hosted`, `local-first` giúp bạn dựng và vận hành hệ thống IoT trong LAN mà không phụ thuộc cloud. Dự án kết hợp dashboard quản lý thiết bị theo area, luồng onboarding và phê duyệt node DIY `ESP32/ESP8266`, lưu Wi-Fi tập trung, builder map GPIO bằng `SVG`, build firmware phía server, flash qua trình duyệt, automation graph trực quan, API key cho tích hợp ngoài, preference ngôn ngữ giao diện theo user và cơ chế `MQTT-first` để điều khiển nhanh, ổn định, riêng tư trên hạ tầng do chính bạn sở hữu.
-
-English: **E-Connect** is a `self-hosted`, `local-first` smart home platform for LAN-native control, area-based device dashboards, DIY `ESP32/ESP8266` onboarding, centralized Wi-Fi provisioning, `SVG` GPIO mapping, server-side firmware builds, browser flashing, visual automations, API-key-based integrations, per-user interface language preferences, and `MQTT-first` messaging, all in a private stack you run yourself.
-
-## Phụ Lục / Appendix
-
-- [Extension Development Guide](./docs/EXTENSIONS.md)
-- [API Key User Guide](./docs/API_KEYS.md)
-- [End-user Compose Template](./deploy/user/compose.yml)
-
-## Công Nghệ / Technology
-
-| Layer | Stack |
-|---|---|
-| Frontend | `Next.js 16`, `React 19`, `Tailwind CSS 4`, `react-zoom-pan-pinch` |
-| Backend | `FastAPI`, `SQLAlchemy`, `Pydantic`, `Uvicorn`, `python-jose`, `passlib` |
-| IoT & Provisioning | `MQTT`, `Mosquitto`, `PlatformIO`, `Zeroconf/mDNS`, browser-based flash and serial tooling |
-| Data & Persistence | `MariaDB`, `PyMySQL`, durable storage for devices, configs, automations, and logs |
-| Deployment | `Docker Compose`, Docker Hub images, local HTTPS on `3443`, GitHub Actions workflows |
-
-`find_website` remains developer-hosted. The self-hosted runtime stays focused on `db`, `mqtt`, `server`, and `webapp`, while browser-based LAN discovery starts from [find.isharoverwhite.com](https://find.isharoverwhite.com).
-
-## Tour Giao Diện / Visual Tour
-
-Current screenshots below were recaptured from the live self-hosted WebUI after bootstrap, so the tour focuses on the current operational surfaces available from the running instance.
-
-### 1. Login
-![E-Connect Login](./docs/screenshots/readme/login.png)
-
-Tiếng Việt: Người dùng đi vào hệ thống qua form xác thực thật với tùy chọn `Keep me logged in` để duy trì session trên thiết bị tin cậy.
-
-English: Users enter the system through the real authentication form, with an optional `Keep me logged in` session mode for trusted devices.
-
-### 2. Dashboard
 ![E-Connect Dashboard](./docs/screenshots/readme/dashboard.png)
 
-Tiếng Việt: Dashboard là trung tâm quan sát thiết bị, cảnh báo hệ thống, trạng thái online/offline và các thao tác vận hành chính với card layout responsive theo area.
+<h2 id="english">✨ Features</h2>
 
-English: The dashboard is the command surface for device status, system alerts, online/offline visibility, and day-to-day operations through an area-based responsive card layout.
+- **Local-First & Self-Hosted:** Complete privacy and control over your smart home data within your LAN.
+- **DIY Device Provisioning:** Easily build, configure, and flash ESP32/ESP8266 firmware directly from your browser.
+- **Visual Automations:** Create complex rules using an intuitive Trigger -> Condition -> Action graph builder.
+- **Centralized Management:** Area-based device dashboards, centralized Wi-Fi credential storage, and real-time logs.
+- **MQTT-First Messaging:** Fast, stable, and local message broker integration for all your devices.
 
-### 3. Device Management
-![E-Connect Device Management](./docs/screenshots/readme/devices-empty.png)
+## 🚀 Getting Started
 
-Tiếng Việt: Khu vực `Devices` quản lý vòng đời thiết bị, trạng thái từng node, metadata firmware, thao tác cấu hình và các entrypoint pairing.
+**Option 1: Using Docker Compose (Recommended)**
+1. Create a folder and download the compose file:
+   ```bash
+   mkdir econnect && cd econnect
+   curl -fsSL https://raw.githubusercontent.com/isharoverwhite/Final-Project/main/deploy/user/compose.yml -o compose.yml
+   ```
+2. (Optional) Open `compose.yml` and edit the `x-user-config` section to set your own passwords and IP addresses.
+3. Start the system:
+   ```bash
+   docker compose up -d
+   ```
+4. Access the WebUI at `https://localhost:3443` or your configured server IP, and use [find.isharoverwhite.com](https://find.isharoverwhite.com) to discover your local server from other devices.
 
-English: The `Devices` area manages the device lifecycle, per-node status, firmware metadata, configuration actions, and pairing entrypoints.
+**Option 2: Running from Source**
+If you prefer running the source code directly:
+1. Clone this repository: `git clone https://github.com/isharoverwhite/Final-Project.git`
+2. Navigate to the project directory: `cd Final-Project`
+3. Start all services: `docker compose up -d --build db mqtt server webapp`
+4. Access the WebUI at `https://localhost:3443`.
 
-### 4. Device Discovery
-![E-Connect Device Discovery](./docs/screenshots/readme/device-discovery.png)
+## 🛠️ Contribution
+Contributions are welcome! Please feel free to submit a Pull Request or check out the [Extension Development Guide](./docs/EXTENSIONS.md).
 
-Tiếng Việt: Màn hình discovery giữ kết nối WebSocket mở để chờ board gửi yêu cầu pairing về đúng server nội bộ mà không cần quét lại thủ công.
-
-English: The discovery surface keeps a WebSocket listener open so boards can report pairing requests to the local server without a manual rescan.
-
-### 5. DIY Builder
-![E-Connect DIY Builder](./docs/screenshots/readme/diy-builder.png)
-
-Tiếng Việt: `IoT Configurator` hỗ trợ chọn board ESP32/ESP8266, gắn Wi-Fi đã lưu, chọn profile phần cứng, map GPIO và chuẩn bị build firmware phía server.
-
-English: The `IoT Configurator` lets you choose ESP32/ESP8266 boards, attach saved Wi-Fi credentials, pick hardware profiles, map GPIO, and prepare server-side firmware builds.
-
-### 6. Device Configuration
-![E-Connect Device Configuration](./docs/screenshots/readme/device-config.png)
-
-Tiếng Việt: Màn hình cấu hình thiết bị cho phép xem lịch sử config đã flash, chỉnh lại pin map, Wi-Fi gắn kèm, và theo dõi trạng thái OTA của board đã ghép nối.
-
-English: The device configuration screen exposes flashed config history, pin remapping, attached Wi-Fi credentials, and OTA status for an already paired board.
-
-### 7. Automation Builder
-![E-Connect Automation Builder](./docs/screenshots/readme/automation-builder.png)
-
-Tiếng Việt: Trình tạo automation dùng graph builder trực quan theo mô hình `Trigger -> Condition -> Action`, có workspace riêng để lưu, chạy thử và kiểm tra rule.
-
-English: The automation builder uses a visual `Trigger -> Condition -> Action` graph workspace for saving, testing, and iterating automation rules.
-
-### 8. Logs And Stats
-![E-Connect Logs And Stats](./docs/screenshots/readme/logs-stats.png)
-
-Tiếng Việt: `Logs & Stats` tập trung health của server, retention alert 30 ngày, bộ lọc tra cứu sự kiện và bảng hoạt động chi tiết để review runtime.
-
-English: `Logs & Stats` centralizes server health, the 30-day alert window, event filters, and detailed activity tables for runtime review.
-
-### 9. Extensions
-![E-Connect Extensions](./docs/screenshots/readme/extensions.png)
-
-Tiếng Việt: Khu vực `Extensions` quản lý package tích hợp ngoài, hiển thị provider đã cài, số thiết bị liên kết, và các ràng buộc xoá package còn đang được dùng.
-
-English: The `Extensions` area manages external integration packages, showing installed providers, linked device counts, and deletion guardrails when packages are still in use.
-
-### 10. Settings And Wi-Fi Credentials
-![E-Connect Settings Wi-Fi](./docs/screenshots/readme/settings-wifi.png)
-
-Tiếng Việt: `Settings` tập trung phần quản trị instance như timezone, language preference, user management, areas, DIY configs, và danh sách Wi-Fi dùng lại cho provisioning.
-
-English: `Settings` centralizes instance administration, including timezone, language preference, user management, areas, DIY configs, and reusable Wi-Fi credentials for provisioning.
+<div align="center">Made with ❤️ for a private smart home experience</div>
 
 ---
 
-## Tiếng Việt
-
-### Chạy Nhanh Theo Kiểu Copy & Run
-
-Không cần tạo `.env`. Bản dành cho người dùng cuối nằm tại `deploy/user/compose.yml`.
-
-Cách dễ nhất cho người dùng thường là:
-
-1. Tải file về với đúng tên `compose.yml`
-2. Mở file đó và sửa vài dòng trong phần `x-user-config`
-3. Chạy đúng một lệnh: `docker compose up -d`
-
-Lệnh tải file:
-
-```bash
-mkdir econnect && cd econnect
-curl -fsSL https://raw.githubusercontent.com/isharoverwhite/Final-Project/main/deploy/user/compose.yml -o compose.yml
-```
-
-Lệnh chạy:
-
-```bash
-docker compose up -d
-```
-
-Nếu bạn đang đứng trong repo này và muốn dùng bản tương thích cũ ở root, cú pháp vẫn là:
-
-```bash
-docker compose -f docker-compose.user.yml up -d
-```
-
-Nếu bạn muốn `find.isharoverwhite.com` ưu tiên alias `econnect.local` trước khi quét subnet, hãy điền `https_ips` bằng LAN IP thật của server rồi bật profile mDNS tùy chọn:
-
-```bash
-docker compose --profile discovery-mdns up -d
-```
-
-Trong repo này, lệnh tương đương là:
-
-```bash
-docker compose -f docker-compose.user.yml --profile discovery-mdns up -d
-```
-
-Sau khi stack lên xong:
-
-1. Trên máy đang chạy Docker, mở `https://localhost:3443`
-2. Hoàn tất `First Time Setup`
-3. Đăng nhập bằng tài khoản admin vừa tạo
-4. Vào `Settings -> Wi-Fi` để lưu mạng Wi-Fi dùng cho provisioning
-5. Vào `Devices -> Create New Device` để tạo project DIY đầu tiên
-6. Trên laptop hoặc điện thoại nằm cùng LAN, mở [find.isharoverwhite.com](https://find.isharoverwhite.com) để kiểm tra browser scan có tìm thấy server self-hosted của bạn hay không
-
-### User cần sửa những dòng nào
-
-Trong hầu hết trường hợp, chỉ cần sửa 4 hoặc 5 dòng này:
-
-```yaml
-x-user-config:
-  db_root_password: &db_root_password "HomeRoot!2026"
-  db_password: &db_password "HomeApp!2026"
-  secret_key: &secret_key "mot-chuoi-rat-dai-va-kho-doan-de-bao-mat"
-  https_hosts: &https_hosts localhost,econnect.local
-  https_ips: &https_ips "192.168.1.25"
-```
-
-Ý nghĩa từng dòng:
-
-- `db_root_password`: mật khẩu root của MariaDB
-- `db_password`: mật khẩu ứng dụng E-Connect dùng để vào MariaDB
-- `secret_key`: khóa bí mật của backend, nên dùng chuỗi dài và khó đoán
-- `https_ips`: IP LAN của máy chạy Docker, dùng khi muốn mở từ điện thoại hoặc máy khác trong mạng nội bộ, đồng thời là IP được profile `discovery-mdns` dùng để publish `econnect.local`
-- `https_hosts`: hostname nội bộ nếu bạn có dùng tên như `econnect.local`
-
-`server` sẽ tự lấy `db_name`, `db_user`, và `db_password` trong cùng file để dựng kết nối MariaDB, nên người dùng không cần map chuỗi kết nối DB thủ công nữa.
-
-### Ví dụ thực tế
-
-Ví dụ bạn có một mini PC chạy Docker trong nhà:
-
-- IP LAN của máy đó là `192.168.1.25`
-- Bạn muốn mở từ laptop và điện thoại trong cùng Wi-Fi
-- Bạn chưa dùng domain public, chỉ dùng LAN
-
-Khi đó bạn có thể sửa `compose.yml` thành:
-
-```yaml
-x-user-config:
-  db_root_password: &db_root_password "HomeRoot!2026"
-  db_password: &db_password "HomeApp!2026"
-  secret_key: &secret_key "econnect-home-2026-change-this-to-a-long-random-secret"
-  https_hosts: &https_hosts localhost,econnect.local
-  https_ips: &https_ips "192.168.1.25"
-```
-
-Sau đó chạy:
-
-```bash
-docker compose up -d
-```
-
-Rồi mở WebUI bằng đúng host đã khai báo trong certificate:
-
-- Trên chính máy chạy Docker: `https://localhost:3443`
-- `https://192.168.1.25:3443`
-- hoặc `https://econnect.local:3443`
-
-Nếu bạn chỉ dùng trên chính máy chạy Docker và không mở từ thiết bị khác, có thể để:
-
-```yaml
-https_hosts: &https_hosts localhost
-https_ips: &https_ips ""
-```
-
-và chỉ mở:
-
-```text
-https://localhost:3443
-```
-
-Nếu bạn đổi IP hoặc hostname sau lần chạy đầu tiên, hãy dừng stack, xóa volume kết thúc bằng `_webapp_tls`, rồi chạy lại để certificate được tạo mới:
-
-```bash
-docker compose down
-docker volume ls | grep webapp_tls
-docker volume rm <your_project>_webapp_tls
-docker compose up -d
-```
-
-### Dùng find website để tìm server trong LAN
-
-`find_website` là entrypoint public do nhà phát triển host, không phải container người dùng cần tự chạy ở nhà. Sau khi stack self-hosted đã hoạt động:
-
-1. Mở [find.isharoverwhite.com](https://find.isharoverwhite.com) từ thiết bị nằm cùng LAN với server E-Connect.
-2. Giữ tab mở để browser của chính thiết bị đó scan tới các endpoint discovery của `server`, chủ yếu là `http://<lan-host>:8000/web-assistant.js` và `http://<lan-host>:8000/discovery-bridge`.
-3. Khi scan thành công, bấm vào result card để mở WebUI cục bộ tại `https://<lan-host>:3443`.
-4. Nếu muốn alias-first fast path bằng `econnect.local`, hãy điền `https_ips` bằng LAN IP thật của server rồi chạy lại với profile `discovery-mdns`.
-
-### Luồng sử dụng đề xuất
-
-1. **Bootstrap hệ thống**
-   Mở `https://localhost:3443` hoặc host HTTPS bạn đã cấu hình, hoàn tất `First Time Setup`, rồi đăng nhập bằng tài khoản admin vừa tạo.
-
-2. **Lưu mạng Wi-Fi dùng chung**
-   Vào `Settings -> Wi-Fi`, thêm SSID và mật khẩu mà thiết bị DIY sẽ dùng khi khởi động lần đầu.
-
-3. **Tạo cấu hình phần cứng**
-   Vào `Devices -> Create New Device`, chọn board, profile phần cứng, area, và network đã lưu.
-
-4. **Map GPIO và build firmware**
-   Đi tiếp qua các bước `Configs -> Pins -> Review -> Flash` để tạo build phía server.
-
-5. **Onboard và quản lý thiết bị**
-   Dùng các màn hình `Dashboard` hoặc `Devices` để quét, duyệt, và quản lý thiết bị mới trong cùng WebUI.
-
-6. **Tạo automation**
-   Vào `Automation`, dựng rule theo sơ đồ `Trigger -> Condition -> Action`.
-
-### Các giá trị nên sửa ngay trong file compose
-
-Mặc định vẫn chạy được ngay, nhưng với môi trường dùng thật bạn nên sửa ít nhất:
-
-```yaml
-x-user-config:
-  db_root_password: &db_root_password "your_root_password"
-  db_password: &db_password "your_app_password"
-  secret_key: &secret_key "your_long_random_secret_key"
-  https_hosts: &https_hosts localhost,econnect.local,e-connect.local
-  https_ips: &https_ips "192.168.1.25"
-  mqtt_image: &mqtt_image docker.io/ryzen30xx/econnect-mqtt:latest
-  server_image: &server_image docker.io/ryzen30xx/econnect-server:latest
-  webapp_image: &webapp_image docker.io/ryzen30xx/econnect-webapp:latest
-```
-
-Phần `mqtt_image`, `server_image`, `webapp_image` thường không cần đổi, trừ khi bạn muốn pin sang tag image khác.
-
-### Build từ source
-
-Nếu bạn muốn chạy trực tiếp từ mã nguồn thay vì image public:
-
-```bash
-git clone https://github.com/isharoverwhite/Final-Project.git
-cd Final-Project
-docker compose up -d --build db mqtt server webapp
-```
-
-Sau đó truy cập `https://localhost:3443`.
-
-### Ghi chú triển khai
-
-- `docker-compose.user.yml` đã được cấu hình sẵn image mặc định từ Docker Hub và không yêu cầu khai báo image bằng tay.
-- GitHub Actions `.github/workflows/end-user-images.yml` sẽ build ba image self-hosted (`server`, `webapp`, `mqtt`) và publish lên Docker Hub khi `main` thay đổi ở các thư mục tương ứng.
-- Workflow publish end-user image cần hai GitHub repository secrets: `DOCKERHUB_USERNAME` và `DOCKERHUB_TOKEN`.
-- `server` mặc định theo dõi release mới nhất từ repo trusted cố định `econnectrelease/firmware` mỗi 60 giây qua `FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS`; khi có bản mới, firmware-template sẽ tự được tải về `/data/firmware-template/current`.
-- Các image Docker Hub được phát hành với cả tag `latest` và tag bất biến dạng `sha-<commit>`. Người dùng cuối có thể pin `mqtt_image`, `server_image`, hoặc `webapp_image` sang tag `sha-...` nếu muốn rollback hoặc khóa phiên bản cụ thể.
-- Cổng HTTPS chính cho WebUI là `3443`.
-- Lần đầu mở WebUI trên một máy mới, trình duyệt có thể cảnh báo certificate tự ký. Bạn chỉ cần chấp nhận certificate đó cho host nội bộ mà bạn đang dùng.
-
-### License
-
-Mã nguồn và tài sản của repository hiện được phân phối dưới giấy phép proprietary trong [`LICENSE`](./LICENSE). Tham khảo thêm [`REPOSITORY_PROTECTION.md`](./REPOSITORY_PROTECTION.md) cho ghi chú bảo vệ repository và nội dung pháp lý liên quan.
-
----
-
-## English
-
-### Copy And Run Quick Start
-
-No `.env` file is required. The end-user artifact lives at `deploy/user/compose.yml`.
-
-The easiest flow for most users is:
-
-1. Download the file as `compose.yml`
-2. Edit a few lines in `x-user-config`
-3. Run exactly one command: `docker compose up -d`
-
-Download command:
-
-```bash
-mkdir econnect && cd econnect
-curl -fsSL https://raw.githubusercontent.com/isharoverwhite/Final-Project/main/deploy/user/compose.yml -o compose.yml
-```
-
-Run command:
-
-```bash
-docker compose up -d
-```
-
-If you are already inside this repository and want the backward-compatible root file, the correct syntax is:
-
-```bash
-docker compose -f docker-compose.user.yml up -d
-```
-
-If you want [find.isharoverwhite.com](https://find.isharoverwhite.com) to prefer the `econnect.local` alias before subnet sweeping, fill `https_ips` with the real server LAN IP and enable the optional mDNS profile:
-
-```bash
-docker compose --profile discovery-mdns up -d
-```
-
-Inside this repository, the equivalent command is:
-
-```bash
-docker compose -f docker-compose.user.yml --profile discovery-mdns up -d
-```
-
-When the stack is ready:
-
-1. On the Docker host machine, open `https://localhost:3443`
-2. Complete `First Time Setup`
-3. Sign in with the new admin account
-4. Save at least one Wi-Fi credential in `Settings -> Wi-Fi`
-5. Open `Devices -> Create New Device` and start your first DIY project
-6. From a laptop or phone on the same LAN, open [find.isharoverwhite.com](https://find.isharoverwhite.com) and confirm that the browser scanner can discover your self-hosted server
-
-### Which Lines Should A User Edit?
-
-In most cases, a user only needs to edit these 4 or 5 lines:
-
-```yaml
-x-user-config:
-  db_root_password: &db_root_password "HomeRoot!2026"
-  db_password: &db_password "HomeApp!2026"
-  secret_key: &secret_key "a-very-long-random-secret-string"
-  https_hosts: &https_hosts localhost,econnect.local
-  https_ips: &https_ips "192.168.1.25"
-```
-
-What each line means:
-
-- `db_root_password`: MariaDB root password
-- `db_password`: MariaDB application password used by E-Connect
-- `secret_key`: backend secret; use a long unpredictable string
-- `https_ips`: LAN IP of the Docker host when you want to open the UI from another device on the same network, and the address reused by the `discovery-mdns` profile to publish `econnect.local`
-- `https_hosts`: internal hostname if you use one, such as `econnect.local`
-
-The `server` container now derives its MariaDB connection from the same `db_name`, `db_user`, and `db_password` values in the same file, so end users do not need to maintain a separate DB connection string anymore.
-
-### Real Example
-
-Example setup:
-
-- Your home mini PC runs Docker
-- Its LAN IP is `192.168.1.25`
-- You want to open E-Connect from both a laptop and a phone on the same Wi-Fi
-- You are not using a public domain
-
-In that case, update `compose.yml` like this:
-
-```yaml
-x-user-config:
-  db_root_password: &db_root_password "HomeRoot!2026"
-  db_password: &db_password "HomeApp!2026"
-  secret_key: &secret_key "econnect-home-2026-change-this-to-a-long-random-secret"
-  https_hosts: &https_hosts localhost,econnect.local
-  https_ips: &https_ips "192.168.1.25"
-```
-
-Then run:
-
-```bash
-docker compose up -d
-```
-
-Then open the WebUI with the same host covered by the certificate:
-
-- On the Docker host itself: `https://localhost:3443`
-- `https://192.168.1.25:3443`
-- or `https://econnect.local:3443`
-
-If you only use the WebUI on the Docker host itself, you can keep it even simpler:
-
-```yaml
-https_hosts: &https_hosts localhost
-https_ips: &https_ips ""
-```
-
-Then open:
-
-```text
-https://localhost:3443
-```
-
-If you change the IP or hostname after the first run, stop the stack, remove the volume ending in `_webapp_tls`, and start again so the certificate can be regenerated:
-
-```bash
-docker compose down
-docker volume ls | grep webapp_tls
-docker volume rm <your_project>_webapp_tls
-docker compose up -d
-```
-
-### Use The Find Website To Discover The LAN Server
-
-`find_website` stays developer-hosted. End users should not run it as part of their home stack. After the self-hosted runtime is healthy:
-
-1. Open [find.isharoverwhite.com](https://find.isharoverwhite.com) from a device on the same LAN as the E-Connect server.
-2. Keep the tab open so that browser session can probe the server discovery endpoints, primarily `http://<lan-host>:8000/web-assistant.js` and `http://<lan-host>:8000/discovery-bridge`.
-3. Click the result card to launch the local WebUI at `https://<lan-host>:3443`.
-4. If you want the alias-first fast path through `econnect.local`, set `https_ips` to the real LAN IP and rerun Compose with the `discovery-mdns` profile enabled.
-
-### Recommended Usage Flow
-
-1. **Bootstrap the instance**
-   Open `https://localhost:3443` or your configured HTTPS host, complete the first-time setup flow, and sign in with the new admin account.
-
-2. **Store reusable Wi-Fi credentials**
-   Go to `Settings -> Wi-Fi` and save the network your DIY nodes should use during initial boot.
-
-3. **Create a hardware project**
-   Open `Devices -> Create New Device`, then choose the board family, exact profile, area, and saved network.
-
-4. **Map GPIO and build firmware**
-   Continue through `Configs -> Pins -> Review -> Flash` to prepare a server-generated firmware build.
-
-5. **Onboard and manage devices**
-   Use the `Dashboard` or `Devices` screens to scan, approve, and manage devices directly in the WebUI.
-
-6. **Build automations**
-   Open `Automation` and compose rules through the visual `Trigger -> Condition -> Action` graph builder.
-
-### Values To Edit Directly In The Compose File
-
-The defaults still work out of the box, but for a real deployment you should update at least:
-
-```yaml
-x-user-config:
-  db_root_password: &db_root_password "your_root_password"
-  db_password: &db_password "your_app_password"
-  secret_key: &secret_key "your_long_random_secret_key"
-  https_hosts: &https_hosts localhost,econnect.local,e-connect.local
-  https_ips: &https_ips "192.168.1.25"
-  mqtt_image: &mqtt_image docker.io/ryzen30xx/econnect-mqtt:latest
-  server_image: &server_image docker.io/ryzen30xx/econnect-server:latest
-  webapp_image: &webapp_image docker.io/ryzen30xx/econnect-webapp:latest
-```
-
-The `mqtt_image`, `server_image`, and `webapp_image` fields usually do not need to be changed unless you want to pin a different image tag.
-
-### Run From Source
-
-If you want to build directly from the repository instead of the published Docker Hub images:
-
-```bash
-git clone https://github.com/isharoverwhite/Final-Project.git
-cd Final-Project
-docker compose up -d --build db mqtt server webapp
-```
-
-Then open `https://localhost:3443`.
-
-### Deployment Notes
-
-- `deploy/user/compose.yml` is the primary end-user artifact; `docker-compose.user.yml` remains the in-repo compatibility variant.
-- GitHub Actions `.github/workflows/end-user-images.yml` builds the three self-hosted images (`server`, `webapp`, and `mqtt`) and publishes them to Docker Hub when `main` changes in those delivery paths.
-- The publish workflow requires two repository secrets: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
-- `server` watches the latest release from the fixed trusted repo `econnectrelease/firmware` every 60 seconds by default through `FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS` and auto-downloads fresh templates into `/data/firmware-template/current`.
-- Docker Hub releases include both `latest` and immutable `sha-<commit>` tags. End users can pin `mqtt_image`, `server_image`, or `webapp_image` to a `sha-...` tag when they need rollback-friendly or fixed-version installs.
-- The primary HTTPS WebUI entrypoint is `:3443`.
-- Host `:8000` remains part of the self-hosted runtime because the public find website needs `/health`, `/web-assistant.js`, and `/discovery-bridge` on the user's LAN server.
-- The optional `discovery-mdns` profile publishes `econnect.local` from the same backend runtime image and expects `https_ips` to contain the real LAN IP.
-- On first access from a new device, the browser may warn about the self-signed certificate. Accept it for the exact internal host you chose for the WebUI.
-
-### License
-
-This repository is distributed under the proprietary terms in [`LICENSE`](./LICENSE). See [`REPOSITORY_PROTECTION.md`](./REPOSITORY_PROTECTION.md) for repository-protection and legal notes.
+<h2 id="tiếng-việt">🇻🇳 Tiếng Việt</h2>
+
+# E-Connect 🏠
+**E-Connect** là nền tảng smart home self-hosted, local-first giúp bạn dựng và vận hành hệ thống IoT trong mạng LAN mà không phụ thuộc vào cloud. Dự án cung cấp công cụ trực quan để quản lý thiết bị, cấu hình ESP32/ESP8266, và tạo automation dễ dàng! 🔌✨
+
+![E-Connect Dashboard](./docs/screenshots/readme/dashboard.png)
+
+## ✨ Tính Năng
+- **Local-First & Self-Hosted:** Đảm bảo quyền riêng tư và quyền kiểm soát hoàn toàn dữ liệu trong mạng nội bộ của bạn.
+- **DIY Provisioning:** Hỗ trợ cấu hình, map GPIO và flash firmware cho ESP32/ESP8266 trực tiếp trên trình duyệt.
+- **Visual Automations:** Trình tạo tự động hóa trực quan theo mô hình Trigger -> Condition -> Action.
+- **Quản Lý Tập Trung:** Dashboard quản lý theo khu vực (area), lưu trữ Wi-Fi dùng chung và theo dõi log hệ thống theo thời gian thực.
+- **MQTT-First:** Điều khiển nhanh, ổn định và bảo mật với MQTT broker được tích hợp sẵn.
+
+## 🚀 Bắt Đầu Nhanh
+
+**Cách 1: Dành cho người dùng (Khuyên dùng)**
+1. Tạo thư mục và tải file cấu hình:
+   ```bash
+   mkdir econnect && cd econnect
+   curl -fsSL https://raw.githubusercontent.com/isharoverwhite/Final-Project/main/deploy/user/compose.yml -o compose.yml
+   ```
+2. (Tùy chọn) Mở file `compose.yml` và chỉnh sửa các thông số mật khẩu, IP tại mục `x-user-config`.
+3. Khởi chạy hệ thống:
+   ```bash
+   docker compose up -d
+   ```
+4. Truy cập giao diện tại `https://localhost:3443` hoặc IP máy chủ của bạn. Có thể dùng [find.isharoverwhite.com](https://find.isharoverwhite.com) để tự động tìm server trong mạng LAN.
+
+**Cách 2: Chạy từ Source Code**
+Nếu bạn muốn build trực tiếp từ mã nguồn:
+1. Clone repository: `git clone https://github.com/isharoverwhite/Final-Project.git`
+2. Mở thư mục dự án: `cd Final-Project`
+3. Build và khởi chạy: `docker compose up -d --build db mqtt server webapp`
+4. Truy cập WebUI tại `https://localhost:3443`.
+
+## 🛠️ Đóng Góp
+Mọi đóng góp cho dự án đều được chào đón! Bạn có thể tạo Pull Request hoặc tham khảo [Hướng dẫn phát triển Extension](./docs/EXTENSIONS.md).
+
+<div align="center">Made with ❤️ for a private smart home experience</div>
