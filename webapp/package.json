@@ -6,7 +6,9 @@
     "dev": "node ./scripts/serve-standalone-https.mjs",
     "build": "next build",
     "start": "node ./scripts/serve-production-https.mjs",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test:e2e": "playwright test",
+    "test:e2e:list": "playwright test --list"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.21",

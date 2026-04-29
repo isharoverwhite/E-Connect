@@ -2,6 +2,7 @@
 
 // @ts-check
 import { test, expect } from '@playwright/test';
+import { ensurePlaywrightRuntime } from './support/e2e';
 
 const ESP8266_SAVED_DRAFT = {
   projectId: null,
@@ -18,24 +19,8 @@ test.describe('DIY Flasher Infinite Loop Regression Tests', () => {
   let authToken = '';
 
   test.beforeAll(async ({ request }) => {
-    // 1. Fetch a real access token from the backend
-    const username = process.env.TEST_USERNAME;
-    const password = process.env.TEST_PASSWORD;
-
-    if (!username || !password) {
-      console.log('Skipping test: Missing TEST_USERNAME or TEST_PASSWORD environment variables');
-      test.skip(true, 'Missing TEST_USERNAME or TEST_PASSWORD environment variables');
-      return;
-    }
-
-    const loginRes = await request.post('/api/v1/auth/token', {
-      form: { username, password }
-    });
-    
-    // We expect the seeded QA admin or configured test user to work
-    expect(loginRes.ok(), `Failed to login to get test token with user ${username}`).toBeTruthy();
-    const data = await loginRes.json();
-    authToken = data.access_token;
+    const runtime = await ensurePlaywrightRuntime(request);
+    authToken = runtime.token;
   });
 
   test.beforeEach(async ({ context }) => {
@@ -76,17 +61,16 @@ test.describe('DIY Flasher Infinite Loop Regression Tests', () => {
     await page.getByRole('heading', { name: 'ESP32-C3', exact: true }).click();
     await expect(page.getByText('Selected: ESP32-C3 DevKitM-1')).toBeVisible();
 
-    // The user needs an area to be selected to proceed. Wait for the API to auto-select the first area.
-    // Ensure the 'Next: Choose Config' button is enabled.
-    await page.getByLabel('Project Name').fill('Loop Regression Device');
-    const nextBtn = page.getByRole('button', { name: 'Next: Choose Config' });
+    // The user needs a board name, area, and Wi-Fi selection to proceed.
+    await page.getByLabel(/Board Name/i).fill('Loop Regression Device');
+    const nextBtn = page.getByRole('button', { name: /Next:\s*Configs/i });
     await expect(nextBtn).toBeEnabled({ timeout: 10000 });
     await nextBtn.click();
     
-    // In Step 2, we need a saved config. Create one.
-    await page.getByRole('button', { name: 'Create Config' }).click();
+    // In Step 2, create a new config entry for this board profile.
+    await page.getByRole('button', { name: 'Create Configuration' }).click();
     
-    const continueBtn = page.getByRole('button', { name: 'Continue to Pin Mapping' });
+    const continueBtn = page.getByRole('button', { name: /Next:\s*Pin Mapping/i });
     await expect(continueBtn).toBeEnabled({ timeout: 10000 });
     await continueBtn.click();
     
@@ -116,9 +100,10 @@ test.describe('DIY Flasher Infinite Loop Regression Tests', () => {
     await expect(page).toHaveURL(/.*\/devices\/diy$/, { timeout: 5000 });
 
     // 3. The new-device path must stay fresh instead of restoring the cached draft name/board.
-    await expect(page.getByLabel('Project Name')).toHaveValue('');
+    await expect(page.getByLabel(/Board Name/i)).toHaveValue('');
     await expect(page.getByText('Selected: DFRobot Beetle ESP32-C3')).toBeVisible();
-    await expect(page.getByText('Choose a board, enter a project name, then create or template a saved config.')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('Wi-Fi Network (Required for initial boot)')).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText('Assigned Area (Optional)')).toBeVisible();
 
     // 4. No depth loops or crashes
     const fatalErrors = errors.filter(e => 

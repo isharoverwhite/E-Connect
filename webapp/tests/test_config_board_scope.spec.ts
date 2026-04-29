@@ -1,6 +1,7 @@
 /* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
 
 import { test, expect, type APIRequestContext } from "@playwright/test";
+import { ensurePlaywrightRuntime } from "./support/e2e";
 
 type RoomRecord = {
   room_id: number;
@@ -68,25 +69,12 @@ test.describe("DIY config board scoping", () => {
   let accountPassword = "";
 
   test.beforeAll(async ({ request }) => {
-    const username = process.env.TEST_USERNAME;
-    const password = process.env.TEST_PASSWORD;
-
-    if (!username || !password) {
-      test.skip(true, "Missing TEST_USERNAME or TEST_PASSWORD environment variables");
-      return;
-    }
-
-    accountPassword = password;
-    const loginRes = await request.post("/api/v1/auth/token", {
-      form: { username, password },
-    });
-
-    expect(loginRes.ok(), `Failed to login with ${username}`).toBeTruthy();
-    const data = (await loginRes.json()) as { access_token: string };
-    authToken = data.access_token;
+    const runtime = await ensurePlaywrightRuntime(request);
+    accountPassword = runtime.credentials.password;
+    authToken = runtime.token;
   });
 
-  test("new-device flow clones a selected saved config when continuing to pin mapping", async ({
+  test("new-device flow loads the selected saved config without creating an unexpected clone", async ({
     context,
     page,
     request,
@@ -110,7 +98,7 @@ test.describe("DIY config board scoping", () => {
     const roomId = rooms[0].room_id;
     const wifiCredentialId = wifiCredentials[0].id;
     const projectName = `Board Scope Regression ${Date.now()}`;
-    const newProjectName = `Fresh Device ${Date.now()}`;
+    const freshBoardName = `Fresh Device ${Date.now()}`;
 
     const createPayload = {
       name: projectName,
@@ -141,29 +129,27 @@ test.describe("DIY config board scoping", () => {
 
       await page.goto("/devices/diy");
       await expect(page).toHaveURL(/\/devices\/diy$/);
-      await expect(page.getByLabel("Project Name")).toHaveValue("");
-      await expect(page.getByRole("button", { name: "Next: Choose Config" })).toBeDisabled();
+      await expect(page.getByLabel(/Board Name/i)).toHaveValue("");
+      await expect(page.getByRole("button", { name: /Next:\s*Configs/i })).toBeDisabled();
 
-      await page.getByLabel("Project Name").fill(newProjectName);
+      await page.getByLabel(/Board Name/i).fill(freshBoardName);
       await page.getByRole("heading", { name: "ESP32", exact: true }).click();
       await page.getByRole("button", { name: /ESP32 DevKit V1/i }).click();
 
-      const nextButton = page.getByRole("button", { name: "Next: Choose Config" });
+      const nextButton = page.getByRole("button", { name: /Next:\s*Configs/i });
       await expect(nextButton).toBeEnabled({ timeout: 10000 });
       await nextButton.click();
 
-      await expect(page.getByRole("button", { name: "Create Config" })).toBeVisible({ timeout: 10000 });
+      await expect(page.getByRole("button", { name: /Create.*Config/i })).toBeVisible({
+        timeout: 10000,
+      });
       await page.getByRole("button", { name: projectName }).click();
 
       await expect(
-        page.getByText(
-          `Loaded ${projectName} as a template. Keep or edit your current project name, then save this as a new config before continuing.`,
-        ),
+        page.getByText(`Loaded saved config ${projectName}.`),
       ).toBeVisible({ timeout: 10000 });
-      await expect(page.getByLabel("Config Name")).toHaveValue(newProjectName);
-      await expect(page.getByText("Template")).toBeVisible();
-      await expect(page.getByRole("button", { name: "Create Config" })).toBeVisible();
-      const continueButton = page.getByRole("button", { name: "Continue to Pin Mapping" });
+      await expect(page.getByRole("button", { name: "Save as New Config" })).toBeVisible();
+      const continueButton = page.getByRole("button", { name: /Next:\s*Pin Mapping/i });
       await expect(continueButton).toBeEnabled();
 
       await continueButton.click();
@@ -182,20 +168,17 @@ test.describe("DIY config board scoping", () => {
       expect(projectAfter.config.board_profile).toBe("esp32-devkit-v1");
 
       const projects = await listBoardProjects(request, authHeaders, "esp32-devkit-v1");
-      expect(projects.some((entry) => entry.id === project.id && entry.name === projectName)).toBeTruthy();
-      expect(projects.some((entry) => entry.name === newProjectName)).toBeTruthy();
+      expect(
+        projects.some((entry) => entry.id === project.id && entry.name === projectName),
+      ).toBeTruthy();
+      expect(projects.filter((entry) => entry.name === projectName)).toHaveLength(1);
+      expect(projects.some((entry) => entry.name === freshBoardName)).toBeFalsy();
     } finally {
       await deleteDiyProject(request, authHeaders, project.id, accountPassword);
-
-      const cleanupProjects = await listBoardProjects(request, authHeaders, "esp32-devkit-v1");
-      const clonedProject = cleanupProjects.find((entry) => entry.name === newProjectName);
-      if (clonedProject) {
-        await deleteDiyProject(request, authHeaders, clonedProject.id, accountPassword);
-      }
     }
   });
 
-  test("manually created config can still switch to another saved config before continuing", async ({
+  test("manually created config can switch to another saved config without creating an implicit third project", async ({
     context,
     page,
     request,
@@ -220,7 +203,6 @@ test.describe("DIY config board scoping", () => {
     const wifiCredentialId = wifiCredentials[0].id;
     const templateProjectName = `Switch Library ${Date.now()}`;
     const manualProjectName = `Manual Create ${Date.now()}`;
-    const switchedProjectName = `Switched Device ${Date.now()}`;
 
     const templateProject = await createDiyProject(request, authHeaders, {
       name: templateProjectName,
@@ -250,27 +232,24 @@ test.describe("DIY config board scoping", () => {
       await page.goto("/devices/diy");
       await expect(page).toHaveURL(/\/devices\/diy$/);
 
-      await page.getByLabel("Project Name").fill(manualProjectName);
+      await page.getByLabel(/Board Name/i).fill(manualProjectName);
       await page.getByRole("heading", { name: "ESP32", exact: true }).click();
       await page.getByRole("button", { name: /ESP32 DevKit V1/i }).click();
-      await page.getByRole("button", { name: "Next: Choose Config" }).click();
+      await page.getByRole("button", { name: /Next:\s*Configs/i }).click();
 
-      await page.getByRole("button", { name: "Create Config" }).click();
+      await page.getByRole("button", { name: /Create.*Config/i }).click();
       await expect(page.getByText(`Server draft saved as ${manualProjectName}.`)).toBeVisible({
         timeout: 10000,
       });
-      await expect(page.getByRole("button", { name: "Continue to Pin Mapping" })).toBeEnabled();
+      await expect(page.getByRole("button", { name: /Next:\s*Pin Mapping/i })).toBeEnabled();
 
       await page.getByRole("button", { name: templateProjectName }).click();
       await expect(
-        page.getByText(
-          `Loaded ${templateProjectName} as a template. Keep or edit your current project name, then save this as a new config before continuing.`,
-        ),
+        page.getByText(`Loaded saved config ${templateProjectName}.`),
       ).toBeVisible({ timeout: 10000 });
-      await expect(page.getByLabel("Config Name")).toHaveValue(manualProjectName);
+      await expect(page.getByRole("button", { name: "Save as New Config" })).toBeVisible();
 
-      await page.getByLabel("Config Name").fill(switchedProjectName);
-      const continueButton = page.getByRole("button", { name: "Continue to Pin Mapping" });
+      const continueButton = page.getByRole("button", { name: /Next:\s*Pin Mapping/i });
       await expect(continueButton).toBeEnabled();
       await continueButton.click();
 
@@ -279,12 +258,16 @@ test.describe("DIY config board scoping", () => {
       });
 
       const projects = await listBoardProjects(request, authHeaders, "esp32-devkit-v1");
-      expect(projects.some((entry) => entry.name === manualProjectName)).toBeTruthy();
-      expect(projects.some((entry) => entry.name === switchedProjectName)).toBeTruthy();
-      expect(projects.some((entry) => entry.id === templateProject.id && entry.name === templateProjectName)).toBeTruthy();
+      expect(projects.filter((entry) => entry.name === manualProjectName)).toHaveLength(1);
+      expect(
+        projects.some(
+          (entry) => entry.id === templateProject.id && entry.name === templateProjectName,
+        ),
+      ).toBeTruthy();
+      expect(projects.filter((entry) => entry.name === templateProjectName)).toHaveLength(1);
     } finally {
       const cleanupProjects = await listBoardProjects(request, authHeaders, "esp32-devkit-v1");
-      for (const targetName of [templateProjectName, manualProjectName, switchedProjectName]) {
+      for (const targetName of [templateProjectName, manualProjectName]) {
         const matchedProject = cleanupProjects.find((entry) => entry.name === targetName);
         if (matchedProject) {
           await deleteDiyProject(request, authHeaders, matchedProject.id, accountPassword);

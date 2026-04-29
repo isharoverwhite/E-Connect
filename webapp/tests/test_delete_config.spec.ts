@@ -1,20 +1,16 @@
 /* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
 
 import { test, expect } from '@playwright/test';
+import { ensurePlaywrightRuntime, loginViaUi } from './support/e2e';
 
 test.describe('Config management', () => {
-  test('Admin can delete config from another user', async ({ page }) => {
-    test.skip(!process.env.TEST_USERNAME || !process.env.TEST_PASSWORD, 'Requires TEST_USERNAME and TEST_PASSWORD');
+  test.beforeAll(async ({ request }) => {
+    await ensurePlaywrightRuntime(request);
+  });
 
-    // Navigate to dashboard
-    await page.goto('/login');
-    
-    // Login as an admin test account
-    await page.getByPlaceholder('Enter your username').fill(process.env.TEST_USERNAME!);
-    await page.getByRole('textbox', { name: "Password" }).fill(process.env.TEST_PASSWORD!);
-    await page.getByRole('button', { name: 'Sign In' }).click();
-    
-    // Wait for redirect to dashboard
+  test('Admin can delete config from another user', async ({ page }) => {
+    await loginViaUi(page);
+    await page.goto('/settings');
     await page.waitForURL(/\/settings$/);
     
     // Go to Configs
