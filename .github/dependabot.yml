@@ -1,0 +1,54 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+# Dependabot configuration for E-Connect repository.
+# Monitors pip (server), npm (webapp), pub (Flutter mobile), and GitHub Actions.
+
+version: 2
+updates:
+
+  # ── Python / pip ──────────────────────────────────────────────────────────
+  - package-ecosystem: "pip"
+    directory: "/server"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Ho_Chi_Minh"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  # ── Node.js / npm ─────────────────────────────────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/webapp"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Ho_Chi_Minh"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
+
+  # ── GitHub Actions ─────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Ho_Chi_Minh"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(deps)"
+      include: "scope"
