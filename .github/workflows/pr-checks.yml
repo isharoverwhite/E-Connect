@@ -11,7 +11,7 @@ jobs:
   changelog:
     name: Changelog Enforcer
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     steps:
       - uses: actions/checkout@v4
       - name: changelog (pull_request)
@@ -36,7 +36,7 @@ jobs:
   maintainer-can-modify:
     name: Ensure Maintainer Can Modify
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     steps:
       - name: Check (pull_request)
         run: |
