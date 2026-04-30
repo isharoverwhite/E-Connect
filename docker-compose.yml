@@ -138,20 +138,6 @@ services:
       server:
         condition: service_healthy
 
-  find_website:
-    build:
-      context: ./find_website
-      dockerfile: Dockerfile
-    image: econnect-find-website
-    container_name: e-connect-find-website
-    restart: always
-    environment:
-      TZ: ${TZ:-Asia/Ho_Chi_Minh}
-    ports:
-      - "${FIND_WEBSITE_PORT:-9123}:9123"
-    depends_on:
-      server:
-        condition: service_healthy
 
 volumes:
   db_data:
