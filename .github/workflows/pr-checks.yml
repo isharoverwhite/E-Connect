@@ -1,0 +1,115 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [ "main", "master" ]
+  pull_request_target:
+    branches: [ "main", "master" ]
+
+jobs:
+  changelog:
+    name: Changelog Enforcer
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: changelog (pull_request)
+        uses: dangoslen/changelog-enforcer@v3
+        with:
+          changeLogPath: 'CHANGELOG.md'
+
+  stale:
+    name: Close stale issues and PRs
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_target'
+    steps:
+      - name: stale (pull_request_target)
+        uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          stale-pr-message: 'This PR is stale because it has been open 30 days with no activity.'
+          close-pr-message: 'This PR was closed because it has been stalled for 14 days with no activity.'
+          days-before-stale: 30
+          days-before-close: 14
+
+  maintainer-can-modify:
+    name: Ensure Maintainer Can Modify
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Check (pull_request)
+        run: |
+          if [ "${{ github.event.pull_request.maintainer_can_modify }}" = "false" ]; then
+            echo "Error: Maintainer must be able to modify the pull request. Please check 'Allow edits from maintainers'."
+            exit 1
+          else
+            echo "Maintainer can modify check passed."
+          fi
+
+  npm-check:
+    name: NPM - Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get Extensions (pull_request)
+        run: |
+          if [ -d "Raycast extensions" ]; then
+            echo "Extensions directory found."
+          else
+            echo "No extensions to get."
+          fi
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ./webapp/package-lock.json
+      - name: NPM Install & Run Lint
+        working-directory: ./webapp
+        run: |
+          npm ci
+          npm run lint
+
+  pytest-check:
+    name: Server PyTest Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: ./server/requirements-dev.txt
+      - name: Install dependencies
+        working-directory: ./server
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+      - name: Run PyTest
+        working-directory: ./server
+        run: pytest tests/
+
+  pr-bot:
+    name: PR Bot
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request_target'
+    steps:
+      - name: PR Bot (pull_request_target)
+        uses: actions/labeler@v5
+        with:
+          repo-token: "${{ secrets.GITHUB_TOKEN }}"
+
+  socket-security:
+    name: Socket Security
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Project Report
+        uses: SocketDev/socket-basics@v1
+        with:
+          socket_security_api_key: ${{ secrets.SOCKET_SECURITY_TOKEN }}
+        continue-on-error: true # So it doesn't block if token is missing initially

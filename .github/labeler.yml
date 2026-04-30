@@ -1,0 +1,23 @@
+# PR Bot Labeler configuration
+# Assign labels based on modified files
+
+backend:
+  - changed-files:
+    - any-glob-to-any-file: 'server/**/*'
+
+frontend:
+  - changed-files:
+    - any-glob-to-any-file: 'webapp/**/*'
+
+mobile:
+  - changed-files:
+    - any-glob-to-any-file: 'econnect_mobile/**/*'
+
+docs:
+  - changed-files:
+    - any-glob-to-any-file: 'docs/**/*'
+    - any-glob-to-any-file: '*.md'
+
+docker:
+  - changed-files:
+    - any-glob-to-any-file: 'docker-compose*.yml'
