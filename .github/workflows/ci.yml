@@ -110,9 +110,15 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
+      - name: Build webapp for E2E
+        run: npm run build
+        env:
+          BACKEND_INTERNAL_URL: http://127.0.0.1:8000
+
       - name: Run Playwright suite
         env:
           ECONNECT_SERVER_PYTHON: python
+          ALLOW_INSECURE_HTTP: "1"
         run: npm run test:e2e
 
       - name: Upload Playwright artifacts

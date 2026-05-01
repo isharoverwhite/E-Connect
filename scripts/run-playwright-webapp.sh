@@ -22,4 +22,10 @@ export HTTPS_PORT="$WEBAPP_HTTPS_PORT"
 export INTERNAL_HTTP_PORT="$WEBAPP_INTERNAL_HTTP_PORT"
 export HOSTNAME="${HOSTNAME:-localhost}"
 
-exec npm run dev
+# In CI the dev server compilation takes too long (>3 min) and exceeds the
+# 180 s webServer timeout. Use the pre-built production server instead.
+if [[ "${CI:-}" == "true" ]]; then
+  exec npm start
+else
+  exec npm run dev
+fi
