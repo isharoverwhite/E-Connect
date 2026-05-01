@@ -37,7 +37,7 @@ export default defineConfig({
       url: `${webappBaseUrl}/login`,
       cwd: repoRoot,
       reuseExistingServer: !process.env.CI,
-      timeout: 180_000,
+      timeout: 240_000,
       ignoreHTTPSErrors: true,
     },
   ],

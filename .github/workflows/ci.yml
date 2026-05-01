@@ -119,6 +119,12 @@ jobs:
         env:
           ECONNECT_SERVER_PYTHON: python
           ALLOW_INSECURE_HTTP: "1"
+          # No Mosquitto in CI — point to a port with no listener so the backend
+          # MQTT client fails immediately instead of looping with reconnect spam.
+          MQTT_BROKER: "127.0.0.1"
+          MQTT_PORT: "18831"
+          # Prevent background network discovery scans from running during tests.
+          RUNTIME_NETWORK_REFRESH_INTERVAL_SECONDS: "3600"
         run: npm run test:e2e
 
       - name: Upload Playwright artifacts
