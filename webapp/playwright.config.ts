@@ -5,7 +5,11 @@ import { defineConfig } from "@playwright/test";
 
 const repoRoot = path.resolve(__dirname, "..");
 const backendHealthUrl = process.env.PLAYWRIGHT_BACKEND_URL ?? "http://127.0.0.1:8000/health";
-const webappBaseUrl = process.env.PLAYWRIGHT_BASE_URL ?? "https://localhost:3443";
+// In CI the webapp runs as a plain Next.js standalone server on HTTP port 3001
+// (no TLS wrapper). Locally it runs behind the HTTPS proxy on port 3443.
+const webappBaseUrl =
+  process.env.PLAYWRIGHT_BASE_URL ??
+  (process.env.CI ? "http://127.0.0.1:3001" : "https://localhost:3443");
 
 export default defineConfig({
   testDir: "./tests",
