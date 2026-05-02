@@ -1,38 +1,38 @@
 /* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
 
 import { test, expect } from '@playwright/test';
-import { ensurePlaywrightRuntime, getE2ECredentials } from './support/e2e';
+import { ensurePlaywrightRuntime } from './support/e2e';
 
 test.describe('WebSocket Realtime Dashboard', () => {
-  test.beforeAll(async ({ request }) => {
-    await ensurePlaywrightRuntime(request);
-  });
+  test('Happy Path: State change via MQTT reflects on UI via WS', async ({ page, context, request }) => {
+    // Resolve runtime inline — guarantees backend is ready and token is present
+    // before any navigation attempt.
+    const { token } = await ensurePlaywrightRuntime(request);
 
-  test('Happy Path: State change via MQTT reflects on UI via WS', async ({ page }) => {
-    const credentials = getE2ECredentials();
+    // Register the WebSocket listener BEFORE injecting auth and navigating.
+    // The listener captures any WS opened during or after the first navigation,
+    // so we must set it up first.
+    const wsPromise = page.waitForEvent('websocket', { timeout: 30_000 });
 
-    // Register the WebSocket listener BEFORE navigation begins so we cannot
-    // miss the event. loginViaUi() waits for the dashboard URL which means
-    // React has already hydrated and the WebSocket may already be open by the
-    // time a post-login listener is registered — causing a guaranteed timeout.
-    const wsPromise = page.waitForEvent('websocket', ws => ws.url().includes('/api/v1/ws'));
+    // Inject the token so AuthProvider navigates directly to the dashboard
+    // without going through /login. This ensures the WS open happens as part
+    // of the initial authenticated page load — the wsPromise listener is
+    // already active at this point.
+    await context.addInitScript((t: string) => {
+      window.localStorage.setItem('econnect_token', t);
+    }, token);
 
-    // Navigate to login and authenticate manually so the WS listener is active
-    // before AuthProvider opens the connection.
-    await page.goto('/login');
-    await page.getByPlaceholder('Enter your username').fill(credentials.username);
-    await page.getByPlaceholder('••••••••').fill(credentials.password);
-    await page.getByRole('button', { name: 'Sign In' }).click();
-    await page.waitForURL(/\/$/);
+    await page.goto('/');
+    await page.waitForURL(/^\/?$|\/$/);
 
-    // Now collect the WebSocket that was opened during/after authentication.
+    // Wait for the WebSocket that was opened during dashboard hydration.
     const ws = await wsPromise;
 
     // Verify connection success.
     expect(ws.url()).toContain('/api/v1/ws');
 
     // Make sure the dashboard shell loaded.
-    await expect(page.getByText('Device Overview')).toBeVisible();
+    await expect(page.getByText('Device Overview')).toBeVisible({ timeout: 15_000 });
 
     // Collect any polling requests made after the initial page load.
     // WebSocket replaces polling, so there should be at most 1 initial fetch.

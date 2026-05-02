@@ -65,21 +65,20 @@ async function deleteDiyProject(
 }
 
 test.describe("DIY config board scoping", () => {
-  let authToken = "";
-  let accountPassword = "";
-
-  test.beforeAll(async ({ request }) => {
-    const runtime = await ensurePlaywrightRuntime(request);
-    accountPassword = runtime.credentials.password;
-    authToken = runtime.token;
-  });
 
   test("new-device flow loads the selected saved config without creating an unexpected clone", async ({
     context,
     page,
     request,
   }) => {
-    test.skip(!authToken, "Auth token unavailable");
+    // Resolve runtime and inject token inline to avoid beforeAll/beforeEach
+    // race conditions where the token is still empty when beforeEach fires.
+    const runtime = await ensurePlaywrightRuntime(request);
+    const authToken = runtime.token;
+    const accountPassword = runtime.credentials.password;
+    await context.addInitScript((t: string) => {
+      window.localStorage.setItem('econnect_token', t);
+    }, authToken);
 
     const authHeaders = {
       Authorization: `Bearer ${authToken}`,
@@ -123,12 +122,10 @@ test.describe("DIY config board scoping", () => {
     const project = await createDiyProject(request, authHeaders, createPayload);
 
     try {
-      await context.addInitScript((token) => {
-        window.localStorage.setItem("econnect_token", token);
-      }, authToken);
-
       await page.goto("/devices/diy");
       await expect(page).toHaveURL(/\/devices\/diy$/);
+      // Wait for SVG builder hydration to complete before interacting with form.
+      await expect(page.getByText('Loading SVG builder...')).toBeHidden({ timeout: 15000 });
       await expect(page.getByLabel(/Board Name/i)).toHaveValue("");
       await expect(page.getByRole("button", { name: /Next:\s*Configs/i })).toBeDisabled();
 
@@ -183,7 +180,13 @@ test.describe("DIY config board scoping", () => {
     page,
     request,
   }) => {
-    test.skip(!authToken, "Auth token unavailable");
+    // Resolve runtime and inject token inline.
+    const runtime = await ensurePlaywrightRuntime(request);
+    const authToken = runtime.token;
+    const accountPassword = runtime.credentials.password;
+    await context.addInitScript((t: string) => {
+      window.localStorage.setItem('econnect_token', t);
+    }, authToken);
 
     const authHeaders = {
       Authorization: `Bearer ${authToken}`,
@@ -225,12 +228,10 @@ test.describe("DIY config board scoping", () => {
     });
 
     try {
-      await context.addInitScript((token) => {
-        window.localStorage.setItem("econnect_token", token);
-      }, authToken);
-
       await page.goto("/devices/diy");
       await expect(page).toHaveURL(/\/devices\/diy$/);
+      // Wait for SVG builder hydration to complete before interacting with form.
+      await expect(page.getByText('Loading SVG builder...')).toBeHidden({ timeout: 15000 });
 
       await page.getByLabel(/Board Name/i).fill(manualProjectName);
       await page.getByRole("heading", { name: "ESP32", exact: true }).click();
