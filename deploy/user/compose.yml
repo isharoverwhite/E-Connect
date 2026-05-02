@@ -14,12 +14,13 @@
 #   The public page scans from the user's browser on the same LAN. Do not add
 #   find_website to this self-hosted stack.
 #
-# Optional alias-first discovery:
-#   After setting `https_ips` to the server LAN IP, run:
-#        docker compose --profile discovery-mdns up -d
-#
 # Main WebUI:
 #   https://localhost:3443
+#
+# Built-in alias-first discovery:
+#   The `server` container runs on host networking so it can auto-detect the
+#   host LAN IP and publish `econnect.local` directly from the main app
+#   process. No separate discovery-mdns helper is required.
 #
 # Built-in extension discovery helper:
 #   The stack also starts a small host-network helper for extension protocols
@@ -33,9 +34,6 @@ x-user-config:
   # - secret_key
   # - https_ips if you open the WebUI from another phone/computer by LAN IP
   # - https_hosts if you use a LAN hostname such as econnect.local
-  # - https_ips also feeds the optional discovery-mdns profile for the public
-  #   find website alias-first scan
-  #
   # Real example for a home LAN server at 192.168.1.25:
   # - db_root_password: &db_root_password "HomeRoot!2026"
   # - db_password: &db_password "HomeApp!2026"
@@ -62,7 +60,6 @@ x-user-config:
 
   # HTTPS certificate coverage for the WebUI on port 3443.
   # Keep localhost if you open the UI on the Docker host itself.
-  # `https_ips` is also reused by the optional discovery-mdns profile.
   https_hosts: &https_hosts localhost,econnect.local,e-connect.local
   https_ips: &https_ips ""
 
@@ -108,11 +105,9 @@ services:
     pull_policy: always
     container_name: e-connect-server
     restart: always
-    ports:
-      # Host port 8000 serves the redirect root, /health, /web-assistant.js,
-      # and /discovery-bridge for the public find website running in the user's
-      # browser, without claiming host port 80.
-      - "8000:8000"
+    # Host networking lets the main app see the real LAN interfaces so it can
+    # auto-detect the reachable server IP and publish mDNS without a helper.
+    network_mode: host
     command:
       - python
       - -c
@@ -120,19 +115,19 @@ services:
         import os, urllib.parse
         user = urllib.parse.quote(os.environ["DB_USER"], safe="")
         password = urllib.parse.quote(os.environ["DB_PASSWORD"], safe="")
-        host = os.environ.get("DB_HOST", "db")
+        host = os.environ.get("DB_HOST", "127.0.0.1")
         name = os.environ["DB_NAME"]
         os.environ["DATABASE_URL"] = f"mysql+pymysql://{user}:{password}@{host}:3306/{name}"
         os.execvp("uvicorn", ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"])
     environment:
       TZ: *timezone
-      DB_HOST: db
+      DB_HOST: 127.0.0.1
       DB_NAME: *db_name
       DB_USER: *db_user
       DB_PASSWORD: *db_password
       SECRET_KEY: *secret_key
       ACCESS_TOKEN_EXPIRE_MINUTES: "43200"
-      MQTT_BROKER: mqtt
+      MQTT_BROKER: 127.0.0.1
       MQTT_PORT: "1883"
       MQTT_NAMESPACE: local
       FIRMWARE_PUBLIC_SCHEME: http
@@ -176,11 +171,15 @@ services:
       - "3443:3443"
     volumes:
       - webapp_tls:/app/.local-https
+    extra_hosts:
+      # Bridge-network containers need the host gateway alias to reach the
+      # host-network `server` service on Linux-class Docker hosts.
+      - "host.docker.internal:host-gateway"
     environment:
       TZ: *timezone
       ALLOW_INSECURE_HTTP: "1"
       NEXT_PUBLIC_API_URL: /api/v1
-      BACKEND_INTERNAL_URL: http://server:8000
+      BACKEND_INTERNAL_URL: http://host.docker.internal:8000
       HTTPS_HOSTS: *https_hosts
       HTTPS_IPS: *https_ips
       HTTPS_PORT: 3443
@@ -207,23 +206,6 @@ services:
     command: ["python", "/app/scripts/yeelight_discovery_helper.py"]
     environment:
       TZ: *timezone
-    depends_on:
-      server:
-        condition: service_healthy
-
-  discovery_mdns:
-    image: *server_image
-    pull_policy: always
-    command: ["python", "-m", "scripts.publish_mdns_alias"]
-    profiles: ["discovery-mdns"]
-    restart: always
-    network_mode: host
-    environment:
-      TZ: *timezone
-      MDNS_HOSTNAME: econnect.local
-      MDNS_ADVERTISED_IPS: *https_ips
-      MDNS_DISCOVERY_PORT: "8000"
-      MDNS_WEBAPP_PORT: "3443"
     depends_on:
       server:
         condition: service_healthy

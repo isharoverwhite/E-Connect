@@ -23,6 +23,7 @@ MDNS_WEBAPP_SERVICE_NAME_ENV = "MDNS_WEBAPP_SERVICE_NAME"
 
 DEFAULT_DISCOVERY_PORT = 8000
 DEFAULT_WEBAPP_PORT = 3443
+DEFAULT_AUTO_MDNS_HOSTNAME = "econnect.local"
 DEFAULT_DISCOVERY_SERVICE_NAME = "E-Connect Discovery"
 DEFAULT_WEBAPP_SERVICE_NAME = "E-Connect WebUI"
 DISCOVERY_PATH = "/web-assistant.js"
@@ -152,13 +153,14 @@ def _resolve_port(env_name: str, default: int) -> int:
 
 def resolve_mdns_registration_config(runtime_state: Mapping[str, object] | None) -> MdnsRegistrationConfig | None:
     raw_hostname = os.getenv(MDNS_HOSTNAME_ENV, "").strip()
-    if not raw_hostname:
-        return None
-
-    hostname = _normalize_mdns_hostname(raw_hostname)
     addresses = _parse_mdns_addresses(os.getenv(MDNS_ADVERTISED_IPS_ENV))
     if not addresses:
         addresses = _extract_runtime_ip_candidates(runtime_state)
+
+    if not raw_hostname and not addresses:
+        return None
+
+    hostname = _normalize_mdns_hostname(raw_hostname or DEFAULT_AUTO_MDNS_HOSTNAME)
 
     if not addresses:
         raise ValueError(

@@ -8,6 +8,7 @@ import signal
 import sys
 from contextlib import suppress
 
+from app.services.builder import resolve_runtime_firmware_network_state
 from app.services.mdns import MdnsPublisher, resolve_mdns_registration_config
 
 
@@ -36,14 +37,24 @@ async def _wait_for_shutdown() -> None:
 
 
 async def _run() -> int:
+    runtime_state = resolve_runtime_firmware_network_state()
     try:
-        config = resolve_mdns_registration_config(None)
+        config = resolve_mdns_registration_config(runtime_state)
     except ValueError as exc:
         logger.error("Discovery mDNS publisher disabled: %s", exc)
         return 1
 
     if config is None:
-        logger.error("Discovery mDNS publisher requires MDNS_HOSTNAME and MDNS_ADVERTISED_IPS.")
+        runtime_error = None
+        if isinstance(runtime_state, dict):
+            candidate = runtime_state.get("error")
+            if isinstance(candidate, str) and candidate.strip():
+                runtime_error = candidate.strip()
+
+        if runtime_error:
+            logger.error("Discovery mDNS publisher could not determine a LAN IP automatically: %s", runtime_error)
+        else:
+            logger.error("Discovery mDNS publisher could not determine a LAN IP automatically.")
         return 1
 
     publisher = MdnsPublisher()

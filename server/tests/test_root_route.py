@@ -148,6 +148,79 @@ def test_health_route_exposes_webapp_transport_from_runtime_network_targets(monk
     assert "stale_device_count" not in payload
 
 
+def test_health_route_promotes_request_runtime_ip_and_starts_mdns(monkeypatch):
+    started_configs = []
+    stopped_configs = []
+    promoted_state = None
+    registered_config = None
+
+    class DummyMdnsPublisher:
+        def __init__(self):
+            self.config = None
+
+        async def start(self, config):
+            self.config = config
+            started_configs.append(config)
+            return ()
+
+        async def stop(self):
+            if self.config is not None:
+                stopped_configs.append(self.config)
+
+    monkeypatch.delenv("MDNS_HOSTNAME", raising=False)
+    monkeypatch.delenv("MDNS_ADVERTISED_IPS", raising=False)
+    monkeypatch.setattr(main, "MdnsPublisher", DummyMdnsPublisher)
+    monkeypatch.setattr(
+        main,
+        "resolve_runtime_firmware_network_state",
+        lambda: {
+            "source": "startup_auto",
+            "targets": None,
+            "error": "Docker bridge startup auto-detect failed.",
+        },
+    )
+
+    with TestClient(app) as client:
+        app.state.firmware_network_state = {
+            "source": "startup_auto",
+            "targets": None,
+            "error": "Docker bridge startup auto-detect failed.",
+        }
+        app.state.firmware_network_audit = None
+
+        try:
+            response = client.get("/health", headers={"host": "192.168.8.44:8000"})
+            promoted_state = app.state.firmware_network_state
+            registered_config = app.state.mdns_registration_config
+        finally:
+            app.state.firmware_network_state = None
+            app.state.firmware_network_audit = None
+            app.state.mdns_publisher = None
+            app.state.mdns_registration_config = None
+
+    assert response.status_code == 200
+    assert response.json()["server_ip"] == "192.168.8.44"
+    assert promoted_state == {
+        "source": "request_runtime",
+        "targets": {
+            "advertised_host": "192.168.8.44",
+            "api_base_url": "http://192.168.8.44:8000/api/v1",
+            "mqtt_broker": "192.168.8.44",
+            "mqtt_port": 1883,
+            "target_key": "192.168.8.44|http://192.168.8.44:8000/api/v1|192.168.8.44|1883",
+        },
+        "error": None,
+    }
+    assert len(started_configs) == 1
+    assert stopped_configs == []
+    config = started_configs[0]
+    assert registered_config == config
+    assert config.hostname == "econnect.local"
+    assert config.addresses == ("192.168.8.44",)
+    assert config.discovery_port == 8000
+    assert config.webapp_port == 3443
+
+
 def test_refresh_runtime_network_state_updates_startup_auto_target(monkeypatch):
     refreshed_state = {
         "source": "startup_auto",

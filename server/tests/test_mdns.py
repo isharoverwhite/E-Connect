@@ -28,6 +28,30 @@ def test_resolve_mdns_registration_config_uses_runtime_ip_targets(monkeypatch):
     assert config.webapp_port == 3443
 
 
+def test_resolve_mdns_registration_config_defaults_hostname_when_runtime_ip_exists(monkeypatch):
+    monkeypatch.delenv("MDNS_HOSTNAME", raising=False)
+    monkeypatch.delenv("MDNS_ADVERTISED_IPS", raising=False)
+    monkeypatch.delenv("MDNS_DISCOVERY_PORT", raising=False)
+    monkeypatch.delenv("MDNS_WEBAPP_PORT", raising=False)
+
+    config = mdns.resolve_mdns_registration_config(
+        {
+            "targets": {
+                "advertised_host": "192.168.2.65",
+                "api_base_url": "https://192.168.2.65:3000/api/v1",
+                "mqtt_broker": "192.168.2.65",
+                "mqtt_port": 1883,
+            }
+        }
+    )
+
+    assert config is not None
+    assert config.hostname == "econnect.local"
+    assert config.addresses == ("192.168.2.65",)
+    assert config.discovery_port == 8000
+    assert config.webapp_port == 3443
+
+
 def test_resolve_mdns_registration_config_uses_explicit_ips_without_runtime_state(monkeypatch):
     monkeypatch.setenv("MDNS_HOSTNAME", "econnect.local")
     monkeypatch.setenv("MDNS_ADVERTISED_IPS", "192.168.2.65")

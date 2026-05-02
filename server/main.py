@@ -36,6 +36,7 @@ from app.services.builder import (
     consume_pending_firmware_template_notification,
     extract_runtime_firmware_network_targets,
     get_firmware_template_auto_poll_interval_seconds,
+    infer_firmware_network_targets,
     refresh_firmware_template_release,
     resolve_runtime_firmware_network_state,
     resolve_webapp_transport,
@@ -105,30 +106,26 @@ def _runtime_network_state_signature(runtime_state: object) -> tuple[str | None,
     return normalized_source, target_key, normalized_error
 
 
-def _refresh_runtime_network_state(app: FastAPI) -> dict[str, object] | None:
+def _apply_runtime_network_state(app: FastAPI, next_state: dict[str, object]) -> dict[str, object]:
     current_state = getattr(app.state, "firmware_network_state", None)
-    if not _should_refresh_runtime_network_state(current_state):
-        return current_state if isinstance(current_state, dict) else None
-
-    refreshed_state = resolve_runtime_firmware_network_state()
     current_signature = _runtime_network_state_signature(current_state)
-    refreshed_signature = _runtime_network_state_signature(refreshed_state)
-    if current_signature == refreshed_signature:
+    next_signature = _runtime_network_state_signature(next_state)
+    if current_signature == next_signature:
         if not isinstance(current_state, dict):
-            app.state.firmware_network_state = refreshed_state
-            mqtt_manager.set_runtime_network_state(refreshed_state)
-        return refreshed_state
+            app.state.firmware_network_state = next_state
+            mqtt_manager.set_runtime_network_state(next_state)
+        return next_state
 
     previous_targets = extract_runtime_firmware_network_targets(current_state)
-    next_targets = extract_runtime_firmware_network_targets(refreshed_state)
+    next_targets = extract_runtime_firmware_network_targets(next_state)
 
-    app.state.firmware_network_state = refreshed_state
-    mqtt_manager.set_runtime_network_state(refreshed_state)
+    app.state.firmware_network_state = next_state
+    mqtt_manager.set_runtime_network_state(next_state)
 
     if getattr(app.state, "database_ready", False) and not _using_overridden_database(app):
         db = SessionLocal()
         try:
-            app.state.firmware_network_audit = audit_runtime_firmware_target_mismatches(db, refreshed_state)
+            app.state.firmware_network_audit = audit_runtime_firmware_target_mismatches(db, next_state)
         finally:
             db.close()
 
@@ -152,7 +149,7 @@ def _refresh_runtime_network_state(app: FastAPI) -> dict[str, object] | None:
         )
 
     previous_error = current_signature[2]
-    next_error = refreshed_signature[2]
+    next_error = next_signature[2]
     if previous_error != next_error and next_error:
         logger.warning("Runtime firmware target refresh warning: %s", next_error)
         record_system_log(
@@ -166,7 +163,114 @@ def _refresh_runtime_network_state(app: FastAPI) -> dict[str, object] | None:
             },
         )
 
-    return refreshed_state
+    return next_state
+
+
+def _refresh_runtime_network_state(app: FastAPI) -> dict[str, object] | None:
+    current_state = getattr(app.state, "firmware_network_state", None)
+    if not _should_refresh_runtime_network_state(current_state):
+        return current_state if isinstance(current_state, dict) else None
+
+    refreshed_state = resolve_runtime_firmware_network_state()
+    return _apply_runtime_network_state(app, refreshed_state)
+
+
+async def _synchronize_mdns_publisher(app: FastAPI) -> None:
+    current_publisher = getattr(app.state, "mdns_publisher", None)
+    current_config = getattr(app.state, "mdns_registration_config", None)
+
+    try:
+        next_config = resolve_mdns_registration_config(getattr(app.state, "firmware_network_state", None))
+    except ValueError as exc:
+        logger.warning("mDNS alias publication disabled: %s", exc)
+        if isinstance(current_publisher, MdnsPublisher):
+            await current_publisher.stop()
+        app.state.mdns_publisher = None
+        app.state.mdns_registration_config = None
+        return
+
+    if next_config is None:
+        if isinstance(current_publisher, MdnsPublisher):
+            await current_publisher.stop()
+        app.state.mdns_publisher = None
+        app.state.mdns_registration_config = None
+        return
+
+    if isinstance(current_publisher, MdnsPublisher) and current_config == next_config:
+        return
+
+    if isinstance(current_publisher, MdnsPublisher):
+        await current_publisher.stop()
+
+    mdns_publisher = MdnsPublisher()
+    try:
+        await mdns_publisher.start(next_config)
+    except Exception:
+        logger.exception(
+            "mDNS alias publication failed for %s -> %s",
+            next_config.hostname,
+            ", ".join(next_config.addresses),
+        )
+        app.state.mdns_publisher = None
+        app.state.mdns_registration_config = None
+        return
+
+    app.state.mdns_publisher = mdns_publisher
+    app.state.mdns_registration_config = next_config
+    logger.info(
+        "Published mDNS alias %s -> %s (discovery %s, webapp %s)",
+        next_config.hostname,
+        ", ".join(next_config.addresses),
+        next_config.discovery_port,
+        next_config.webapp_port,
+    )
+
+
+def _should_promote_request_runtime_state(runtime_state: object) -> bool:
+    if not isinstance(runtime_state, dict):
+        return True
+
+    source = runtime_state.get("source")
+    if not isinstance(source, str):
+        return True
+
+    normalized_source = source.strip().lower()
+    return normalized_source in {"", "startup_auto", "request_runtime"}
+
+
+def _build_request_runtime_network_state(request: Request) -> dict[str, object] | None:
+    try:
+        targets = infer_firmware_network_targets(
+            request.headers,
+            request.url.scheme,
+            getattr(request.app.state, "firmware_network_state", None),
+        )
+    except ValueError:
+        return None
+
+    advertised_host = str(targets.get("advertised_host") or "").strip()
+    if _normalize_discovery_server_ip(advertised_host) is None:
+        return None
+
+    return {
+        "source": "request_runtime",
+        "targets": targets,
+        "error": None,
+    }
+
+
+async def _promote_request_runtime_network_state(request: Request) -> dict[str, object] | None:
+    current_state = getattr(request.app.state, "firmware_network_state", None)
+    if not _should_promote_request_runtime_state(current_state):
+        return current_state if isinstance(current_state, dict) else None
+
+    next_state = _build_request_runtime_network_state(request)
+    if next_state is None:
+        return current_state if isinstance(current_state, dict) else None
+
+    applied_state = _apply_runtime_network_state(request.app, next_state)
+    await _synchronize_mdns_publisher(request.app)
+    return applied_state
 
 
 def _serialize_firmware_network_state(app: FastAPI) -> dict[str, str] | None:
@@ -478,6 +582,7 @@ async def lifespan(app: FastAPI):
             await asyncio.sleep(RUNTIME_NETWORK_REFRESH_INTERVAL_SECONDS)
             try:
                 _refresh_runtime_network_state(app)
+                await _synchronize_mdns_publisher(app)
             except Exception:
                 logger.exception("Runtime network watchdog failed")
 
@@ -549,6 +654,7 @@ async def lifespan(app: FastAPI):
     app.state.database_ready = False
     app.state.database_error = None
     app.state.mdns_publisher = None
+    app.state.mdns_registration_config = None
     app.state.mqtt_started = False
     _set_app_timezone_context(app, apply_effective_timezone_context())
     app.state.server_started_at = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -565,30 +671,7 @@ async def lifespan(app: FastAPI):
     elif firmware_network_state and "error" in firmware_network_state:
         logger.warning("Firmware provisioning host auto-detect unavailable: %s", firmware_network_state["error"])
 
-    try:
-        mdns_config = resolve_mdns_registration_config(app.state.firmware_network_state)
-    except ValueError as exc:
-        logger.warning("mDNS alias publication disabled: %s", exc)
-    else:
-        if mdns_config is not None:
-            mdns_publisher = MdnsPublisher()
-            try:
-                await mdns_publisher.start(mdns_config)
-            except Exception:
-                logger.exception(
-                    "mDNS alias publication failed for %s -> %s",
-                    mdns_config.hostname,
-                    ", ".join(mdns_config.addresses),
-                )
-            else:
-                app.state.mdns_publisher = mdns_publisher
-                logger.info(
-                    "Published mDNS alias %s -> %s (discovery %s, webapp %s)",
-                    mdns_config.hostname,
-                    ", ".join(mdns_config.addresses),
-                    mdns_config.discovery_port,
-                    mdns_config.webapp_port,
-                )
+    await _synchronize_mdns_publisher(app)
 
     if _using_overridden_database(app):
         logger.info("Skipping startup database initialization because get_db is overridden")
@@ -741,7 +824,8 @@ async def database_error_handler(request: Request, exc: OperationalError):
     )
 
 @app.get("/health")
-def health_check(request: Request):
+async def health_check(request: Request):
+    await _promote_request_runtime_network_state(request)
     payload, status_code = _build_health_payload(request)
     if status_code == 200:
         return payload
@@ -759,23 +843,25 @@ def root_redirect(request: Request):
 
 
 @app.get("/web-assistant.js")
-def web_assistant_script(request: Request, callback: str):
+async def web_assistant_script(request: Request, callback: str):
     normalized_callback = callback.strip()
     if not normalized_callback or JSONP_CALLBACK_PATTERN.fullmatch(normalized_callback) is None:
         raise HTTPException(status_code=400, detail="Invalid callback name")
 
+    await _promote_request_runtime_network_state(request)
     payload, _status_code = _build_health_payload(request)
     javascript = f"{normalized_callback}({json.dumps(payload)});"
     return Response(content=javascript, media_type="application/javascript")
 
 
 @app.get("/discovery-bridge")
-def discovery_bridge(request: Request, target_origin: str, request_id: str):
+async def discovery_bridge(request: Request, target_origin: str, request_id: str):
     normalized_request_id = request_id.strip()
     if DISCOVERY_BRIDGE_REQUEST_ID_PATTERN.fullmatch(normalized_request_id) is None:
         raise HTTPException(status_code=400, detail="Invalid request id")
 
     normalized_target_origin = _normalize_target_origin(target_origin)
+    await _promote_request_runtime_network_state(request)
     payload, _status_code = _build_health_payload(request)
     message_payload = {
         "type": "econnect.discovery.bridge",
