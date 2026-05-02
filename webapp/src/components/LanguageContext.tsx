@@ -2,7 +2,7 @@
 
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, useRef } from "react";
+import React, { createContext, useContext, useState, useEffect, useLayoutEffect, useRef } from "react";
 import { fetchCurrentUser, updateUserLanguage } from "@/lib/api";
 import { getToken } from "@/lib/auth";
 import { translations, LanguageCode, TranslationKey } from "@/lib/i18n";
@@ -38,6 +38,10 @@ function getTextNodes(node: Node): Text[] {
             if (lowerClass.includes("icon") || lowerClass.includes("lucide")) {
                 return textNodes;
             }
+            // Skip wrapper spans injected by our own splitText animation
+            if (element.getAttribute("data-split-wrapper")) {
+                return textNodes;
+            }
         }
 
         for (let i = 0; i < node.childNodes.length; i++) {
@@ -46,171 +50,139 @@ function getTextNodes(node: Node): Text[] {
     }
     return textNodes;
 }
+// ─── splitText-style animation (anime.js inspired) ───────────────────────────
+// Each text node is wrapped in a clip container and its characters are split
+// into individual <span> elements that slide in from below (or above) with a
+// staggered delay, exactly like animejs.com/documentation/text/splittext.
 
-// Global state for the scramble animation loop
-let scrambleActive = false;
-let scrambleNodes: {
-    node: Text;
-    targetText: string;
-    sequences: string[][];
-    frame: number;
-}[] = [];
+const CHAR_DURATION_MS = 420;       // duration of a single char slide
+const CHAR_STAGGER_MS  = 18;        // delay added per char index
+const EASE_OUT_EXPO = (t: number) => (t === 1 ? 1 : 1 - Math.pow(2, -10 * t));
 
-const UPPER_ALPHA = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-const LOWER_ALPHA = "abcdefghijklmnopqrstuvwxyz";
-const NUMBERS = "0123456789";
+const oldTextsByParent = new Map<Element, string[]>();
 
-function getCharSequence(targetChar: string, charIndex: number): string[] {
-    if (!targetChar.trim()) return [targetChar];
-    
-    // Keep emojis and complex characters unchanged
-    if (targetChar.length > 1) {
-        return [targetChar];
-    }
-    // Match common emoji and icon Unicode blocks
-    if (/[\u2600-\u27BF\u2B50\u2B55\u23E9-\u23F3\u23F8-\u23FA]/.test(targetChar)) {
-        return [targetChar];
-    }
-    
-    let alpha = UPPER_ALPHA;
-    
-    // Check casing to keep scramble visually consistent
-    if (targetChar.toUpperCase() === targetChar.toLowerCase()) {
-        if (/[0-9]/.test(targetChar)) {
-            alpha = NUMBERS;
-        } else {
-            // It's punctuation or a symbol (e.g. '-', '.', ',')
-            return [targetChar];
+function captureOldTexts() {
+    oldTextsByParent.clear();
+    const nodes = getTextNodes(document.body);
+    nodes.forEach(node => {
+        if (node.parentElement) {
+            if (!oldTextsByParent.has(node.parentElement)) {
+                oldTextsByParent.set(node.parentElement, []);
+            }
+            oldTextsByParent.get(node.parentElement)!.push(node.nodeValue || "");
         }
-    } else if (targetChar === targetChar.toLowerCase()) {
-        alpha = LOWER_ALPHA;
-    } else {
-        alpha = UPPER_ALPHA;
-    }
+    });
+}
 
-    const seq: string[] = [];
-    
-    let targetIdx = alpha.indexOf(targetChar);
-    if (targetIdx === -1) {
-        targetIdx = 0; // fallback if target is not in A-Z (e.g., Vietnamese letters)
-    }
-    
-    // Base frames plus stagger to create a left-to-right sweep
-    const stagger = Math.min(20, charIndex);
-    const totalFrames = 10 + stagger;
-    
-    for (let i = 0; i < totalFrames - 1; i++) {
-        const distanceToTarget = totalFrames - 1 - i;
-        const charIdx = ((targetIdx - distanceToTarget) % alpha.length + alpha.length) % alpha.length;
-        seq.push(alpha[charIdx]);
-    }
-    seq.push(targetChar);
-    
-    return seq;
+/** Wraps a single text node with a splitText animation. */
+function animateSplitTextNode(node: Text, targetText: string, oldText: string) {
+    if (!node.isConnected || !targetText.trim()) return;
+
+    const parent = node.parentElement;
+    if (!parent) return;
+
+    // Build a wrapper that clips the characters.
+    // Must be inline-block (not inline) so overflow:hidden actually clips children.
+    const wrapper = document.createElement("span");
+    wrapper.style.cssText =
+        "display:inline-block; overflow:hidden; vertical-align:bottom; max-width:100%; position:relative;";
+    wrapper.setAttribute("data-split-wrapper", "1");
+
+    const newChars = Array.from(targetText);
+    const oldChars = Array.from(oldText || targetText); // fallback to target if no old text
+
+    newChars.forEach((ch, i) => {
+        if (ch === " ") {
+            wrapper.appendChild(document.createTextNode(" "));
+            return;
+        }
+
+        const oldCh = i < oldChars.length ? oldChars[i] : "";
+
+        // Per-character clip container (overflow:hidden + inline-block)
+        const clip = document.createElement("span");
+        clip.style.cssText =
+            "display:inline-block; overflow:hidden; vertical-align:bottom; position:relative;";
+
+        const spanOld = document.createElement("span");
+        spanOld.textContent = oldCh;
+        spanOld.style.cssText = "display:inline-block; position:absolute; left:0; top:0; will-change:transform, opacity; z-index:1;";
+
+        const spanNew = document.createElement("span");
+        spanNew.textContent = ch;
+        spanNew.style.cssText = "display:inline-block; will-change:transform; position:relative; z-index:2;";
+
+        // Initial positions for slot machine
+        spanNew.style.transform = `translateY(-100%)`;
+        spanOld.style.transform = `translateY(0%)`;
+
+        clip.appendChild(spanOld);
+        clip.appendChild(spanNew);
+        wrapper.appendChild(clip);
+
+        // Kick off the animation with stagger
+        const delay = i * CHAR_STAGGER_MS;
+        const start = performance.now() + delay;
+
+        const animate = (now: number) => {
+            if (!spanNew.isConnected) return;
+            const elapsed = Math.max(0, now - start);
+            if (elapsed <= 0) {
+                requestAnimationFrame(animate);
+                return;
+            }
+            const progress = Math.min(elapsed / CHAR_DURATION_MS, 1);
+            const eased = EASE_OUT_EXPO(progress);
+            
+            const currentNewY = -100 * (1 - eased);
+            const currentOldY = 100 * eased;
+
+            spanNew.style.transform = `translateY(${currentNewY.toFixed(2)}%)`;
+            spanOld.style.transform = `translateY(${currentOldY.toFixed(2)}%)`;
+            spanOld.style.opacity = `${1 - eased}`;
+
+            if (progress < 1) {
+                requestAnimationFrame(animate);
+            } else {
+                spanNew.style.transform = "translateY(0%)";
+                spanOld.style.transform = "translateY(100%)";
+                spanOld.style.opacity = "0";
+            }
+        };
+        requestAnimationFrame(animate);
+    });
+
+    // Replace the text node with our animated wrapper
+    parent.replaceChild(wrapper, node);
+
+    // After the longest animation finishes, unwrap back to plain text so
+    // React's reconciler doesn't encounter unexpected DOM structure.
+    const totalDuration = CHAR_DURATION_MS + newChars.length * CHAR_STAGGER_MS + 80;
+    setTimeout(() => {
+        if (wrapper.isConnected) {
+            const plain = document.createTextNode(targetText);
+            wrapper.parentElement?.replaceChild(plain, wrapper);
+        }
+    }, totalDuration);
 }
 
 function triggerGlobalScramble() {
     const nodes = getTextNodes(document.body);
-    
     nodes.forEach(node => {
-        let currentText = node.nodeValue || "";
-        if (!currentText.trim()) return;
+        const text = node.nodeValue || "";
+        if (!text.trim()) return;
 
-        const anyNode = node as Node & { _isScrambling?: boolean; _targetText?: string; _lastScrambledText?: string };
-        
-        if (anyNode._isScrambling) {
-            // Already scrambling. Did React update it?
-            if (anyNode._lastScrambledText !== currentText) {
-                // React updated it! Use the NEW text as the target!
-                anyNode._targetText = currentText;
-            } else {
-                // React didn't update it, keep the existing target
-                currentText = anyNode._targetText || currentText;
+        let oldText = "";
+        if (node.parentElement && oldTextsByParent.has(node.parentElement)) {
+            const arr = oldTextsByParent.get(node.parentElement)!;
+            if (arr.length > 0) {
+                oldText = arr.shift()!;
             }
         }
 
-        anyNode._isScrambling = true;
-        anyNode._targetText = currentText;
-        anyNode._lastScrambledText = currentText;
-        
-        // Remove existing entry if any
-        scrambleNodes = scrambleNodes.filter(n => n.node !== node);
-        
-        // Use Array.from to correctly iterate over Unicode characters including emojis
-        const chars = Array.from(currentText);
-        const charSequences: string[][] = [];
-        for (let i = 0; i < chars.length; i++) {
-            charSequences.push(getCharSequence(chars[i], i));
-        }
-
-        scrambleNodes.push({
-            node,
-            targetText: currentText,
-            sequences: charSequences,
-            frame: 0
-        });
+        animateSplitTextNode(node, text, oldText);
     });
-
-    if (!scrambleActive && scrambleNodes.length > 0) {
-        scrambleActive = true;
-        let lastTime = performance.now();
-        
-        const loop = (time: number) => {
-            if (!scrambleActive) return;
-            
-            // Limit frame rate to ~33fps (30ms) for smoother scrambling
-            if (time - lastTime < 30) {
-                requestAnimationFrame(loop);
-                return;
-            }
-            lastTime = time;
-
-            scrambleNodes = scrambleNodes.filter(item => {
-                const { node, targetText, sequences, frame } = item;
-                const anyNode = node as Node & { _isScrambling?: boolean; _lastScrambledText?: string };
-                
-                if (!node.isConnected) {
-                    anyNode._isScrambling = false;
-                    return false;
-                }
-
-                // If the DOM was modified by React since our last frame, abort!
-                if (node.nodeValue !== anyNode._lastScrambledText) {
-                    anyNode._isScrambling = false;
-                    return false;
-                }
-
-                let allFinished = true;
-                const newText = sequences.map(seq => {
-                    if (frame < seq.length - 1) {
-                        allFinished = false;
-                        return seq[frame];
-                    }
-                    return seq[seq.length - 1];
-                }).join("");
-                    
-                node.nodeValue = newText;
-                anyNode._lastScrambledText = newText;
-
-                if (allFinished) {
-                    node.nodeValue = targetText;
-                    anyNode._lastScrambledText = targetText;
-                    anyNode._isScrambling = false;
-                    return false; // remove from queue
-                }
-
-                item.frame += 1;
-                return true; // keep in queue
-            });
-
-            if (scrambleNodes.length > 0) {
-                requestAnimationFrame(loop);
-            } else {
-                scrambleActive = false;
-            }
-        };
-        requestAnimationFrame(loop);
-    }
+    oldTextsByParent.clear();
 }
 
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
@@ -279,6 +251,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
             const customEvent = event as CustomEvent;
             const profile = customEvent.detail;
             if (profile && profile.language && (profile.language === "en" || profile.language === "vi")) {
+                captureOldTexts();
                 setLanguageState(profile.language);
                 localStorage.setItem("app_language", profile.language);
             }
@@ -288,7 +261,11 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
         return () => window.removeEventListener('auth-profile-loaded', handleProfileLoaded);
     }, []);
 
-    useEffect(() => {
+    // useLayoutEffect fires BEFORE the browser paints — this ensures the char
+    // wrappers are inserted and initial translateY is set before anything is
+    // rendered to screen, preventing new-language text from flashing at position 0
+    // then sliding in (the overlap the user sees with useEffect).
+    useLayoutEffect(() => {
         if (!isInitialized) return;
         if (prevLanguage.current && prevLanguage.current !== language) {
             triggerGlobalScramble();
@@ -297,6 +274,7 @@ export function LanguageProvider({ children }: { children: React.ReactNode }) {
     }, [language, isInitialized]);
 
     const setLanguage = async (lang: LanguageCode) => {
+        captureOldTexts();
         setLanguageState(lang);
         localStorage.setItem("app_language", lang);
 
