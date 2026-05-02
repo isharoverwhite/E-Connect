@@ -4,34 +4,34 @@ import { test, expect } from '@playwright/test';
 import { ensurePlaywrightRuntime } from './support/e2e';
 
 test.describe('Config management', () => {
+  let authToken = '';
+
   test.beforeAll(async ({ request }) => {
-    await ensurePlaywrightRuntime(request);
+    const runtime = await ensurePlaywrightRuntime(request);
+    authToken = runtime.token;
   });
 
-  test('Admin can navigate to Settings > Configs without error', async ({ page, context }) => {
-    // Inject auth token so AuthProvider does not redirect to /login.
-    const { token } = await ensurePlaywrightRuntime(
-      // Re-use an APIRequestContext bound to the baseURL.
-      // The fixture exposes the token from beforeAll via the cached promise.
-      // We call the already-resolved promise here — no extra network round-trip.
-      page.request,
-    );
-    await context.addInitScript((t) => {
-      window.localStorage.setItem('econnect_token', t);
-    }, token);
+  // Inject the auth token before every test navigation so AuthProvider does
+  // not redirect to /login before the page can hydrate.
+  test.beforeEach(async ({ context }) => {
+    await context.addInitScript((token) => {
+      window.localStorage.setItem('econnect_token', token);
+    }, authToken);
+  });
 
+  test('Admin can navigate to Settings > Configs without error', async ({ page }) => {
     await page.goto('/settings');
     await page.waitForURL(/\/settings$/);
 
-    // Navigate to the Configs tab and verify the section loads.
-    await page.getByText('Configs').click();
+    // Navigate to the Configs tab. Use a tab/button role to avoid matching
+    // generic text in other parts of the page.
+    await page.getByRole('button', { name: 'Configs' }).click();
 
-    // The heading or the empty-state text should be visible — either means the
-    // tab rendered without a crash. We do NOT assert on specific config names
-    // because those depend on uncontrolled fixture state.
+    // Wait for the ConfigsPanel heading — this is always present once the tab
+    // renders and the API call for configs resolves (or fails). We do NOT assert
+    // on specific config names because those depend on uncontrolled fixture state.
     await expect(
-      page.locator('text=Unused').or(page.locator('text=Configuration')).first(),
-    ).toBeVisible({ timeout: 10_000 });
+      page.getByRole('heading', { name: 'Manage Saved Configs' }),
+    ).toBeVisible({ timeout: 15_000 });
   });
 });
-
