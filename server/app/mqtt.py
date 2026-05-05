@@ -2348,12 +2348,19 @@ class MQTTClientManager:
         *,
         latency_trace: dict[str, Any] | None = None,
     ) -> bool:
+        """Publish a command to a device via MQTT (non-blocking).
+
+        Uses wait_for_publish=False to avoid blocking FastAPI async handlers.
+        Board acknowledgement is handled asynchronously via state updates
+        rather than blocking the HTTP request on MQTT publish confirmation.
+        """
         kwargs: dict[str, Any] = {}
         if latency_trace is not None:
             kwargs["latency_trace"] = latency_trace
         return self.publish_json(
             self.command_topic(device_id),
             payload,
+            wait_for_publish=False,
             **kwargs,
         )
 

@@ -468,6 +468,9 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
   const [optimisticSliderValue, setOptimisticSliderValue] = useState<number | null>(null);
+  const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [commandCooldown, setCommandCooldown] = useState(false);
+  const COMMAND_COOLDOWN_MS = 300;
 
   const deliveryForPendingCommand = Boolean(
     config.last_delivery && pendingCmdId && config.last_delivery.command_id === pendingCmdId
@@ -503,8 +506,8 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
   const commandPending = pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced;
   const controlReady = isOnline;
   // Keep custom controls interactive once the HTTP request settles; MQTT/state ack can lag behind the online badge.
-  const toggleDisabled = requestPending || !controlReady;
-  const sliderDisabled = requestPending || !controlReady;
+  const toggleDisabled = requestPending || commandCooldown || !controlReady;
+  const sliderDisabled = requestPending || commandCooldown || !controlReady;
   const toggleLoading =
     commandPending ||
     optimisticToggleState !== null &&
@@ -584,9 +587,19 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
 
   const handleToggle = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const isChecked = e.target.checked;
+    if (commandCooldown) return;
     setRequestPending(true);
+    setCommandCooldown(true);
     setPendingCmdId(null);
     setOptimisticToggleState(isChecked);
+
+    const releaseCooldown = () => {
+      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+      cooldownTimerRef.current = setTimeout(() => {
+        setCommandCooldown(false);
+        cooldownTimerRef.current = null;
+      }, COMMAND_COOLDOWN_MS);
+    };
 
     try {
       const payload: { kind: string; pin: number; value: number; power?: boolean } = {
@@ -612,6 +625,8 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
       setRequestPending(false);
       setOptimisticToggleState(null);
       setOptimisticSliderValue(null);
+    } finally {
+      releaseCooldown();
     }
   };
 
@@ -1054,6 +1069,9 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
   const [optimisticSliderValue, setOptimisticSliderValue] = useState<number | null>(null);
+  const [commandCooldown, setCommandCooldown] = useState(false);
+  const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const COMMAND_COOLDOWN_MS = 300;
   const [optimisticRgb, setOptimisticRgb] = useState<[number, number, number] | null>(null);
   const [optimisticTone, setOptimisticTone] = useState<number | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -1092,8 +1110,8 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
 
   const controlReady = isOnline;
   const commandPending = pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced;
-  const toggleDisabled = requestPending || !controlReady;
-  const valueControlDisabled = requestPending || !controlReady;
+  const toggleDisabled = requestPending || commandCooldown || !controlReady;
+  const valueControlDisabled = requestPending || commandCooldown || !controlReady;
   const toggleLoading =
     commandPending ||
     optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
@@ -1184,10 +1202,21 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
 
   const handleToggle = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const isChecked = e.target.checked;
+    if (commandCooldown) return;
     setRequestPending(true);
+    setCommandCooldown(true);
     setPendingCmdId(null);
     setOptimisticToggleState(isChecked);
     setOptimisticSliderValue(!isChecked ? 0 : null);
+
+    const releaseCooldown = () => {
+      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+      cooldownTimerRef.current = setTimeout(() => {
+        setCommandCooldown(false);
+        cooldownTimerRef.current = null;
+      }, COMMAND_COOLDOWN_MS);
+    };
+
     try {
       const payload = { kind: "action", pin: 0, value: isChecked ? 1 : 0 };
       const response = await sendDeviceCommand(config.device_id, payload);
@@ -1202,6 +1231,8 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
       setRequestPending(false);
       setOptimisticToggleState(null);
       setOptimisticSliderValue(null);
+    } finally {
+      releaseCooldown();
     }
   };
 
@@ -1455,6 +1486,9 @@ function ExternalSwitchCard({ config, isOnline }: { config: DeviceConfig; isOnli
   const [requestPending, setRequestPending] = useState(false);
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
+  const [commandCooldown, setCommandCooldown] = useState(false);
+  const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const COMMAND_COOLDOWN_MS = 300;
 
   const effectiveCaps = getEffectiveExtensionCapabilities(config);
   const supportsPower = effectiveCaps.includes("power") || effectiveCaps.length === 0;
@@ -1466,7 +1500,7 @@ function ExternalSwitchCard({ config, isOnline }: { config: DeviceConfig; isOnli
   const toggleTargetMatched = optimisticToggleState !== null && baselineToggleState === optimisticToggleState;
   const commandStateSynced = optimisticToggleState === null || toggleTargetMatched;
   const commandPending = pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced;
-  const toggleDisabled = !supportsPower || requestPending || !isOnline;
+  const toggleDisabled = !supportsPower || requestPending || commandCooldown || !isOnline;
   const toggleLoading =
     commandPending ||
     optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
@@ -1504,9 +1538,20 @@ function ExternalSwitchCard({ config, isOnline }: { config: DeviceConfig; isOnli
 
   const handleToggle = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const isChecked = event.target.checked;
+    if (commandCooldown) return;
     setRequestPending(true);
+    setCommandCooldown(true);
     setPendingCmdId(null);
     setOptimisticToggleState(isChecked);
+
+    const releaseCooldown = () => {
+      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+      cooldownTimerRef.current = setTimeout(() => {
+        setCommandCooldown(false);
+        cooldownTimerRef.current = null;
+      }, COMMAND_COOLDOWN_MS);
+    };
+
     try {
       const response = await sendDeviceCommand(config.device_id, { kind: "action", pin: 0, value: isChecked ? 1 : 0 });
       setRequestPending(false);
@@ -1518,6 +1563,8 @@ function ExternalSwitchCard({ config, isOnline }: { config: DeviceConfig; isOnli
     } catch {
       setRequestPending(false);
       setOptimisticToggleState(null);
+    } finally {
+      releaseCooldown();
     }
   };
 
@@ -1573,6 +1620,9 @@ function ExternalFanCard({ config, isOnline }: { config: DeviceConfig; isOnline:
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
   const [optimisticSpeed, setOptimisticSpeed] = useState<number | null>(null);
+  const [commandCooldown, setCommandCooldown] = useState(false);
+  const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const COMMAND_COOLDOWN_MS = 300;
 
   const effectiveCaps = getEffectiveExtensionCapabilities(config);
   const supportsPower = effectiveCaps.includes("power");
@@ -1589,8 +1639,8 @@ function ExternalFanCard({ config, isOnline }: { config: DeviceConfig; isOnline:
     (optimisticToggleState === null || toggleTargetMatched) &&
     (optimisticSpeed === null || speedTargetMatched);
   const commandPending = pendingCmdId !== null && !deliveryForPendingCommand && !commandStateSynced;
-  const toggleDisabled = !supportsPower || requestPending || !isOnline;
-  const speedDisabled = !supportsSpeed || requestPending || !isOnline;
+  const toggleDisabled = !supportsPower || requestPending || commandCooldown || !isOnline;
+  const speedDisabled = !supportsSpeed || requestPending || commandCooldown || !isOnline;
   const toggleLoading =
     commandPending ||
     optimisticToggleState !== null && !toggleTargetMatched && !failedPendingCommand;
@@ -1646,12 +1696,23 @@ function ExternalFanCard({ config, isOnline }: { config: DeviceConfig; isOnline:
 
   const handleToggle = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const isChecked = event.target.checked;
+    if (commandCooldown) return;
     setRequestPending(true);
+    setCommandCooldown(true);
     setPendingCmdId(null);
     setOptimisticToggleState(isChecked);
     if (!isChecked) {
       setOptimisticSpeed(0);
     }
+
+    const releaseCooldown = () => {
+      if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
+      cooldownTimerRef.current = setTimeout(() => {
+        setCommandCooldown(false);
+        cooldownTimerRef.current = null;
+      }, COMMAND_COOLDOWN_MS);
+    };
+
     try {
       const response = await sendDeviceCommand(config.device_id, { kind: "action", pin: 0, value: isChecked ? 1 : 0 });
       setRequestPending(false);
@@ -1665,6 +1726,8 @@ function ExternalFanCard({ config, isOnline }: { config: DeviceConfig; isOnline:
       setRequestPending(false);
       setOptimisticToggleState(null);
       setOptimisticSpeed(null);
+    } finally {
+      releaseCooldown();
     }
   };
 

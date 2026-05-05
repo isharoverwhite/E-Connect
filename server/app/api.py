@@ -13,6 +13,8 @@ import datetime as stdlib_datetime
 import json
 import logging
 import os
+import threading
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 import asyncio
@@ -4556,6 +4558,32 @@ async def delete_device(device_id: str, db: Session = Depends(get_db), current_u
     db.commit()
     return {"status": "deleted", "detail": f"External device {device_id} removed from the dashboard."}
 
+# Per-device command rate limiter: prevent MQTT queue saturation from rapid-fire toggles
+_device_command_cooldown: dict[str, float] = {}
+_device_command_cooldown_lock = threading.Lock()
+_DEVICE_COMMAND_MIN_INTERVAL_SECONDS = float(
+    os.getenv("DEVICE_COMMAND_MIN_INTERVAL_SECONDS", "0.25")
+)
+
+
+def _check_device_command_cooldown(device_id: str) -> float | None:
+    """Return remaining cooldown seconds if command is too soon, or None if allowed."""
+    with _device_command_cooldown_lock:
+        now_ts = time.monotonic()
+        last_ts = _device_command_cooldown.get(device_id, 0.0)
+        elapsed = now_ts - last_ts
+        if elapsed < _DEVICE_COMMAND_MIN_INTERVAL_SECONDS:
+            return _DEVICE_COMMAND_MIN_INTERVAL_SECONDS - elapsed
+        _device_command_cooldown[device_id] = now_ts
+        # Periodic cleanup of stale entries
+        if len(_device_command_cooldown) > 1000:
+            cutoff = now_ts - 300.0
+            stale = [k for k, v in _device_command_cooldown.items() if v < cutoff]
+            for k in stale:
+                _device_command_cooldown.pop(k, None)
+        return None
+
+
 @router.post("/device/{device_id}/command")
 async def send_command(
     device_id: str,
@@ -4567,11 +4595,28 @@ async def send_command(
 ):
     """
     Send a command to the device via MQTT and record the publish result.
+
+    Rate-limited: commands to the same device must be spaced by at least
+    DEVICE_COMMAND_MIN_INTERVAL_SECONDS (default 0.25s) to prevent
+    MQTT broker queue saturation and board connection drops.
     """
     command = dict(command or {})
     api_received_at = datetime.now(timezone.utc).isoformat()
     supplied_password = command.pop("password", None)
     current_user_id = current_user.user_id
+
+    # Enforce per-device command rate limit for non-OTA commands
+    if command.get("action") != "ota":
+        remaining = _check_device_command_cooldown(device_id)
+        if remaining is not None:
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "error": "rate_limited",
+                    "message": f"Too many commands. Please wait {remaining:.1f}s before sending another command to this device.",
+                    "retry_after_seconds": round(remaining, 1),
+                },
+            )
 
     device = db.query(Device).filter(Device.device_id == device_id).first()
     if device is None:
