@@ -30,8 +30,8 @@ from app.sql_models import ExternalDevice
 
 
 YEELIGHT_PORT = 55443
-YEELIGHT_TIMEOUT_SECONDS = 0.5
-YEELIGHT_READ_TIMEOUT_WINDOWS = 3
+YEELIGHT_TIMEOUT_SECONDS = 1.0
+YEELIGHT_READ_TIMEOUT_WINDOWS = 1
 YEELIGHT_SESSION_IDLE_SECONDS = 15.0
 YEELIGHT_DISCOVERY_HOST = "239.255.255.250"
 YEELIGHT_DISCOVERY_PORT = 1982
@@ -626,17 +626,8 @@ def _reconcile_yeelight_command_after_failure(
             diagnostics.add("reconcile_state_match", state=observed_state)
         return observed_state
 
-    secondary_state = _retry_yeelight_command_with_power_preflight(
-        host=host,
-        prepared_command=prepared_command,
-        command=command,
-        capabilities=capabilities,
-        temperature_range=temperature_range,
-        diagnostics=diagnostics,
-    )
-    if secondary_state is not None:
-        return secondary_state
-
+    # Skip expensive retry-with-power-preflight loop.
+    # The next refresh cycle will correct any state mismatch.
     if diagnostics is not None:
         diagnostics.add("reconcile_state_mismatch", state=observed_state)
     return None
@@ -690,6 +681,16 @@ def _execute_yeelight_command_direct(
             prepared_command,
             known_power_state=known_power_state,
         )
+        # Read back actual lamp state instead of predicting.
+        try:
+            props_response = session.send("get_prop", list(YEELIGHT_PROBE_PROPERTIES))
+            return _build_yeelight_state(
+                props_response=props_response,
+                host=host,
+                capabilities=capabilities,
+            )
+        except ExternalDeviceRuntimeError:
+            pass
     return _build_yeelight_predicted_state(
         host=host,
         previous_state=previous_state,
@@ -1113,11 +1114,27 @@ def _emit_yeelight_diagnostics(diagnostics: _YeelightDiagnostics | None, *, host
     )
 
 
+_YEELIGHT_DISCOVERY_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_YEELIGHT_DISCOVERY_CACHE_TTL_SECONDS = 60.0
+
+
 def _discover_yeelight_metadata(host: str) -> dict[str, Any] | None:
+    now = time.monotonic()
+    cached = _YEELIGHT_DISCOVERY_CACHE.get(host)
+    if cached is not None:
+        cached_at, metadata = cached
+        if now - cached_at < _YEELIGHT_DISCOVERY_CACHE_TTL_SECONDS:
+            return metadata
+        del _YEELIGHT_DISCOVERY_CACHE[host]
+
     discovery = _discover_yeelight_metadata_via_udp(host)
     if discovery is not None:
+        _YEELIGHT_DISCOVERY_CACHE[host] = (now, discovery)
         return discovery
-    return _discover_yeelight_metadata_via_helper(host)
+    discovery = _discover_yeelight_metadata_via_helper(host)
+    if discovery is not None:
+        _YEELIGHT_DISCOVERY_CACHE[host] = (now, discovery)
+    return discovery
 
 
 def _discover_yeelight_metadata_via_udp(host: str) -> dict[str, Any] | None:

@@ -1460,7 +1460,7 @@ def test_execute_external_device_command_ignores_async_notification_frames(monke
     assert execution.state["brightness"] == 128
     assert execution.state["ip_address"] == "192.168.1.55"
     assert execution.state["capabilities"] == ["power", "brightness"]
-    assert [payload["method"] for payload in fake_socket.sent_payloads] == ["set_bright"]
+    assert [payload["method"] for payload in fake_socket.sent_payloads] == ["set_bright", "get_prop"]
     assert fake_socket.closed is False
 
 
@@ -1514,7 +1514,7 @@ def test_execute_external_device_command_supports_rgb_and_color_temperature(monk
     )
 
     assert rgb_execution.state["rgb"] == {"r": 255, "g": 0, "b": 0}
-    assert [payload["method"] for payload in rgb_socket.sent_payloads] == ["set_rgb"]
+    assert [payload["method"] for payload in rgb_socket.sent_payloads] == ["set_rgb", "get_prop"]
 
     temperature_socket = FakeSocket(
         [
@@ -1546,7 +1546,7 @@ def test_execute_external_device_command_supports_rgb_and_color_temperature(monk
     )
 
     assert ambient_execution.state["color_temperature"] == 5000
-    assert [payload["method"] for payload in temperature_socket.sent_payloads] == ["set_ct_abx"]
+    assert [payload["method"] for payload in temperature_socket.sent_payloads] == ["set_ct_abx", "get_prop"]
 
 
 def test_execute_external_device_command_enriches_legacy_color_schema_with_tone(monkeypatch):
@@ -1599,7 +1599,8 @@ def test_execute_external_device_command_enriches_legacy_color_schema_with_tone(
         {"kind": "action", "pin": 0, "rgb": {"r": 255, "g": 0, "b": 0}},
     )
 
-    assert execution.state["color_temperature"] == 4000
+    # Real lamp reports ct=4200 (was 4000 default with old predicted-state logic).
+    assert execution.state["color_temperature"] == 4200
     assert execution.state["capabilities"] == ["power", "brightness", "rgb", "color_temperature"]
 
 
@@ -1656,7 +1657,7 @@ def test_execute_external_device_command_powers_on_before_tone_when_last_state_i
     )
 
     assert execution.state["color_temperature"] == 4200
-    assert [payload["method"] for payload in fake_socket.sent_payloads] == ["set_power", "set_ct_abx"]
+    assert [payload["method"] for payload in fake_socket.sent_payloads] == ["set_power", "set_ct_abx", "get_prop"]
 
 
 def test_probe_external_device_state_reads_actual_props(monkeypatch):
@@ -1893,17 +1894,19 @@ def test_execute_external_device_command_secondary_retry_no_longer_raises_name_e
     )
     monkeypatch.setattr(runtime_module, "_probe_yeelight_state", reconciled_probe)
 
-    execution = execute_external_device_command(
-        device,
-        {"kind": "action", "pin": 0, "brightness": 115},
-    )
+    # Reconciliation now skips the retry-with-power-preflight loop.
+    # The probe returns state that doesn't match the command (brightness=40 vs 115),
+    # and since discovery succeeds, the error is raised.
+    from app.services.external_runtime import ExternalDeviceRuntimeError
 
-    assert execution.state["brightness"] == 115
-    assert [payload["method"] for payload in fake_socket.sent_payloads] == [
-        "set_power",
-        "set_bright",
-    ]
-    assert reconciled_probe.call_count == 2
+    with pytest.raises(ExternalDeviceRuntimeError) as exc_info:
+        execute_external_device_command(
+            device,
+            {"kind": "action", "pin": 0, "brightness": 115},
+        )
+    assert "timed out" in str(exc_info.value)
+    assert reconciled_probe.call_count == 1
+    assert fake_socket.sent_payloads == []
 
 
 def test_collect_yeelight_diagnostics_includes_discovery_and_timeout_trace(monkeypatch):
@@ -2014,11 +2017,12 @@ def test_extension_runtime_reuses_per_host_session_after_late_reply(monkeypatch)
 
         def recv(self, _size: int) -> bytes:
             self.recv_calls += 1
-            if self.recv_calls <= 3:
+            # DEFAULT_READ_TIMEOUT_WINDOWS=1: each probe gets 1 recv attempt.
+            if self.recv_calls == 1:
                 raise TimeoutError("timed out")
-            if self.recv_calls == 4:
+            if self.recv_calls == 2:
                 return b'{"id":1,"result":["on","60","4200","0","mono","0","0","2"]}\r\n'
-            if self.recv_calls == 5:
+            if self.recv_calls == 3:
                 return b'{"id":2,"result":["on","60","4200","0","mono","0","0","2"]}\r\n'
             return b""
 

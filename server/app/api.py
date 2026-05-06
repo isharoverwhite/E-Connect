@@ -4643,6 +4643,12 @@ async def send_command(
             scope_key=_build_external_command_scope_key(external_device.device_id),
         )
 
+        # Mark state as transitioning so UI shows a pending indicator
+        # instead of stale cached brightness/color values.
+        transitioning_state = dict(external_device.last_state if isinstance(external_device.last_state, dict) else {})
+        transitioning_state["_transitioning"] = True
+        _persist_external_runtime_state(db, external_device, state=transitioning_state)
+
         background_tasks.add_task(
             _execute_external_device_command_task,
             _background_session_factory(db),
