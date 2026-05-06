@@ -97,6 +97,8 @@ services:
       - "3443:3443"
     volumes:
       - webapp_tls:/app/.local-https
+    extra_hosts:
+      - "server:host-gateway"
     environment:
       TZ: ${TZ:-Asia/Ho_Chi_Minh}
       ALLOW_INSECURE_HTTP: "1"
