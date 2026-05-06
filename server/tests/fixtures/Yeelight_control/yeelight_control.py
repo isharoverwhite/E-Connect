@@ -487,8 +487,6 @@ def _probe_yeelight_state(
             capabilities=capabilities,
         )
     except ExtensionRuntimeError as exc:
-        if exc.connection_failed:
-            raise
         discovery = _discover_yeelight_metadata(host)
         if discovery is None:
             raise

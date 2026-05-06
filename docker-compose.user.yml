@@ -149,6 +149,8 @@ services:
       MDNS_DISCOVERY_PORT: "8000"
       MDNS_WEBAPP_PORT: "3443"
       HOST_OS_ROOT: /hostfs
+      EXTENSIONS_DATA_DIR: /data/extensions
+      ECONNECT_YEELIGHT_DISCOVERY_HELPER_URL: http://127.0.0.1:8915
     volumes:
       - server_data:/data
       # Optional host storage visibility for the System Health screen.

@@ -1712,7 +1712,7 @@ def test_probe_external_device_state_reads_actual_props(monkeypatch):
     assert [payload["method"] for payload in fake_socket.sent_payloads] == ["get_prop"]
 
 
-def test_probe_external_device_state_does_not_fallback_to_discovery_when_tcp_connect_fails(monkeypatch):
+def test_probe_external_device_state_falls_back_to_discovery_when_tcp_connect_fails(monkeypatch):
     from app.services.external_runtime import ExternalDeviceRuntimeError
 
     def raise_host_down(*_args, **_kwargs):
@@ -1746,6 +1746,42 @@ def test_probe_external_device_state_does_not_fallback_to_discovery_when_tcp_con
             "rgb": "16711680",
             "color_mode": "1",
         },
+    )
+
+    result = probe_external_device_state(device)
+    state = result.state
+    assert state["power"] == "on"
+    assert state["model"] == "colorb"
+    assert state["provider"] == "Yeelight"
+    assert state["ip_address"] == "192.168.1.88"
+
+
+def test_probe_external_device_state_raises_when_tcp_fails_and_discovery_fails(monkeypatch):
+    from app.services.external_runtime import ExternalDeviceRuntimeError
+
+    def raise_host_down(*_args, **_kwargs):
+        raise OSError("[Errno 64] Host is down")
+
+    monkeypatch.setattr("app.services.external_runtime.socket.create_connection", raise_host_down)
+
+    extension = build_runtime_backed_extension()
+    device = ExternalDevice(
+        provider="Yeelight",
+        config={"ip_address": "192.168.1.88"},
+        schema_snapshot={
+            "display": {
+                "card_type": "light",
+                "capabilities": ["power", "brightness", "rgb", "color_temperature"],
+                "temperature_range": {"min": 1700, "max": 6500},
+            }
+        },
+    )
+    device.installed_extension = extension
+    runtime_module = load_test_runtime_module(extension)
+    monkeypatch.setattr(
+        runtime_module,
+        "_discover_yeelight_metadata",
+        lambda _host: None,
     )
 
     with pytest.raises(ExternalDeviceRuntimeError) as exc_info:

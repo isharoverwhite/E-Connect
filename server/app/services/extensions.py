@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import zipfile
@@ -12,7 +13,12 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 
-EXTENSIONS_DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "extensions"
+EXTENSIONS_DATA_DIR = Path(
+    os.getenv(
+        "EXTENSIONS_DATA_DIR",
+        str(Path(__file__).resolve().parents[1] / "data" / "extensions"),
+    )
+)
 EXTENSION_PACKAGES_DIR = EXTENSIONS_DATA_DIR / "packages"
 EXTENSION_EXTRACTED_DIR = EXTENSIONS_DATA_DIR / "extracted"
 MAX_EXTENSION_ARCHIVE_BYTES = 5 * 1024 * 1024
