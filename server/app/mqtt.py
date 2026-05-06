@@ -996,6 +996,7 @@ class MQTTClientManager:
         self.client = mqtt.Client(
             mqtt.CallbackAPIVersion.VERSION2,
             client_id=self.client_id,
+            clean_session=False,
         )
         self.client.on_connect = self.on_connect
         self.client.on_message = self.on_message
@@ -1630,10 +1631,10 @@ class MQTTClientManager:
         was_connected = self.connected
         self.connected = True
         logger.info("Successfully connected to MQTT broker")
-        client.subscribe(STATE_TOPIC_SUBSCRIPTION)
-        client.subscribe(REGISTER_TOPIC_SUBSCRIPTION)
-        logger.info("Subscribed to %s", STATE_TOPIC_SUBSCRIPTION)
-        logger.info("Subscribed to %s", REGISTER_TOPIC_SUBSCRIPTION)
+        client.subscribe(STATE_TOPIC_SUBSCRIPTION, qos=1)
+        client.subscribe(REGISTER_TOPIC_SUBSCRIPTION, qos=1)
+        logger.info("Subscribed to %s (qos=1)", STATE_TOPIC_SUBSCRIPTION)
+        logger.info("Subscribed to %s (qos=1)", REGISTER_TOPIC_SUBSCRIPTION)
         if not was_connected:
             record_system_log(
                 event_code="mqtt_connected",
