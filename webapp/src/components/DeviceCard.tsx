@@ -1263,6 +1263,26 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
     }
   };
 
+  const handleToneCommit = async (tone: number) => {
+    setRequestPending(true);
+    setPendingCmdId(null);
+    setAdvancedModeOverride("temperature");
+    setOptimisticTone(tone);
+    try {
+      const payload = { kind: "action", pin: 0, color_temperature: Math.round(tone) };
+      const response = await sendDeviceCommand(config.device_id, payload);
+      setRequestPending(false);
+      if (response && response.status === "failed") {
+        setOptimisticTone(null);
+      } else {
+        setPendingCmdId(response?.command_id || null);
+      }
+    } catch {
+      setRequestPending(false);
+      setOptimisticTone(null);
+    }
+  };
+
   const scheduleToneValue = (tone: number, immediate = false) => {
     setPendingCmdId(null);
     setAdvancedModeOverride("temperature");
@@ -1272,14 +1292,14 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
 
   const switchMode = (mode: ExtensionAdvancedMode) => {
     if (visibleAdvancedMode === mode) return;
-    
+
     setAdvancedModeOverride(mode);
-    
+
     if (isOnline && !valueControlDisabled) {
       if (mode === "color") {
         handleRgbCommit(rgbValue);
       } else if (mode === "temperature") {
-        scheduleToneValue(toneValue, true);
+        handleToneCommit(toneValue);
       }
     }
   };
