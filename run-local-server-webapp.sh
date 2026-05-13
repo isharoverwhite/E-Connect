@@ -8,7 +8,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="$ROOT_DIR/server"
 WEBAPP_DIR="$ROOT_DIR/webapp"
 
-SERVER_PYTHON="${ECONNECT_SERVER_PYTHON:-$SERVER_DIR/venv/bin/python}"
+DEFAULT_SERVER_PYTHON="$SERVER_DIR/.venv/bin/python"
+LEGACY_SERVER_PYTHON="$SERVER_DIR/venv/bin/python"
+SERVER_PYTHON="${ECONNECT_SERVER_PYTHON:-$DEFAULT_SERVER_PYTHON}"
 START_DOCKER_DEPS="${ECONNECT_START_DOCKER_DEPS:-1}"
 
 SERVER_HOST="${ECONNECT_SERVER_HOST:-0.0.0.0}"
@@ -292,8 +294,11 @@ trap cleanup EXIT INT TERM
 require_command bash
 require_command lsof
 require_command npm
+if [[ "$SERVER_PYTHON" == "$DEFAULT_SERVER_PYTHON" && ! -x "$SERVER_PYTHON" && -x "$LEGACY_SERVER_PYTHON" ]]; then
+  SERVER_PYTHON="$LEGACY_SERVER_PYTHON"
+fi
 [[ -x "$SERVER_PYTHON" ]] || {
-  echo "Missing backend Python runtime: $SERVER_PYTHON" >&2
+  echo "Missing backend Python runtime. Checked: $SERVER_PYTHON" >&2
   exit 1
 }
 [[ -d "$WEBAPP_DIR/node_modules" ]] || {

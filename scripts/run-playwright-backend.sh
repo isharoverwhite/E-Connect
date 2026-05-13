@@ -6,7 +6,8 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER_DIR="$ROOT_DIR/server"
-DEFAULT_SERVER_PYTHON="$SERVER_DIR/venv/bin/python"
+DEFAULT_SERVER_PYTHON="$SERVER_DIR/.venv/bin/python"
+LEGACY_SERVER_PYTHON="$SERVER_DIR/venv/bin/python"
 SERVER_PORT="${ECONNECT_SERVER_PORT:-8000}"
 PLAYWRIGHT_DB_PATH="${ECONNECT_PLAYWRIGHT_DB_PATH:-$ROOT_DIR/.codex-artifacts/playwright/econnect-e2e.sqlite3}"
 
@@ -14,6 +15,8 @@ if [[ -n "${ECONNECT_SERVER_PYTHON:-}" ]]; then
   SERVER_PYTHON="$ECONNECT_SERVER_PYTHON"
 elif [[ -x "$DEFAULT_SERVER_PYTHON" ]]; then
   SERVER_PYTHON="$DEFAULT_SERVER_PYTHON"
+elif [[ -x "$LEGACY_SERVER_PYTHON" ]]; then
+  SERVER_PYTHON="$LEGACY_SERVER_PYTHON"
 elif command -v python3 >/dev/null 2>&1; then
   SERVER_PYTHON="$(command -v python3)"
 elif command -v python >/dev/null 2>&1; then
