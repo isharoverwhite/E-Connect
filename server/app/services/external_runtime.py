@@ -43,6 +43,7 @@ YEELIGHT_DISCOVERY_HELPER_PATH = "/yeelight/discover"
 YEELIGHT_DISCOVERY_HELPER_TIMEOUT_SECONDS = 1.5
 YEELIGHT_TRANSITION_MS = 150
 YEELIGHT_RECONCILE_DELAY_SECONDS = 0.15
+YEELIGHT_POST_COMMAND_PROBE_DELAY_SECONDS = 0.25
 DEFAULT_LIGHT_CAPABILITIES = ("power", "brightness")
 YEELIGHT_SCHEMA_CAPABILITY_HINTS = {
     "yeelight_white_light": ("power", "brightness"),
@@ -293,7 +294,7 @@ class _YeelightLanSession:
         state.lock.release()
         self._state = None
 
-    def send(self, method_name: str, params: list[Any]) -> dict[str, Any]:
+    def send(self, method_name: str, params: list[Any], *, expect_reply: bool = True) -> dict[str, Any]:
         state = self._require_state()
         if state.socket is None:
             raise ExternalDeviceRuntimeError("Yeelight session is not connected.", mark_offline=True)
@@ -308,9 +309,12 @@ class _YeelightLanSession:
                     "send",
                     request_id=request_id,
                     method=method_name,
+                    expect_reply=expect_reply,
                     payload=encoded_payload.decode("utf-8", errors="replace").strip(),
                 )
             state.socket.sendall(encoded_payload)
+            if not expect_reply:
+                return {"id": request_id}
             return self._read_matching_reply(request_id)
         except TimeoutError as exc:
             if self._diagnostics is not None:
@@ -681,6 +685,8 @@ def _execute_yeelight_command_direct(
             prepared_command,
             known_power_state=known_power_state,
         )
+        # Allow the lamp to settle after the command (especially smooth transitions).
+        time.sleep(YEELIGHT_POST_COMMAND_PROBE_DELAY_SECONDS)
         # Read back actual lamp state instead of predicting.
         try:
             props_response = session.send("get_prop", list(YEELIGHT_PROBE_PROPERTIES))
@@ -873,7 +879,11 @@ def _send_yeelight_power_command(
     allow_timeout: bool = False,
 ) -> None:
     try:
-        session.send("set_power", [desired_power, "smooth", YEELIGHT_TRANSITION_MS, 0])
+        session.send(
+            "set_power",
+            [desired_power, "smooth", YEELIGHT_TRANSITION_MS, 0],
+            expect_reply=False,
+        )
     except ExternalDeviceRuntimeError as exc:
         if not allow_timeout:
             raise
@@ -898,13 +908,18 @@ def _apply_yeelight_command(
         session.send(
             "set_rgb",
             [_rgb_triplet_to_int(command.rgb or {"r": 0, "g": 0, "b": 0}), "smooth", YEELIGHT_TRANSITION_MS],
+            expect_reply=False,
         )
         return
 
     if command.action == "color_temperature":
         if known_power_state == "off":
             _send_yeelight_power_command(session, "on", allow_timeout=True)
-        session.send("set_ct_abx", [command.color_temperature or 4000, "smooth", YEELIGHT_TRANSITION_MS])
+        session.send(
+            "set_ct_abx",
+            [command.color_temperature or 4000, "smooth", YEELIGHT_TRANSITION_MS],
+            expect_reply=False,
+        )
         return
 
     if command.action == "brightness":
@@ -912,21 +927,21 @@ def _apply_yeelight_command(
         if requested_brightness <= 0:
             if known_power_state == "off":
                 return
-            session.send("set_power", ["off", "smooth", YEELIGHT_TRANSITION_MS, 0])
+            session.send("set_power", ["off", "smooth", YEELIGHT_TRANSITION_MS, 0], expect_reply=False)
         else:
             if known_power_state == "off":
                 _send_yeelight_power_command(session, "on", allow_timeout=True)
             session.send(
                 "set_bright",
                 [_ui_brightness_to_yeelight(requested_brightness), "smooth", YEELIGHT_TRANSITION_MS],
+                expect_reply=False,
             )
         return
 
     if command.action == "power":
         desired_power = command.desired_power or "off"
-        if known_power_state == desired_power:
-            return
-        session.send("set_power", [desired_power, "smooth", YEELIGHT_TRANSITION_MS, 0])
+        # Always send — stale last_state should not block the command.
+        session.send("set_power", [desired_power, "smooth", YEELIGHT_TRANSITION_MS, 0], expect_reply=False)
         return
 
     raise ExternalDeviceRuntimeValidationError(
@@ -942,21 +957,27 @@ def _apply_yeelight_command_without_power_preflight(
         session.send(
             "set_rgb",
             [_rgb_triplet_to_int(command.rgb or {"r": 0, "g": 0, "b": 0}), "smooth", YEELIGHT_TRANSITION_MS],
+            expect_reply=False,
         )
         return
 
     if command.action == "color_temperature":
-        session.send("set_ct_abx", [command.color_temperature or 4000, "smooth", YEELIGHT_TRANSITION_MS])
+        session.send(
+            "set_ct_abx",
+            [command.color_temperature or 4000, "smooth", YEELIGHT_TRANSITION_MS],
+            expect_reply=False,
+        )
         return
 
     if command.action == "brightness":
         requested_brightness = command.brightness or 0
         if requested_brightness <= 0:
-            session.send("set_power", ["off", "smooth", YEELIGHT_TRANSITION_MS, 0])
+            session.send("set_power", ["off", "smooth", YEELIGHT_TRANSITION_MS, 0], expect_reply=False)
         else:
             session.send(
                 "set_bright",
                 [_ui_brightness_to_yeelight(requested_brightness), "smooth", YEELIGHT_TRANSITION_MS],
+                expect_reply=False,
             )
         return
 
@@ -1055,12 +1076,12 @@ def _build_yeelight_predicted_state(
             brightness = requested_brightness
     elif prepared_command.action == "rgb":
         power_state = "on"
-        brightness = brightness if brightness > 0 else 255
+        # Keep baseline brightness; never force 255 as a magic default.
         rgb_triplet = prepared_command.rgb or rgb_triplet
         color_mode = 1
     elif prepared_command.action == "color_temperature":
         power_state = "on"
-        brightness = brightness if brightness > 0 else 255
+        # Keep baseline brightness; never force 255 as a magic default.
         color_temperature = prepared_command.color_temperature or color_temperature
         color_mode = 2
 
@@ -1267,16 +1288,19 @@ def _prepare_yeelight_command(
         temperature = _normalize_color_temperature(command.get("color_temperature"), temperature_range)
         return _PreparedYeelightCommand(action="color_temperature", color_temperature=temperature)
 
+    # Check "value" BEFORE "brightness" so power toggle commands are never
+    # misinterpreted as brightness commands (some frontends attach
+    # brightness=255 to every toggle).
+    if "value" in command:
+        _require_capability(capabilities, "power")
+        desired_power = "on" if _coerce_binary_state(command.get("value")) else "off"
+        return _PreparedYeelightCommand(action="power", desired_power=desired_power)
+
     brightness_value = command.get("brightness")
     if isinstance(brightness_value, (int, float)) and not isinstance(brightness_value, bool):
         _require_capability(capabilities, "brightness")
         requested_brightness = _normalize_ui_brightness(brightness_value)
         return _PreparedYeelightCommand(action="brightness", brightness=requested_brightness)
-
-    if "value" in command:
-        _require_capability(capabilities, "power")
-        desired_power = "on" if _coerce_binary_state(command.get("value")) else "off"
-        return _PreparedYeelightCommand(action="power", desired_power=desired_power)
 
     raise ExternalDeviceRuntimeValidationError(
         "Yeelight command must provide 'value', 'brightness', 'rgb', or 'color_temperature'."

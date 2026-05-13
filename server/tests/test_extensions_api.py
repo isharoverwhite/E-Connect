@@ -1464,6 +1464,63 @@ def test_execute_external_device_command_ignores_async_notification_frames(monke
     assert fake_socket.closed is False
 
 
+def test_execute_external_device_command_succeeds_when_write_ack_is_missing(monkeypatch):
+    class FakeSocket:
+        def __init__(self, responses: list[bytes]):
+            self._responses = list(responses)
+            self.sent_payloads: list[dict[str, object]] = []
+            self.timeout = None
+            self.closed = False
+
+        def settimeout(self, timeout: int) -> None:
+            self.timeout = timeout
+
+        def sendall(self, payload: bytes) -> None:
+            self.sent_payloads.append(json.loads(payload.decode("utf-8").strip()))
+
+        def recv(self, _size: int) -> bytes:
+            if self._responses:
+                return self._responses.pop(0)
+            return b""
+
+        def close(self) -> None:
+            self.closed = True
+
+    # Some Yeelight firmware applies the write but never returns the write ACK.
+    # The follow-up get_prop still succeeds and should be enough for a fast UI update.
+    fake_socket = FakeSocket(
+        [
+            b'{"id":2,"result":["on","50","4200","0","mono","0","0","2"]}\r\n',
+        ]
+    )
+
+    monkeypatch.setattr(
+        "app.services.external_runtime.socket.create_connection",
+        lambda *_args, **_kwargs: fake_socket,
+    )
+
+    extension = build_runtime_backed_extension()
+    device = ExternalDevice(
+        provider="Yeelight",
+        config={"ip_address": "192.168.1.55"},
+        schema_snapshot={
+            "display": {
+                "card_type": "light",
+                "capabilities": ["power", "brightness"],
+            }
+        },
+    )
+    device.installed_extension = extension
+
+    execution = execute_external_device_command(device, {"kind": "action", "pin": 0, "brightness": 128})
+
+    assert execution.state["value"] == 1
+    assert execution.state["power"] == "on"
+    assert execution.state["brightness"] == 128
+    assert [payload["method"] for payload in fake_socket.sent_payloads] == ["set_bright", "get_prop"]
+    assert fake_socket.closed is False
+
+
 def test_execute_external_device_command_supports_rgb_and_color_temperature(monkeypatch):
     class FakeSocket:
         def __init__(self, responses: list[bytes]):
