@@ -71,6 +71,7 @@ const OTA_POLL_FINAL_STATUSES = new Set<BuildJobStatus>([
 const OTA_DEVICE_POLL_INTERVAL_MS = 2000;
 const OTA_REDIRECT_DELAY_MS = 1800;
 const OTA_ONLINE_FRESHNESS_GRACE_MS = 2000;
+const OTA_FLASH_FAILED_RECOVERY_WINDOW_MS = 180_000;
 const EMPTY_CONFIG_VALIDATION_MESSAGE = "Map at least one GPIO before generating config or flashing firmware.";
 
 function getErrorMessage(error: unknown): string {
@@ -227,6 +228,20 @@ function isDeviceBackOnlineAfterOta(
     lastSeenAt >= flashedAt - OTA_ONLINE_FRESHNESS_GRACE_MS &&
     isExpectedFirmwareVersion(device, expectedFirmwareVersion)
   );
+}
+
+function shouldStopBuildJobPolling(
+  status: BuildJobStatus,
+  flashFailureObservedAt: number | null,
+): boolean {
+  if (status === "flash_failed") {
+    return (
+      flashFailureObservedAt !== null &&
+      Date.now() - flashFailureObservedAt >= OTA_FLASH_FAILED_RECOVERY_WINDOW_MS
+    );
+  }
+
+  return OTA_POLL_FINAL_STATUSES.has(status);
 }
 
 async function fetchBuildJob(jobId: string): Promise<BuildJobSnapshot> {
@@ -592,14 +607,20 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
     }
 
     let cancelled = false;
-
     let interval: number | null = null;
+    let flashFailureObservedAt: number | null = null;
 
     const pollBuildJob = async () => {
       try {
         const snapshot = await fetchBuildJob(jobId);
         if (cancelled) {
           return;
+        }
+
+        if (snapshot.status === "flash_failed") {
+          flashFailureObservedAt ??= Date.now();
+        } else {
+          flashFailureObservedAt = null;
         }
 
         setJobStatus(snapshot.status);
@@ -624,7 +645,7 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
               : entry,
           ),
         );
-        if (OTA_POLL_FINAL_STATUSES.has(snapshot.status) && interval !== null) {
+        if (shouldStopBuildJobPolling(snapshot.status, flashFailureObservedAt) && interval !== null) {
           window.clearInterval(interval);
           interval = null;
         }
@@ -2382,8 +2403,9 @@ export default function DevicePinConfigurator({ params }: { params: Promise<{ id
               {jobStatus === "flash_failed" && (
                 <div className="flex items-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
                   <span className="material-icons-round">warning</span>
-                  OTA update failed or timed out. Check the board power and network, then retry
-                  this exact artifact or rebuild if the config changed.
+                  {isExpectedFirmwareVersion(device, expectedFirmwareVersion)
+                    ? "The board now reports the target firmware. Waiting for the server to reconcile this OTA attempt."
+                    : "OTA update failed or timed out. Check the board power and network, then retry this exact artifact or rebuild if the config changed."}
                 </div>
               )}
 

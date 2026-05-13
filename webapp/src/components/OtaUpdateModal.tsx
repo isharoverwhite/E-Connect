@@ -2,7 +2,7 @@
 
 import React from "react";
 import type { DeviceConfig } from "@/types/device";
-import type { useOtaUpdate } from "@/hooks/useOtaUpdate";
+import { isExpectedFirmwareVersion, type useOtaUpdate } from "@/hooks/useOtaUpdate";
 
 export interface OtaUpdateModalProps {
   device: DeviceConfig | null;
@@ -31,6 +31,7 @@ export function OtaUpdateModal({ device, otaState, onClose }: OtaUpdateModalProp
   if (!otaModalOpen) return null;
 
   const canInitiateOta = jobStatus === "artifact_ready" || jobStatus === "flash_failed";
+  const boardReportsExpectedFirmware = isExpectedFirmwareVersion(device, expectedFirmwareVersion);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
@@ -181,10 +182,12 @@ export function OtaUpdateModal({ device, otaState, onClose }: OtaUpdateModalProp
             <div className="flex flex-col gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700 dark:border-rose-500/20 dark:bg-rose-500/10 dark:text-rose-200">
               <div className="flex items-center gap-3 font-semibold">
                 <span className="material-icons-round">warning</span>
-                OTA update failed
+                {boardReportsExpectedFirmware ? "Reconciling OTA result" : "OTA update failed"}
               </div>
               <p className="pl-9 text-rose-900 dark:text-rose-100">
-                The board failed to update over the air. Check the board power and network, then retry this exact artifact or rebuild if the config changed.
+                {boardReportsExpectedFirmware
+                  ? "The board now reports the target firmware. Waiting for the server to reconcile this OTA attempt before declaring it failed."
+                  : "The board failed to update over the air. Check the board power and network, then retry this exact artifact or rebuild if the config changed."}
               </p>
               {jobError && (
                 <div className="ml-9 mt-2 rounded bg-white/50 p-3 font-mono text-xs dark:bg-slate-900/50 break-words">

@@ -32,6 +32,7 @@ export const OTA_POLL_FINAL_STATUSES = new Set<BuildJobStatus>([
 
 const OTA_DEVICE_POLL_INTERVAL_MS = 2000;
 const OTA_ONLINE_FRESHNESS_GRACE_MS = 2000;
+const OTA_FLASH_FAILED_RECOVERY_WINDOW_MS = 180_000;
 
 function parseTimestamp(value?: string | null): number | null {
   if (!value) {
@@ -84,6 +85,20 @@ export function isDeviceBackOnlineAfterOta(
     lastSeenAt >= flashedAt - OTA_ONLINE_FRESHNESS_GRACE_MS &&
     isExpectedFirmwareVersion(device, expectedFirmwareVersion)
   );
+}
+
+function shouldStopBuildJobPolling(
+  status: BuildJobStatus,
+  flashFailureObservedAt: number | null,
+): boolean {
+  if (status === "flash_failed") {
+    return (
+      flashFailureObservedAt !== null &&
+      Date.now() - flashFailureObservedAt >= OTA_FLASH_FAILED_RECOVERY_WINDOW_MS
+    );
+  }
+
+  return OTA_POLL_FINAL_STATUSES.has(status);
 }
 
 export async function fetchBuildJob(jobId: string): Promise<BuildJobSnapshot> {
@@ -139,6 +154,7 @@ export function useOtaUpdate({ device, onDeviceUpdated, fetchDeviceFn, onBuildJo
 
     let cancelled = false;
     let interval: number | null = null;
+    let flashFailureObservedAt: number | null = null;
 
     const pollBuildJob = async () => {
       try {
@@ -147,16 +163,22 @@ export function useOtaUpdate({ device, onDeviceUpdated, fetchDeviceFn, onBuildJo
           return;
         }
 
+        if (snapshot.status === "flash_failed") {
+          flashFailureObservedAt ??= Date.now();
+        } else {
+          flashFailureObservedAt = null;
+        }
+
         setJobStatus(snapshot.status);
         setJobError(snapshot.error_message?.trim() || null);
         setExpectedFirmwareVersion(snapshot.expected_firmware_version?.trim() || null);
         if (snapshot.status === "flashing" || snapshot.status === "flashed") {
           setOtaActionError(null);
         }
-        
+
         onBuildJobUpdate?.(snapshot);
 
-        if (OTA_POLL_FINAL_STATUSES.has(snapshot.status) && interval !== null) {
+        if (shouldStopBuildJobPolling(snapshot.status, flashFailureObservedAt) && interval !== null) {
           window.clearInterval(interval);
           interval = null;
         }
