@@ -19,7 +19,9 @@ import logging
 import os
 from pathlib import Path
 import re
+import urllib.request
 from urllib.parse import urlparse
+
 from app.api import (
     DEVICE_HEARTBEAT_TIMEOUT_SECONDS,
     expire_stale_online_devices_once,
@@ -313,6 +315,53 @@ def _serialize_firmware_network_state(app: FastAPI) -> dict[str, str] | None:
     return payload or None
 
 
+# Cached webapp health status to avoid probing on every health/discovery request.
+_webapp_health_cache: dict[str, object] = {
+    "status": None,
+    "checked_at": 0.0,
+}
+_webapp_health_cache_ttl_seconds: float = 5.0
+
+
+def _probe_webapp_health() -> str:
+    """Check whether the WebUI webapp is responding on the internal Docker network.
+
+    Tries the explicitly configured URL first, then falls back to common
+    internal addresses (Docker service name for bridge networks, localhost for
+    host‑networked containers).
+    """
+    now = datetime.now(timezone.utc).timestamp()
+    cached_status = _webapp_health_cache.get("status")
+    cached_at = _webapp_health_cache.get("checked_at")
+    if isinstance(cached_status, str) and isinstance(cached_at, (int, float)):
+        if now - cached_at < _webapp_health_cache_ttl_seconds:
+            return cached_status
+
+    configured_url = os.getenv("WEBAPP_INTERNAL_URL", "").strip()
+    candidate_urls: list[str] = []
+    if configured_url:
+        candidate_urls.append(configured_url)
+    candidate_urls.extend(["http://webapp:3000", "http://127.0.0.1:3000"])
+
+    status = "unreachable"
+    for base_url in candidate_urls:
+        try:
+            req = urllib.request.Request(
+                f"{base_url}/login",
+                headers={"User-Agent": "EConnect-HealthCheck/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                if 200 <= resp.status < 500:
+                    status = "ok"
+                    break
+        except Exception:
+            continue
+
+    _webapp_health_cache["status"] = status
+    _webapp_health_cache["checked_at"] = now
+    return status
+
+
 def _serialize_discovery_webapp_transport(app: FastAPI) -> dict[str, str] | None:
     runtime_state = getattr(app.state, "firmware_network_state", None)
     if not isinstance(runtime_state, dict):
@@ -476,6 +525,7 @@ def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
             payload["server_ip"] = server_ip
         if webapp_transport is not None:
             payload["webapp"] = webapp_transport
+            payload["webapp_status"] = _probe_webapp_health()
         return payload, 200
 
     database_ready, database_error = check_database_connection()
@@ -493,6 +543,7 @@ def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
             payload["server_ip"] = server_ip
         if webapp_transport is not None:
             payload["webapp"] = webapp_transport
+            payload["webapp_status"] = _probe_webapp_health()
         return payload, 200
 
     payload = {
@@ -505,6 +556,7 @@ def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
         payload["server_ip"] = server_ip
     if webapp_transport is not None:
         payload["webapp"] = webapp_transport
+        payload["webapp_status"] = _probe_webapp_health()
 
     return payload, 503
 
