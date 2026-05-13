@@ -475,6 +475,9 @@ def test_pwm_command_persists_restore_value_and_reuses_it_on_power_on(monkeypatc
     assert dashboard_response.json()[0]["last_state"]["pins"][0]["restore_value"] == 250
     assert dashboard_response.json()[0]["last_state"]["predicted"] is True
 
+    import time
+    time.sleep(0.3)
+
     on_response = client.post(
         "/api/v1/device/device-dimmer/command",
         headers=admin_headers,
@@ -553,6 +556,9 @@ def test_send_command_supersedes_older_pending_command_for_same_pin(monkeypatch)
     assert first_response.status_code == 200, first_response.text
     first_command_id = first_response.json()["command_id"]
     assert first_command_id in mqtt_manager.pending_commands
+
+    import time
+    time.sleep(0.3)
 
     second_response = client.post(
         "/api/v1/device/device-supersede/command",

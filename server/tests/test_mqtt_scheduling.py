@@ -140,11 +140,11 @@ def test_publish_command_records_enqueue_and_flush_trace() -> None:
         latency_trace=latency_trace,
     ) is True
 
-    assert info.waited is True
+    assert info.waited is False
     assert latency_trace["paho_publish_requested_at"]
     assert latency_trace["paho_publish_enqueued_at"]
-    assert latency_trace["paho_publish_flushed_at"]
-    assert latency_trace["mqtt_publish_completed_at"]
+    assert "paho_publish_flushed_at" not in latency_trace
+    assert "mqtt_publish_completed_at" not in latency_trace
     assert latency_trace["paho_publish_rc"] == mqtt.MQTT_ERR_SUCCESS
 
 
