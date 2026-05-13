@@ -1,5 +1,6 @@
 # Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
 
+import copy
 import hashlib
 import io
 import json
@@ -920,7 +921,9 @@ def test_multicard_runtime_fan_speed_command_updates_state_via_real_extension_ho
         headers={"Authorization": f"Bearer {token}"},
     )
     assert command_response.status_code == 200, command_response.text
-    assert command_response.json()["status"] == "pending"
+    payload = command_response.json()
+    assert payload["status"] == "acknowledged"
+    assert payload["last_state"]["speed"] == 67
 
     db = TestingSessionLocal()
     try:
@@ -1105,8 +1108,9 @@ def test_external_device_command_executes_runtime_and_updates_state(monkeypatch)
     )
     assert command_response.status_code == 200, command_response.text
     payload = command_response.json()
-    assert payload["status"] == "pending"
+    assert payload["status"] == "acknowledged"
     assert payload["command_id"]
+    assert payload["last_state"] == runtime_result.state
 
     db = TestingSessionLocal()
     try:
@@ -1255,7 +1259,9 @@ def test_external_device_command_accepts_color_temperature_for_legacy_color_sche
         headers={"Authorization": f"Bearer {token}"},
     )
     assert command_response.status_code == 200, command_response.text
-    assert command_response.json()["status"] == "pending"
+    payload = command_response.json()
+    assert payload["status"] == "acknowledged"
+    assert payload["last_state"] == runtime_result.state
 
     db = TestingSessionLocal()
     try:
@@ -1291,6 +1297,7 @@ def test_external_device_command_failure_marks_device_offline(monkeypatch):
     )
     assert create_response.status_code == 200, create_response.text
     device_payload = create_response.json()
+    original_state = copy.deepcopy(device_payload["last_state"])
 
     from app.services.external_runtime import ExternalDeviceRuntimeError
 
@@ -1308,13 +1315,15 @@ def test_external_device_command_failure_marks_device_offline(monkeypatch):
     )
     assert command_response.status_code == 200, command_response.text
     payload = command_response.json()
-    assert payload["status"] == "pending"
-    assert payload["message"] == "Command requested"
+    assert payload["status"] == "failed"
+    assert payload["message"] == "Bulb offline"
+    assert payload["last_state"] == original_state
 
     db = TestingSessionLocal()
     try:
         stored_device = db.query(ExternalDevice).filter_by(device_id=device_payload["device_id"]).one()
         assert stored_device.conn_status == ConnStatus.offline
+        assert stored_device.last_state == original_state
     finally:
         db.close()
 
@@ -1363,6 +1372,7 @@ def test_external_device_command_connection_failure_is_reported_as_offline_witho
     )
     assert create_response.status_code == 200, create_response.text
     device_payload = create_response.json()
+    original_state = copy.deepcopy(device_payload["last_state"])
 
     def raise_host_down(*_args, **_kwargs):
         raise OSError("[Errno 64] Host is down")
@@ -1378,12 +1388,15 @@ def test_external_device_command_connection_failure_is_reported_as_offline_witho
     )
     assert command_response.status_code == 200, command_response.text
     payload = command_response.json()
-    assert payload["status"] == "pending"
+    assert payload["status"] == "failed"
+    assert payload["message"] == "Yeelight connection failed: [Errno 64] Host is down"
+    assert payload["last_state"] == original_state
 
     db = TestingSessionLocal()
     try:
         stored_device = db.query(ExternalDevice).filter_by(device_id=device_payload["device_id"]).one()
         assert stored_device.conn_status == ConnStatus.offline
+        assert stored_device.last_state == original_state
     finally:
         db.close()
 

@@ -2293,7 +2293,7 @@ def _execute_external_device_command_task(
     *,
     device_id: str,
     command: dict[str, Any],
-) -> None:
+) -> tuple[str, str | None, dict[str, Any] | None]:
     db = session_factory()
     command_id = str(command.get("command_id") or "")
     try:
@@ -2304,18 +2304,23 @@ def _execute_external_device_command_task(
             .first()
         )
         if external_device is None:
-            return
+            return "missing", "External device not found.", None
 
         if command_id and not command_ordering_manager.is_latest(command_id):
-            return
+            return "superseded", None, None
 
-        previous_state = external_device.last_state if isinstance(external_device.last_state, dict) else {}
+        previous_status = external_device.conn_status
+        previous_state = (
+            copy.deepcopy(external_device.last_state)
+            if isinstance(external_device.last_state, dict)
+            else {}
+        )
         previous_payload = build_external_device_state_payload(external_device, state=previous_state)
         try:
             runtime_result = execute_external_device_command(external_device, command)
         except ExternalDeviceRuntimeValidationError as exc:
             if command_id and not command_ordering_manager.is_latest(command_id):
-                return
+                return "superseded", None, None
             try:
                 ws_manager.broadcast_device_event_sync(
                     "command_delivery",
@@ -2329,10 +2334,10 @@ def _execute_external_device_command_task(
                 )
             except Exception:
                 pass
-            return
+            return "failed", str(exc), previous_state
         except ExternalDeviceRuntimeUnsupportedError as exc:
             if command_id and not command_ordering_manager.is_latest(command_id):
-                return
+                return "superseded", None, None
             try:
                 ws_manager.broadcast_device_event_sync(
                     "command_delivery",
@@ -2346,10 +2351,10 @@ def _execute_external_device_command_task(
                 )
             except Exception:
                 pass
-            return
+            return "failed", str(exc), previous_state
         except ExternalDeviceRuntimeError as exc:
             if command_id and not command_ordering_manager.is_latest(command_id):
-                return
+                return "superseded", None, None
             if exc.mark_offline:
                 _mark_external_device_offline(db, external_device)
                 try:
@@ -2378,16 +2383,23 @@ def _execute_external_device_command_task(
                 )
             except Exception:
                 pass
-            return
+            return "failed", str(exc), previous_state
 
         runtime_state = runtime_result.state if isinstance(runtime_result.state, dict) else {}
         if command_id and not command_ordering_manager.is_latest(command_id):
-            return
+            return "superseded", None, None
         state_changed = _external_runtime_state_changed(previous_state, runtime_state)
         _persist_external_runtime_state(db, external_device, state=runtime_state)
         current_payload = build_external_device_state_payload(external_device, state=runtime_state)
 
         try:
+            if previous_status != ConnStatus.online:
+                ws_manager.broadcast_device_event_sync(
+                    "device_online",
+                    external_device.device_id,
+                    external_device.room_id,
+                    runtime_state,
+                )
             ws_manager.broadcast_device_event_sync(
                 "device_state",
                 external_device.device_id,
@@ -2425,6 +2437,7 @@ def _execute_external_device_command_task(
                     "Automation graph evaluation failed for external device command state %s",
                     external_device.device_id,
                 )
+        return "acknowledged", None, copy.deepcopy(runtime_state)
     finally:
         if command_id:
             command_ordering_manager.complete(command_id)
@@ -4643,19 +4656,40 @@ async def send_command(
             scope_key=_build_external_command_scope_key(external_device.device_id),
         )
 
-        # Mark state as transitioning so UI shows a pending indicator
-        # instead of stale cached brightness/color values.
-        transitioning_state = dict(external_device.last_state if isinstance(external_device.last_state, dict) else {})
-        transitioning_state["_transitioning"] = True
-        _persist_external_runtime_state(db, external_device, state=transitioning_state)
-
-        background_tasks.add_task(
+        command_status, command_reason, runtime_state = await asyncio.to_thread(
             _execute_external_device_command_task,
             _background_session_factory(db),
             device_id=external_device.device_id,
             command=dict(command),
         )
-        return {"status": "pending", "command_id": command_id, "message": "Command requested"}
+        response_last_state = (
+            copy.deepcopy(runtime_state)
+            if isinstance(runtime_state, dict)
+            else None
+        )
+
+        if command_status == "acknowledged":
+            return {
+                "status": "acknowledged",
+                "command_id": command_id,
+                "message": "Command applied",
+                "last_state": response_last_state,
+            }
+
+        if command_status == "superseded":
+            return {
+                "status": "superseded",
+                "command_id": command_id,
+                "message": "Command superseded by a newer request",
+                "last_state": response_last_state,
+            }
+
+        return {
+            "status": "failed",
+            "command_id": command_id,
+            "message": command_reason or "Failed to execute external device command",
+            "last_state": response_last_state,
+        }
 
     _ensure_device_control_access(db, current_user, device)
 
