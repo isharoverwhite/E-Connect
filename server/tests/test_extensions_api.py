@@ -1062,6 +1062,63 @@ def test_create_external_device_persists_selected_room():
         db.close()
 
 
+def test_external_device_read_models_strip_transient_runtime_keys():
+    create_admin_user()
+    token = get_token()
+
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={"file": ("yeelight.zip", build_extension_zip(), "application/zip")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    create_response = client.post(
+        "/api/v1/external-devices",
+        json={
+            "installed_extension_id": "yeelight_control",
+            "device_schema_id": "yeelight_color_light",
+            "name": "Shelf Yeelight",
+            "config": {"ip_address": "192.168.1.44"},
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 200, create_response.text
+    device_id = create_response.json()["device_id"]
+
+    db = TestingSessionLocal()
+    try:
+        stored_device = db.query(ExternalDevice).filter_by(device_id=device_id).one()
+        stored_device.last_state = {
+            "power": "on",
+            "value": 1,
+            "brightness": 77,
+            "_transitioning": True,
+            "rgb": {
+                "r": 255,
+                "g": 0,
+                "b": 0,
+                "_shadow": "internal",
+            },
+        }
+        db.commit()
+    finally:
+        db.close()
+
+    dashboard_response = client.get(
+        "/api/v1/dashboard/devices",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert dashboard_response.status_code == 200, dashboard_response.text
+    dashboard_payload = {
+        device["device_id"]: device for device in dashboard_response.json()
+    }
+    last_state = dashboard_payload[device_id]["last_state"]
+    assert last_state["brightness"] == 77
+    assert "_transitioning" not in last_state
+    assert "_shadow" not in last_state["rgb"]
+
+
 def test_external_device_command_executes_runtime_and_updates_state(monkeypatch):
     create_admin_user()
     token = get_token()
@@ -1297,7 +1354,18 @@ def test_external_device_command_failure_marks_device_offline(monkeypatch):
     )
     assert create_response.status_code == 200, create_response.text
     device_payload = create_response.json()
-    original_state = copy.deepcopy(device_payload["last_state"])
+    expected_state = copy.deepcopy(device_payload["last_state"])
+
+    db = TestingSessionLocal()
+    try:
+        stored_device = db.query(ExternalDevice).filter_by(device_id=device_payload["device_id"]).one()
+        stored_device.last_state = {
+            **copy.deepcopy(expected_state),
+            "_transitioning": True,
+        }
+        db.commit()
+    finally:
+        db.close()
 
     from app.services.external_runtime import ExternalDeviceRuntimeError
 
@@ -1317,13 +1385,14 @@ def test_external_device_command_failure_marks_device_offline(monkeypatch):
     payload = command_response.json()
     assert payload["status"] == "failed"
     assert payload["message"] == "Bulb offline"
-    assert payload["last_state"] == original_state
+    assert payload["last_state"] == expected_state
+    assert "_transitioning" not in payload["last_state"]
 
     db = TestingSessionLocal()
     try:
         stored_device = db.query(ExternalDevice).filter_by(device_id=device_payload["device_id"]).one()
         assert stored_device.conn_status == ConnStatus.offline
-        assert stored_device.last_state == original_state
+        assert stored_device.last_state == expected_state
     finally:
         db.close()
 
@@ -1372,7 +1441,18 @@ def test_external_device_command_connection_failure_is_reported_as_offline_witho
     )
     assert create_response.status_code == 200, create_response.text
     device_payload = create_response.json()
-    original_state = copy.deepcopy(device_payload["last_state"])
+    expected_state = copy.deepcopy(device_payload["last_state"])
+
+    db = TestingSessionLocal()
+    try:
+        stored_device = db.query(ExternalDevice).filter_by(device_id=device_payload["device_id"]).one()
+        stored_device.last_state = {
+            **copy.deepcopy(expected_state),
+            "_transitioning": True,
+        }
+        db.commit()
+    finally:
+        db.close()
 
     def raise_host_down(*_args, **_kwargs):
         raise OSError("[Errno 64] Host is down")
@@ -1390,13 +1470,14 @@ def test_external_device_command_connection_failure_is_reported_as_offline_witho
     payload = command_response.json()
     assert payload["status"] == "failed"
     assert payload["message"] == "Yeelight connection failed: [Errno 64] Host is down"
-    assert payload["last_state"] == original_state
+    assert payload["last_state"] == expected_state
+    assert "_transitioning" not in payload["last_state"]
 
     db = TestingSessionLocal()
     try:
         stored_device = db.query(ExternalDevice).filter_by(device_id=device_payload["device_id"]).one()
         assert stored_device.conn_status == ConnStatus.offline
-        assert stored_device.last_state == original_state
+        assert stored_device.last_state == expected_state
     finally:
         db.close()
 
