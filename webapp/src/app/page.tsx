@@ -214,8 +214,9 @@ function renderWeatherIcon(weatherData: CurrentWeatherResponse | null, size: Wea
   }
 
   if (size === "hero") {
+    const heroAnimClass = weatherData.icon === "thunderstorm" ? " animate-weather-thunder-flash" : "";
     return (
-      <span className="material-symbols-rounded text-6xl text-sky-500 dark:text-sky-400 group-hover:text-sky-600 dark:group-hover:text-sky-300 transition-colors">
+      <span className={`material-symbols-rounded text-6xl text-sky-500 dark:text-sky-400 group-hover:text-sky-600 dark:group-hover:text-sky-300 transition-colors${heroAnimClass}`}>
         {weatherData.icon}
       </span>
     );
@@ -229,6 +230,27 @@ function renderWeatherIcon(weatherData: CurrentWeatherResponse | null, size: Wea
           <div className="w-[1.5px] h-[6px] bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] animate-weather-rain-1" />
           <div className="w-[1.5px] h-[6px] bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] animate-weather-rain-2 mt-[2px]" />
           <div className="w-[1.5px] h-[6px] bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] animate-weather-rain-3" />
+        </div>
+      </div>
+    );
+  }
+
+  if (weatherData.icon === "thunderstorm" && size === "inline") {
+    return (
+      <span className="material-symbols-rounded text-sm mr-1 inline-block animate-weather-thunder-flash">
+        thunderstorm
+      </span>
+    );
+  }
+
+  if (weatherData.icon === "ac_unit" && size === "inline") {
+    return (
+      <div className="relative mr-1 h-5 w-5 flex items-center justify-center">
+        <span className="material-symbols-rounded text-sm animate-weather-cloud relative z-10">cloud</span>
+        <div className="absolute top-[12px] left-1/2 -translate-x-1/2 flex items-center gap-[2px]">
+          <div className="w-[3px] h-[3px] bg-sky-200 dark:bg-sky-100 rounded-full animate-weather-snow-1" />
+          <div className="w-[3px] h-[3px] bg-sky-200 dark:bg-sky-100 rounded-full animate-weather-snow-2 mt-[1px]" />
+          <div className="w-[3px] h-[3px] bg-sky-200 dark:bg-sky-100 rounded-full animate-weather-snow-3" />
         </div>
       </div>
     );
