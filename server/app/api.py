@@ -2083,7 +2083,7 @@ def _serialize_external_device(device: ExternalDevice) -> dict[str, Any]:
         "conn_status": device.conn_status,
         "last_seen": device.last_seen,
         "pairing_requested_at": None,
-        "last_state": device.last_state,
+        "last_state": _sanitize_external_runtime_state(device.last_state),
         "provisioning_project_id": None,
         "board": None,
         "provider": device.provider,
@@ -2191,6 +2191,21 @@ def _coerce_runtime_reported_at(value: Any) -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def _sanitize_external_runtime_state(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, nested_value in value.items():
+            if isinstance(key, str) and key.startswith("_"):
+                continue
+            sanitized[key] = _sanitize_external_runtime_state(nested_value)
+        return sanitized
+
+    if isinstance(value, list):
+        return [_sanitize_external_runtime_state(item) for item in value]
+
+    return value
+
+
 def _persist_external_runtime_state(
     db: Session,
     device: ExternalDevice,
@@ -2208,8 +2223,9 @@ def _stage_external_runtime_state(
     *,
     state: dict[str, Any],
 ) -> None:
-    device.last_state = state
-    device.last_seen = _coerce_runtime_reported_at(state.get("reported_at"))
+    sanitized_state = _sanitize_external_runtime_state(state)
+    device.last_state = sanitized_state
+    device.last_seen = _coerce_runtime_reported_at(sanitized_state.get("reported_at"))
     device.conn_status = ConnStatus.online
 
 
@@ -2226,6 +2242,8 @@ def _mark_external_device_offline(
 def _stage_external_device_offline(
     device: ExternalDevice,
 ) -> None:
+    if isinstance(device.last_state, dict):
+        device.last_state = _sanitize_external_runtime_state(device.last_state)
     device.conn_status = ConnStatus.offline
 
 
@@ -2311,7 +2329,7 @@ def _execute_external_device_command_task(
 
         previous_status = external_device.conn_status
         previous_state = (
-            copy.deepcopy(external_device.last_state)
+            _sanitize_external_runtime_state(copy.deepcopy(external_device.last_state))
             if isinstance(external_device.last_state, dict)
             else {}
         )
@@ -2385,7 +2403,11 @@ def _execute_external_device_command_task(
                 pass
             return "failed", str(exc), previous_state
 
-        runtime_state = runtime_result.state if isinstance(runtime_result.state, dict) else {}
+        runtime_state = (
+            _sanitize_external_runtime_state(runtime_result.state)
+            if isinstance(runtime_result.state, dict)
+            else {}
+        )
         if command_id and not command_ordering_manager.is_latest(command_id):
             return "superseded", None, None
         state_changed = _external_runtime_state_changed(previous_state, runtime_state)
@@ -2463,7 +2485,11 @@ def refresh_external_device_states_once(
         for external_device in external_devices:
             stats["probed"] += 1
             previous_status = external_device.conn_status
-            previous_state = external_device.last_state if isinstance(external_device.last_state, dict) else {}
+            previous_state = (
+                _sanitize_external_runtime_state(external_device.last_state)
+                if isinstance(external_device.last_state, dict)
+                else {}
+            )
             previous_payload = build_external_device_state_payload(external_device, state=previous_state)
 
             try:
