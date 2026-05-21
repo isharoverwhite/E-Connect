@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 import ipaddress
 import json
 import logging
+import logging.handlers
 import os
 from pathlib import Path
 import re
@@ -24,6 +25,7 @@ from urllib.parse import urlparse
 
 from app.api import (
     DEVICE_HEARTBEAT_TIMEOUT_SECONDS,
+    ensure_installed_extensions_extracted,
     expire_stale_online_devices_once,
     refresh_external_device_states_once,
     router as device_router,
@@ -57,6 +59,7 @@ from app.sql_models import Household, SystemLogCategory, SystemLogSeverity, User
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+_LOG_DIR = Path("/data/logs")
 STALE_DEVICE_SWEEP_INTERVAL_SECONDS = max(1, min(DEVICE_HEARTBEAT_TIMEOUT_SECONDS, 2))
 RUNTIME_NETWORK_REFRESH_INTERVAL_SECONDS = max(
     1.0,
@@ -76,6 +79,21 @@ EXTERNAL_DEVICE_POLL_INTERVAL_SECONDS = max(
 )
 JSONP_CALLBACK_PATTERN = re.compile(r"^[A-Za-z_$][0-9A-Za-z_$.]*$")
 DISCOVERY_BRIDGE_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+def _configure_file_logging() -> None:
+    try:
+        _LOG_DIR.mkdir(parents=True, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(
+            _LOG_DIR / "server.log",
+            maxBytes=10 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+        )
+        handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logging.getLogger().addHandler(handler)
+    except Exception:
+        logger.warning("File logging setup failed; continuing with stdout only")
+
 
 def _using_overridden_database(app: FastAPI) -> bool:
     return get_db in app.dependency_overrides
@@ -561,6 +579,56 @@ def _build_health_payload(request: Request) -> tuple[dict[str, object], int]:
     return payload, 503
 
 
+async def _build_health_payload_async(request: Request) -> tuple[dict[str, object], int]:
+    """Non-blocking version of _build_health_payload; all I/O runs in a thread."""
+    webapp_transport = _serialize_discovery_webapp_transport(request.app)
+    server_ip = _resolve_discovery_server_ip(request)
+    if _using_overridden_database(request.app):
+        payload: dict[str, object] = {
+            "status": "ok",
+            "database": "overridden",
+            "mqtt": "skipped",
+            "initialized": await asyncio.to_thread(_resolve_initialized_state, request.app),
+        }
+        if server_ip is not None:
+            payload["server_ip"] = server_ip
+        if webapp_transport is not None:
+            payload["webapp"] = webapp_transport
+            payload["webapp_status"] = await asyncio.to_thread(_probe_webapp_health)
+        return payload, 200
+
+    database_ready, database_error = await asyncio.to_thread(check_database_connection)
+    request.app.state.database_ready = database_ready
+    request.app.state.database_error = database_error
+
+    if database_ready:
+        payload = {
+            "status": "ok",
+            "database": "ok",
+            "mqtt": "connected" if mqtt_manager.connected else "disconnected",
+            "initialized": await asyncio.to_thread(_resolve_initialized_state, request.app),
+        }
+        if server_ip is not None:
+            payload["server_ip"] = server_ip
+        if webapp_transport is not None:
+            payload["webapp"] = webapp_transport
+            payload["webapp_status"] = await asyncio.to_thread(_probe_webapp_health)
+        return payload, 200
+
+    payload = {
+        "status": "degraded",
+        "database": "unavailable",
+        "mqtt": "connected" if mqtt_manager.connected else "disconnected",
+        "initialized": None,
+    }
+    if server_ip is not None:
+        payload["server_ip"] = server_ip
+    if webapp_transport is not None:
+        payload["webapp"] = webapp_transport
+        payload["webapp_status"] = await asyncio.to_thread(_probe_webapp_health)
+    return payload, 503
+
+
 def _resolve_root_redirect_transport(app: FastAPI) -> tuple[str, int]:
     default_transport = resolve_webapp_transport(None)
     runtime_state = _serialize_firmware_network_state(app)
@@ -699,10 +767,11 @@ async def lifespan(app: FastAPI):
                 continue
 
             try:
-                refresh_external_device_states_once(session_factory=SessionLocal)
+                await asyncio.to_thread(refresh_external_device_states_once, session_factory=SessionLocal)
             except Exception:
                 logger.exception("External-device watchdog failed")
 
+    _configure_file_logging()
     app.state.database_ready = False
     app.state.database_error = None
     app.state.mdns_publisher = None
@@ -774,6 +843,12 @@ async def lifespan(app: FastAPI):
         audit_warning = getattr(app.state, "firmware_network_audit", {}).get("warning")
         if isinstance(audit_warning, str) and audit_warning.strip():
             logger.warning(audit_warning)
+        try:
+            extraction_stats = ensure_installed_extensions_extracted(session_factory=SessionLocal)
+            if extraction_stats.get("extracted", 0):
+                logger.info("Startup extension extraction complete: %s", extraction_stats)
+        except Exception:
+            logger.exception("Startup extension extraction scan failed")
         try:
             initial_external_poll = refresh_external_device_states_once(session_factory=SessionLocal)
         except Exception:
@@ -875,10 +950,26 @@ async def database_error_handler(request: Request, exc: OperationalError):
         },
     )
 
+@app.get("/livez")
+async def liveness_check():
+    """Lightweight liveness probe — no I/O, used by Docker healthcheck."""
+    return {"status": "alive"}
+
+
+@app.get("/readyz")
+async def readiness_check(request: Request):
+    """Full readiness probe: DB + MQTT + webapp. Same logic as /health."""
+    await _promote_request_runtime_network_state(request)
+    payload, status_code = await _build_health_payload_async(request)
+    if status_code == 200:
+        return payload
+    return JSONResponse(status_code=status_code, content=payload)
+
+
 @app.get("/health")
 async def health_check(request: Request):
     await _promote_request_runtime_network_state(request)
-    payload, status_code = _build_health_payload(request)
+    payload, status_code = await _build_health_payload_async(request)
     if status_code == 200:
         return payload
     return JSONResponse(status_code=status_code, content=payload)
@@ -901,7 +992,7 @@ async def web_assistant_script(request: Request, callback: str):
         raise HTTPException(status_code=400, detail="Invalid callback name")
 
     await _promote_request_runtime_network_state(request)
-    payload, _status_code = _build_health_payload(request)
+    payload, _status_code = await _build_health_payload_async(request)
     javascript = f"{normalized_callback}({json.dumps(payload)});"
     return Response(content=javascript, media_type="application/javascript")
 
@@ -914,7 +1005,7 @@ async def discovery_bridge(request: Request, target_origin: str, request_id: str
 
     normalized_target_origin = _normalize_target_origin(target_origin)
     await _promote_request_runtime_network_state(request)
-    payload, _status_code = _build_health_payload(request)
+    payload, _status_code = await _build_health_payload_async(request)
     message_payload = {
         "type": "econnect.discovery.bridge",
         "requestId": normalized_request_id,

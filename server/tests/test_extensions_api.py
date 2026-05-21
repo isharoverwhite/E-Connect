@@ -22,11 +22,15 @@ from app.auth import get_password_hash
 from app.database import Base, get_db
 from app.mqtt import mqtt_manager
 from app.services.command_ordering import command_ordering_manager
-from app.services.extension_runtime_loader import clear_extension_runtime_cache, load_installed_extension_runtime
+from app.services.extension_runtime_loader import (
+    clear_extension_runtime_cache,
+    load_installed_extension_runtime,
+)
 from app.services.external_runtime import (
-    collect_yeelight_diagnostics,
+    ExternalDeviceRuntimeError,
     execute_external_device_command,
     probe_external_device_state,
+    validate_external_device_command,
 )
 from app.services.extensions import (
     EXTENSIONS_DATA_DIR,
@@ -480,13 +484,48 @@ def test_parse_extension_archive_accepts_switch_fan_and_sensor_card_types():
     assert schemas["climate_sensor"]["display"]["capabilities"] == ["temperature", "humidity", "value"]
 
 
-def test_parse_extension_archive_rejects_capability_not_supported_by_card_type():
+def test_parse_extension_archive_rejects_capability_with_invalid_format():
     manifest = build_multi_card_manifest()
     schema = manifest["device_schemas"][0]
     assert isinstance(schema, dict)
-    schema["display"] = {"card_type": "switch", "capabilities": ["power", "brightness"]}
+    # Hyphens are not allowed in capability names (use underscore instead)
+    schema["display"] = {"card_type": "switch", "capabilities": ["power", "power-level"]}
 
-    with pytest.raises(ExtensionManifestValidationError, match="unsupported capability 'brightness'"):
+    with pytest.raises(ExtensionManifestValidationError, match="invalid capability name"):
+        parse_extension_archive(build_extension_zip(manifest))
+
+
+def test_parse_extension_archive_accepts_arbitrary_capabilities_for_any_card_type():
+    manifest = build_multi_card_manifest()
+    schema = manifest["device_schemas"][0]
+    assert isinstance(schema, dict)
+    schema["display"] = {"card_type": "switch", "capabilities": ["power", "brightness", "target_temp"]}
+
+    normalized_manifest, _ = parse_extension_archive(build_extension_zip(manifest))
+    schema_result = next(s for s in normalized_manifest["device_schemas"] if s["schema_id"] == schema["schema_id"])
+    assert "brightness" in schema_result["display"]["capabilities"]
+    assert "target_temp" in schema_result["display"]["capabilities"]
+
+
+def test_parse_extension_archive_accepts_custom_card_type_with_explicit_capabilities():
+    manifest = build_manifest()
+    manifest["device_schemas"][0]["display"] = {
+        "card_type": "thermostat",
+        "capabilities": ["target_temp", "current_temp", "mode"],
+    }
+    manifest["device_schemas"][0]["schema_id"] = "smart-thermostat"
+
+    normalized_manifest, _ = parse_extension_archive(build_extension_zip(manifest))
+    schema_result = normalized_manifest["device_schemas"][0]
+    assert schema_result["display"]["card_type"] == "thermostat"
+    assert schema_result["display"]["capabilities"] == ["target_temp", "current_temp", "mode"]
+
+
+def test_parse_extension_archive_rejects_custom_card_type_without_explicit_capabilities():
+    manifest = build_manifest()
+    manifest["device_schemas"][0]["display"] = {"card_type": "thermostat"}
+
+    with pytest.raises(ExtensionManifestValidationError, match="must explicitly declare display.capabilities"):
         parse_extension_archive(build_extension_zip(manifest))
 
 
@@ -1457,7 +1496,7 @@ def test_external_device_command_connection_failure_is_reported_as_offline_witho
     def raise_host_down(*_args, **_kwargs):
         raise OSError("[Errno 64] Host is down")
 
-    monkeypatch.setattr("app.services.external_runtime.socket.create_connection", raise_host_down)
+    monkeypatch.setattr("socket.create_connection", raise_host_down)
     ws_mock = Mock()
     monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", ws_mock)
 
@@ -1530,7 +1569,7 @@ def test_execute_external_device_command_ignores_async_notification_frames(monke
     )
 
     monkeypatch.setattr(
-        "app.services.external_runtime.socket.create_connection",
+        "socket.create_connection",
         lambda *_args, **_kwargs: fake_socket,
     )
 
@@ -1589,7 +1628,7 @@ def test_execute_external_device_command_succeeds_when_write_ack_is_missing(monk
     )
 
     monkeypatch.setattr(
-        "app.services.external_runtime.socket.create_connection",
+        "socket.create_connection",
         lambda *_args, **_kwargs: fake_socket,
     )
 
@@ -1642,7 +1681,7 @@ def test_execute_external_device_command_supports_rgb_and_color_temperature(monk
         ]
     )
     monkeypatch.setattr(
-        "app.services.external_runtime.socket.create_connection",
+        "socket.create_connection",
         lambda *_args, **_kwargs: rgb_socket,
     )
 
@@ -1674,7 +1713,7 @@ def test_execute_external_device_command_supports_rgb_and_color_temperature(monk
         ]
     )
     monkeypatch.setattr(
-        "app.services.external_runtime.socket.create_connection",
+        "socket.create_connection",
         lambda *_args, **_kwargs: temperature_socket,
     )
 
@@ -1727,7 +1766,7 @@ def test_execute_external_device_command_enriches_legacy_color_schema_with_tone(
         ]
     )
     monkeypatch.setattr(
-        "app.services.external_runtime.socket.create_connection",
+        "socket.create_connection",
         lambda *_args, **_kwargs: fake_socket,
     )
 
@@ -1783,7 +1822,7 @@ def test_execute_external_device_command_powers_on_before_tone_when_last_state_i
         ]
     )
     monkeypatch.setattr(
-        "app.services.external_runtime.socket.create_connection",
+        "socket.create_connection",
         lambda *_args, **_kwargs: fake_socket,
     )
 
@@ -1837,7 +1876,7 @@ def test_probe_external_device_state_reads_actual_props(monkeypatch):
         ]
     )
     monkeypatch.setattr(
-        "app.services.external_runtime.socket.create_connection",
+        "socket.create_connection",
         lambda *_args, **_kwargs: fake_socket,
     )
 
@@ -1870,7 +1909,7 @@ def test_probe_external_device_state_falls_back_to_discovery_when_tcp_connect_fa
     def raise_host_down(*_args, **_kwargs):
         raise OSError("[Errno 64] Host is down")
 
-    monkeypatch.setattr("app.services.external_runtime.socket.create_connection", raise_host_down)
+    monkeypatch.setattr("socket.create_connection", raise_host_down)
 
     extension = build_runtime_backed_extension()
     device = ExternalDevice(
@@ -1914,7 +1953,7 @@ def test_probe_external_device_state_raises_when_tcp_fails_and_discovery_fails(m
     def raise_host_down(*_args, **_kwargs):
         raise OSError("[Errno 64] Host is down")
 
-    monkeypatch.setattr("app.services.external_runtime.socket.create_connection", raise_host_down)
+    monkeypatch.setattr("socket.create_connection", raise_host_down)
 
     extension = build_runtime_backed_extension()
     device = ExternalDevice(
@@ -1973,7 +2012,7 @@ def test_execute_external_device_command_secondary_retry_no_longer_raises_name_e
         ]
     )
     monkeypatch.setattr(
-        "app.services.external_runtime.socket.create_connection",
+        "socket.create_connection",
         lambda *_args, **_kwargs: fake_socket,
     )
     probe_states = [
@@ -2058,98 +2097,6 @@ def test_execute_external_device_command_secondary_retry_no_longer_raises_name_e
     assert "timed out" in str(exc_info.value)
     assert reconciled_probe.call_count == 1
     assert fake_socket.sent_payloads == []
-
-
-def test_collect_yeelight_diagnostics_includes_discovery_and_timeout_trace(monkeypatch):
-    class FakeLanSocket:
-        def __init__(self) -> None:
-            self.sent_payloads: list[dict[str, object]] = []
-            self.timeout = None
-            self.closed = False
-
-        def settimeout(self, timeout: int) -> None:
-            self.timeout = timeout
-
-        def sendall(self, payload: bytes) -> None:
-            self.sent_payloads.append(json.loads(payload.decode("utf-8").strip()))
-
-        def recv(self, _size: int) -> bytes:
-            raise TimeoutError("timed out")
-
-        def close(self) -> None:
-            self.closed = True
-
-    class FakeDiscoverySocket:
-        def __init__(self) -> None:
-            self.timeout = None
-            self.closed = False
-            self.sent_packets: list[tuple[bytes, tuple[str, int]]] = []
-            self._responses = [
-                (
-                    (
-                        "HTTP/1.1 200 OK\r\n"
-                        "Location: yeelight://192.168.2.8:55443\r\n"
-                        "model: colorb\r\n"
-                        "support: get_prop set_power set_bright set_ct_abx set_rgb\r\n"
-                        "\r\n"
-                    ).encode("utf-8"),
-                    ("192.168.2.8", 49153),
-                )
-            ]
-
-        def setsockopt(self, *_args) -> None:
-            return None
-
-        def settimeout(self, timeout: int) -> None:
-            self.timeout = timeout
-
-        def sendto(self, packet: bytes, address: tuple[str, int]) -> None:
-            self.sent_packets.append((packet, address))
-
-        def recvfrom(self, _size: int) -> tuple[bytes, tuple[str, int]]:
-            if self._responses:
-                return self._responses.pop(0)
-            raise TimeoutError("timed out")
-
-        def close(self) -> None:
-            self.closed = True
-
-    lan_socket = FakeLanSocket()
-    discovery_socket = FakeDiscoverySocket()
-
-    def fake_socket_factory(*args, **kwargs):
-        if args[:3] == (socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP):
-            return discovery_socket
-        raise AssertionError(f"Unexpected socket args: {args}")
-
-    monkeypatch.setattr(
-        "app.services.external_runtime.socket.create_connection",
-        lambda *_args, **_kwargs: lan_socket,
-    )
-    monkeypatch.setattr("app.services.external_runtime.socket.socket", fake_socket_factory)
-
-    diagnostics = collect_yeelight_diagnostics("192.168.2.8")
-
-    assert diagnostics["host"] == "192.168.2.8"
-    assert diagnostics["discovery"]["model"] == "colorb"
-    assert diagnostics["discovery"]["support_methods"] == [
-        "get_prop",
-        "set_power",
-        "set_bright",
-        "set_ct_abx",
-        "set_rgb",
-    ]
-    assert lan_socket.sent_payloads[0]["method"] == "get_prop"
-    event_names = [event["event"] for event in diagnostics["events"]]
-    assert "discovery_match" in event_names
-    assert "connect_ok" in event_names
-    assert "send" in event_names
-    assert "recv_timeout" in event_names
-    assert "probe_error" in event_names
-    assert discovery_socket.closed is True
-    assert lan_socket.closed is False
-    assert diagnostics["online"] is True
-    assert diagnostics["control_transport"] == "tcp-no-ack"
 
 
 def test_extension_runtime_reuses_per_host_session_after_late_reply(monkeypatch):
@@ -2556,3 +2503,320 @@ def test_execute_external_device_command_reconciles_direct_timeout_with_observed
     assert execution.state["model"] == "colorb"
     assert execution.state["brightness"] == 115
     reconciled_probe.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Password field type tests
+# ---------------------------------------------------------------------------
+
+
+def test_parse_extension_archive_accepts_password_field_type():
+    manifest = build_manifest()
+    manifest["device_schemas"][0]["config_schema"] = {
+        "fields": [
+            {"key": "api_key", "label": "API Key", "type": "password", "required": True},
+        ]
+    }
+
+    normalized_manifest, _ = parse_extension_archive(build_extension_zip(manifest))
+    field = normalized_manifest["device_schemas"][0]["config_schema"]["fields"][0]
+    assert field["key"] == "api_key"
+    assert field["type"] == "password"
+
+
+def test_external_device_password_config_is_masked_in_api_response():
+    create_admin_user()
+    token = get_token()
+
+    manifest = build_manifest()
+    manifest["device_schemas"][0]["config_schema"] = {
+        "fields": [
+            {"key": "ip_address", "label": "IP Address", "type": "string", "required": True},
+            {"key": "api_key", "label": "API Key", "type": "password", "required": True},
+        ]
+    }
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={"file": ("yeelight.zip", build_extension_zip(manifest), "application/zip")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200, upload_response.text
+
+    create_response = client.post(
+        "/api/v1/external-devices",
+        json={
+            "installed_extension_id": "yeelight_control",
+            "device_schema_id": "yeelight_white_light",
+            "name": "Cloud Bulb",
+            "config": {"ip_address": "192.168.1.10", "api_key": "secret-token-abc123"},
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 200, create_response.text
+    device_payload = create_response.json()
+
+    assert device_payload["external_config"]["ip_address"] == "192.168.1.10"
+    assert device_payload["external_config"]["api_key"] == "***"
+
+
+def test_external_device_password_config_real_value_passed_to_extension_hook(monkeypatch):
+    manifest = build_manifest()
+    manifest["device_schemas"][0]["config_schema"] = {
+        "fields": [
+            {"key": "ip_address", "label": "IP Address", "type": "string", "required": True},
+            {"key": "api_key", "label": "API Key", "type": "password", "required": True},
+        ]
+    }
+    extension = build_runtime_backed_extension(manifest=manifest)
+    device = ExternalDevice(
+        provider="Yeelight",
+        config={"ip_address": "192.168.1.20", "api_key": "real-secret"},
+        last_state={},
+        schema_snapshot=extension.manifest["device_schemas"][0],
+    )
+    device.installed_extension = extension
+
+    received_configs: list[dict] = []
+
+    def fake_validate(runtime_device: dict, command: dict) -> None:
+        received_configs.append(runtime_device["config"])
+
+    # Must patch on runtime.module (the entrypoint loaded by the runtime loader)
+    runtime = load_installed_extension_runtime(extension)
+    monkeypatch.setattr(runtime.module, "validate_command", fake_validate)
+
+    validate_external_device_command(device, {"kind": "action", "pin": 0, "value": 1})
+
+    assert len(received_configs) == 1
+    assert received_configs[0]["api_key"] == "real-secret"
+
+
+def test_external_device_string_fields_not_masked_in_api_response():
+    create_admin_user()
+    token = get_token()
+
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={"file": ("yeelight.zip", build_extension_zip(), "application/zip")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200
+
+    create_response = client.post(
+        "/api/v1/external-devices",
+        json={
+            "installed_extension_id": "yeelight_control",
+            "device_schema_id": "yeelight_white_light",
+            "name": "String Field Bulb",
+            "config": {"ip_address": "10.0.0.5"},
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 200, create_response.text
+    assert create_response.json()["external_config"]["ip_address"] == "10.0.0.5"
+
+
+# ---------------------------------------------------------------------------
+# Discover candidates validation tests
+# ---------------------------------------------------------------------------
+
+
+def test_discover_devices_filters_candidates_with_unknown_schema_id(monkeypatch):
+    create_admin_user()
+    token = get_token()
+
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={"file": ("yeelight.zip", build_extension_zip(), "application/zip")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200
+
+    monkeypatch.setattr(
+        "app.api.discover_external_devices_via_extension",
+        lambda _ext: [
+            {"device_schema_id": "yeelight_white_light", "config": {"ip_address": "192.168.1.1"}},
+            {"device_schema_id": "no_such_schema", "config": {"ip_address": "192.168.1.2"}},
+        ],
+    )
+
+    response = client.post(
+        "/api/v1/extensions/yeelight_control/discover",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["candidates"]) == 1
+    assert payload["candidates"][0]["device_schema_id"] == "yeelight_white_light"
+    assert payload["skipped_count"] == 1
+
+
+def test_discover_devices_filters_candidates_missing_required_config_fields(monkeypatch):
+    create_admin_user()
+    token = get_token()
+
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={"file": ("yeelight.zip", build_extension_zip(), "application/zip")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200
+
+    monkeypatch.setattr(
+        "app.api.discover_external_devices_via_extension",
+        lambda _ext: [
+            {"device_schema_id": "yeelight_white_light", "config": {"ip_address": "192.168.1.3"}},
+            {"device_schema_id": "yeelight_white_light"},
+        ],
+    )
+
+    response = client.post(
+        "/api/v1/extensions/yeelight_control/discover",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["candidates"]) == 1
+    assert payload["candidates"][0]["config"]["ip_address"] == "192.168.1.3"
+    assert payload["skipped_count"] == 1
+
+
+def test_discover_devices_filters_non_dict_candidates(monkeypatch):
+    create_admin_user()
+    token = get_token()
+
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={"file": ("yeelight.zip", build_extension_zip(), "application/zip")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200
+
+    monkeypatch.setattr(
+        "app.api.discover_external_devices_via_extension",
+        lambda _ext: [
+            "not-a-dict",
+            {"device_schema_id": "yeelight_white_light", "config": {"ip_address": "192.168.1.4"}},
+            42,
+        ],
+    )
+
+    response = client.post(
+        "/api/v1/extensions/yeelight_control/discover",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["candidates"]) == 1
+    assert payload["skipped_count"] == 2
+
+
+def test_discover_devices_returns_all_valid_candidates_when_all_pass(monkeypatch):
+    create_admin_user()
+    token = get_token()
+
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={"file": ("yeelight.zip", build_extension_zip(), "application/zip")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200
+
+    candidates = [
+        {"device_schema_id": "yeelight_white_light", "config": {"ip_address": "192.168.1.10"}, "name": "Bulb A"},
+        {"device_schema_id": "yeelight_color_light", "config": {"ip_address": "192.168.1.11"}, "name": "Bulb B"},
+    ]
+    monkeypatch.setattr(
+        "app.api.discover_external_devices_via_extension",
+        lambda _ext: candidates,
+    )
+
+    response = client.post(
+        "/api/v1/extensions/yeelight_control/discover",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert len(payload["candidates"]) == 2
+    assert payload["skipped_count"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Extension hook timeout tests
+# ---------------------------------------------------------------------------
+
+
+def test_extension_hook_probe_state_raises_on_timeout(monkeypatch):
+    import time
+    import app.services.external_runtime as ext_runtime
+
+    monkeypatch.setattr(ext_runtime, "EXTENSION_HOOK_TIMEOUT_SECONDS", 0.05)
+
+    extension = build_runtime_backed_extension()
+    device = ExternalDevice(
+        provider="Yeelight",
+        config={"ip_address": "192.168.1.99"},
+        last_state={},
+        schema_snapshot=extension.manifest["device_schemas"][0],
+    )
+    device.installed_extension = extension
+
+    # Patch on runtime.module so resolve_runtime_hook picks up the sleeping function
+    runtime = load_installed_extension_runtime(extension)
+    monkeypatch.setattr(runtime.module, "probe_state", lambda _d: (time.sleep(1.0), {})[1])
+
+    with pytest.raises(ExternalDeviceRuntimeError) as exc_info:
+        probe_external_device_state(device)
+
+    assert exc_info.value.mark_offline is True
+    assert exc_info.value.connection_failed is True
+
+
+def test_extension_hook_timeout_marks_device_offline_in_polling_loop(monkeypatch):
+    import time
+    import app.services.external_runtime as ext_runtime
+
+    create_admin_user()
+    token = get_token()
+
+    upload_response = client.post(
+        "/api/v1/extensions/upload",
+        files={"file": ("yeelight.zip", build_extension_zip(), "application/zip")},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert upload_response.status_code == 200
+
+    create_response = client.post(
+        "/api/v1/external-devices",
+        json={
+            "installed_extension_id": "yeelight_control",
+            "device_schema_id": "yeelight_white_light",
+            "name": "Slow Bulb",
+            "config": {"ip_address": "192.168.1.99"},
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert create_response.status_code == 200, create_response.text
+    device_id = create_response.json()["device_id"]
+
+    db = TestingSessionLocal()
+    try:
+        extension_obj = db.query(InstalledExtension).filter_by(extension_id="yeelight_control").one()
+        runtime = load_installed_extension_runtime(extension_obj)
+        # Pre-set device as online so the timeout will trigger an offline transition
+        device_obj = db.query(ExternalDevice).filter_by(device_id=device_id).one()
+        device_obj.conn_status = ConnStatus.online
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(ext_runtime, "EXTENSION_HOOK_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(runtime.module, "probe_state", lambda _d: (time.sleep(1.0), {})[1])
+    ws_mock = Mock()
+    monkeypatch.setattr("app.api.ws_manager.broadcast_device_event_sync", ws_mock)
+
+    stats = refresh_external_device_states_once(session_factory=TestingSessionLocal)
+
+    assert stats["probed"] == 1
+    assert stats["offline"] == 1
+    assert stats["online"] == 0

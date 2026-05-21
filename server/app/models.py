@@ -568,7 +568,7 @@ class DiyProjectResponse(DiyProjectBase):
 class ExtensionConfigField(BaseModel):
     key: str
     label: str
-    type: Literal["string", "number", "boolean"]
+    type: Literal["string", "number", "boolean", "password"]
     required: bool = False
 
 

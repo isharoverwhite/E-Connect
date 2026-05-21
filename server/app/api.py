@@ -120,10 +120,12 @@ from .services.provisioning import (
 from .services.i2c_registry import I2CLibrary, get_i2c_catalog
 from .services.extensions import (
     ExtensionManifestValidationError,
+    extract_extension_archive,
     get_manifest_device_schema,
     parse_extension_archive,
     persist_extension_archive,
     remove_extracted_extension_dir,
+    resolve_extracted_extension_dir,
     validate_external_device_config,
 )
 from .services.extension_runtime_loader import (
@@ -135,6 +137,7 @@ from .services.external_runtime import (
     ExternalDeviceRuntimeError,
     ExternalDeviceRuntimeUnsupportedError,
     ExternalDeviceRuntimeValidationError,
+    discover_external_devices_via_extension,
     execute_external_device_command,
     probe_external_device_state,
     validate_external_device_command,
@@ -2056,6 +2059,14 @@ def _resolve_external_device_type(device: ExternalDevice) -> str:
     return _normalize_device_type_value(display.get("card_type"), default=fallback)
 
 
+def _mask_external_device_config(config: dict[str, Any], schema_snapshot: dict[str, Any]) -> dict[str, Any]:
+    fields = schema_snapshot.get("config_schema", {}).get("fields", [])
+    secret_keys = {f["key"] for f in fields if isinstance(f, dict) and f.get("type") == "password"}
+    if not secret_keys:
+        return config
+    return {k: "***" if k in secret_keys else v for k, v in config.items()}
+
+
 def _serialize_external_device(device: ExternalDevice) -> dict[str, Any]:
     room_name = device.room.name if device.room is not None else None
     config = device.config if isinstance(device.config, dict) else {}
@@ -2071,7 +2082,7 @@ def _serialize_external_device(device: ExternalDevice) -> dict[str, Any]:
         "mode": DeviceMode.library,
         "firmware_revision": None,
         "firmware_version": device.installed_extension.version if device.installed_extension is not None else None,
-        "ip_address": config.get("ip_address"),
+        "ip_address": None,
         "topic_pub": None,
         "topic_sub": None,
         "show_on_dashboard": device.show_on_dashboard,
@@ -2090,7 +2101,10 @@ def _serialize_external_device(device: ExternalDevice) -> dict[str, Any]:
         "extension_name": extension_name,
         "installed_extension_id": device.installed_extension_id,
         "device_schema_id": device.device_schema_id,
-        "external_config": config,
+        "external_config": _mask_external_device_config(
+            config,
+            device.schema_snapshot if isinstance(device.schema_snapshot, dict) else {},
+        ),
         "schema_snapshot": device.schema_snapshot if isinstance(device.schema_snapshot, dict) else {},
         "is_external": True,
         "created_at": device.created_at,
@@ -2576,6 +2590,69 @@ def refresh_external_device_states_once(
                         external_device.device_id,
                     )
 
+        return stats
+    finally:
+        db.close()
+
+
+def ensure_installed_extensions_extracted(
+    *,
+    session_factory: Optional[Callable[[], Session]] = None,
+) -> dict[str, int]:
+    """Re-extract any installed extensions whose extracted directory is missing.
+
+    Called at startup so all extensions are immediately available after a
+    container redeployment where ZIP archives are persisted but the extracted
+    tree was not.
+    """
+    db = (session_factory or SessionLocal)()
+    try:
+        extensions = (
+            db.query(InstalledExtension)
+            .filter(
+                InstalledExtension.archive_sha256.isnot(None),
+                InstalledExtension.archive_path.isnot(None),
+            )
+            .all()
+        )
+        stats = {"total": len(extensions), "extracted": 0, "already_present": 0, "failed": 0}
+        for ext in extensions:
+            if not ext.extension_id or not ext.version or not ext.archive_sha256:
+                stats["failed"] += 1
+                continue
+            extracted_dir = resolve_extracted_extension_dir(
+                extension_id=ext.extension_id,
+                version=ext.version,
+                archive_sha256=ext.archive_sha256,
+            )
+            if extracted_dir.exists():
+                stats["already_present"] += 1
+                continue
+            archive_path = ext.archive_path
+            if not archive_path or not Path(archive_path).exists():
+                logger.warning(
+                    "Extension '%s' archive not found at '%s' — skipping startup extraction.",
+                    ext.extension_id,
+                    archive_path,
+                )
+                stats["failed"] += 1
+                continue
+            try:
+                extract_extension_archive(
+                    archive_path=archive_path,
+                    extension_id=ext.extension_id,
+                    version=ext.version,
+                    archive_sha256=ext.archive_sha256,
+                )
+                stats["extracted"] += 1
+                logger.info("Re-extracted extension '%s' at startup.", ext.extension_id)
+            except Exception as exc:
+                logger.warning(
+                    "Failed to extract extension '%s' at startup: %s",
+                    ext.extension_id,
+                    exc,
+                )
+                stats["failed"] += 1
         return stats
     finally:
         db.close()
@@ -3955,6 +4032,55 @@ async def upload_extension_zip(
         extension,
         external_device_count=int(external_device_count),
     )
+
+
+@router.post("/extensions/{extension_id}/discover")
+async def discover_devices_via_extension(
+    extension_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_account_admin_user),
+):
+    _get_current_household_or_404(db, current_user)
+    extension = (
+        db.query(InstalledExtension)
+        .filter(InstalledExtension.extension_id == extension_id)
+        .first()
+    )
+    if extension is None:
+        raise HTTPException(status_code=404, detail="Extension not found")
+
+    try:
+        candidates = await asyncio.to_thread(discover_external_devices_via_extension, extension)
+    except ExternalDeviceRuntimeUnsupportedError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error": "unsupported", "message": str(exc)},
+        ) from exc
+    except ExternalDeviceRuntimeError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "discovery_failed", "message": str(exc)},
+        ) from exc
+
+    manifest = extension.manifest or {}
+    valid_candidates: list[Any] = []
+    skipped_count = 0
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            skipped_count += 1
+            continue
+        schema_id = candidate.get("device_schema_id")
+        if not isinstance(schema_id, str) or not schema_id.strip():
+            skipped_count += 1
+            continue
+        try:
+            schema = get_manifest_device_schema(manifest, schema_id.strip())
+            validate_external_device_config(schema, candidate.get("config") or {})
+            valid_candidates.append(candidate)
+        except ExtensionManifestValidationError:
+            skipped_count += 1
+
+    return {"extension_id": extension_id, "candidates": valid_candidates, "skipped_count": skipped_count}
 
 
 @router.get("/external-devices", response_model=List[DeviceResponse])

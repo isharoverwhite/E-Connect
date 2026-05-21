@@ -22,14 +22,7 @@ EXTENSIONS_DATA_DIR = Path(
 EXTENSION_PACKAGES_DIR = EXTENSIONS_DATA_DIR / "packages"
 EXTENSION_EXTRACTED_DIR = EXTENSIONS_DATA_DIR / "extracted"
 MAX_EXTENSION_ARCHIVE_BYTES = 5 * 1024 * 1024
-SUPPORTED_CARD_TYPES = {"light", "switch", "fan", "sensor"}
-SUPPORTED_CONFIG_FIELD_TYPES = {"string", "number", "boolean"}
-SUPPORTED_CAPABILITIES_BY_CARD_TYPE = {
-    "light": {"power", "brightness", "rgb", "color_temperature"},
-    "switch": {"power"},
-    "fan": {"power", "speed"},
-    "sensor": {"temperature", "humidity", "value"},
-}
+SUPPORTED_CONFIG_FIELD_TYPES = {"string", "number", "boolean", "password"}
 DEFAULT_CAPABILITIES_BY_CARD_TYPE = {
     "light": ("power", "brightness"),
     "switch": ("power",),
@@ -37,11 +30,15 @@ DEFAULT_CAPABILITIES_BY_CARD_TYPE = {
     "sensor": ("value",),
 }
 IDENTIFIER_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]{1,119}$")
+CAPABILITY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,59}$")
 PYTHON_SYMBOL_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 DEFAULT_PACKAGE_HOOKS = {
     "validate_command": "validate_command",
     "execute_command": "execute_command",
     "probe_state": "probe_state",
+}
+OPTIONAL_PACKAGE_HOOKS = {
+    "discover_devices": "discover_devices",
 }
 
 for path in (EXTENSIONS_DATA_DIR, EXTENSION_PACKAGES_DIR, EXTENSION_EXTRACTED_DIR):
@@ -137,11 +134,10 @@ def _normalize_device_schema(schema_payload: Any, *, seen_schema_ids: set[str]) 
     if not isinstance(display_payload, dict):
         raise ExtensionManifestValidationError(f"Schema '{schema_id}' is missing 'display'.")
 
-    card_type = _read_nonempty_string(display_payload, "card_type").lower()
-    if card_type not in SUPPORTED_CARD_TYPES:
-        raise ExtensionManifestValidationError(
-            f"Schema '{schema_id}' uses unsupported card type '{card_type}'."
-        )
+    card_type = _validate_identifier(
+        _read_nonempty_string(display_payload, "card_type"),
+        field_name="display.card_type",
+    )
 
     raw_device_type = schema_payload.get("device_type")
     if raw_device_type is None:
@@ -154,13 +150,17 @@ def _normalize_device_schema(schema_payload: Any, *, seen_schema_ids: set[str]) 
 
     raw_capabilities = display_payload.get("capabilities")
     if raw_capabilities is None:
-        raw_capabilities = list(DEFAULT_CAPABILITIES_BY_CARD_TYPE[card_type])
+        default_caps = DEFAULT_CAPABILITIES_BY_CARD_TYPE.get(card_type)
+        if default_caps is None:
+            raise ExtensionManifestValidationError(
+                f"Schema '{schema_id}' must explicitly declare display.capabilities for card type '{card_type}'."
+            )
+        raw_capabilities = list(default_caps)
     if not isinstance(raw_capabilities, list) or len(raw_capabilities) == 0:
         raise ExtensionManifestValidationError(
             f"Schema '{schema_id}' display.capabilities must be a non-empty list."
         )
 
-    allowed_capabilities = SUPPORTED_CAPABILITIES_BY_CARD_TYPE[card_type]
     capabilities: list[str] = []
     seen_capabilities: set[str] = set()
     for raw_capability in raw_capabilities:
@@ -169,9 +169,9 @@ def _normalize_device_schema(schema_payload: Any, *, seen_schema_ids: set[str]) 
                 f"Schema '{schema_id}' has an invalid display capability entry."
             )
         capability = raw_capability.strip().lower()
-        if capability not in allowed_capabilities:
+        if not CAPABILITY_PATTERN.fullmatch(capability):
             raise ExtensionManifestValidationError(
-                f"Schema '{schema_id}' uses unsupported capability '{capability}' for card type '{card_type}'."
+                f"Schema '{schema_id}' has an invalid capability name '{capability}'."
             )
         if capability in seen_capabilities:
             continue
@@ -280,13 +280,20 @@ def normalize_manifest_v1(manifest_payload: Any) -> dict[str, Any]:
     raw_hooks = package_payload.get("hooks") or DEFAULT_PACKAGE_HOOKS
     if not isinstance(raw_hooks, dict):
         raise ExtensionManifestValidationError("Manifest field 'package.hooks' must be an object.")
-    package_hooks = {
+    package_hooks: dict[str, str] = {
         hook_key: _validate_python_symbol(
             _read_nonempty_string(raw_hooks, hook_key),
             field_name=f"package.hooks.{hook_key}",
         )
         for hook_key in DEFAULT_PACKAGE_HOOKS
     }
+    for hook_key, default_name in OPTIONAL_PACKAGE_HOOKS.items():
+        raw_hook_name = raw_hooks.get(hook_key)
+        if raw_hook_name is not None:
+            package_hooks[hook_key] = _validate_python_symbol(
+                _read_nonempty_string(raw_hooks, hook_key),
+                field_name=f"package.hooks.{hook_key}",
+            )
 
     raw_device_schemas = manifest_payload.get("device_schemas")
     if not isinstance(raw_device_schemas, list) or len(raw_device_schemas) == 0:
@@ -478,7 +485,7 @@ def validate_external_device_config(schema: dict[str, Any], config_payload: Any)
             continue
 
         field_type = field["type"]
-        if field_type == "string":
+        if field_type in ("string", "password"):
             if not isinstance(raw_value, str) or not raw_value.strip():
                 raise ExtensionManifestValidationError(f"Config field '{field_key}' must be a non-empty string.")
             normalized[field_key] = raw_value.strip()
