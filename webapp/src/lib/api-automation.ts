@@ -8,6 +8,7 @@ import {
   AutomationMutationPayload,
   TriggerResult,
   AutomationScheduleContext,
+  ExecutionLog,
 } from "@/types/automation";
 
 function authHeaders(extra?: Record<string, string>): Record<string, string> {
@@ -82,5 +83,14 @@ export async function fetchAutomationScheduleContext(): Promise<AutomationSchedu
     headers: authHeaders(),
   });
   if (!res.ok) throw new Error(await readApiError(res, "Failed to load server time context"));
+  return res.json();
+}
+
+export async function fetchAutomationLogs(automationId: number, limit = 50): Promise<ExecutionLog[]> {
+  const res = await fetch(`${API_URL}/automation/${automationId}/logs?limit=${limit}`, {
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+  if (!res.ok) throw new Error(await readApiError(res, "Failed to load execution logs"));
   return res.json();
 }

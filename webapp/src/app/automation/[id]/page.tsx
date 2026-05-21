@@ -11,7 +11,7 @@ import { DeviceConfig, PinConfig } from "@/types/device";
 import { useToast } from "@/components/ToastContext";
 
 // --- Types ---
-import { AutomationNodeType, AutomationGraphNodeConfig, AutomationGraphNode, AutomationGraphEdge, TriggerResult, AutomationRecord, DraftAutomation, TIME_TRIGGER_KIND, TIME_TRIGGER_WEEKDAY_OPTIONS, DEVICE_VALUE_TRIGGER_KIND, DEVICE_ON_OFF_TRIGGER_KIND, LEGACY_DEVICE_TRIGGER_KIND, AutomationScheduleContext, TELEGRAM_ACTION_KIND } from "@/types/automation";
+import { AutomationNodeType, AutomationGraphNodeConfig, AutomationGraphNode, AutomationGraphEdge, TriggerResult, AutomationRecord, DraftAutomation, TIME_TRIGGER_KIND, TIME_TRIGGER_WEEKDAY_OPTIONS, DEVICE_VALUE_TRIGGER_KIND, DEVICE_ON_OFF_TRIGGER_KIND, LEGACY_DEVICE_TRIGGER_KIND, AutomationScheduleContext, TELEGRAM_ACTION_KIND, ExecutionLog } from "@/types/automation";
 
 type PageState = "loading" | "empty" | "loaded" | "error";
 
@@ -30,7 +30,7 @@ interface ContextMenuState {
 }
 
 // --- API helpers ---
-import { fetchAutomations, createAutomation, updateAutomation, deleteAutomation, triggerAutomation, fetchAutomationScheduleContext } from "@/lib/api-automation";
+import { fetchAutomations, createAutomation, updateAutomation, deleteAutomation, triggerAutomation, fetchAutomationScheduleContext, fetchAutomationLogs } from "@/lib/api-automation";
 
 // --- Subcomponents ---
 
@@ -213,6 +213,11 @@ export default function AutomationPage() {
     }
   }, [selectedNodeId]);
 
+  // Execution history
+  const [execLogs, setExecLogs] = useState<ExecutionLog[]>([]);
+  const [execLogsLoading, setExecLogsLoading] = useState(false);
+  const [execLogsError, setExecLogsError] = useState("");
+
   // Basic modales
 
   const [renameOpen, setRenameOpen] = useState(false);
@@ -337,6 +342,22 @@ export default function AutomationPage() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  // Fetch execution history when a real (non-draft) automation is selected
+  useEffect(() => {
+    if (selectedId === null) {
+      setExecLogs([]);
+      setExecLogsError("");
+      return;
+    }
+    let cancelled = false;
+    setExecLogsLoading(true);
+    setExecLogsError("");
+    fetchAutomationLogs(selectedId)
+      .then((logs) => { if (!cancelled) { setExecLogs(logs); setExecLogsLoading(false); } })
+      .catch((err) => { if (!cancelled) { setExecLogsError(err instanceof Error ? err.message : "Failed to load history."); setExecLogsLoading(false); } });
+    return () => { cancelled = true; };
+  }, [selectedId]);
 
   // Update local graph state when selection changes
   useEffect(() => {
@@ -524,6 +545,10 @@ export default function AutomationPage() {
       const res = await triggerAutomation(selectedAutomation.id);
       setLastResult(res);
       setTriggerState("done");
+      // Refresh execution history to reflect the new run
+      fetchAutomationLogs(selectedAutomation.id)
+        .then(setExecLogs)
+        .catch(() => {/* silent refresh failure */});
     } catch (e) {
       setLastResult({ status: "failed", message: e instanceof Error ? e.message : "Error", log: null });
       setTriggerState("done");
@@ -1573,12 +1598,12 @@ export default function AutomationPage() {
                       {(() => {
                          const isConditionMiss = lastResult.log?.error_message === "No action applied because no branch passed all conditions.";
                          const displayStatus = isConditionMiss ? "skipped" : lastResult.status;
-                         const statusClasses = isConditionMiss 
+                         const statusClasses = isConditionMiss
                              ? "bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300"
-                             : lastResult.status === 'success' 
-                                 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-400' 
+                             : lastResult.status === 'success'
+                                 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-400'
                                  : 'bg-rose-100 text-rose-700 dark:bg-rose-900/50 dark:text-rose-400';
-                         
+
                          return (
                             <>
                                 <span className={`text-xs font-bold px-2 py-1 rounded inline-block mb-3 uppercase ${statusClasses}`}>
@@ -1598,6 +1623,74 @@ export default function AutomationPage() {
                             </>
                          );
                       })()}
+                   </div>
+               )}
+
+               {/* Execution History — only shown when a saved automation is selected */}
+               {selectedId !== null && !selectedNodeId && (
+                   <div className="mx-4 mb-4 mt-2">
+                       <div className="flex items-center justify-between mb-2">
+                           <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{t("automation.editor.execution_history")}</span>
+                           {execLogsLoading && (
+                               <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                           )}
+                       </div>
+                       {execLogsError ? (
+                           <p className="text-xs text-rose-500 dark:text-rose-400">{t("automation.editor.exec_load_error")}</p>
+                       ) : execLogsLoading && execLogs.length === 0 ? (
+                           <p className="text-xs text-slate-400 italic">{t("automation.editor.exec_loading")}</p>
+                       ) : execLogs.length === 0 ? (
+                           <p className="text-xs text-slate-400 italic">{t("automation.editor.execution_history_empty")}</p>
+                       ) : (
+                           <div className="rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                               <table className="w-full text-xs">
+                                   <thead>
+                                       <tr className="bg-slate-50 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-700">
+                                           <th className="px-3 py-2 text-left font-bold text-slate-500 uppercase tracking-wide">{t("automation.editor.exec_col_time")}</th>
+                                           <th className="px-2 py-2 text-left font-bold text-slate-500 uppercase tracking-wide">{t("automation.editor.exec_col_source")}</th>
+                                           <th className="px-2 py-2 text-left font-bold text-slate-500 uppercase tracking-wide">{t("automation.editor.exec_col_result")}</th>
+                                       </tr>
+                                   </thead>
+                                   <tbody>
+                                       {execLogs.map((log, idx) => {
+                                           const isConditionMiss = log.error_message === "No action applied because no branch passed all conditions.";
+                                           const displayStatus = isConditionMiss ? "skipped" : log.status;
+                                           const statusColor =
+                                               displayStatus === "success"
+                                                   ? "text-emerald-600 dark:text-emerald-400"
+                                                   : displayStatus === "skipped"
+                                                   ? "text-slate-500 dark:text-slate-400"
+                                                   : "text-rose-500 dark:text-rose-400";
+                                           const detail = isConditionMiss
+                                               ? "Condition not met"
+                                               : log.error_message
+                                               ? log.error_message.slice(0, 60)
+                                               : log.log_output
+                                               ? log.log_output.slice(0, 60)
+                                               : null;
+                                           return (
+                                               <tr
+                                                   key={log.id}
+                                                   title={log.error_message ?? log.log_output ?? undefined}
+                                                   className={`border-b border-slate-100 dark:border-slate-800 last:border-0 ${idx % 2 === 0 ? "bg-white dark:bg-slate-950" : "bg-slate-50/50 dark:bg-slate-900/30"}`}
+                                               >
+                                                   <td className="px-3 py-2 text-slate-600 dark:text-slate-400 font-mono whitespace-nowrap" title={log.triggered_at}>
+                                                       {new Date(log.triggered_at).toLocaleString([], { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                                                   </td>
+                                                   <td className="px-2 py-2 text-slate-500 dark:text-slate-500 capitalize whitespace-nowrap">{log.trigger_source ?? "manual"}</td>
+                                                   <td className="px-2 py-2">
+                                                       <span className={`font-bold uppercase ${statusColor}`}>{displayStatus}</span>
+                                                       {detail && (
+                                                           <div className="text-[10px] text-slate-400 dark:text-slate-600 mt-0.5 truncate max-w-[120px]" title={detail}>{detail}</div>
+                                                       )}
+                                                   </td>
+                                               </tr>
+                                           );
+                                       })}
+                                   </tbody>
+                               </table>
+                           </div>
+                       )}
                    </div>
                )}
                 </div>

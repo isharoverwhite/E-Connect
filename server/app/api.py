@@ -4669,6 +4669,82 @@ async def rebuild_device_firmware(
         "message": "Rebuild job queued.",
     }
 
+@router.post("/devices/ota/batch")
+async def batch_device_ota(
+    device_ids: List[str] = Body(..., embed=True),
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """Trigger OTA firmware rebuild for multiple devices by their device_id (UUID strings)."""
+    from app.sql_models import DiyProjectConfig
+
+    results = []
+    for device_id in device_ids:
+        try:
+            device = _get_device_in_household_or_404(db, current_user, device_id)
+        except HTTPException:
+            results.append({"device_id": device_id, "status": "not_found"})
+            continue
+
+        if not device.provisioning_project_id:
+            results.append({"device_id": device_id, "status": "error", "message": "Not a managed DIY device"})
+            continue
+
+        try:
+            project = _get_project_in_household_or_404(db, current_user, device.provisioning_project_id)
+        except HTTPException:
+            results.append({"device_id": device_id, "status": "error", "message": "Project not found"})
+            continue
+
+        if not project.current_config_id:
+            results.append({"device_id": device_id, "status": "error", "message": "No committed configuration found"})
+            continue
+
+        committed_config = db.query(DiyProjectConfig).filter(
+            DiyProjectConfig.id == project.current_config_id
+        ).first()
+
+        if not committed_config:
+            results.append({"device_id": device_id, "status": "error", "message": "Committed configuration not found"})
+            continue
+
+        if project.pending_build_job_id:
+            existing_job = db.query(BuildJob).filter(BuildJob.id == project.pending_build_job_id).first()
+            if existing_job and existing_job.status in {JobStatus.queued, JobStatus.building}:
+                results.append({"device_id": device_id, "status": "already_queued", "job_id": existing_job.id})
+                continue
+
+        try:
+            job_id = str(uuid.uuid4())
+            job = BuildJob(
+                id=job_id,
+                project_id=project.id,
+                status=JobStatus.queued,
+                saved_config_id=committed_config.id,
+                staged_project_config=committed_config.config,
+            )
+            db.add(job)
+            project.pending_config = committed_config.config
+            project.pending_config_id = committed_config.id
+            project.pending_build_job_id = job.id
+            db.commit()
+            db.refresh(job)
+
+            background_tasks.add_task(
+                build_firmware_task,
+                job.id,
+                [],
+                _background_session_factory(db),
+            )
+            results.append({"device_id": device_id, "status": "triggered", "job_id": job.id})
+        except Exception as exc:
+            db.rollback()
+            results.append({"device_id": device_id, "status": "error", "message": str(exc)})
+
+    return {"results": results}
+
+
 @router.patch("/device/{device_id}/visibility")
 async def update_device_visibility(
     device_id: str,
@@ -4727,7 +4803,7 @@ async def delete_device(device_id: str, db: Session = Depends(get_db), current_u
 _device_command_cooldown: dict[str, float] = {}
 _device_command_cooldown_lock = threading.Lock()
 _DEVICE_COMMAND_MIN_INTERVAL_SECONDS = float(
-    os.getenv("DEVICE_COMMAND_MIN_INTERVAL_SECONDS", "0.25")
+    os.getenv("DEVICE_COMMAND_MIN_INTERVAL_SECONDS", "0.05")
 )
 
 
@@ -6566,6 +6642,28 @@ async def trigger_automation(automation_id: int, db: Session = Depends(get_db), 
         message=msg,
         log=_automation_log_response_model(execution_log),
     )
+
+
+@router.get("/automation/{automation_id}/logs", response_model=List[AutomationLogResponse])
+async def get_automation_execution_logs(
+    automation_id: int,
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return the execution history for a saved automation (most recent first)."""
+    automation = _get_user_automation(db, automation_id, user)
+    if not automation:
+        raise HTTPException(status_code=404, detail="Automation not found")
+    logs = (
+        db.query(AutomationExecutionLog)
+        .filter(AutomationExecutionLog.automation_id == automation_id)
+        .order_by(AutomationExecutionLog.triggered_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [_automation_log_response_model(log) for log in logs]
+
 
 # --- OTA (Simplified from previous) ---
 
