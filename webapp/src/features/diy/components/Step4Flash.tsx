@@ -368,6 +368,16 @@ export function Step4Flash({
                                         </span>
                                         {buildActionLabel}
                                     </button>
+                                    {(serverBuild.status === "build_failed" || serverBuild.status === "flash_failed" || serverBuild.status === "cancelled") && (
+                                        <button
+                                            onClick={onTriggerServerBuild}
+                                            disabled={buildBusy || hasActiveBuild || pinsLength === 0 || projectSyncState === "saving"}
+                                            className="inline-flex items-center gap-2 rounded-lg border-2 border-rose-400 bg-rose-50 px-4 py-2.5 text-sm font-semibold text-rose-700 transition-colors hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-500/50 dark:bg-rose-500/10 dark:text-rose-300 dark:hover:bg-rose-500/20"
+                                        >
+                                            <span className="material-symbols-outlined text-base">replay</span>
+                                            {t("diy.step4flash.btn.retry")}
+                                        </button>
+                                    )}
                                     <button
                                         onClick={onRefreshBuild}
                                         disabled={!serverBuild.jobId}

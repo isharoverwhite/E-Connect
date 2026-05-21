@@ -221,9 +221,10 @@ function useRealtimeRangeCommand({
 
     try {
       const response = await sendDeviceCommand(deviceId, buildPayload(nextIntent.value));
+      const isRateLimited = response.status === "rate_limited";
       lastCompletedIntentRef.current = {
         seq: nextIntent.seq,
-        status: response.status === "failed" ? "rejected" : "fulfilled",
+        status: (response.status === "failed") ? "rejected" : "fulfilled",
       };
       if (!activeRef.current) {
         return;
@@ -234,7 +235,7 @@ function useRealtimeRangeCommand({
         if (isLatestIntent) {
           onLatestRejected();
         }
-      } else if (isLatestIntent) {
+      } else if (!isRateLimited && isLatestIntent) {
         onLatestAccepted(response);
       }
     } catch {
@@ -470,7 +471,18 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
   const [optimisticSliderValue, setOptimisticSliderValue] = useState<number | null>(null);
   const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [commandCooldown, setCommandCooldown] = useState(false);
-  const COMMAND_COOLDOWN_MS = 300;
+  const [commandError, setCommandError] = useState(false);
+  const commandErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const COMMAND_COOLDOWN_MS = 100;
+
+  const flashCommandError = () => {
+    setCommandError(true);
+    if (commandErrorTimerRef.current) clearTimeout(commandErrorTimerRef.current);
+    commandErrorTimerRef.current = setTimeout(() => {
+      setCommandError(false);
+      commandErrorTimerRef.current = null;
+    }, 2000);
+  };
 
   const deliveryForPendingCommand = Boolean(
     config.last_delivery && pendingCmdId && config.last_delivery.command_id === pendingCmdId
@@ -617,6 +629,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
       if (response && response.status === "failed") {
         setOptimisticToggleState(null);
         setOptimisticSliderValue(null);
+        flashCommandError();
       } else {
         applyPersistedState(response.last_state);
         setPendingCmdId(response?.command_id || null);
@@ -625,6 +638,7 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
       setRequestPending(false);
       setOptimisticToggleState(null);
       setOptimisticSliderValue(null);
+      flashCommandError();
     } finally {
       releaseCooldown();
     }
@@ -643,13 +657,20 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
     return (
       <div className="flex justify-between items-center py-3 border-t border-slate-100 dark:border-slate-800/50">
         <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
-        <DeviceToggle
-          checked={toggleState}
-          disabled={toggleDisabled}
-          id={`pin-${config.device_id}-${pin.gpio_pin}`}
-          loading={toggleLoading}
-          onChange={handleToggle}
-        />
+        <div className="flex items-center gap-2">
+          {commandError && (
+            <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-red-500 dark:text-red-400 animate-pulse" title={t("devices.card.cmd_error")}>
+              <span className="material-icons-round text-[14px] align-middle">error_outline</span>
+            </span>
+          )}
+          <DeviceToggle
+            checked={toggleState}
+            disabled={toggleDisabled}
+            id={`pin-${config.device_id}-${pin.gpio_pin}`}
+            loading={toggleLoading}
+            onChange={handleToggle}
+          />
+        </div>
       </div>
     );
   }
@@ -660,7 +681,11 @@ export function PinControlItem({ config, pin, isOnline }: { config: DeviceConfig
         <div className="flex justify-between items-center mb-3">
           <span className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</span>
           <div className="flex items-center gap-3">
-             {sliderLoading ? (
+             {commandError ? (
+               <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-red-500 dark:text-red-400 animate-pulse" title={t("devices.card.cmd_error")}>
+                 <span className="material-icons-round text-[14px] align-middle">error_outline</span>
+               </span>
+             ) : sliderLoading ? (
                <span className="text-[10px] font-medium uppercase tracking-[0.12em] text-sky-600 dark:text-sky-300 animate-pulse">
                  {t("devices.card.syncing")}
                </span>
@@ -1071,7 +1096,7 @@ export function ExtensionCard({ config, isOnline }: { config: DeviceConfig, isOn
   const [optimisticSliderValue, setOptimisticSliderValue] = useState<number | null>(null);
   const [commandCooldown, setCommandCooldown] = useState(false);
   const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const COMMAND_COOLDOWN_MS = 300;
+  const COMMAND_COOLDOWN_MS = 100;
   const [optimisticRgb, setOptimisticRgb] = useState<[number, number, number] | null>(null);
   const [optimisticTone, setOptimisticTone] = useState<number | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -1507,8 +1532,19 @@ function ExternalSwitchCard({ config, isOnline }: { config: DeviceConfig; isOnli
   const [pendingCmdId, setPendingCmdId] = useState<string | null>(null);
   const [optimisticToggleState, setOptimisticToggleState] = useState<boolean | null>(null);
   const [commandCooldown, setCommandCooldown] = useState(false);
+  const [commandError, setCommandError] = useState(false);
   const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const COMMAND_COOLDOWN_MS = 300;
+  const commandErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const COMMAND_COOLDOWN_MS = 100;
+
+  const flashCommandError = () => {
+    setCommandError(true);
+    if (commandErrorTimerRef.current) clearTimeout(commandErrorTimerRef.current);
+    commandErrorTimerRef.current = setTimeout(() => {
+      setCommandError(false);
+      commandErrorTimerRef.current = null;
+    }, 2000);
+  };
 
   const effectiveCaps = getEffectiveExtensionCapabilities(config);
   const supportsPower = effectiveCaps.includes("power") || effectiveCaps.length === 0;
@@ -1577,12 +1613,14 @@ function ExternalSwitchCard({ config, isOnline }: { config: DeviceConfig; isOnli
       setRequestPending(false);
       if (response.status === "failed") {
         setOptimisticToggleState(null);
+        flashCommandError();
       } else {
         setPendingCmdId(response.command_id || null);
       }
     } catch {
       setRequestPending(false);
       setOptimisticToggleState(null);
+      flashCommandError();
     } finally {
       releaseCooldown();
     }
@@ -1621,6 +1659,12 @@ function ExternalSwitchCard({ config, isOnline }: { config: DeviceConfig; isOnli
           />
         </div>
       </div>
+      {commandError && (
+        <div className="mb-2 flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-400">
+          <span className="material-icons-round text-[14px]">error_outline</span>
+          {t("devices.card.cmd_error")}
+        </div>
+      )}
       <div className="rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/60">
         <div className="text-[11px] uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">{t("devices.card.switch_state")}</div>
         <div className="mt-2 flex items-end justify-between gap-3">
@@ -1642,7 +1686,7 @@ function ExternalFanCard({ config, isOnline }: { config: DeviceConfig; isOnline:
   const [optimisticSpeed, setOptimisticSpeed] = useState<number | null>(null);
   const [commandCooldown, setCommandCooldown] = useState(false);
   const cooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const COMMAND_COOLDOWN_MS = 300;
+  const COMMAND_COOLDOWN_MS = 100;
 
   const effectiveCaps = getEffectiveExtensionCapabilities(config);
   const supportsPower = effectiveCaps.includes("power");

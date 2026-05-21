@@ -129,7 +129,7 @@ export default function SetupPage() {
         }
     };
 
-    const handleSubmit = async () => {
+    const handleSubmit = async (skipLocation = false) => {
         setError("");
 
         if (!validateAdminStep()) {
@@ -137,7 +137,7 @@ export default function SetupPage() {
             return;
         }
 
-        if (!homeLocation) {
+        if (!skipLocation && !homeLocation) {
             setFieldErrors((prev) => ({ ...prev, homeLocation: "Choose the home location for this server." }));
             return;
         }
@@ -151,12 +151,14 @@ export default function SetupPage() {
                 fullname,
                 householdName,
                 language,
-                home_location: {
-                    latitude: homeLocation.latitude,
-                    longitude: homeLocation.longitude,
-                    label: homeLocation.label,
-                    source: homeLocation.source,
-                },
+                home_location: homeLocation
+                    ? {
+                          latitude: homeLocation.latitude,
+                          longitude: homeLocation.longitude,
+                          label: homeLocation.label,
+                          source: homeLocation.source,
+                      }
+                    : undefined,
             });
             showToast("Server initialized successfully! Redirecting to login...", "success");
             setTimeout(() => {
@@ -166,6 +168,11 @@ export default function SetupPage() {
             setError(getErrorMessage(error, "Failed to initialize server"));
             setIsLoading(false);
         }
+    };
+
+    const handleSkipLocation = () => {
+        showToast(t("setup.form.skip_location_warning"), "info");
+        void handleSubmit(true);
     };
 
     if (isCheckingStatus) {
@@ -452,7 +459,7 @@ export default function SetupPage() {
                                             </button>
                                             <button
                                                 type="button"
-                                                onClick={handleSubmit}
+                                                onClick={() => void handleSubmit()}
                                                 disabled={isLoading || !homeLocation}
                                                 className="sm:flex-[2] bg-gradient-to-r from-primary to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold py-3 rounded-xl transition-all duration-300 shadow-[0_8px_20px_-6px_rgba(59,130,246,0.5)] hover:shadow-[0_12px_25px_-6px_rgba(59,130,246,0.7)] hover:-translate-y-0.5 flex justify-center items-center disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-[0_8px_20px_-6px_rgba(59,130,246,0.5)] text-sm"
                                             >
@@ -466,6 +473,23 @@ export default function SetupPage() {
                                                 )}
                                             </button>
                                         </div>
+
+                                        {!homeLocation && (
+                                            <div className="pt-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={handleSkipLocation}
+                                                    disabled={isLoading}
+                                                    className="w-full text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 text-xs font-medium py-2 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
+                                                >
+                                                    <span className="material-icons-round text-[14px]">skip_next</span>
+                                                    {t("setup.form.skip_location")}
+                                                </button>
+                                                <p className="text-amber-600 dark:text-amber-400 text-[10px] text-center mt-1">
+                                                    {t("setup.form.skip_location_warning")}
+                                                </p>
+                                            </div>
+                                        )}
 
                                         <p className="text-slate-500 dark:text-slate-400 text-[10px] text-center leading-relaxed">
                                             {t("setup.form.agreement")}
