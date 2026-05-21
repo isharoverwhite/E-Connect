@@ -17,6 +17,14 @@ import DeviceScanConnectPanel from "@/components/DeviceScanConnectPanel";
 import { isSystemLogAlertEntry } from "@/lib/system-log";
 import { HomeLocation } from "@/lib/home-location";
 import { fetchRooms, RoomRecord } from "@/lib/rooms";
+import {
+  WeatherSunIcon,
+  WeatherMoonIcon,
+  WeatherRainyIcon,
+  WeatherThunderstormIcon,
+  WeatherSnowIcon,
+  WeatherCloudyIcon,
+} from "@/components/WeatherIcon";
 
 const ADMIN_SUPPLEMENTAL_REFRESH_DEBOUNCE_MS = 750;
 const WEATHER_LOCATION_MAX_LENGTH = 15;
@@ -135,61 +143,6 @@ function HomeLocationSetupPrompt({
 
 type WeatherVisualSize = "hero" | "inline";
 
-function ClearSkySunIcon({ size, className = "" }: { size: WeatherVisualSize; className?: string }) {
-  const containerClass = size === "hero" ? "h-10 w-10" : "h-5 w-5";
-  const coreClass = size === "hero" ? "h-6 w-6" : "h-3 w-3";
-  const coreShadowClass = size === "hero"
-    ? "shadow-[0_0_12px_rgba(251,191,36,0.35)]"
-    : "shadow-[0_0_10px_rgba(251,191,36,0.35)]";
-  const longRayClass = size === "hero" ? "top-[-2px] h-[8px] w-[2px]" : "top-[-1px] h-[4px] w-[1.5px]";
-  const shortRayClass = size === "hero" ? "top-[2px] h-[4px] w-[2px]" : "top-[1px] h-[2px] w-[1.5px]";
-  const raysAnimationClass = "animate-weather-sun-rays";
-
-  return (
-    <span className={`relative inline-flex shrink-0 items-center justify-center align-middle ${containerClass} ${className}`}>
-      <span className={`absolute inset-0 ${raysAnimationClass}`}>
-        {Array.from({ length: 12 }).map((_, index) => (
-          <span
-            key={`sun-ray-${index}`}
-            className="absolute inset-0"
-            style={{ transform: `rotate(${index * 30}deg)` }}
-          >
-            <span
-              className={`absolute left-1/2 -translate-x-1/2 rounded-full bg-amber-300 ${index % 2 === 0 ? longRayClass : shortRayClass}`}
-            />
-          </span>
-        ))}
-      </span>
-      <span className={`relative rounded-full bg-amber-400 ${coreClass} ${coreShadowClass}`} />
-    </span>
-  );
-}
-
-function ClearSkyMoonIcon({ size, className = "" }: { size: WeatherVisualSize; className?: string }) {
-  if (size === "inline") {
-    return (
-      <span className={`material-icons-round inline-block shrink-0 align-middle text-[18px] leading-none animate-weather-moon ${className}`}>
-        dark_mode
-      </span>
-    );
-  }
-
-  const containerClass = size === "hero" ? "h-10 w-10" : "h-5 w-5";
-  const moonClass = size === "hero" ? "h-7 w-7" : "h-3.5 w-3.5";
-  const cutoutClass = size === "hero" ? "left-[8px] top-[1px] h-6 w-6" : "left-[5px] top-[0.5px] h-3 w-3";
-  const shadowClass = size === "hero"
-    ? "shadow-[0_0_12px_rgba(226,232,240,0.22)]"
-    : "shadow-[0_0_10px_rgba(226,232,240,0.2)]";
-
-  return (
-    <span className={`relative inline-flex shrink-0 items-center justify-center align-middle ${containerClass} ${className}`}>
-      <span className={`relative rounded-full bg-slate-200 dark:bg-slate-100 ${moonClass} ${shadowClass}`}>
-        <span className={`absolute rounded-full bg-white dark:bg-slate-900 ${cutoutClass}`} />
-      </span>
-    </span>
-  );
-}
-
 function renderWeatherIcon(weatherData: CurrentWeatherResponse | null, size: WeatherVisualSize) {
   if (!weatherData) {
     return (
@@ -200,65 +153,23 @@ function renderWeatherIcon(weatherData: CurrentWeatherResponse | null, size: Wea
   }
 
   if (weatherData.weather_code === 0) {
-    if (size === "hero") {
-      return (
-        <span className="material-icons-round text-6xl text-sky-500 dark:text-sky-400 group-hover:text-sky-600 dark:group-hover:text-sky-300 transition-colors">
-          {weatherData.is_day === false ? "brightness_2" : "wb_sunny"}
-        </span>
-      );
-    }
-
     return weatherData.is_day === false
-      ? <ClearSkyMoonIcon size={size} className={size === "inline" ? "mr-1" : ""} />
-      : <ClearSkySunIcon size={size} className={size === "inline" ? "mr-1" : ""} />;
+      ? <WeatherMoonIcon size={size} className={size === "inline" ? "mr-1" : ""} />
+      : <WeatherSunIcon size={size} className={size === "inline" ? "mr-1" : ""} />;
   }
 
-  if (size === "hero") {
-    const heroAnimClass = weatherData.icon === "thunderstorm" ? " animate-weather-thunder-flash" : "";
-    return (
-      <span className={`material-symbols-rounded text-6xl text-sky-500 dark:text-sky-400 group-hover:text-sky-600 dark:group-hover:text-sky-300 transition-colors${heroAnimClass}`}>
-        {weatherData.icon}
-      </span>
-    );
-  }
-
-  if (weatherData.icon === "rainy" && size === "inline") {
-    return (
-      <div className="relative mr-1 h-5 w-5 flex items-center justify-center">
-        <span className="material-symbols-rounded text-sm animate-weather-cloud relative z-10">cloud</span>
-        <div className="absolute top-[12px] left-1/2 -translate-x-1/2 flex items-center gap-[2px]">
-          <div className="w-[1.5px] h-[6px] bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] animate-weather-rain-1" />
-          <div className="w-[1.5px] h-[6px] bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] animate-weather-rain-2 mt-[2px]" />
-          <div className="w-[1.5px] h-[6px] bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] animate-weather-rain-3" />
-        </div>
-      </div>
-    );
-  }
-
-  if (weatherData.icon === "thunderstorm" && size === "inline") {
-    return (
-      <span className="material-symbols-rounded text-sm mr-1 inline-block animate-weather-thunder-flash">
-        thunderstorm
-      </span>
-    );
-  }
-
-  if (weatherData.icon === "ac_unit" && size === "inline") {
-    return (
-      <div className="relative mr-1 h-5 w-5 flex items-center justify-center">
-        <span className="material-symbols-rounded text-sm animate-weather-cloud relative z-10">cloud</span>
-        <div className="absolute top-[12px] left-1/2 -translate-x-1/2 flex items-center gap-[2px]">
-          <div className="w-[3px] h-[3px] bg-sky-200 dark:bg-sky-100 rounded-full animate-weather-snow-1" />
-          <div className="w-[3px] h-[3px] bg-sky-200 dark:bg-sky-100 rounded-full animate-weather-snow-2 mt-[1px]" />
-          <div className="w-[3px] h-[3px] bg-sky-200 dark:bg-sky-100 rounded-full animate-weather-snow-3" />
-        </div>
-      </div>
-    );
-  }
+  if (weatherData.icon === "rainy") return <WeatherRainyIcon size={size} />;
+  if (weatherData.icon === "thunderstorm") return <WeatherThunderstormIcon size={size} />;
+  if (weatherData.icon === "ac_unit") return <WeatherSnowIcon size={size} />;
+  if (weatherData.icon === "cloud") return <WeatherCloudyIcon size={size} />;
 
   return (
     <span
-      className={`material-symbols-rounded text-sm mr-1 ${weatherData.icon === "cloud" ? "animate-weather-cloud inline-block" : ""}`}
+      className={`material-symbols-rounded ${
+        size === "hero"
+          ? "text-6xl text-sky-500 dark:text-sky-400 group-hover:text-sky-600 dark:group-hover:text-sky-300 transition-colors"
+          : "text-sm mr-1"
+      }`}
     >
       {weatherData.icon}
     </span>
