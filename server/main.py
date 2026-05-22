@@ -742,6 +742,21 @@ async def lifespan(app: FastAPI):
                 db.commit()
                 if logs:
                     logger.info("Executed %s automation time trigger(s).", len(logs))
+                    for log in logs:
+                        try:
+                            automation_name = log.automation.name if log.automation is not None else str(log.automation_id)
+                            raw_status = log.status.value if hasattr(log.status, "value") else str(log.status)
+                            ws_manager.broadcast_system_event_sync(
+                                "automation_fired",
+                                {
+                                    "automation_id": log.automation_id,
+                                    "automation_name": automation_name,
+                                    "status": raw_status,
+                                    "trigger_source": log.trigger_source,
+                                },
+                            )
+                        except Exception:
+                            pass
             except Exception:
                 db.rollback()
                 logger.exception("Automation time-trigger watchdog failed")

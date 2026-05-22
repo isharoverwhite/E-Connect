@@ -165,4 +165,11 @@ class ConnectionManager:
                 self._loop
             )
 
+    def broadcast_system_event_sync(self, event_type: str, payload: Dict[str, Any]):
+        if self._loop is not None and not self._loop.is_closed():
+            asyncio.run_coroutine_threadsafe(
+                self.broadcast_system_event(event_type, payload),
+                self._loop
+            )
+
 manager = ConnectionManager()

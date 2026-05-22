@@ -61,7 +61,7 @@ from .sql_models import (
     Room, RoomPermission, BackupArchive, Household, HouseholdMembership, HouseholdRole,
     AuthStatus, ConnStatus, AutomationExecutionLog, DiyProject, DiyProjectConfig, BuildJob, SerialSession, SerialSessionStatus,
     SystemLog, SystemLogCategory as SqlSystemLogCategory, SystemLogSeverity as SqlSystemLogSeverity,
-    WifiCredential, InstalledExtension, ExternalDevice, HouseholdLocation,
+    WifiCredential, InstalledExtension, ExternalDevice, HouseholdLocation, DashboardLayout,
 )
 from .database import (
     SessionLocal,
@@ -873,7 +873,7 @@ def _expire_device_if_stale(db: Session, device: Device, *, reference_time: date
             "device_offline",
             device.device_id,
             device.room_id,
-            {"reason": "heartbeat_timeout"}
+            {"reason": "heartbeat_timeout", "device_name": device.name}
         )
     except Exception:
         pass
@@ -2309,6 +2309,7 @@ def _execute_external_device_command_task(
                         {
                             "reported_at": datetime.now(timezone.utc).isoformat(),
                             "reason": str(exc),
+                            "device_name": external_device.name,
                         },
                     )
                 except Exception:
@@ -2443,6 +2444,7 @@ def refresh_external_device_states_once(
                             {
                                 "reported_at": datetime.now(timezone.utc).isoformat(),
                                 "reason": str(exc),
+                                "device_name": external_device.name,
                             },
                         )
                     except Exception:
@@ -4183,6 +4185,41 @@ async def list_dashboard_devices(
     devices = _load_visible_devices(db, current_user, AuthStatus.approved)
     external_devices = _load_visible_external_devices(db, current_user, AuthStatus.approved)
     return devices + [_serialize_external_device(device) for device in external_devices]
+
+
+@router.get("/dashboard/layout")
+async def get_dashboard_layout(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    rows = db.query(DashboardLayout).filter(DashboardLayout.user_id == user.user_id).all()
+    return [{"device_id": r.device_id, "position": r.position, "visible": r.visible} for r in rows]
+
+
+@router.put("/dashboard/layout")
+async def save_dashboard_layout(
+    layout: List[dict] = Body(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    for item in layout:
+        row = db.query(DashboardLayout).filter(
+            DashboardLayout.user_id == user.user_id,
+            DashboardLayout.device_id == str(item["device_id"]),
+        ).first()
+        if row:
+            row.position = int(item.get("position", 0))
+            row.visible = bool(item.get("visible", True))
+        else:
+            db.add(DashboardLayout(
+                user_id=user.user_id,
+                device_id=str(item["device_id"]),
+                position=int(item.get("position", 0)),
+                visible=bool(item.get("visible", True)),
+            ))
+    db.commit()
+    return {"ok": True}
+
 
 @router.get("/device/{device_id}", response_model=DeviceResponse)
 async def get_device(device_id: str, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
@@ -6455,6 +6492,18 @@ async def trigger_automation(automation_id: int, db: Session = Depends(get_db), 
     db.refresh(execution_log)
     raw_status = execution_log.status.value if hasattr(execution_log.status, "value") else str(execution_log.status)
     success = raw_status == ExecutionStatus.success.value
+    try:
+        ws_manager.broadcast_system_event_sync(
+            "automation_fired",
+            {
+                "automation_id": auto.id,
+                "automation_name": auto.name,
+                "status": raw_status,
+                "trigger_source": "manual",
+            },
+        )
+    except Exception:
+        pass
     if success:
         msg = f"Automation '{auto.name}' executed successfully."
         response_status = ExecutionStatus.success

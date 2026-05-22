@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { initializeServer, fetchSystemStatus } from "@/lib/auth";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { useToast } from "@/components/ToastContext";
 import { useLanguage, LanguageCode } from "@/components/LanguageContext";
 import { HomeLocation } from "@/lib/home-location";
@@ -34,6 +35,7 @@ export default function SetupPage() {
 
     const [showSplash, setShowSplash] = useState(false);
     const [splashAnimating, setSplashAnimating] = useState(false);
+    const [setupDone, setSetupDone] = useState(false);
 
     const router = useRouter();
     const { showToast } = useToast();
@@ -160,10 +162,8 @@ export default function SetupPage() {
                       }
                     : undefined,
             });
-            showToast("Server initialized successfully! Redirecting to login...", "success");
-            setTimeout(() => {
-                window.location.href = "/login";
-            }, 1000);
+            showToast("Server initialized successfully!", "success");
+            setSetupDone(true);
         } catch (error: unknown) {
             setError(getErrorMessage(error, "Failed to initialize server"));
             setIsLoading(false);
@@ -174,6 +174,64 @@ export default function SetupPage() {
         showToast(t("setup.form.skip_location_warning"), "info");
         void handleSubmit(true);
     };
+
+    if (setupDone) {
+        return (
+            <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center p-4 relative overflow-hidden">
+                <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-primary/20 dark:bg-primary/15 rounded-full blur-[120px] pointer-events-none mix-blend-screen dark:mix-blend-lighten"></div>
+                <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-emerald-500/15 dark:bg-emerald-500/10 rounded-full blur-[100px] pointer-events-none mix-blend-screen dark:mix-blend-lighten"></div>
+
+                <div className="bg-white/70 dark:bg-slate-900/60 backdrop-blur-2xl border border-white/50 dark:border-slate-700/50 rounded-[2rem] p-8 sm:p-12 w-full max-w-lg shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] dark:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.5)] flex flex-col relative z-10 mx-auto">
+                    <div className="text-center mb-8">
+                        <span className="material-icons-round text-5xl text-emerald-400">check_circle</span>
+                        <h2 className="text-2xl font-bold mt-3 text-slate-900 dark:text-white">E-Connect is ready!</h2>
+                        <p className="text-slate-500 dark:text-slate-400 mt-2 text-sm">
+                            Your server is set up. Here are your next steps:
+                        </p>
+                    </div>
+
+                    <div className="flex flex-col gap-3">
+                        <Link href="/devices/discovery"
+                           className="flex items-center gap-4 p-4 rounded-xl bg-blue-600 hover:bg-blue-500 transition-colors text-white">
+                            <span className="material-icons-round text-2xl">devices</span>
+                            <div className="flex-1">
+                                <div className="font-semibold">Add your first device</div>
+                                <div className="text-xs text-blue-100 mt-0.5">Pair an ESP32 or smart home device</div>
+                            </div>
+                            <span className="material-icons-round opacity-60">arrow_forward</span>
+                        </Link>
+
+                        <Link href="/settings"
+                           className="flex items-center gap-4 p-4 rounded-xl bg-slate-700 hover:bg-slate-600 transition-colors text-slate-200">
+                            <span className="material-icons-round text-2xl">wifi</span>
+                            <div className="flex-1">
+                                <div className="font-semibold">Save Wi-Fi credentials</div>
+                                <div className="text-xs text-slate-400 mt-0.5">So devices can connect automatically</div>
+                            </div>
+                            <span className="material-icons-round opacity-60">arrow_forward</span>
+                        </Link>
+
+                        <Link href="/automation"
+                           className="flex items-center gap-4 p-4 rounded-xl bg-slate-700 hover:bg-slate-600 transition-colors text-slate-200">
+                            <span className="material-icons-round text-2xl">smart_toy</span>
+                            <div className="flex-1">
+                                <div className="font-semibold">Create an automation</div>
+                                <div className="text-xs text-slate-400 mt-0.5">Control devices automatically with rules</div>
+                            </div>
+                            <span className="material-icons-round opacity-60">arrow_forward</span>
+                        </Link>
+                    </div>
+
+                    <button
+                        onClick={() => router.push('/login')}
+                        className="mt-6 w-full text-center text-sm text-slate-500 hover:text-slate-400 transition-colors"
+                    >
+                        Skip — go to login
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
     if (isCheckingStatus) {
         return (

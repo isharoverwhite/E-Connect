@@ -2,6 +2,7 @@
 
 import type { Metadata } from "next";
 import { Inter, Fira_Code, JetBrains_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 import AuthProvider from "@/components/AuthProvider";
 import { ToastProvider } from "@/components/ToastContext";
@@ -9,6 +10,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { LanguageProvider } from "@/components/LanguageContext";
 import MqttWarningBanner from "@/components/MqttWarningBanner";
 import WifiWarningBanner from "@/components/WifiWarningBanner";
+import { AppEventListener } from "@/components/AppEventListener";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const fira_code = Fira_Code({ subsets: ["latin"], variable: "--font-fira-code" });
@@ -17,6 +19,15 @@ const jetbrains_mono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-je
 export const metadata: Metadata = {
   title: "E-Connect Dashboard",
   description: "IoT Home Control System",
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "E-Connect",
+  },
+  other: {
+    "theme-color": "#3b82f6",
+  },
 };
 
 export default function RootLayout({
@@ -36,6 +47,7 @@ export default function RootLayout({
           <LanguageProvider>
             <AuthProvider>
               <ToastProvider>
+                <AppEventListener />
                 <MqttWarningBanner />
                 <WifiWarningBanner />
                 {children}
@@ -43,6 +55,11 @@ export default function RootLayout({
             </AuthProvider>
           </LanguageProvider>
         </ThemeProvider>
+        <Script id="sw-register" strategy="afterInteractive">{`
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').catch(function(){});
+          }
+        `}</Script>
       </body>
     </html>
   );
