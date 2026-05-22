@@ -30,6 +30,7 @@ from app.api import (
     refresh_external_device_states_once,
     router as device_router,
 )
+from app.routers.google_home import router as google_home_router
 from sqlalchemy.exc import OperationalError
 
 from app.database import SessionLocal, check_database_connection, get_db, initialize_database
@@ -949,6 +950,7 @@ app.add_middleware(
 )
 
 app.include_router(device_router, prefix="/api/v1")
+app.include_router(google_home_router, prefix="/api/v1")
 
 # CI/test environments may not ship any static assets; serve 404s instead of failing import-time.
 app.mount("/static", StaticFiles(directory=STATIC_DIR, check_dir=False), name="static")

@@ -7,8 +7,9 @@ sqlalchemy
 pymysql
 python-dotenv
 passlib[bcrypt]
-python-jose
+python-jose[cryptography]
 paho-mqtt>=2.0.0
 platformio
 zeroconf
 psutil
+httpx

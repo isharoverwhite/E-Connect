@@ -209,7 +209,11 @@ class Device(Base):
     owner = relationship("User", back_populates="devices")
     pin_configurations = relationship("PinConfiguration", back_populates="device", cascade="all, delete-orphan")
     backup_archives = relationship("BackupArchive", back_populates="device", cascade="all, delete-orphan")
-    history = relationship("DeviceHistory", back_populates="device", cascade="all, delete-orphan")
+    history = relationship(
+        "DeviceHistory",
+        primaryjoin="Device.device_id == foreign(DeviceHistory.device_id)",
+        cascade="all, delete-orphan",
+    )
 
 class PinConfiguration(Base):
     __tablename__ = "pin_configurations"
@@ -355,13 +359,12 @@ class DeviceHistory(Base):
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    device_id = Column(String(36), ForeignKey("devices.device_id"), nullable=False)
+    device_id = Column(String(36), nullable=False)
     timestamp = Column(TIMESTAMP, server_default=func.now())
     event_type = Column(Enum(EventType), nullable=False)
     payload = Column(Text, comment='Dữ liệu thay đổi hoặc giá trị cảm biến')
     changed_by = Column(Integer, ForeignKey("users.user_id"), nullable=True, comment='User thực hiện thay đổi, NULL nếu do Automation')
 
-    device = relationship("Device", back_populates="history")
     user = relationship("User", back_populates="history_logs")
 
 
@@ -485,4 +488,45 @@ class DashboardLayout(Base):
     user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
     device_id = Column(String(64), nullable=False)
     position = Column(Integer, nullable=False, default=0)
+
+
+class GoogleHomeConfig(Base):
+    """Server-wide Google Home integration credentials (admin-managed, single row)."""
+
+    __tablename__ = "google_home_config"
+
+    id = Column(Integer, primary_key=True, autoincrement=True, default=1)
+    client_id = Column(String(512), nullable=True)
+    client_secret = Column(String(512), nullable=True)
+    project_id = Column(String(255), nullable=True)
+    service_account_json = Column(Text, nullable=True, comment="Full JSON key for Google Cloud service account (Home Graph API)")
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
+class GoogleHomeLinkedUser(Base):
+    __tablename__ = "google_home_linked_users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.user_id"), unique=True, nullable=False, index=True)
+    agent_user_id = Column(String(255), unique=True, nullable=False, comment="Stable ID sent to Google to identify this user")
+    access_token = Column(String(1024), nullable=False, comment="Short-lived token Google uses to authenticate fulfillment requests")
+    refresh_token = Column(String(1024), nullable=False, comment="Long-lived token Google uses to refresh access tokens")
+    linked_at = Column(TIMESTAMP, server_default=func.now())
+
+    user = relationship("User")
+
+
+class GoogleHomeAuthCode(Base):
+    __tablename__ = "google_home_auth_codes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code = Column(String(255), unique=True, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.user_id"), nullable=False)
+    redirect_uri = Column(String(512), nullable=False)
+    client_id = Column(String(255), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    used = Column(Boolean, default=False, nullable=False)
+    created_at = Column(TIMESTAMP, server_default=func.now())
+
+    user = relationship("User")
     visible = Column(Boolean, nullable=False, default=True)

@@ -35,6 +35,7 @@ import Sidebar from "@/components/Sidebar";
 import { ApiKeysPanel } from "./ApiKeysPanel";
 import { ConfigsPanel } from "./ConfigsPanel";
 import { WifiCredentialsPanel } from "./WifiCredentialsPanel";
+import { GoogleHomePanel } from "@/components/GoogleHomePanel";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastContext";
 import { useLanguage } from "@/components/LanguageContext";
@@ -71,7 +72,7 @@ function formatServerTimePreview(value?: string | null, timezone?: string | null
     });
 }
 
-type SettingsPanel = "general" | "apiKeys" | "users" | "rooms" | "wifi" | "configs";
+type SettingsPanel = "general" | "apiKeys" | "users" | "rooms" | "wifi" | "configs" | "googleHome";
 type AccountType = ManagedUser["account_type"];
 type TemperatureSourceOption = {
     device_id: string;
@@ -730,6 +731,16 @@ export default function SettingsPage() {
                             {t("settings.tabs.wifi")}
                         </button>
                     ) : null}
+                    <button
+                        onClick={() => setActivePanel("googleHome")}
+                        className={`py-4 text-sm font-semibold transition-colors ${
+                            activePanel === "googleHome"
+                                ? "border-b-[3px] border-primary text-primary"
+                                : "text-slate-500 hover:text-primary dark:text-slate-400"
+                        }`}
+                    >
+                        {t("google_home.title")}
+                    </button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto bg-slate-50/60 p-6 dark:bg-background-dark">
@@ -1487,6 +1498,10 @@ export default function SettingsPage() {
 
                         {activePanel === "wifi" ? (
                             <WifiCredentialsPanel timezone={generalSettings?.effective_timezone ?? null} />
+                        ) : null}
+
+                        {activePanel === "googleHome" ? (
+                            <GoogleHomePanel />
                         ) : null}
                     </div>
                 </div>
