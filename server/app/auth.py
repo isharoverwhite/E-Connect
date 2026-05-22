@@ -118,6 +118,31 @@ def create_refresh_token(
         persistent=persistent,
     )
 
+TOTP_CHALLENGE_TOKEN_TYPE = "totp_challenge"
+_TOTP_CHALLENGE_EXPIRE_MINUTES = 5
+
+
+def create_totp_challenge_token(username: str, *, keep_login: bool) -> str:
+    expire = datetime.now(timezone.utc) + timedelta(minutes=_TOTP_CHALLENGE_EXPIRE_MINUTES)
+    payload = {
+        "sub": username,
+        "type": TOTP_CHALLENGE_TOKEN_TYPE,
+        "keep_login": keep_login,
+        "exp": expire,
+    }
+    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def verify_totp_challenge_token(token: str) -> dict | None:
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        if payload.get("type") != TOTP_CHALLENGE_TOKEN_TYPE:
+            return None
+        return payload
+    except jwt.JWTError:
+        return None
+
+
 def create_ota_token(job_id: str) -> str:
     """Create a short-lived token specifically for OTA downloads."""
     expire = datetime.now(timezone.utc) + timedelta(minutes=60) # 1 hour

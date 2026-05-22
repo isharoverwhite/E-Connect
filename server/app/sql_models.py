@@ -82,6 +82,11 @@ class User(Base):
     account_type = Column(Enum(AccountType), default=AccountType.parent)
     language = Column(String(5), nullable=False, default="en", server_default=text("'en'"))
     created_at = Column(TIMESTAMP, server_default=func.now())
+    # Security
+    totp_secret = Column(String(64), nullable=True)
+    totp_enabled = Column(Boolean, default=False, nullable=False, server_default=text("0"))
+    failed_login_attempts = Column(Integer, default=0, nullable=False, server_default=text("0"))
+    locked_until = Column(DateTime, nullable=True)
 
     rooms = relationship("Room", back_populates="user")
     devices = relationship("Device", back_populates="owner")

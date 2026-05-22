@@ -222,6 +222,30 @@ class Token(BaseModel):
     access_token_expires_at: Optional[datetime] = None
     refresh_token_expires_at: Optional[datetime] = None
     keep_login: bool = False
+    require_totp: bool = False
+    totp_token: Optional[str] = None
+
+
+class TotpVerifyRequest(BaseModel):
+    totp_token: str
+    code: str = Field(..., min_length=6, max_length=8)
+
+
+class TotpSetupResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+
+
+class TotpEnableRequest(BaseModel):
+    code: str = Field(..., min_length=6, max_length=8)
+
+
+class TotpDisableRequest(BaseModel):
+    password: str
+
+
+class TotpStatusResponse(BaseModel):
+    enabled: bool
 
 
 class RefreshTokenRequest(BaseModel):
@@ -427,6 +451,7 @@ class DeviceHistoryResponse(DeviceHistoryCreate):
     device_id: str
     timestamp: datetime
     changed_by: Optional[int] = None
+    changed_by_username: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

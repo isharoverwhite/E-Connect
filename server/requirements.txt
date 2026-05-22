@@ -13,3 +13,4 @@ platformio
 zeroconf
 psutil
 httpx
+pyotp

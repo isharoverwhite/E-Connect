@@ -16,6 +16,12 @@ export default function LoginPage() {
     const [error, setError] = useState("");
     const [isLoading, setIsLoading] = useState(false);
 
+    // TOTP challenge step
+    const [totpToken, setTotpToken] = useState<string | null>(null);
+    const [totpCode, setTotpCode] = useState("");
+    const [totpLoading, setTotpLoading] = useState(false);
+    const [totpError, setTotpError] = useState("");
+
     const { refreshProfile } = useAuth();
     const { t } = useLanguage();
     const router = useRouter();
@@ -32,16 +38,111 @@ export default function LoginPage() {
             formData.append("keep_login", keepLogin ? "true" : "false");
 
             const data = await loginUser(formData);
+
+            if (data.require_totp && data.totp_token) {
+                setTotpToken(data.totp_token);
+                return;
+            }
+
             setToken(data);
             await refreshProfile();
             router.push("/");
         } catch (error: unknown) {
-            setError(error instanceof Error ? error.message : t("login.error.failed"));
+            const msg = error instanceof Error ? error.message : t("login.error.failed");
+            setError(msg);
         } finally {
             setIsLoading(false);
         }
     };
 
+    const handleTotpSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!totpToken || !totpCode.trim()) return;
+        setTotpError("");
+        setTotpLoading(true);
+        try {
+            const res = await fetch("/api/v1/auth/totp/verify", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ totp_token: totpToken, code: totpCode.trim() }),
+            });
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.detail ?? t("login.totp_invalid"));
+            }
+            const data = await res.json();
+            setToken(data);
+            await refreshProfile();
+            router.push("/");
+        } catch (err) {
+            setTotpError(err instanceof Error ? err.message : t("login.totp_invalid"));
+        } finally {
+            setTotpLoading(false);
+        }
+    };
+
+    // ── TOTP challenge screen ──────────────────────────────────────────────
+    if (totpToken) {
+        return (
+            <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center p-4">
+                <div className="bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700/50 rounded-2xl p-8 w-full max-w-md shadow-xl flex flex-col items-center">
+                    <div className="w-16 h-16 bg-indigo-100 dark:bg-indigo-900/30 rounded-full flex items-center justify-center mb-6">
+                        <span className="material-icons-round text-indigo-600 dark:text-indigo-400 text-3xl">security</span>
+                    </div>
+                    <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">{t("login.totp_title")}</h1>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm mb-8 text-center">{t("login.totp_hint")}</p>
+
+                    {totpError && (
+                        <div className="w-full bg-red-500/10 border border-red-500/50 text-red-500 text-sm rounded-lg p-3 mb-6 flex items-center">
+                            <span className="material-icons-round mr-2 text-[18px]">error_outline</span>
+                            {totpError}
+                        </div>
+                    )}
+
+                    <form onSubmit={handleTotpSubmit} className="w-full space-y-5">
+                        <div>
+                            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">{t("login.totp_code_label")}</label>
+                            <input
+                                type="text"
+                                inputMode="numeric"
+                                pattern="[0-9]*"
+                                maxLength={8}
+                                value={totpCode}
+                                onChange={(e) => { setTotpCode(e.target.value.replace(/\D/g, "")); setTotpError(""); }}
+                                className="w-full text-center font-mono text-2xl tracking-[0.5em] bg-white dark:bg-black/20 border border-slate-300 dark:border-slate-700 rounded-xl py-3 px-4 text-slate-900 dark:text-white placeholder-slate-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                                placeholder="000000"
+                                autoComplete="one-time-code"
+                                autoFocus
+                                required
+                            />
+                        </div>
+
+                        <button
+                            type="submit"
+                            disabled={totpLoading || totpCode.length < 6}
+                            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-xl transition shadow-sm flex justify-center items-center disabled:opacity-70"
+                        >
+                            {totpLoading ? (
+                                <span className="material-icons-round animate-spin">refresh</span>
+                            ) : (
+                                t("login.totp_verify_btn")
+                            )}
+                        </button>
+
+                        <button
+                            type="button"
+                            onClick={() => { setTotpToken(null); setTotpCode(""); setTotpError(""); }}
+                            className="w-full text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors py-2"
+                        >
+                            {t("login.totp_back")}
+                        </button>
+                    </form>
+                </div>
+            </div>
+        );
+    }
+
+    // ── Password screen ────────────────────────────────────────────────────
     return (
         <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center p-4">
             <div className="bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700/50 rounded-2xl p-8 w-full max-w-md shadow-xl flex flex-col items-center">

@@ -36,6 +36,7 @@ import { ApiKeysPanel } from "./ApiKeysPanel";
 import { ConfigsPanel } from "./ConfigsPanel";
 import { WifiCredentialsPanel } from "./WifiCredentialsPanel";
 import { GoogleHomePanel } from "@/components/GoogleHomePanel";
+import { TwoFactorPanel } from "@/components/TwoFactorPanel";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useToast } from "@/components/ToastContext";
 import { useLanguage } from "@/components/LanguageContext";
@@ -72,7 +73,7 @@ function formatServerTimePreview(value?: string | null, timezone?: string | null
     });
 }
 
-type SettingsPanel = "general" | "apiKeys" | "users" | "rooms" | "wifi" | "configs" | "googleHome";
+type SettingsPanel = "general" | "apiKeys" | "users" | "rooms" | "wifi" | "configs" | "googleHome" | "security";
 type AccountType = ManagedUser["account_type"];
 type TemperatureSourceOption = {
     device_id: string;
@@ -740,6 +741,16 @@ export default function SettingsPage() {
                         }`}
                     >
                         {t("google_home.title")}
+                    </button>
+                    <button
+                        onClick={() => setActivePanel("security")}
+                        className={`py-4 text-sm font-semibold transition-colors ${
+                            activePanel === "security"
+                                ? "border-b-[3px] border-primary text-primary"
+                                : "text-slate-500 hover:text-primary dark:text-slate-400"
+                        }`}
+                    >
+                        {t("settings.tabs.security")}
                     </button>
                 </div>
 
@@ -1502,6 +1513,10 @@ export default function SettingsPage() {
 
                         {activePanel === "googleHome" ? (
                             <GoogleHomePanel />
+                        ) : null}
+
+                        {activePanel === "security" ? (
+                            <TwoFactorPanel />
                         ) : null}
                     </div>
                 </div>

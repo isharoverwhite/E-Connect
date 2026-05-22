@@ -38,6 +38,7 @@ from .ws_manager import manager as ws_manager
 from .models import (
     ApiKeyCreateRequest, ApiKeyCreateResponse, ApiKeyResponse,
     UserCreate, UserResponse, Token, TokenData, InitialServerRequest, RefreshTokenRequest,
+    TotpVerifyRequest, TotpSetupResponse, TotpEnableRequest, TotpDisableRequest, TotpStatusResponse,
     DeviceApprovalRequest, DeviceAvailabilityResponse, DeviceHandshakeResponse, DeviceRegister, DeviceResponse, DeviceVisibilityUpdate, PinConfigCreate,
     AutomationCreate, AutomationResponse, AutomationUpdate,
     DeviceHistoryCreate, DeviceHistoryResponse,
@@ -84,6 +85,8 @@ from .auth import (
     parse_api_key_token,
     create_ota_token,
     create_refresh_token,
+    create_totp_challenge_token,
+    verify_totp_challenge_token,
     get_password_hash,
     verify_api_key_secret,
     verify_ota_token,
@@ -2301,6 +2304,14 @@ def _execute_external_device_command_task(
                 return "superseded", None, None
             if exc.mark_offline:
                 _mark_external_device_offline(db, external_device)
+                db.add(
+                    DeviceHistory(
+                        device_id=external_device.device_id,
+                        event_type=EventType.offline,
+                        payload=json.dumps({"reason": str(exc)}),
+                    )
+                )
+                db.commit()
                 try:
                     ws_manager.broadcast_device_event_sync(
                         "device_offline",
@@ -2340,6 +2351,25 @@ def _execute_external_device_command_task(
         state_changed = _external_runtime_state_changed(previous_state, runtime_state)
         _persist_external_runtime_state(db, external_device, state=runtime_state)
         current_payload = build_external_device_state_payload(external_device, state=runtime_state)
+
+        if previous_status != ConnStatus.online:
+            db.add(
+                DeviceHistory(
+                    device_id=external_device.device_id,
+                    event_type=EventType.online,
+                    payload=json.dumps({"reported_at": datetime.now(timezone.utc).isoformat()}),
+                )
+            )
+            db.commit()
+        if state_changed:
+            db.add(
+                DeviceHistory(
+                    device_id=external_device.device_id,
+                    event_type=EventType.state_change,
+                    payload=json.dumps(runtime_state),
+                )
+            )
+            db.commit()
 
         try:
             if previous_status != ConnStatus.online:
@@ -2435,6 +2465,14 @@ def refresh_external_device_states_once(
                     continue
                 if external_device.conn_status != ConnStatus.offline:
                     _mark_external_device_offline(db, external_device)
+                    db.add(
+                        DeviceHistory(
+                            device_id=external_device.device_id,
+                            event_type=EventType.offline,
+                            payload=json.dumps({"reason": str(exc)}),
+                        )
+                    )
+                    db.commit()
                     stats["offline"] += 1
                     try:
                         ws_manager.broadcast_device_event_sync(
@@ -2460,6 +2498,14 @@ def refresh_external_device_states_once(
             current_payload = build_external_device_state_payload(external_device, state=runtime_state)
 
             if previous_status != ConnStatus.online:
+                db.add(
+                    DeviceHistory(
+                        device_id=external_device.device_id,
+                        event_type=EventType.online,
+                        payload=json.dumps({"reported_at": datetime.now(timezone.utc).isoformat()}),
+                    )
+                )
+                db.commit()
                 stats["online"] += 1
                 try:
                     ws_manager.broadcast_device_event_sync(
@@ -2470,6 +2516,16 @@ def refresh_external_device_states_once(
                     )
                 except Exception:
                     pass
+
+            if state_changed:
+                db.add(
+                    DeviceHistory(
+                        device_id=external_device.device_id,
+                        event_type=EventType.state_change,
+                        payload=json.dumps(runtime_state),
+                    )
+                )
+                db.commit()
 
             if previous_status != ConnStatus.online or state_changed:
                 if state_changed:
@@ -2961,25 +3017,151 @@ async def toggle_admin_user(user_id: int, db: Session = Depends(get_db), admin: 
     db.refresh(membership.user)
     return _serialize_managed_user(membership.user, membership)
 
+_MAX_LOGIN_ATTEMPTS = 5
+_LOCKOUT_MINUTES = 15
+
+
 @router.post("/auth/token", response_model=Token)
 async def login_for_access_token(
     form_data: OAuth2PasswordRequestForm = Depends(),
     keep_login: bool = Form(False),
     db: Session = Depends(get_db),
 ):
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     user = db.query(User).filter(User.username == form_data.username).first()
-    # Check password against 'authentication' column
+
+    # Check account lockout
+    if user and user.locked_until and user.locked_until > now:
+        remaining = int((user.locked_until - now).total_seconds())
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error": "account_locked",
+                "message": f"Too many failed attempts. Try again in {remaining // 60 + 1} minute(s).",
+                "locked_until": user.locked_until.isoformat(),
+                "retry_after_seconds": remaining,
+            },
+        )
+
     if not user or not verify_password(form_data.password, user.authentication):
+        if user:
+            attempts = (user.failed_login_attempts or 0) + 1
+            if attempts >= _MAX_LOGIN_ATTEMPTS:
+                user.locked_until = now + timedelta(minutes=_LOCKOUT_MINUTES)
+                user.failed_login_attempts = 0
+                db.commit()
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "error": "account_locked",
+                        "message": f"Too many failed attempts. Account locked for {_LOCKOUT_MINUTES} minutes.",
+                        "locked_until": user.locked_until.isoformat(),
+                        "retry_after_seconds": _LOCKOUT_MINUTES * 60,
+                    },
+                )
+            user.failed_login_attempts = attempts
+            db.commit()
         raise HTTPException(
             status_code=401,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Find active household membership for context binding
-    membership = _get_primary_membership(db, user)
+    # Reset failure counter on successful password verification
+    if user.failed_login_attempts or user.locked_until:
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        db.commit()
 
+    # Gate on TOTP if enabled
+    if user.totp_enabled and user.totp_secret:
+        totp_token = create_totp_challenge_token(user.username, keep_login=keep_login)
+        return Token(
+            access_token="",
+            token_type="bearer",
+            require_totp=True,
+            totp_token=totp_token,
+        )
+
+    membership = _get_primary_membership(db, user)
     return _issue_user_session_tokens(user, membership, keep_login=keep_login)
+
+
+@router.post("/auth/totp/verify", response_model=Token)
+async def verify_totp_code(body: TotpVerifyRequest, db: Session = Depends(get_db)):
+    import pyotp
+    claims = verify_totp_challenge_token(body.totp_token)
+    if not claims:
+        raise HTTPException(status_code=401, detail="TOTP session expired. Please sign in again.")
+
+    username = claims.get("sub")
+    keep_login = bool(claims.get("keep_login"))
+
+    user = db.query(User).filter(User.username == username).first()
+    if not user or not user.totp_enabled or not user.totp_secret:
+        raise HTTPException(status_code=401, detail="Invalid TOTP session.")
+
+    totp = pyotp.TOTP(user.totp_secret)
+    if not totp.verify(body.code, valid_window=1):
+        raise HTTPException(status_code=401, detail="Invalid authentication code.")
+
+    membership = _get_primary_membership(db, user)
+    return _issue_user_session_tokens(user, membership, keep_login=keep_login)
+
+
+@router.get("/auth/totp/status", response_model=TotpStatusResponse)
+async def get_totp_status(current_user: User = Depends(get_current_user)):
+    return TotpStatusResponse(enabled=bool(current_user.totp_enabled))
+
+
+@router.get("/auth/totp/setup", response_model=TotpSetupResponse)
+async def setup_totp(db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    import pyotp
+    secret = pyotp.random_base32()
+    provisioning_uri = pyotp.TOTP(secret).provisioning_uri(
+        name=current_user.username,
+        issuer_name="E-Connect",
+    )
+    user = db.query(User).filter(User.user_id == current_user.user_id).first()
+    user.totp_secret = secret
+    user.totp_enabled = False
+    db.commit()
+    return TotpSetupResponse(secret=secret, provisioning_uri=provisioning_uri)
+
+
+@router.post("/auth/totp/enable")
+async def enable_totp(
+    body: TotpEnableRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    import pyotp
+    user = db.query(User).filter(User.user_id == current_user.user_id).first()
+    if not user.totp_secret:
+        raise HTTPException(status_code=400, detail="Call /auth/totp/setup first to generate a secret.")
+    if user.totp_enabled:
+        raise HTTPException(status_code=400, detail="Two-factor authentication is already enabled.")
+    totp = pyotp.TOTP(user.totp_secret)
+    if not totp.verify(body.code, valid_window=1):
+        raise HTTPException(status_code=400, detail="Invalid authentication code. Check your authenticator app.")
+    user.totp_enabled = True
+    db.commit()
+    return TotpStatusResponse(enabled=True)
+
+
+@router.delete("/auth/totp/disable")
+async def disable_totp(
+    body: TotpDisableRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    user = db.query(User).filter(User.user_id == current_user.user_id).first()
+    if not verify_password(body.password, user.authentication):
+        raise HTTPException(status_code=401, detail="Incorrect password.")
+    user.totp_secret = None
+    user.totp_enabled = False
+    db.commit()
+    return TotpStatusResponse(enabled=False)
 
 
 @router.post("/auth/refresh", response_model=Token)
@@ -6335,6 +6517,9 @@ async def push_history(device_id: str, entry: DeviceHistoryCreate, db: Session =
             "MQTT-managed DIY devices must publish telemetry to the MQTT state topic."
         )
 
+    if entry.event_type == EventType.state_change and device.conn_status == ConnStatus.offline:
+        raise HTTPException(status_code=409, detail="Device is offline; state_change not recorded")
+
     # Update last seen
     device.last_seen = datetime.now(timezone.utc).replace(tzinfo=None)
 
@@ -6365,8 +6550,32 @@ async def push_history(device_id: str, entry: DeviceHistoryCreate, db: Session =
     return history
 
 @router.get("/device/{device_id}/history", response_model=List[DeviceHistoryResponse])
-async def get_history(device_id: str, db: Session = Depends(get_db), _admin: User = Depends(get_admin_user)):
-    return db.query(DeviceHistory).filter(DeviceHistory.device_id == device_id).order_by(DeviceHistory.timestamp.desc()).limit(50).all()
+async def get_history(
+    device_id: str,
+    event_type: Optional[str] = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    valid_types = {e.value for e in EventType}
+    q = db.query(DeviceHistory).filter(DeviceHistory.device_id == device_id)
+    if event_type and event_type in valid_types:
+        q = q.filter(DeviceHistory.event_type == event_type)
+    rows = q.order_by(DeviceHistory.timestamp.desc(), DeviceHistory.id.desc()).offset(offset).limit(limit).all()
+
+    user_ids = {r.changed_by for r in rows if r.changed_by is not None}
+    username_map: dict[int, str] = {}
+    if user_ids:
+        users = db.query(User.user_id, User.username).filter(User.user_id.in_(user_ids)).all()
+        username_map = {u.user_id: u.username for u in users}
+
+    results = []
+    for row in rows:
+        entry = DeviceHistoryResponse.model_validate(row)
+        entry.changed_by_username = username_map.get(row.changed_by) if row.changed_by else None
+        results.append(entry)
+    return results
 
 
 @router.get("/device/{device_id}/export")
