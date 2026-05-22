@@ -472,11 +472,66 @@ function BookIcon({ className }: { className?: string }) {
 
 function GoogleHomeIcon({ className }: { className?: string }) {
     return (
-        <svg className={className} viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <rect width="28" height="28" rx="8" fill="#4285F4" />
-            <path d="M14 6a8 8 0 1 0 0 16A8 8 0 0 0 14 6Z" fill="white" fillOpacity=".15" />
-            <circle cx="14" cy="11" r="3" fill="white" />
-            <path d="M8 20c0-3.314 2.686-6 6-6s6 2.686 6 6" stroke="white" strokeWidth="2" strokeLinecap="round" />
+        <svg className={className} viewBox="0 0 154 155" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+                <radialGradient id="gh_a" cx="-118.17" cy="280.42" r="1" gradientTransform="matrix(4.2185 35.138 43.765 -5.2543 -11436 6610)" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#facd0c" offset="0" />
+                    <stop stopColor="#facd0c" stopOpacity="0" offset="1" />
+                </radialGradient>
+                <radialGradient id="gh_b" cx="-117.19" cy="278.63" r="1" gradientTransform="matrix(20.699 28.705 35.753 -25.781 -7188.5 11567)" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#a5ce3d" offset="0" />
+                    <stop stopColor="#a5ce3d" stopOpacity="0" offset="1" />
+                </radialGradient>
+                <linearGradient id="gh_i" x1="118.38" x2="152.38" y1="151.08" y2="144.71" gradientTransform="matrix(.97602 .2177 .2177 -.97602 266.35 1023.8)" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#d669a8" offset="0" />
+                    <stop stopColor="#577dbe" offset="1" />
+                </linearGradient>
+                <linearGradient id="gh_j" x1="108.62" x2="108.62" y1="71.278" y2="32.087" gradientTransform="matrix(.98847 -.1514 -.1514 -.98847 359.52 1016.8)" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#547dbf" offset="0" />
+                    <stop stopColor="#18a1ce" offset="1" />
+                </linearGradient>
+                <linearGradient id="gh_c" x1="21.62" x2="50.082" y1="38.375" y2="5.439" gradientTransform="matrix(1 0 0 -1 328.04 1024.1)" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#fcc010" offset="0" />
+                    <stop stopColor="#32b55e" offset="1" />
+                </linearGradient>
+                <linearGradient id="gh_d" x1="62.695" x2="62.695" y1="154.54" y2="110.29" gradientTransform="matrix(.94765 .31932 .31932 -.94765 247.31 1054.1)" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#ef4b5a" offset="0" />
+                    <stop stopColor="#fabe0f" offset="1" />
+                </linearGradient>
+                <linearGradient id="gh_e" x1="82.325" x2="66.325" y1="137.09" y2="136.59" gradientTransform="matrix(1 0 0 -1 328.04 1024.1)" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#d769a9" offset="0" />
+                    <stop stopColor="#ef4b5a" offset="1" />
+                </linearGradient>
+                <linearGradient id="gh_f" x1="135.62" x2="137.12" y1="76.153" y2="65.153" gradientTransform="matrix(1 0 0 -1 328.04 1024.1)" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#537dbf" offset="0" />
+                    <stop stopColor="#18a1ce" offset="1" />
+                </linearGradient>
+                <linearGradient id="gh_g" x1="136.14" x2="120.64" y1="39.516" y2="17.516" gradientTransform="matrix(1 0 0 -1 328.04 1024.1)" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#18a1ce" offset="0" />
+                    <stop stopColor="#32b55e" offset="1" />
+                </linearGradient>
+                <linearGradient id="gh_h" x1="24.141" x2="45.641" y1="30.047" y2="13.547" gradientTransform="matrix(1 0 0 -1 328.04 1024.1)" gradientUnits="userSpaceOnUse">
+                    <stop stopColor="#fcc010" offset="0" />
+                    <stop stopColor="#32b55e" offset="1" />
+                </linearGradient>
+            </defs>
+            <g transform="translate(-328 -868)">
+                <path d="m480.37 934.89-34.021 12.688 0.37696 0.36719v38.18h-4.2774l35.572 29.43c2.468-3.1985 3.9356-7.2083 3.9356-11.561v-60.949c0-2.8217-0.54965-5.5868-1.5859-8.1543z" fill="#18a1ce" />
+                <path d="m363.28 962.93-35.23 2.0723v24.629l35.23-13.566z" fill="#fcc010" />
+                <path d="m391.24 986.13-17.053 36.811h88.832c8.0041 0 14.848-4.9659 17.621-11.984l-37.238-24.826z" fill="#32b55e" />
+                <path d="m388 874.01c-0.6081 0.50613-1.1995 1.0446-1.7695 1.6152l-46.359 46.441 33.438 15.912 25.751-25.572z" fill="#ef4b5a" />
+                <path d="m454.22 906.61-22.916 26.285 15.42 15.055v2.4004l35.23-5.2207v-2.0801c0-5.84-2.3498-11.441-6.5098-15.541z" fill="#537dbf" />
+                <path d="m363.27 986.13h27.961l-17.053 36.809h-27.198c-10.46 0-18.94-8.48-18.94-18.94v-14.368l35.23-13.566z" fill="url(#gh_h)" />
+                <path d="m481.95 989.49v14.513c0 10.46-8.48 18.94-18.94 18.94h-2.661l-32.995-36.809h19.366v-11.116z" fill="url(#gh_g)" />
+                <path d="m481.95 960.56h-35.23v-10.212l35.23-5.22z" fill="url(#gh_f)" />
+                <path d="m405.16 868.07c-5.1332-0.13064-10.292 1.2738-14.75 4.1836-0.64321 0.49084-1.6472 1.1372-2.1699 1.5664-0.081 0.0659-0.15395 0.14591-0.23437 0.21289l9.1367 40.285h2e-3l7.5-7.4473 6.8378 6.6758 10.348-38.801c-4.736-4.3-10.682-6.5234-16.67-6.6758z" fill="url(#gh_e)" />
+                <path d="m339.8 922.15-5.373 5.3809c-4.08 4.09-6.3809 9.6302-6.3809 15.41v21.947l35.23 11.871v-28.809l13.451-13.357z" fill="url(#gh_d)" />
+                <path d="m363.28 973.86-35.213 30.984c3e-5 6e-4 -3e-5 0 0 0 0.44241 10.068 8.7453 18.096 18.922 18.096h27.443l34.553-36.811h-45.705z" fill="url(#gh_c)" />
+                <path d="m474.93 927-42.93 6.5742 14.721 14.371-1e-5 23.023 35.23-5.3965 1e-5 -22.527c0-5.84-2.3498-11.441-6.5098-15.541z" fill="url(#gh_j)" fillOpacity=".5" />
+                <path d="m418.96 872.49-8.8574 39.713 35.225 34.387 8.9121-39.957-31.639-31.154c-1.1407-1.1238-2.3608-2.12-3.6406-2.9883z" fill="url(#gh_i)" />
+                <path d="m358.35 981.03a35.39 44.079 54.205 0 0-30.307 8.9375v14.029c0 10.46 8.4794 18.941 18.939 18.941h40.041a35.39 44.079 54.205 0 0-3.7754-29.174 35.39 44.079 54.205 0 0-8.1934-7.6367h-11.781l1e-5 -4.5078a35.39 44.079 54.205 0 0-4.9238-0.58985z" fill="url(#gh_b)" />
+                <path d="m338.57 949.03a35.39 44.079 83.154 0 0-5.2891 0.37695 35.39 44.079 83.154 0 0-5.2324 0.88672v53.703c0 6.7628 3.5441 12.698 8.877 16.049a35.39 44.079 83.154 0 0 4.793-0.3633 35.39 44.079 83.154 0 0 39.543-33.555h-17.982v-31.414a35.39 44.079 83.154 0 0-24.709-5.6836z" fill="url(#gh_a)" />
+            </g>
         </svg>
     );
 }
