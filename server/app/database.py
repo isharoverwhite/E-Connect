@@ -122,14 +122,25 @@ def _reset_failed_schema_connection(conn) -> None:
     with suppress(Exception):
         conn.invalidate()
 
+_db_check_last_warn_key: str = ""
+_db_check_last_warn_time: float = 0.0
+_DB_CHECK_WARN_THROTTLE_SECONDS: float = 30.0
+
+
 def check_database_connection():
+    global _db_check_last_warn_key, _db_check_last_warn_time
     try:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
+        _db_check_last_warn_key = ""
         return True, None
     except SQLAlchemyError as exc:
         error_message = _format_operational_error(exc) if isinstance(exc, OperationalError) else str(exc)
-        logger.warning("Database connectivity check failed: %s", error_message)
+        now = time.monotonic()
+        if error_message != _db_check_last_warn_key or now - _db_check_last_warn_time > _DB_CHECK_WARN_THROTTLE_SECONDS:
+            logger.warning("Database connectivity check failed: %s", error_message)
+            _db_check_last_warn_key = error_message
+            _db_check_last_warn_time = now
         return False, error_message
 
 def _table_exists(table_name: str) -> bool:
@@ -698,6 +709,30 @@ def _ensure_additive_columns():
             "language",
             "VARCHAR(5) NOT NULL DEFAULT 'en'",
             "VARCHAR(5) NOT NULL DEFAULT 'en'",
+        ),
+        (
+            "users",
+            "totp_secret",
+            "VARCHAR(64)",
+            "VARCHAR(64) NULL",
+        ),
+        (
+            "users",
+            "totp_enabled",
+            "BOOLEAN NOT NULL DEFAULT 0",
+            "BOOLEAN NOT NULL DEFAULT 0",
+        ),
+        (
+            "users",
+            "failed_login_attempts",
+            "INTEGER NOT NULL DEFAULT 0",
+            "INT NOT NULL DEFAULT 0",
+        ),
+        (
+            "users",
+            "locked_until",
+            "DATETIME",
+            "DATETIME NULL",
         ),
     ]
 
