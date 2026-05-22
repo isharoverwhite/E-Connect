@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from app.services.extensions import (
     DEFAULT_PACKAGE_HOOKS,
+    OPTIONAL_PACKAGE_HOOKS,
     extract_extension_archive,
     remove_extracted_extension_dir,
     resolve_extracted_extension_dir,
@@ -191,6 +192,8 @@ def _load_module(*, cache_key: str, entrypoint_path: Path, manifest: dict[str, A
         for hook_key, hook_name in hook_names.items():
             hook = getattr(module, hook_name, None)
             if not callable(hook):
+                if hook_key in OPTIONAL_PACKAGE_HOOKS:
+                    continue
                 raise ExtensionRuntimeLoadError(
                     f"Manifest hook '{hook_key}' points to missing callable '{hook_name}' in '{entrypoint_path.name}'."
                 )
@@ -231,4 +234,10 @@ def _read_package_hooks(manifest: dict[str, Any]) -> dict[str, str]:
         if not isinstance(hook_name, str) or not hook_name.strip():
             raise ExtensionRuntimeLoadError(f"Installed extension manifest hook '{hook_key}' is invalid.")
         hooks[hook_key] = hook_name.strip()
+    for hook_key in OPTIONAL_PACKAGE_HOOKS:
+        hook_name = raw_hooks.get(hook_key)
+        if hook_name is not None:
+            if not isinstance(hook_name, str) or not hook_name.strip():
+                raise ExtensionRuntimeLoadError(f"Installed extension manifest hook '{hook_key}' is invalid.")
+            hooks[hook_key] = hook_name.strip()
     return hooks
