@@ -31,6 +31,8 @@ export interface AuthSession {
     access_token_expires_at?: string | null;
     refresh_token_expires_at?: string | null;
     keep_login: boolean;
+    require_totp?: boolean;
+    totp_token?: string | null;
 }
 
 function isBrowser(): boolean {

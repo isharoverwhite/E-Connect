@@ -2,7 +2,8 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import QRCode from "qrcode";
 import { getToken } from "@/lib/auth";
 import { useToast } from "@/components/ToastContext";
 import { useLanguage } from "@/components/LanguageContext";
@@ -185,7 +186,14 @@ export function TwoFactorPanel() {
                         <span className="w-5 h-5 rounded-full bg-indigo-600 text-white text-xs flex items-center justify-center font-bold">1</span>
                         {t("security.2fa.step1_title")}
                     </h4>
-                    <p className="text-xs text-slate-600 dark:text-slate-400 mb-3">{t("security.2fa.step1_hint")}</p>
+                    <p className="text-xs text-slate-600 dark:text-slate-400 mb-4">{t("security.2fa.step1_hint")}</p>
+
+                    {/* QR code */}
+                    <div className="flex justify-center mb-4">
+                        <div className="p-3 bg-white rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 inline-block">
+                            <QRCodeCanvas uri={setupData.provisioning_uri} size={180} />
+                        </div>
+                    </div>
 
                     {/* Open in app link */}
                     <a
@@ -308,6 +316,21 @@ export function TwoFactorPanel() {
             </section>
         </div>
     );
+}
+
+function QRCodeCanvas({ uri, size = 180 }: { uri: string; size?: number }) {
+    const canvasRef = useRef<HTMLCanvasElement>(null);
+
+    useEffect(() => {
+        if (!canvasRef.current) return;
+        QRCode.toCanvas(canvasRef.current, uri, {
+            width: size,
+            margin: 1,
+            color: { dark: "#1e1b4b", light: "#ffffff" },
+        });
+    }, [uri, size]);
+
+    return <canvas ref={canvasRef} width={size} height={size} className="block rounded-lg" />;
 }
 
 function ShieldIcon({ className }: { className?: string }) {
