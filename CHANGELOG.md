@@ -8,4 +8,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Added
 - GitHub Action Pull Request Checks.
+- Dashboard card drag-and-drop reordering and per-card hide/show toggle persisted per user via new `dashboard_layouts` table and `GET`/`PUT /api/v1/dashboard/layout` endpoints.
 

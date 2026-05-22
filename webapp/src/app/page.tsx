@@ -4,7 +4,24 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { fetchCurrentHouseTemperature, fetchCurrentWeather, fetchDashboardDevices, fetchDevices, fetchSystemLogs, markSystemLogRead, markAllSystemLogsRead, SystemLogEntry, fetchSystemStatus, SystemStatusResponse, CurrentWeatherResponse, HouseTemperatureResponse, updateHouseholdLocation } from "@/lib/api";
+import { fetchCurrentHouseTemperature, fetchCurrentWeather, fetchDashboardDevices, fetchDevices, fetchSystemLogs, markSystemLogRead, markAllSystemLogsRead, SystemLogEntry, fetchSystemStatus, SystemStatusResponse, CurrentWeatherResponse, HouseTemperatureResponse, updateHouseholdLocation, fetchDashboardLayout, saveDashboardLayout, DashboardLayoutItem } from "@/lib/api";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DragOverlay,
+  DragStartEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  rectSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useAuth } from "@/components/AuthProvider";
 import { useLanguage } from "@/components/LanguageContext";
 import { useToast } from "@/components/ToastContext";
@@ -176,6 +193,86 @@ function renderWeatherIcon(weatherData: CurrentWeatherResponse | null, size: Wea
   );
 }
 
+function SortableDeviceWrapper({
+  config,
+  isOnline,
+  editMode,
+  visible,
+  onToggleVisibility,
+  cardMinWidth,
+  cardMinHeight,
+  cardMaxWidth,
+}: {
+  config: DeviceConfig;
+  isOnline: boolean;
+  editMode: boolean;
+  visible: boolean;
+  onToggleVisibility: (deviceId: string) => void;
+  cardMinWidth: number;
+  cardMinHeight: number;
+  cardMaxWidth: number;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: config.device_id, disabled: !editMode });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+    flexBasis: `${cardMinWidth}px`,
+    minWidth: `min(100%, ${cardMinWidth}px)`,
+    maxWidth: `min(100%, ${cardMaxWidth}px)`,
+    minHeight: `${cardMinHeight}px`,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="flex w-full flex-none relative"
+    >
+      {editMode && (
+        <div className="absolute inset-0 z-10 rounded-xl ring-2 ring-primary/40 pointer-events-none" />
+      )}
+      {editMode && (
+        <div className="absolute top-2 left-2 z-20 flex gap-1.5">
+          <button
+            {...listeners}
+            {...attributes}
+            className="flex h-7 w-7 cursor-grab active:cursor-grabbing items-center justify-center rounded-lg bg-white/90 dark:bg-slate-800/90 shadow-sm border border-slate-200 dark:border-slate-600 text-slate-500 hover:text-primary transition-colors"
+            aria-label="Drag to reorder"
+            title="Drag to reorder"
+          >
+            <span className="material-icons-round text-[16px]">drag_indicator</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onToggleVisibility(config.device_id)}
+            className={`flex h-7 w-7 items-center justify-center rounded-lg shadow-sm border transition-colors ${
+              visible
+                ? "bg-white/90 dark:bg-slate-800/90 border-slate-200 dark:border-slate-600 text-slate-500 hover:text-amber-500"
+                : "bg-amber-50 dark:bg-amber-900/30 border-amber-300 dark:border-amber-600 text-amber-500"
+            }`}
+            aria-label={visible ? "Hide card" : "Show card"}
+            title={visible ? "Hide card" : "Show card"}
+          >
+            <span className="material-icons-round text-[16px]">{visible ? "visibility" : "visibility_off"}</span>
+          </button>
+        </div>
+      )}
+      <div className={`w-full h-full transition-opacity duration-200 ${editMode && !visible ? "opacity-40" : ""}`}>
+        <DynamicDeviceCard config={config} isOnline={isOnline} />
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { user } = useAuth();
   const { t } = useLanguage();
@@ -209,6 +306,10 @@ export default function Dashboard() {
   const [hasAreaSwipeMotion, setHasAreaSwipeMotion] = useState(false);
   const [areaUnderlineStyle, setAreaUnderlineStyle] = useState({ x: 0, width: 0, opacity: 0 });
   const [windowWidth, setWindowWidth] = useState(typeof window !== "undefined" ? window.innerWidth : 1200);
+  const [editMode, setEditMode] = useState(false);
+  const [dashboardLayout, setDashboardLayout] = useState<DashboardLayoutItem[]>([]);
+  const [isSavingLayout, setIsSavingLayout] = useState(false);
+  const [activeDragId, setActiveDragId] = useState<string | null>(null);
   const notificationRef = useRef<HTMLDivElement>(null);
   const areaMenuRef = useRef<HTMLDivElement>(null);
   const areaTabsRowRef = useRef<HTMLDivElement>(null);
@@ -595,6 +696,17 @@ export default function Dashboard() {
     void runDashboardRefresh("full");
   }, [runDashboardRefresh, user]);
 
+  useEffect(() => {
+    if (!user) return;
+    void fetchDashboardLayout().then((layout) => {
+      setDashboardLayout(layout);
+    });
+  }, [user]);
+
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+  );
+
   const isDeviceOnline = useCallback((d: DeviceConfig) => {
     return d.auth_status === "approved" && d.conn_status === "online";
   }, []);
@@ -640,13 +752,31 @@ export default function Dashboard() {
     }
   }, [areaOptions, selectedArea]);
 
+  const layoutMap = useMemo(() => {
+    const map = new Map<string, DashboardLayoutItem>();
+    for (const item of dashboardLayout) {
+      map.set(item.device_id, item);
+    }
+    return map;
+  }, [dashboardLayout]);
+
   const visibleDevices = useMemo(() => {
-    if (selectedArea === "all") {
-      return visibleApprovedDevices;
+    const baseList = selectedArea === "all"
+      ? visibleApprovedDevices
+      : visibleApprovedDevices.filter((device) => getAreaFilterOption(device).id === selectedArea);
+
+    const sorted = [...baseList].sort((a, b) => {
+      const posA = layoutMap.get(a.device_id)?.position ?? 9999;
+      const posB = layoutMap.get(b.device_id)?.position ?? 9999;
+      return posA - posB;
+    });
+
+    if (editMode) {
+      return sorted;
     }
 
-    return visibleApprovedDevices.filter((device) => getAreaFilterOption(device).id === selectedArea);
-  }, [visibleApprovedDevices, selectedArea]);
+    return sorted.filter((device) => layoutMap.get(device.device_id)?.visible !== false);
+  }, [visibleApprovedDevices, selectedArea, layoutMap, editMode]);
 
   const selectedAreaLabel = useMemo(
     () => areaOptions.find((option) => option.id === selectedArea)?.label ?? t("dashboard.all"),
@@ -825,6 +955,81 @@ export default function Dashboard() {
     return name ? `${greeting}, ${name}` : greeting;
   }, [serverTimezone, user, t]);
 
+  const handleDragStart = useCallback((event: DragStartEvent) => {
+    setActiveDragId(String(event.active.id));
+  }, []);
+
+  const handleDragEnd = useCallback(async (event: DragEndEvent) => {
+    setActiveDragId(null);
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    setDashboardLayout((prev) => {
+      const deviceIds = visibleDevices.map((d) => d.device_id);
+      const oldIndex = deviceIds.indexOf(String(active.id));
+      const newIndex = deviceIds.indexOf(String(over.id));
+      if (oldIndex === -1 || newIndex === -1) return prev;
+
+      const reordered = arrayMove(deviceIds, oldIndex, newIndex);
+      const existingMap = new Map(prev.map((item) => [item.device_id, item]));
+
+      const next: DashboardLayoutItem[] = reordered.map((deviceId, idx) => ({
+        device_id: deviceId,
+        position: idx,
+        visible: existingMap.get(deviceId)?.visible ?? true,
+      }));
+
+      // Include items that are not in visible list (other areas)
+      for (const item of prev) {
+        if (!reordered.includes(item.device_id)) {
+          next.push(item);
+        }
+      }
+
+      void (async () => {
+        setIsSavingLayout(true);
+        try {
+          await saveDashboardLayout(next);
+        } finally {
+          setIsSavingLayout(false);
+        }
+      })();
+
+      return next;
+    });
+  }, [visibleDevices]);
+
+  const handleToggleVisibility = useCallback((deviceId: string) => {
+    setDashboardLayout((prev) => {
+      const existingMap = new Map(prev.map((item) => [item.device_id, item]));
+      const current = existingMap.get(deviceId);
+      const nextVisible = !(current?.visible ?? true);
+
+      let next: DashboardLayoutItem[];
+      if (current) {
+        next = prev.map((item) =>
+          item.device_id === deviceId ? { ...item, visible: nextVisible } : item,
+        );
+      } else {
+        next = [
+          ...prev,
+          { device_id: deviceId, position: prev.length, visible: nextVisible },
+        ];
+      }
+
+      void (async () => {
+        setIsSavingLayout(true);
+        try {
+          await saveDashboardLayout(next);
+        } finally {
+          setIsSavingLayout(false);
+        }
+      })();
+
+      return next;
+    });
+  }, []);
+
   const handleAreaSelection = useCallback((nextArea: string) => {
     if (nextArea === selectedArea) {
       setShowAreaMenu(false);
@@ -867,6 +1072,23 @@ export default function Dashboard() {
         <header className="h-16 bg-surface-light dark:bg-surface-dark border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-6 shadow-sm z-30">
           <h1 className="text-lg font-semibold text-slate-800 dark:text-white capitalize truncate pr-4">{greetingText}</h1>
           <div className="flex items-center space-x-4">
+            <button
+              type="button"
+              onClick={() => setEditMode((v) => !v)}
+              className={`flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-all ${
+                editMode
+                  ? "bg-primary text-white shadow-md"
+                  : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+              }`}
+              title={editMode ? "Exit edit mode" : "Edit layout"}
+            >
+              {isSavingLayout ? (
+                <span className="material-icons-round text-[16px] animate-spin">autorenew</span>
+              ) : (
+                <span className="material-icons-round text-[16px]">{editMode ? "done" : "dashboard_customize"}</span>
+              )}
+              <span className="hidden sm:inline">{editMode ? "Done" : "Edit layout"}</span>
+            </button>
             <div className="relative group" ref={notificationRef}>
               <button
                 className="w-10 h-10 flex items-center justify-center text-primary bg-blue-50 dark:bg-blue-500/10 rounded-full transition-colors relative outline-none ring-2 ring-blue-100 dark:ring-blue-900/30"
@@ -1256,31 +1478,65 @@ export default function Dashboard() {
                       {selectedArea === "all" ? t("dashboard.no_devices_found") : `${t("dashboard.no_devices_found_in_area")} ${selectedAreaLabel}.`}
                     </div>
                   ) : (
-                    <div className="flex flex-wrap items-start gap-6">
-                      {visibleDevices.map((config) => {
-                        if (!("device_id" in config)) return null;
-                        const c = config as DeviceConfig;
-                        const cardMinWidth = getCardMinWidth(c);
-                        const cardMinHeight = getCardMinHeight(c);
-                        const cardMaxWidth = Math.max(cardMinWidth, DASHBOARD_CARD_MAX_WIDTH);
-                        return (
-                          <div
-                            key={c.device_id}
-                            className="flex w-full flex-none"
-                            style={{
-                              flexBasis: `${cardMinWidth}px`,
-                              minWidth: `min(100%, ${cardMinWidth}px)`,
-                              maxWidth: `min(100%, ${cardMaxWidth}px)`,
-                              minHeight: `${cardMinHeight}px`,
-                            }}
-                          >
-                            <div className="w-full h-full">
-                              <DynamicDeviceCard config={c} isOnline={isDeviceOnline(c)} />
+                    <DndContext
+                      sensors={dndSensors}
+                      collisionDetection={closestCenter}
+                      onDragStart={handleDragStart}
+                      onDragEnd={(e) => { void handleDragEnd(e); }}
+                    >
+                      <SortableContext
+                        items={visibleDevices.map((d) => d.device_id)}
+                        strategy={rectSortingStrategy}
+                      >
+                        <div className="flex flex-wrap items-start gap-6">
+                          {visibleDevices.map((config) => {
+                            if (!("device_id" in config)) return null;
+                            const c = config as DeviceConfig;
+                            const cardMinWidth = getCardMinWidth(c);
+                            const cardMinHeight = getCardMinHeight(c);
+                            const cardMaxWidth = Math.max(cardMinWidth, DASHBOARD_CARD_MAX_WIDTH);
+                            const isVisible = layoutMap.get(c.device_id)?.visible ?? true;
+                            return (
+                              <SortableDeviceWrapper
+                                key={c.device_id}
+                                config={c}
+                                isOnline={isDeviceOnline(c)}
+                                editMode={editMode}
+                                visible={isVisible}
+                                onToggleVisibility={handleToggleVisibility}
+                                cardMinWidth={cardMinWidth}
+                                cardMinHeight={cardMinHeight}
+                                cardMaxWidth={cardMaxWidth}
+                              />
+                            );
+                          })}
+                        </div>
+                      </SortableContext>
+                      <DragOverlay>
+                        {activeDragId ? (() => {
+                          const c = visibleDevices.find((d) => d.device_id === activeDragId) as DeviceConfig | undefined;
+                          if (!c) return null;
+                          const cardMinWidth = getCardMinWidth(c);
+                          const cardMinHeight = getCardMinHeight(c);
+                          const cardMaxWidth = Math.max(cardMinWidth, DASHBOARD_CARD_MAX_WIDTH);
+                          return (
+                            <div
+                              className="flex w-full flex-none rounded-xl shadow-2xl opacity-95"
+                              style={{
+                                flexBasis: `${cardMinWidth}px`,
+                                minWidth: `min(100%, ${cardMinWidth}px)`,
+                                maxWidth: `min(100%, ${cardMaxWidth}px)`,
+                                minHeight: `${cardMinHeight}px`,
+                              }}
+                            >
+                              <div className="w-full h-full">
+                                <DynamicDeviceCard config={c} isOnline={isDeviceOnline(c)} />
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
+                          );
+                        })() : null}
+                      </DragOverlay>
+                    </DndContext>
                   )}
                 </div>
               </div>

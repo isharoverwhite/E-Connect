@@ -627,6 +627,40 @@ export async function fetchDashboardDevices(): Promise<DeviceConfig[]> {
     }
 }
 
+export interface DashboardLayoutItem {
+    device_id: string;
+    position: number;
+    visible: boolean;
+}
+
+export async function fetchDashboardLayout(): Promise<DashboardLayoutItem[]> {
+    try {
+        const token = getToken();
+        if (!token) return [];
+        const res = await fetch(`${API_URL}/dashboard/layout`, {
+            cache: "no-store",
+            headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok) return [];
+        return res.json();
+    } catch {
+        return [];
+    }
+}
+
+export async function saveDashboardLayout(layout: DashboardLayoutItem[]): Promise<void> {
+    const token = getToken();
+    if (!token) return;
+    await fetch(`${API_URL}/dashboard/layout`, {
+        method: "PUT",
+        headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify(layout),
+    });
+}
+
 export async function fetchInstalledExtensions(token?: string): Promise<InstalledExtension[]> {
     const authToken = token ?? getToken();
     if (!authToken) {
@@ -816,6 +850,9 @@ export async function sendDeviceCommand(
             body: JSON.stringify(payload)
         });
 
+        if (res.status === 429) {
+            return { status: "rate_limited", message: "Command rate limited, please wait." };
+        }
         if (!res.ok) {
             return { status: "failed", message: await parseApiError(res, "Failed to send device command") };
         }
@@ -982,3 +1019,40 @@ export const rebuildFirmware = async (
   }
   return response.json();
 };
+
+export interface BatchOtaResult {
+  device_id: string;
+  status: "triggered" | "already_queued" | "not_found" | "error";
+  job_id?: string;
+  message?: string;
+}
+
+export async function batchOTA(
+  deviceIds: string[]
+): Promise<{ results: BatchOtaResult[] }> {
+  const token = getToken();
+  if (!token) {
+    throw new Error("Missing session token. Please sign in again.");
+  }
+
+  const response = await fetch(`${API_URL}/devices/ota/batch`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ device_ids: deviceIds }),
+  });
+
+  if (!response.ok) {
+    const isJson = response.headers.get("content-type")?.includes("application/json");
+    if (isJson) {
+      const errorData = await response.json();
+      const message = typeof errorData.detail === "object" ? errorData.detail.message : errorData.detail;
+      throw new Error(message || "Failed to trigger batch OTA");
+    }
+    throw new Error(`Server Error: ${response.statusText}`);
+  }
+
+  return response.json();
+}

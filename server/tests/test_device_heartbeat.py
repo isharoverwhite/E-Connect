@@ -139,7 +139,7 @@ def test_expire_stale_online_devices_once_marks_old_devices_offline(monkeypatch)
         "device_offline",
         device_id,
         room_id,
-        {"reason": "heartbeat_timeout"},
+        {"reason": "heartbeat_timeout", "device_name": "Heartbeat Device"},
     )
     remember_connectivity_mock.assert_called_once()
     assert remember_connectivity_mock.call_args.args == (device_id,)

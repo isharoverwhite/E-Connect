@@ -475,3 +475,14 @@ class SerialSession(Base):
 
     locked_by = relationship("User")
     build_job = relationship("BuildJob")
+
+
+class DashboardLayout(Base):
+    __tablename__ = "dashboard_layouts"
+    __table_args__ = (UniqueConstraint("user_id", "device_id"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.user_id", ondelete="CASCADE"), nullable=False)
+    device_id = Column(String(64), nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+    visible = Column(Boolean, nullable=False, default=True)
