@@ -1,6 +1,6 @@
 # Google Home Integration — Setup Guide
 
-> **Reading time:** ~10 minutes  
+> **Time:** ~15 minutes  
 > **Audience:** Server administrator  
 > **Prerequisite:** E-Connect server is running and accessible from the internet (via port forwarding, Cloudflare Tunnel, ngrok, etc.)
 
@@ -16,59 +16,63 @@ E-Connect integrates with Google Home as a **Smart Home Action**. Once configure
 "Hey Google, turn off all devices"
 ```
 
-The integration works by:
-1. **Your server** acting as an OAuth 2.0 authorization server (account linking)
-2. **Google's servers** calling your fulfillment webhook to send SYNC / QUERY / EXECUTE intents
-3. **Report State** pushing real-time state changes back to Google via the Home Graph API
+The integration works as follows:
+1. **Your server** acts as an OAuth 2.0 authorization server — users sign in to E-Connect to link their Google account.
+2. **Google's servers** call your fulfillment webhook to send SYNC / QUERY / EXECUTE intents.
+3. **Report State** pushes real-time device state back to Google via the Home Graph API.
+
+You need to collect **4 values** from Google to fill into E-Connect:
+
+| Field in E-Connect | Where to get it |
+|---|---|
+| **OAuth2 Client ID** | A string you choose when configuring Account Linking in Google Home Developer Console |
+| **OAuth2 Client Secret** | A string you choose when configuring Account Linking in Google Home Developer Console |
+| **Google Cloud Project ID** | The project Settings page in Google Home Developer Console |
+| **Service Account JSON Key** | Google Cloud Console — downloaded from a Service Account |
 
 ---
 
-## Architecture Diagram
+## Step 1 — Open E-Connect Settings → Google Home
+
+Sign in to E-Connect with an **admin** account, go to **Settings**, and scroll down to the **Google Home** section.
+
+You will see the **Google Cloud Credentials** form with 4 empty fields. This is your destination — the steps below guide you through collecting all 4 values.
+
+> The Google Cloud Credentials section is only visible to admin accounts.
+
+---
+
+## Step 2 — Create a Project in Google Home Developer Console
+
+Go to: **https://console.home.google.com/projects**
+
+1. Click **Create a project**.
+2. Enter a project name (e.g. `E-Connect`) and click **Create project**.
+3. After the project is created, **note down the Project ID** — this is the **Google Cloud Project ID** you will fill in at Step 7.
+   > The Project ID looks like `my-project-abc123` and appears in the URL or in the project's Settings page.
+
+---
+
+## Step 3 — Configure Smart Home Fulfillment
+
+Inside the project, go to **Develop → Actions** in the left sidebar.
+
+Under **Fulfillment URL**, enter:
 
 ```
-Google Home App
-      │
-      │  Account Linking (OAuth2)
-      ▼
-E-Connect Server  ◄──────────────────────────────┐
-   /api/v1/google/auth          │                │
-   /api/v1/google/token         │                │
-      │                         │                │
-      │  Smart Home Fulfillment │                │
-      ▼                         │                │
-E-Connect Server                │                │
-   /api/v1/google/fulfillment   │                │
-      │  SYNC / QUERY / EXECUTE │                │
-      ▼                         │                │
-   MQTT → ESP32 Devices         │                │
-      │                         │                │
-      │  State Changes          │                │
-      └─────► Report State ─────┘                │
-              Home Graph API                     │
-              (Google Cloud)                     │
-                                                 │
-              Service Account JWT ───────────────┘
+https://<your-public-server-domain>/api/v1/google/fulfillment
 ```
 
----
+> Replace `<your-public-server-domain>` with the public hostname or IP of your E-Connect server.  
+> Example: `https://myhome.duckdns.org/api/v1/google/fulfillment`
 
-## Step 1 — Create a Google Actions Project
-
-1. Go to [Google Actions Console](https://console.actions.google.com/) and sign in with your Google account.
-2. Click **New project**, give it a name (e.g. `E-Connect`), and click **Create project**.
-3. On the "What kind of Action do you want to build?" screen, select **Smart Home** and click **Start Building**.
-4. In the left sidebar, go to **Develop → Actions**.
-5. Under **Fulfillment**, paste your server's fulfillment URL:
-   ```
-   https://<your-public-server-domain>/api/v1/google/fulfillment
-   ```
-   > Replace `<your-public-server-domain>` with your server's public hostname or IP.
+Click **Save**.
 
 ---
 
-## Step 2 — Configure Account Linking (OAuth 2.0)
+## Step 4 — Configure Account Linking (OAuth 2.0)
 
-Still in the Actions Console, go to **Develop → Account linking**.
+Still in the same project, go to **Develop → Account linking**.
 
 Fill in the fields as follows:
 
@@ -76,75 +80,103 @@ Fill in the fields as follows:
 |---|---|
 | **Linking type** | OAuth |
 | **Grant type** | Authorization code |
-| **Client ID** | A secret string you generate (e.g. `econnect-ghome-client`) |
-| **Client secret** | Another secret string you generate (e.g. a long random password) |
+| **Client ID** | A secret string you choose — save it, this is your **OAuth2 Client ID** |
+| **Client secret** | Another secret string you choose — save it, this is your **OAuth2 Client Secret** |
 | **Authorization URL** | `https://<your-public-server-domain>/api/v1/google/auth` |
 | **Token URL** | `https://<your-public-server-domain>/api/v1/google/token` |
 
-> **Important:** Save the Client ID and Client Secret — you will enter them in E-Connect Settings in Step 4.
+> **Generate random Client ID / Secret:**
+> ```bash
+> python3 -c "import uuid; print(uuid.uuid4())"
+> ```
+> Run this command twice — once for the Client ID, once for the Client Secret.
 
 Click **Save**.
 
 ---
 
-## Step 3 — Enable Home Graph API & Create a Service Account
+## Step 5 — Enable the Home Graph API
 
-The Home Graph API lets E-Connect proactively push device state changes to Google (Report State) so Google always has the latest state.
+The Home Graph API allows E-Connect to push real-time device state changes to Google.
 
-### 3a — Enable the API
+Go to the Google Cloud Console — make sure you are in the same project created in Step 2:
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) and select the same project used in Step 1.
-2. Navigate to **APIs & Services → Library**.
-3. Search for **HomeGraph API** and click **Enable**.
+**https://console.cloud.google.com/apis/library/homegraph.googleapis.com**
 
-### 3b — Create a Service Account
+Click **Enable**.
 
-1. Go to **IAM & Admin → Service Accounts**.
-2. Click **Create Service Account**.
-3. Give it a name (e.g. `econnect-homegraph`), click **Create and continue**.
-4. Skip the optional role and user access steps — click **Done**.
-
-### 3c — Download the JSON Key
-
-1. Click on the service account you just created.
-2. Go to the **Keys** tab.
-3. Click **Add Key → Create new key → JSON** and click **Create**.
-4. A `.json` file is downloaded — keep it safe, you will paste its contents into E-Connect Settings.
+> If the wrong project is selected, click the project name in the top-left corner and switch to your Google Home project.
 
 ---
 
-## Step 4 — Configure E-Connect
+## Step 6 — Create a Service Account and Download the JSON Key
 
-1. Open E-Connect in your browser and go to **Settings → Google Home**.
-2. Scroll down to the **Google Cloud Credentials** section (visible to admins only).
-3. Fill in the fields:
+A Service Account lets the E-Connect server authenticate with the Home Graph API to send Report State.
+
+### 6a — Create the Service Account
+
+Go to: **https://console.cloud.google.com/iam-admin/serviceaccounts**
+
+1. Click **+ Create service account**.
+2. Give it a name (e.g. `econnect-homegraph`) and click **Create and continue**.
+3. Skip the Permissions and Grant access steps — click **Done**.
+
+### 6b — Download the JSON Key
+
+1. Click on the **email address** of the service account you just created.
+2. Switch to the **Keys** tab.
+3. Click **Add Key → Create new key → JSON → Create**.
+4. A `.json` file is downloaded automatically — this is the **Service Account JSON Key**.
+
+The file looks like this:
+
+```json
+{
+  "type": "service_account",
+  "project_id": "your-project-id",
+  "private_key_id": "...",
+  "private_key": "-----BEGIN RSA PRIVATE KEY-----\n...",
+  "client_email": "econnect-homegraph@your-project.iam.gserviceaccount.com",
+  ...
+}
+```
+
+> Keep this file safe — it grants access to your Home Graph API.
+
+---
+
+## Step 7 — Fill Credentials into E-Connect
+
+Return to E-Connect → **Settings → Google Home**, and fill in the 4 fields in the **Google Cloud Credentials** section:
 
 | Field | Value |
 |---|---|
-| **OAuth2 Client ID** | The Client ID you chose in Step 2 |
-| **OAuth2 Client Secret** | The Client Secret you chose in Step 2 |
-| **Google Cloud Project ID** | Your Google Cloud project ID (shown in the Cloud Console header) |
-| **Service Account JSON Key** | Paste the entire contents of the `.json` file downloaded in Step 3c |
+| **OAuth2 Client ID** | The Client ID you chose in Step 4 |
+| **OAuth2 Client Secret** | The Client Secret you chose in Step 4 |
+| **Google Cloud Project ID** | The Project ID noted in Step 2 |
+| **Service Account JSON Key** | Paste the entire contents of the `.json` file from Step 6b |
 
-4. Click **Save Credentials**.
+Click **Save Credentials**.
 
-The status badges at the top of the section will turn green once all fields are configured.
+The status badges at the top of the section will turn green once all fields are saved correctly.
 
 ---
 
-## Step 5 — Test Account Linking
+## Step 8 — Link in the Google Home App
 
-1. Open the **Google Home** app on your phone.
+Each user on the server performs this step on their phone:
+
+1. Open the **Google Home** app.
 2. Tap **+** → **Set up device** → **Works with Google**.
-3. Search for your action name (the name you gave in Step 1).
-4. Tap it, then sign in with your E-Connect username and password.
-5. After signing in, Google will redirect back and sync your devices automatically.
+3. Search for your action name (the name you set in Step 2).
+4. Tap it, then sign in with an E-Connect username and password.
+5. After signing in, Google automatically syncs devices.
 
-You should see all your E-Connect devices appear in the Google Home app within a few seconds.
+All E-Connect devices will appear in the Google Home app within a few seconds.
 
 ---
 
-## Step 6 — Voice Commands
+## Voice Commands
 
 Once linked, you can say:
 
@@ -152,19 +184,19 @@ Once linked, you can say:
 |---|---|
 | `"Hey Google, turn on [device name]"` | Turns the device on |
 | `"Hey Google, turn off [device name]"` | Turns the device off |
-| `"Hey Google, set [device name] to 50%"` | Sets brightness/fan speed to 50% |
+| `"Hey Google, set [device name] to 50%"` | Sets brightness / fan speed to 50% |
 | `"Hey Google, dim [device name]"` | Reduces brightness |
-| `"Hey Google, sync my devices"` | Re-syncs device list |
+| `"Hey Google, sync my devices"` | Re-syncs the device list |
 
-> **Tip:** Device names in Google Home match the names you set in E-Connect. Rename devices in **E-Connect → Devices** for better voice recognition.
+> Device names in Google Home match the names set in E-Connect. Rename devices in **E-Connect → Devices** for better voice recognition.
 
 ---
 
-## Sync & Re-link
+## Sync & Unlink
 
-- **Adding a new device** — Go to **Settings → Google Home** and click **Sync Devices**, or say *"Hey Google, sync my devices"*.
+- **Adding a new device** — Go to **Settings → Google Home** and click **Sync Devices**, or say _"Hey Google, sync my devices"_.
 - **Unlinking** — Go to **Settings → Google Home** and click **Unlink Account**. You can re-link at any time.
-- **Credential rotation** — If you change the Client Secret, all linked users will need to re-link their accounts.
+- **Rotating the Client Secret** — If you change the Client Secret, all linked users must re-link their accounts.
 
 ---
 
@@ -172,52 +204,45 @@ Once linked, you can say:
 
 ### Google can't reach my server
 
-Make sure your server is publicly accessible. Test by opening the following URL in a browser:
+Verify your server is publicly accessible by opening the following URL in a browser:
 
 ```
 https://<your-public-server-domain>/api/v1/google/fulfillment
 ```
 
-You should receive a `401 Missing authorization` response (not a connection error), which confirms the endpoint is reachable.
+You should receive a `401 Missing authorization` response — not a connection error. This confirms the endpoint is reachable.
 
 ### "Service unavailable" during account linking
 
-This means `GOOGLE_HOME_CLIENT_ID` and `GOOGLE_HOME_CLIENT_SECRET` are not set. Check the **Google Cloud Credentials** section in Settings.
+The OAuth Client ID or Client Secret has not been saved. Check the **Google Cloud Credentials** section in Settings and click **Save Credentials**.
 
-### Devices not appearing in Google Home
+### Devices not appearing after linking
 
-After linking, click **Sync Devices** in Settings or say *"Hey Google, sync my devices"*. If devices still don't appear, check that your devices are **approved** (not pending) in E-Connect.
+Click **Sync Devices** in Settings or say _"Hey Google, sync my devices"_. If devices still don't appear, check that your devices are **approved** (not pending) in E-Connect.
 
-### State is stale in Google Home
+### State is stale / out of sync in Google Home
 
-State staleness means Report State is not working. Verify that:
-- The **Google Cloud Project ID** is set correctly in Settings.
-- The **Service Account JSON Key** is for a service account in the correct project.
-- The **HomeGraph API** is enabled in your Google Cloud project.
+Report State is not working. Verify:
+- The **Google Cloud Project ID** is filled in correctly in Settings.
+- The **Service Account JSON Key** belongs to a service account in the correct Google Cloud project.
+- The **Home Graph API** is enabled in your Google Cloud project (Step 5).
 
----
+### E-Connect not found in "Works with Google"
 
-## Environment Variables (alternative to UI)
-
-Instead of using the Settings UI, you can also configure credentials via environment variables in your `docker-compose.yml` or `.env` file:
-
-```env
-GOOGLE_HOME_CLIENT_ID=your-client-id
-GOOGLE_HOME_CLIENT_SECRET=your-client-secret
-GOOGLE_HOME_PROJECT_ID=your-gcloud-project-id
-GOOGLE_HOME_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
-```
-
-> **Note:** Settings saved via the UI take priority over environment variables.
+The Action must be in **Test** mode before it appears in the list. In the Google Home Developer Console, go to **Test** and enable the testing mode.
 
 ---
 
-## Security Notes
+## Checklist
 
-- The OAuth 2.0 Client Secret and Service Account JSON key are stored encrypted in the E-Connect database. Never share them publicly.
-- The fulfillment endpoint only accepts requests bearing a valid E-Connect access token issued during the account-linking OAuth flow.
-- The service account key is used server-side only — it is never exposed to users.
+- [ ] Create project in Google Home Developer Console → note **Project ID**
+- [ ] Configure **Fulfillment URL** in Developer Console
+- [ ] Configure **Account Linking** — set Client ID & Client Secret → save both values
+- [ ] Enable **Home Graph API** in Google Cloud Console
+- [ ] Create **Service Account** → download **JSON Key**
+- [ ] Fill in 4 fields in **E-Connect → Settings → Google Home** → click **Save Credentials**
+- [ ] Link in Google Home App → verify devices appear
 
 ---
 
-*Guide version: 1.0 — E-Connect 2026*
+*Guide version: 2.0 — E-Connect 2026*
