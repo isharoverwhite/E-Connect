@@ -233,16 +233,4 @@ The Action must be in **Test** mode before it appears in the list. In the Google
 
 ---
 
-## Checklist
-
-- [ ] Create project in Google Home Developer Console → note **Project ID**
-- [ ] Configure **Fulfillment URL** in Developer Console
-- [ ] Configure **Account Linking** — set Client ID & Client Secret → save both values
-- [ ] Enable **Home Graph API** in Google Cloud Console
-- [ ] Create **Service Account** → download **JSON Key**
-- [ ] Fill in 4 fields in **E-Connect → Settings → Google Home** → click **Save Credentials**
-- [ ] Link in Google Home App → verify devices appear
-
----
-
 *Guide version: 2.0 — E-Connect 2026*

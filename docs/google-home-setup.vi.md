@@ -233,16 +233,4 @@ Action cần được **Test** trước khi xuất hiện trong danh sách. Tron
 
 ---
 
-## Checklist
-
-- [ ] Tạo project trong Google Home Developer Console → ghi lại **Project ID**
-- [ ] Cấu hình **Fulfillment URL** trong Developer Console
-- [ ] Cấu hình **Account Linking** — đặt Client ID & Client Secret → ghi lại cả hai
-- [ ] Bật **Home Graph API** trong Google Cloud Console
-- [ ] Tạo **Service Account** → tải xuống **JSON Key**
-- [ ] Điền 4 trường trong **E-Connect → Settings → Google Home** → nhấn **Save Credentials**
-- [ ] Liên kết qua Google Home App → kiểm tra thiết bị xuất hiện
-
----
-
 *Phiên bản hướng dẫn: 2.0 — E-Connect 2026*
