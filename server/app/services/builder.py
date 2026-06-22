@@ -837,6 +837,7 @@ def generate_platformio_ini(project, project_dir: str):
     needs_dht = False
     has_actuator_pins = False
     has_pwm_pins = False
+    has_switch_pins = False
 
     for pin in raw_pins if isinstance(raw_pins, list) else []:
         mode = str(pin.get("mode")).upper()
@@ -854,8 +855,11 @@ def generate_platformio_ini(project, project_dir: str):
                         lib_deps.extend(lib_info.pio_lib_deps)
                         seen_libs.add(lib_name)
             elif mode == "INPUT":
-                if extra.get("input_type") == "dht":
+                input_type = extra.get("input_type")
+                if input_type == "dht":
                     needs_dht = True
+                elif input_type == "switch":
+                    has_switch_pins = True
 
     if needs_dht:
         lib_deps.extend([
@@ -874,16 +878,23 @@ def generate_platformio_ini(project, project_dir: str):
         # Calculate optimal sleep mode based on pin configurations
         if has_pwm_pins:
             build_flags.append("-D ECONNECT_SLEEP_MODE=0")  # Modem Sleep (CPU Awake, WiFi off)
-        elif has_actuator_pins:
-            build_flags.append("-D ECONNECT_SLEEP_MODE=1")  # Light Sleep (CPU Paused, GPIO preserved)
+        elif has_actuator_pins or has_switch_pins:
+            build_flags.append("-D ECONNECT_SLEEP_MODE=1")  # Light Sleep (CPU Paused, GPIO preserved, interrupts active)
         else:
             build_flags.append("-D ECONNECT_SLEEP_MODE=2")  # Deep Sleep (Max Power Saving)
             
         deep_sleep_interval = config_json.get("deep_sleep_interval_s")
-        if isinstance(deep_sleep_interval, int) and deep_sleep_interval > 0:
-            build_flags.append(f"-D ECONNECT_DEEP_SLEEP_INTERVAL_S={deep_sleep_interval}")
+        if not has_pwm_pins and not has_actuator_pins and not has_switch_pins:
+            # Pure sensors: default to 5 minutes if not strictly defined
+            if isinstance(deep_sleep_interval, int) and deep_sleep_interval > 0:
+                build_flags.append(f"-D ECONNECT_DEEP_SLEEP_INTERVAL_S={deep_sleep_interval}")
+            else:
+                build_flags.append("-D ECONNECT_DEEP_SLEEP_INTERVAL_S=300")
         else:
-            build_flags.append("-D ECONNECT_DEEP_SLEEP_INTERVAL_S=60")
+            if isinstance(deep_sleep_interval, int) and deep_sleep_interval > 0:
+                build_flags.append(f"-D ECONNECT_DEEP_SLEEP_INTERVAL_S={deep_sleep_interval}")
+            else:
+                build_flags.append("-D ECONNECT_DEEP_SLEEP_INTERVAL_S=60")
 
     build_flags_block = "\n".join(f"    {flag}" for flag in build_flags) if build_flags else ""
     board_configs_block = "\n".join(board_config_lines) + "\n" if board_config_lines else ""
