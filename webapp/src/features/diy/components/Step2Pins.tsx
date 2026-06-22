@@ -883,16 +883,20 @@ export function Step2Pins({
                             <style>
                                 {`
                                 @keyframes drawLine {
-                                    from { stroke-dashoffset: 400; }
+                                    from { stroke-dashoffset: 100; }
                                     to { stroke-dashoffset: 0; }
                                 }
                                 .animate-draw-line {
-                                    stroke-dasharray: 400;
-                                    stroke-dashoffset: 400;
+                                    stroke-dasharray: 100;
+                                    stroke-dashoffset: 100;
                                     animation: drawLine 0.4s ease-out forwards;
                                 }
                                 @keyframes popInScale {
                                     from { opacity: 0; transform: scale(0.9); }
+                                    to { opacity: 1; transform: scale(1); }
+                                }
+                                @keyframes fadeInDot {
+                                    from { opacity: 0; transform: scale(0); }
                                     to { opacity: 1; transform: scale(1); }
                                 }
                                 `}
@@ -1043,14 +1047,14 @@ export function Step2Pins({
                                         cy={startY} 
                                         r="3" 
                                         fill={lineColor} 
-                                        style={{ opacity: 0, animation: 'popInScale 0.2s ease-out forwards', filter: dropShadow || undefined }}
+                                        style={{ opacity: 0, transformOrigin: `${startX}px ${startY}px`, animation: 'fadeInDot 0.2s ease-out forwards', filter: dropShadow || undefined }}
                                     />
                                     <circle 
                                         cx={lineEndX} 
                                         cy={lineEndY} 
                                         r="3" 
                                         fill={lineColor} 
-                                        style={{ opacity: 0, animation: 'popInScale 0.2s ease-out 0.4s forwards', filter: dropShadow || undefined }}
+                                        style={{ opacity: 0, transformOrigin: `${lineEndX}px ${lineEndY}px`, animation: 'fadeInDot 0.2s ease-out 0.4s forwards', filter: dropShadow || undefined }}
                                     />
                                     <foreignObject x={popX} y={popY} width={popWidth + 40} height={popHeight} className="overflow-visible pointer-events-none">
                                         <div 
