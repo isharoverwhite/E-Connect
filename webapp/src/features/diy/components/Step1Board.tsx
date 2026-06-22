@@ -352,7 +352,7 @@ export function Step1Board({
                                                 <span className="material-symbols-outlined text-[16px]">mode_standby</span>
                                             </div>
                                             <div className="absolute bottom-full right-0 mb-2 w-max max-w-[200px] pointer-events-none opacity-0 group-hover/ulp:opacity-100 transition-all translate-y-1 group-hover/ulp:translate-y-0 bg-slate-800 text-white text-xs px-3 py-2 rounded-lg shadow-xl border border-slate-700/50 whitespace-normal text-right">
-                                                {t("diy.step1.ulp_support", { defaultValue: "Supports Deep Sleep & ULP Co-processor" })}
+                                                Supports Deep Sleep & ULP Co-processor
                                             </div>
                                         </div>
                                     )}
