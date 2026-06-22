@@ -67,7 +67,7 @@ export function Step3Validate({ board, validation, pins, onNext, onBack, isReady
                 </div>
                 <div className="flex flex-col gap-2 rounded-xl p-6 border border-border-light dark:border-border-dark dark:border-slate-800 bg-surface-light dark:bg-surface-dark dark:bg-slate-900/50">
                     <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 dark:text-slate-400 mb-1">
-                        <span className="material-symbols-outlined text-sm">memory</span>
+                        <span className="material-symbols-outlined text-sm">extension</span>
                         <p className="text-sm font-medium leading-normal">Features</p>
                     </div>
                     <div className="flex items-center gap-2 flex-wrap mt-1">
@@ -78,7 +78,7 @@ export function Step3Validate({ board, validation, pins, onNext, onBack, isReady
                         )}
                         {hasULP && (
                             <div className="bg-slate-100 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 flex items-center justify-center text-violet-500 dark:text-violet-400 shadow-sm" title="ULP Co-processor">
-                                <span className="material-symbols-outlined text-lg">microchip</span>
+                                <span className="material-symbols-outlined text-lg">memory</span>
                             </div>
                         )}
                         {hasBattery && (
