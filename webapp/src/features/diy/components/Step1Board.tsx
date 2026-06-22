@@ -327,6 +327,7 @@ export function Step1Board({
                             profile.rightPins.some(p => p.label === "BAT" || p.id === "BAT")
                         )
                     );
+                    const hasUlp = ["ESP32", "ESP32-S2", "ESP32-S3"].includes(item.id);
                     
                     return (
                         <div
@@ -344,18 +345,28 @@ export function Step1Board({
                                         }`}
                                     src={BOARD_IMAGE_MAP[item.id] || BOARD_IMAGE_MAP["ESP32"]}
                                 />
-                                {hasBattery && (
-                                    <div className="absolute bottom-2 right-2 group/battery z-10">
-                                        <div 
-                                            className="bg-slate-900/80 backdrop-blur-md p-1.5 rounded-lg border border-slate-700/50 flex items-center justify-center text-emerald-400 shadow-sm transition-all opacity-80 group-hover/battery:opacity-100 cursor-help"
-                                        >
-                                            <span className="material-symbols-outlined text-[16px]">battery_charging_full</span>
+                                <div className="absolute bottom-2 right-2 flex gap-1.5 z-10">
+                                    {hasUlp && (
+                                        <div className="group/ulp relative">
+                                            <div className="bg-slate-900/80 backdrop-blur-md p-1.5 rounded-lg border border-slate-700/50 flex items-center justify-center text-sky-400 shadow-sm transition-all opacity-80 group-hover/ulp:opacity-100 cursor-help">
+                                                <span className="material-symbols-outlined text-[16px]">mode_standby</span>
+                                            </div>
+                                            <div className="absolute bottom-full right-0 mb-2 w-max max-w-[200px] pointer-events-none opacity-0 group-hover/ulp:opacity-100 transition-all translate-y-1 group-hover/ulp:translate-y-0 bg-slate-800 text-white text-xs px-3 py-2 rounded-lg shadow-xl border border-slate-700/50 whitespace-normal text-right">
+                                                {t("diy.step1.ulp_support", { defaultValue: "Supports Deep Sleep & ULP Co-processor" })}
+                                            </div>
                                         </div>
-                                        <div className="absolute bottom-full right-0 mb-2 w-max max-w-[200px] pointer-events-none opacity-0 group-hover/battery:opacity-100 transition-all translate-y-1 group-hover/battery:translate-y-0 bg-slate-800 text-white text-xs px-3 py-2 rounded-lg shadow-xl border border-slate-700/50 whitespace-normal text-right">
-                                            {t("diy.step1.battery_support")}
+                                    )}
+                                    {hasBattery && (
+                                        <div className="group/battery relative">
+                                            <div className="bg-slate-900/80 backdrop-blur-md p-1.5 rounded-lg border border-slate-700/50 flex items-center justify-center text-emerald-400 shadow-sm transition-all opacity-80 group-hover/battery:opacity-100 cursor-help">
+                                                <span className="material-symbols-outlined text-[16px]">battery_charging_full</span>
+                                            </div>
+                                            <div className="absolute bottom-full right-0 mb-2 w-max max-w-[200px] pointer-events-none opacity-0 group-hover/battery:opacity-100 transition-all translate-y-1 group-hover/battery:translate-y-0 bg-slate-800 text-white text-xs px-3 py-2 rounded-lg shadow-xl border border-slate-700/50 whitespace-normal text-right">
+                                                {t("diy.step1.battery_support")}
+                                            </div>
                                         </div>
-                                    </div>
-                                )}
+                                    )}
+                                </div>
                             </div>
                             <div>
                                 <h3 className="text-slate-900 dark:text-white dark:text-white text-lg font-bold mb-1">{item.title}</h3>
