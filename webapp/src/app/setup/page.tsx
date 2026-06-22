@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useState, useRef, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { initializeServer, fetchSystemStatus } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -10,10 +10,10 @@ import { useToast } from "@/components/ToastContext";
 import { useLanguage, LanguageCode } from "@/components/LanguageContext";
 import { HomeLocation } from "@/lib/home-location";
 import HomeLocationPicker from "@/components/HomeLocationPicker";
-// @ts-expect-error - no types for animejs installed
-import { animate, cubicBezier, steps } from "animejs";
+import { motion, AnimatePresence } from "framer-motion";
 
 type SetupStep = 1 | 2;
+type ScreenState = "splash" | "onboarding" | "setup" | "done" | "error";
 
 function getErrorMessage(error: unknown, fallback: string) {
     return error instanceof Error ? error.message : fallback;
@@ -32,83 +32,56 @@ export default function SetupPage() {
     const [error, setError] = useState("");
     const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
     const [isLoading, setIsLoading] = useState(false);
-    const [isCheckingStatus, setIsCheckingStatus] = useState(true);
+    const [screenState, setScreenState] = useState<ScreenState>("splash");
     const [statusError, setStatusError] = useState("");
 
-    const [showSplash, setShowSplash] = useState(false);
-    const [splashAnimating, setSplashAnimating] = useState(false);
-    const [setupDone, setSetupDone] = useState(false);
-
-    const iconRef = useRef<HTMLSpanElement>(null);
-    const titleRef = useRef<HTMLHeadingElement>(null);
-    const subtitleRef = useRef<HTMLParagraphElement>(null);
+    const [loadingTextIndex, setLoadingTextIndex] = useState(0);
+    const [onboardingStepIndex, setOnboardingStepIndex] = useState(0);
 
     const router = useRouter();
     const { showToast } = useToast();
+
+    const loadingTexts = [
+        t("setup.splash.loading_1") || "Waking up server...",
+        t("setup.splash.loading_2") || "Checking database...",
+        t("setup.splash.loading_3") || "Connecting ecosystem..."
+    ];
+
+    const onboardingSlides = [
+        { title: t("setup.onboarding.slide1.title") || "Connect Everything", desc: t("setup.onboarding.slide1.desc") || "Discover and pair your DIY or smart home devices instantly.", icon: "devices_other" },
+        { title: t("setup.onboarding.slide2.title") || "100% Local & Secure", desc: t("setup.onboarding.slide2.desc") || "Your data stays in your home. No cloud dependency.", icon: "gpp_good" },
+        { title: t("setup.onboarding.slide3.title") || "Build Your Ecosystem", desc: t("setup.onboarding.slide3.desc") || "Set up automations and control your house your way.", icon: "auto_awesome" }
+    ];
+
+    useEffect(() => {
+        if (screenState !== "splash") return;
+        const interval = setInterval(() => {
+            setLoadingTextIndex(i => (i + 1) % loadingTexts.length);
+        }, 1500);
+        return () => clearInterval(interval);
+    }, [screenState, loadingTexts.length]);
 
     useEffect(() => {
         let mounted = true;
         const checkStatus = async () => {
             try {
+                const startTime = Date.now();
                 const sysStatus = await fetchSystemStatus();
+                const elapsed = Date.now() - startTime;
+                const minWait = 2500;
+                if (elapsed < minWait) await new Promise(r => setTimeout(r, minWait - elapsed));
+
                 if (mounted) {
                     if (sysStatus.initialized) {
                         router.push("/login");
                     } else {
-                        setIsCheckingStatus(false);
-                        setShowSplash(true);
-
-                        // Start animejs timeline after render
-                        setTimeout(() => {
-                            if (!mounted) return;
-                            
-                            const easeBezier = cubicBezier(0.1, 0.8, 0.2, 1);
-                            
-                            if (iconRef.current) {
-                                animate(iconRef.current, {
-                                    rotate: [-1080, 0],
-                                    scale: [0, 1],
-                                    opacity: [0, 1],
-                                    duration: 1200,
-                                    ease: easeBezier
-                                });
-                            }
-                            
-                            if (titleRef.current) {
-                                animate(titleRef.current, {
-                                    x: [-50, 0],
-                                    opacity: [0, 1],
-                                    duration: 800,
-                                    delay: 800,
-                                    ease: easeBezier
-                                });
-                            }
-
-                            if (subtitleRef.current) {
-                                animate(subtitleRef.current, {
-                                    y: [20, 0],
-                                    opacity: [0, 1],
-                                    duration: 800,
-                                    delay: 1100,
-                                    ease: easeBezier
-                                });
-                            }
-                        }, 50);
-
-                        setTimeout(() => {
-                            if (mounted) {
-                                setSplashAnimating(true);
-                                setTimeout(() => {
-                                    if (mounted) setShowSplash(false);
-                                }, 700);
-                            }
-                        }, 3700);
+                        setScreenState("onboarding");
                     }
                 }
             } catch (error: unknown) {
                 if (mounted) {
                     setStatusError(getErrorMessage(error, "Failed to connect to the backend server."));
-                    setIsCheckingStatus(false);
+                    setScreenState("error");
                 }
             }
         };
@@ -206,7 +179,7 @@ export default function SetupPage() {
                     : undefined,
             });
             showToast("Server initialized successfully!", "success");
-            setSetupDone(true);
+            setScreenState("done");
         } catch (error: unknown) {
             setError(getErrorMessage(error, "Failed to initialize server"));
             setIsLoading(false);
@@ -218,130 +191,189 @@ export default function SetupPage() {
         void handleSubmit(true);
     };
 
-    if (setupDone) {
-        return (
-            <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center p-4 relative overflow-hidden">
-                <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-primary/20 dark:bg-primary/15 rounded-full blur-[120px] pointer-events-none mix-blend-screen dark:mix-blend-lighten"></div>
-                <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-emerald-500/15 dark:bg-emerald-500/10 rounded-full blur-[100px] pointer-events-none mix-blend-screen dark:mix-blend-lighten"></div>
-
-                <div className="bg-white/70 dark:bg-slate-900/60 backdrop-blur-2xl border border-white/50 dark:border-slate-700/50 rounded-[2rem] p-8 sm:p-12 w-full max-w-lg shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] dark:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.5)] flex flex-col relative z-10 mx-auto">
-                    <div className="text-center mb-8">
-                        <span className="material-icons-round text-5xl text-emerald-400">check_circle</span>
-                        <h2 className="text-2xl font-bold mt-3 text-slate-900 dark:text-white">E-Connect is ready!</h2>
-                        <p className="text-slate-500 dark:text-slate-400 mt-2 text-sm">
-                            Your server is set up. Here are your next steps:
-                        </p>
-                    </div>
-
-                    <div className="flex flex-col gap-3">
-                        <Link href="/devices/discovery"
-                           className="flex items-center gap-4 p-4 rounded-xl bg-blue-600 hover:bg-blue-500 transition-colors text-white">
-                            <span className="material-icons-round text-2xl">devices</span>
-                            <div className="flex-1">
-                                <div className="font-semibold">Add your first device</div>
-                                <div className="text-xs text-blue-100 mt-0.5">Pair an ESP32 or smart home device</div>
-                            </div>
-                            <span className="material-icons-round opacity-60">arrow_forward</span>
-                        </Link>
-
-                        <Link href="/settings"
-                           className="flex items-center gap-4 p-4 rounded-xl bg-slate-700 hover:bg-slate-600 transition-colors text-slate-200">
-                            <span className="material-icons-round text-2xl">wifi</span>
-                            <div className="flex-1">
-                                <div className="font-semibold">Save Wi-Fi credentials</div>
-                                <div className="text-xs text-slate-400 mt-0.5">So devices can connect automatically</div>
-                            </div>
-                            <span className="material-icons-round opacity-60">arrow_forward</span>
-                        </Link>
-
-                        <Link href="/automation"
-                           className="flex items-center gap-4 p-4 rounded-xl bg-slate-700 hover:bg-slate-600 transition-colors text-slate-200">
-                            <span className="material-icons-round text-2xl">smart_toy</span>
-                            <div className="flex-1">
-                                <div className="font-semibold">Create an automation</div>
-                                <div className="text-xs text-slate-400 mt-0.5">Control devices automatically with rules</div>
-                            </div>
-                            <span className="material-icons-round opacity-60">arrow_forward</span>
-                        </Link>
-                    </div>
-
-                    <button
-                        onClick={() => router.push('/login')}
-                        className="mt-6 w-full text-center text-sm text-slate-500 hover:text-slate-400 transition-colors"
-                    >
-                        Skip — go to login
-                    </button>
-                </div>
-            </div>
-        );
-    }
-
-    if (isCheckingStatus) {
-        return (
-            <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-            </div>
-        );
-    }
-
-    if (statusError) {
-        return (
-            <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center p-4">
-                <div className="bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700/50 rounded-2xl p-8 max-w-sm text-center shadow-xl">
-                    <span className="material-icons-round text-red-500 text-5xl mb-4">cloud_off</span>
-                    <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">{t("error.connection")}</h2>
-                    <p className="text-slate-500 dark:text-slate-400 text-sm mb-6">{statusError}</p>
-                    <button onClick={() => window.location.reload()} className="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm hover:shadow">
-                        {t("error.retry")}
-                    </button>
-                </div>
-            </div>
-        );
-    }
-
     return (
-        <>
-            {showSplash && (
-                <div className={`fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white dark:bg-slate-950 transition-all duration-700 ease-in-out ${
-                    splashAnimating ? "opacity-0 scale-110 pointer-events-none" : "opacity-100 scale-100"
-                }`}>
-                    <div className="flex items-center justify-center">
-                        <span 
-                            ref={iconRef}
-                            className="material-icons-round text-primary mr-6 relative z-10 bg-white dark:bg-slate-950 opacity-0"
-                            style={{ fontSize: "140px", lineHeight: "1" }}
+        <div className="min-h-screen bg-background-light dark:bg-background-dark relative overflow-hidden flex items-center justify-center p-4">
+            {/* Animated Background */}
+            <div className="absolute inset-0 pointer-events-none overflow-hidden">
+                <motion.div 
+                    animate={{ scale: [1, 1.1, 1], opacity: [0.2, 0.4, 0.2] }}
+                    transition={{ duration: 8, repeat: Infinity, ease: "easeInOut" }}
+                    className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-primary/20 dark:bg-primary/15 rounded-full blur-[120px] mix-blend-screen dark:mix-blend-lighten"
+                />
+                <motion.div 
+                    animate={{ scale: [1, 1.2, 1], opacity: [0.15, 0.3, 0.15] }}
+                    transition={{ duration: 10, repeat: Infinity, ease: "easeInOut", delay: 1 }}
+                    className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-emerald-500/15 dark:bg-emerald-500/10 rounded-full blur-[100px] mix-blend-screen dark:mix-blend-lighten"
+                />
+            </div>
+
+            <div className="absolute top-4 right-4 sm:top-8 sm:right-8 z-50">
+                <select
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value as LanguageCode)}
+                    className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl border border-white/40 dark:border-slate-700/50 rounded-xl px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/50 shadow-sm transition-all hover:bg-white/90 dark:hover:bg-slate-800/90 cursor-pointer"
+                >
+                    <option value="en">English</option>
+                    <option value="vi">Tiếng Việt</option>
+                </select>
+            </div>
+
+            <AnimatePresence mode="wait">
+                {screenState === "splash" && (
+                    <motion.div
+                        key="splash"
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 1.05, filter: "blur(10px)" }}
+                        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+                        className="relative z-10 flex flex-col items-center justify-center bg-white/60 dark:bg-slate-900/40 backdrop-blur-3xl border border-white/50 dark:border-slate-700/50 rounded-[2.5rem] p-12 sm:p-20 shadow-[0_30px_60px_-15px_rgba(0,0,0,0.1)] dark:shadow-[0_30px_60px_-15px_rgba(0,0,0,0.5)] mx-auto"
+                    >
+                        <motion.div
+                            animate={{ rotate: 360 }}
+                            transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+                            className="w-24 h-24 mb-6 rounded-full bg-gradient-to-tr from-primary/20 to-primary/5 flex items-center justify-center shadow-inner border border-primary/20"
                         >
-                            hub
-                        </span>
-                        <div className="flex flex-col items-end">
-                            <h1 ref={titleRef} className="text-slate-900 dark:text-white text-6xl sm:text-[96px] font-extrabold tracking-tight leading-none opacity-0" style={{ marginTop: "10px" }}>
-                                E-Connect
-                            </h1>
-                            <p ref={subtitleRef} className="text-slate-500 dark:text-slate-400 mt-2 text-sm sm:text-base font-semibold tracking-widest uppercase opacity-0">
-                                Connect All Your Things
+                            <span className="material-icons-round text-primary text-[60px]">hub</span>
+                        </motion.div>
+                        
+                        <h1 className="text-4xl sm:text-6xl font-extrabold text-slate-900 dark:text-white tracking-tight mb-2">E-Connect</h1>
+                        
+                        <div className="h-6 overflow-hidden mt-6 relative w-64 text-center">
+                            <AnimatePresence mode="popLayout">
+                                <motion.p
+                                    key={loadingTextIndex}
+                                    initial={{ y: 20, opacity: 0 }}
+                                    animate={{ y: 0, opacity: 1 }}
+                                    exit={{ y: -20, opacity: 0 }}
+                                    transition={{ duration: 0.4 }}
+                                    className="text-primary font-semibold text-sm absolute inset-0 tracking-wide uppercase"
+                                >
+                                    {loadingTexts[loadingTextIndex]}
+                                </motion.p>
+                            </AnimatePresence>
+                        </div>
+                    </motion.div>
+                )}
+
+                {screenState === "onboarding" && (
+                    <motion.div
+                        key="onboarding"
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        transition={{ duration: 0.5 }}
+                        className="relative z-10 w-full max-w-lg bg-white/70 dark:bg-slate-900/60 backdrop-blur-2xl border border-white/50 dark:border-slate-700/50 rounded-[2rem] p-8 shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] dark:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.5)] flex flex-col items-center text-center mx-auto"
+                    >
+                        <div className="w-full relative h-56 mb-8 flex items-center justify-center">
+                            <AnimatePresence mode="wait">
+                                <motion.div
+                                    key={onboardingStepIndex}
+                                    initial={{ opacity: 0, x: 50 }}
+                                    animate={{ opacity: 1, x: 0 }}
+                                    exit={{ opacity: 0, x: -50 }}
+                                    transition={{ duration: 0.3 }}
+                                    className="absolute inset-0 flex flex-col items-center justify-center"
+                                >
+                                    <div className="w-24 h-24 mb-6 rounded-full bg-primary/10 dark:bg-primary/20 flex items-center justify-center">
+                                        <span className="material-icons-round text-5xl text-primary">{onboardingSlides[onboardingStepIndex].icon}</span>
+                                    </div>
+                                    <h2 className="text-2xl sm:text-3xl font-bold text-slate-900 dark:text-white mb-3 tracking-tight">{onboardingSlides[onboardingStepIndex].title}</h2>
+                                    <p className="text-slate-500 dark:text-slate-400 max-w-sm mx-auto">{onboardingSlides[onboardingStepIndex].desc}</p>
+                                </motion.div>
+                            </AnimatePresence>
+                        </div>
+                        
+                        <div className="flex gap-2 mb-8">
+                            {onboardingSlides.map((_, i) => (
+                                <div key={i} className={`h-1.5 rounded-full transition-all duration-500 ${i === onboardingStepIndex ? "w-8 bg-primary" : "w-2 bg-slate-300 dark:bg-slate-700"}`} />
+                            ))}
+                        </div>
+
+                        <button 
+                            onClick={() => {
+                                if (onboardingStepIndex < onboardingSlides.length - 1) {
+                                    setOnboardingStepIndex(i => i + 1);
+                                } else {
+                                    setScreenState("setup");
+                                }
+                            }}
+                            className="w-full bg-gradient-to-r from-primary to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white font-bold px-8 py-3.5 rounded-xl transition-all duration-300 shadow-[0_8px_20px_-6px_rgba(59,130,246,0.5)] hover:shadow-[0_12px_25px_-6px_rgba(59,130,246,0.7)] hover:-translate-y-0.5 flex justify-center items-center text-sm"
+                        >
+                            {onboardingStepIndex < onboardingSlides.length - 1 ? t("setup.form.continue") || "Continue" : t("setup.onboarding.start") || "Start Setup"}
+                        </button>
+                    </motion.div>
+                )}
+
+                {screenState === "error" && (
+                    <motion.div
+                        key="error"
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        className="relative z-10 bg-surface-light dark:bg-surface-dark border border-slate-200 dark:border-slate-700/50 rounded-2xl p-8 max-w-sm text-center shadow-xl mx-auto"
+                    >
+                        <span className="material-icons-round text-red-500 text-5xl mb-4">cloud_off</span>
+                        <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">{t("error.connection")}</h2>
+                        <p className="text-slate-500 dark:text-slate-400 text-sm mb-6">{statusError}</p>
+                        <button onClick={() => window.location.reload()} className="bg-primary hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition shadow-sm hover:shadow">
+                            {t("error.retry")}
+                        </button>
+                    </motion.div>
+                )}
+
+                {screenState === "done" && (
+                    <motion.div
+                        key="done"
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="relative z-10 bg-white/70 dark:bg-slate-900/60 backdrop-blur-2xl border border-white/50 dark:border-slate-700/50 rounded-[2rem] p-8 sm:p-12 w-full max-w-lg shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] dark:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.5)] flex flex-col mx-auto"
+                    >
+                        <div className="text-center mb-8">
+                            <span className="material-icons-round text-5xl text-emerald-400">check_circle</span>
+                            <h2 className="text-2xl font-bold mt-3 text-slate-900 dark:text-white">E-Connect is ready!</h2>
+                            <p className="text-slate-500 dark:text-slate-400 mt-2 text-sm">
+                                Your server is set up. Here are your next steps:
                             </p>
                         </div>
-                    </div>
-                </div>
-            )}
+                        <div className="flex flex-col gap-3">
+                            <Link href="/devices/discovery" className="flex items-center gap-4 p-4 rounded-xl bg-blue-600 hover:bg-blue-500 transition-colors text-white">
+                                <span className="material-icons-round text-2xl">devices</span>
+                                <div className="flex-1">
+                                    <div className="font-semibold">Add your first device</div>
+                                    <div className="text-xs text-blue-100 mt-0.5">Pair an ESP32 or smart home device</div>
+                                </div>
+                                <span className="material-icons-round opacity-60">arrow_forward</span>
+                            </Link>
+                            <Link href="/settings" className="flex items-center gap-4 p-4 rounded-xl bg-slate-700 hover:bg-slate-600 transition-colors text-slate-200">
+                                <span className="material-icons-round text-2xl">wifi</span>
+                                <div className="flex-1">
+                                    <div className="font-semibold">Save Wi-Fi credentials</div>
+                                    <div className="text-xs text-slate-400 mt-0.5">So devices can connect automatically</div>
+                                </div>
+                                <span className="material-icons-round opacity-60">arrow_forward</span>
+                            </Link>
+                            <Link href="/automation" className="flex items-center gap-4 p-4 rounded-xl bg-slate-700 hover:bg-slate-600 transition-colors text-slate-200">
+                                <span className="material-icons-round text-2xl">smart_toy</span>
+                                <div className="flex-1">
+                                    <div className="font-semibold">Create an automation</div>
+                                    <div className="text-xs text-slate-400 mt-0.5">Control devices automatically with rules</div>
+                                </div>
+                                <span className="material-icons-round opacity-60">arrow_forward</span>
+                            </Link>
+                        </div>
+                        <button onClick={() => router.push('/login')} className="mt-6 w-full text-center text-sm text-slate-500 hover:text-slate-400 transition-colors">
+                            Skip — go to login
+                        </button>
+                    </motion.div>
+                )}
 
-            <div className="min-h-screen bg-background-light dark:bg-background-dark flex items-center justify-center p-4 relative overflow-hidden">
-                {/* Decorative background glows */}
-                <div className="absolute top-[-20%] left-[-10%] w-[60%] h-[60%] bg-primary/20 dark:bg-primary/15 rounded-full blur-[120px] pointer-events-none mix-blend-screen dark:mix-blend-lighten"></div>
-                <div className="absolute bottom-[-20%] right-[-10%] w-[50%] h-[50%] bg-emerald-500/15 dark:bg-emerald-500/10 rounded-full blur-[100px] pointer-events-none mix-blend-screen dark:mix-blend-lighten"></div>
-
-                <div className="absolute top-4 right-4 sm:top-8 sm:right-8 z-50">
-                    <select
-                        value={language}
-                        onChange={(e) => setLanguage(e.target.value as LanguageCode)}
-                        className="bg-white/60 dark:bg-slate-800/60 backdrop-blur-xl border border-white/40 dark:border-slate-700/50 rounded-xl px-4 py-2 text-sm font-medium text-slate-700 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-primary/50 shadow-sm transition-all hover:bg-white/90 dark:hover:bg-slate-800/90 cursor-pointer"
+                {screenState === "setup" && (
+                    <motion.div
+                        key="setup"
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        className="relative z-10 bg-white/70 dark:bg-slate-900/60 backdrop-blur-2xl border border-white/50 dark:border-slate-700/50 rounded-[2rem] p-8 sm:p-12 w-full max-w-4xl shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] dark:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.5)] flex flex-col mx-auto"
                     >
-                        <option value="en">English</option>
-                        <option value="vi">Tiếng Việt</option>
-                    </select>
-                </div>
-
-                <div className="bg-white/70 dark:bg-slate-900/60 backdrop-blur-2xl border border-white/50 dark:border-slate-700/50 rounded-[2rem] p-8 sm:p-12 w-full max-w-4xl shadow-[0_20px_40px_-15px_rgba(0,0,0,0.05)] dark:shadow-[0_20px_40px_-15px_rgba(0,0,0,0.5)] flex flex-col relative z-10 mx-auto">
                     
                     <div className="w-full flex flex-col justify-center">
                         <div className="mb-10 flex items-center justify-between text-xs font-bold tracking-wider">
@@ -574,8 +606,9 @@ export default function SetupPage() {
                             />
                         )}
                     </div>
-                </div>
-            </div>
-        </>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </div>
     );
 }
