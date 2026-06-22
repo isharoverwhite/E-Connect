@@ -73,7 +73,7 @@ export default function SetupPage() {
 
                 if (mounted) {
                     if (sysStatus.initialized) {
-                        router.push("/login");
+                        window.location.href = "/login";
                     } else {
                         setScreenState("onboarding");
                     }
@@ -361,7 +361,7 @@ export default function SetupPage() {
                                 <span className="material-icons-round opacity-60">arrow_forward</span>
                             </Link>
                         </div>
-                        <button onClick={() => router.push('/login')} className="mt-6 w-full text-center text-sm text-blue-500 hover:text-blue-400 font-medium transition-colors">
+                        <button onClick={() => window.location.href = '/login'} className="mt-6 w-full text-center text-sm text-blue-500 hover:text-blue-400 font-medium transition-colors">
                             Skip — go to login
                         </button>
                     </motion.div>
