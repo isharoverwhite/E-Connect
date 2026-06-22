@@ -347,7 +347,7 @@ export function Step1Board({
                                 {hasBattery && (
                                     <div 
                                         className="absolute bottom-2 right-2 bg-slate-900/80 backdrop-blur-md p-1.5 rounded-lg border border-slate-700/50 flex items-center justify-center text-emerald-400 shadow-sm transition-all opacity-80 group-hover:opacity-100"
-                                        title="Battery-powered boards available in this family"
+                                        title={t("diy.step1.battery_support")}
                                     >
                                         <span className="material-symbols-outlined text-[16px]">battery_charging_full</span>
                                     </div>
