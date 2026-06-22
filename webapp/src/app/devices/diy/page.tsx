@@ -271,6 +271,8 @@ function createProjectPayload({
   cpuMhz,
   flashSize,
   psramSize,
+  powerMode,
+  deepSleepInterval,
   }: {
   board: BoardProfile;
   projectName: string;
