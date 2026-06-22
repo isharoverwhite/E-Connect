@@ -72,17 +72,17 @@ export function Step3Validate({ board, validation, pins, onNext, onBack, isReady
                     </div>
                     <div className="flex items-center gap-2 flex-wrap mt-1">
                         {hasDeepSleep && (
-                            <div className="bg-slate-100 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 flex items-center justify-center text-indigo-500 dark:text-indigo-400 shadow-sm" title="Deep Sleep">
+                            <div className="bg-slate-100 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 flex items-center justify-center text-indigo-500 dark:text-indigo-400 shadow-sm" title="Deep Sleep: Tự động kích hoạt khi thiết bị được cấu hình sử dụng Pin. Giúp chip ngủ sâu và tiết kiệm năng lượng tối đa.">
                                 <span className="material-symbols-outlined text-lg">snooze</span>
                             </div>
                         )}
                         {hasULP && (
-                            <div className="bg-slate-100 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 flex items-center justify-center text-violet-500 dark:text-violet-400 shadow-sm" title="ULP Co-processor">
+                            <div className="bg-slate-100 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 flex items-center justify-center text-violet-500 dark:text-violet-400 shadow-sm" title="ULP Co-processor: Tự động sử dụng để duy trì đọc cảm biến cơ bản hoặc đếm xung khi chip chính đang trong trạng thái ngủ sâu.">
                                 <span className="material-symbols-outlined text-lg">memory</span>
                             </div>
                         )}
                         {hasBattery && (
-                            <div className="bg-slate-100 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 flex items-center justify-center text-emerald-500 dark:text-emerald-400 shadow-sm" title="Battery Support">
+                            <div className="bg-slate-100 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 flex items-center justify-center text-emerald-500 dark:text-emerald-400 shadow-sm" title="Battery Support: Tự động theo dõi phần trăm pin khi bạn cài đặt chân ADC có chức năng đo điện áp (BATTERY).">
                                 <span className="material-symbols-outlined text-lg">battery_charging_full</span>
                             </div>
                         )}
