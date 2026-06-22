@@ -48,7 +48,7 @@ export default function WifiWarningBanner() {
 
     return (
         <Link 
-            href="/settings"
+            href="/settings?tab=network&focus=wifi"
             className="flex-shrink-0 bg-[linear-gradient(45deg,#d97706_25%,#f59e0b_25%,#f59e0b_50%,#d97706_50%,#d97706_75%,#f59e0b_75%,#f59e0b_100%)] bg-[length:40px_40px] animate-stripe-slide text-white text-sm font-medium py-1.5 px-4 flex items-center justify-center shadow-md z-[100] w-full animate-in slide-in-from-top-2 border-b-2 border-amber-700 hover:brightness-110 transition-all cursor-pointer"
         >
             <span className="material-icons-round text-[18px] mr-2">wifi_off</span>

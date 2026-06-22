@@ -2,7 +2,8 @@
 
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { getToken } from "@/lib/auth";
 import {
@@ -48,6 +49,17 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
   const [showCreatePassword, setShowCreatePassword] = useState(false);
   const [showEditPassword, setShowEditPassword] = useState(false);
   const [confirmDeleteTarget, setConfirmDeleteTarget] = useState<WifiCredentialRecord | null>(null);
+
+  const searchParams = useSearchParams();
+  const ssidInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (searchParams.get("focus") === "wifi") {
+      setTimeout(() => {
+        ssidInputRef.current?.focus();
+      }, 100);
+    }
+  }, [searchParams]);
 
   async function loadCredentials() {
     const token = getToken();
@@ -298,6 +310,7 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
             {t("settings.wifi.form.ssid")}
           </label>
           <input
+            ref={ssidInputRef}
             className={`w-full bg-white dark:bg-slate-800 border rounded-lg px-4 py-2.5 text-sm focus:ring-primary focus:border-primary outline-none transition-shadow text-slate-900 dark:text-white ${
               createErrors.ssid
                 ? "border-rose-400"

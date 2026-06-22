@@ -3,6 +3,7 @@
 "use client";
 
 import { FormEvent, useEffect, useEffectEvent, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 
 import { useAuth } from "@/components/AuthProvider";
@@ -97,6 +98,7 @@ export default function SettingsPage() {
     const { showToast } = useToast();
     const { t, language, setLanguage } = useLanguage();
     const isAdmin = user?.account_type === "admin";
+    const searchParams = useSearchParams();
 
     const [activePanel, setActivePanel] = useState<SettingsPanel>("general");
     const [managedUsers, setManagedUsers] = useState<ManagedUser[]>([]);
@@ -147,8 +149,14 @@ export default function SettingsPage() {
     const assignableUsers = managedUsers.filter((entry) => entry.account_type !== "admin");
 
     useEffect(() => {
-        setActivePanel("general");
-    }, [isAdmin]);
+        if (!isAdmin) return;
+        const tabParam = searchParams.get("tab") as SettingsPanel | null;
+        if (tabParam && ["general", "account", "household", "network", "integrations"].includes(tabParam)) {
+            setActivePanel(tabParam);
+        } else {
+            setActivePanel("general");
+        }
+    }, [isAdmin, searchParams]);
 
     async function loadManagedUsers() {
         if (!isAdmin) {
