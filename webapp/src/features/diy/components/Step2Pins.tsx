@@ -1009,30 +1009,48 @@ export function Step2Pins({
                             const midX = (startX + lineEndX) / 2;
                             const pathD = `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${lineEndY} L ${lineEndX} ${lineEndY}`;
 
+                            const isMapped = !!assignment;
+                            const isReserved = selPin.capabilities.includes("RESERVED") || selPin.label === "GND" || selPin.label.includes("3V3") || selPin.label.includes("5V") || selPin.label.includes("VIN");
+                            
+                            let lineColor = isDark ? "#3b82f6" : "#2563eb"; // default blue
+                            let dropShadow = "";
+                            
+                            if (isMapped) {
+                                lineColor = isDark ? "#10b981" : "#059669"; // emerald
+                                dropShadow = "drop-shadow(0 0 8px rgba(16,185,129,0.8))";
+                            } else if (isReserved) {
+                                lineColor = isDark ? "#64748b" : "#475569"; // slate
+                            } else {
+                                lineColor = isDark ? "#eab308" : "#ca8a04"; // yellow
+                                dropShadow = "drop-shadow(0 0 8px rgba(234,179,8,0.8))";
+                            }
+
                             return (
                                 <g key={`popover-${selPin.id}`}>
                                     {/* Connecting Line */}
                                     <path 
                                         d={pathD} 
                                         fill="none" 
-                                        stroke={isDark ? "#3b82f6" : "#2563eb"} 
+                                        stroke={lineColor} 
                                         strokeWidth="1.5" 
+                                        pathLength="100"
                                         className="animate-draw-line"
+                                        style={dropShadow ? { filter: dropShadow } : undefined}
                                     />
                                     {/* Connection Dot */}
                                     <circle 
                                         cx={startX} 
                                         cy={startY} 
                                         r="3" 
-                                        fill={isDark ? "#3b82f6" : "#2563eb"} 
-                                        style={{ opacity: 0, animation: 'popInScale 0.2s ease-out forwards' }}
+                                        fill={lineColor} 
+                                        style={{ opacity: 0, animation: 'popInScale 0.2s ease-out forwards', filter: dropShadow || undefined }}
                                     />
                                     <circle 
                                         cx={lineEndX} 
                                         cy={lineEndY} 
                                         r="3" 
-                                        fill={isDark ? "#3b82f6" : "#2563eb"} 
-                                        style={{ opacity: 0, animation: 'popInScale 0.2s ease-out 0.4s forwards' }}
+                                        fill={lineColor} 
+                                        style={{ opacity: 0, animation: 'popInScale 0.2s ease-out 0.4s forwards', filter: dropShadow || undefined }}
                                     />
                                     <foreignObject x={popX} y={popY} width={popWidth + 40} height={popHeight} className="overflow-visible pointer-events-none">
                                         <div 
