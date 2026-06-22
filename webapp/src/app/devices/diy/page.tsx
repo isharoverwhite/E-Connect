@@ -523,6 +523,8 @@ export default function DIYBuilderPage() {
         cpuMhz,
         flashSize,
         psramSize,
+        powerMode,
+        deepSleepInterval,
       }),
     [
       activeBuildJobId,
@@ -537,6 +539,8 @@ export default function DIYBuilderPage() {
       cpuMhz,
       flashSize,
       psramSize,
+      powerMode,
+      deepSleepInterval,
     ],
   );
   const projectPayloadJson = useMemo(() => JSON.stringify(projectPayload), [projectPayload]);
