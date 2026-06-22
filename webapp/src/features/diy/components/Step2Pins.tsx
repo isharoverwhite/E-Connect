@@ -9,6 +9,22 @@ import { getToken } from "@/lib/auth";
 import { getBoardPinMarkers, isBoardPinReserved, type BoardPin, type BoardProfile } from "../board-profiles";
 import { type PinMapping, PIN_FILL, type ProjectSyncState, type I2CLibrary } from "../types";
 
+const BATTERY_TYPES = [
+    { label: "Li-ion/Li-Po 1S (3.7V)", max: 4.2, nom: 3.7 },
+    { label: "Li-ion/Li-Po 2S (7.4V)", max: 8.4, nom: 7.4 },
+    { label: "Li-ion/Li-Po 3S (11.1V)", max: 12.6, nom: 11.1 },
+    { label: "LiFePO4 1S (3.2V)", max: 3.65, nom: 3.2 },
+    { label: "Ắc quy chì (12V)", max: 14.4, nom: 12.0 },
+    { label: "Tùy chỉnh (Custom)", max: undefined, nom: undefined },
+];
+
+const BATTERY_CAPACITIES = [
+    { label: "Nhỏ (< 1000mAh)", r2: 100 },
+    { label: "Trung bình (1000 - 5000mAh)", r2: 47 },
+    { label: "Lớn (> 5000mAh)", r2: 10 },
+    { label: "Tùy chỉnh (Custom)", r2: undefined },
+];
+
 export interface Step2PinsProps {
     pins: PinMapping[];
     setPins: React.Dispatch<React.SetStateAction<PinMapping[]>>;
@@ -435,6 +451,51 @@ export function Step2Pins({
 
                                                 {assignment?.mode === "ADC" ? (
                                                     <div className="mt-3 flex flex-col gap-3 border-t border-amber-200/50 dark:border-amber-800/30 pt-3">
+                                                        <div className="grid grid-cols-2 gap-3 mb-3 pb-3 border-b border-amber-200/50 dark:border-amber-800/30">
+                                                            <div className="flex flex-col gap-1">
+                                                                <label className="text-[10px] text-amber-800 dark:text-amber-400 font-medium">Loại Pin (Battery Type)</label>
+                                                                <select
+                                                                    value={assignment.extra_params?.battery_preset ?? "Li-ion/Li-Po 1S (3.7V)"}
+                                                                    onChange={(e) => {
+                                                                        const val = e.target.value;
+                                                                        const preset = BATTERY_TYPES.find(t => t.label === val);
+                                                                        if (preset && preset.max) {
+                                                                            handleExtraParamChange(pin, { 
+                                                                                battery_preset: val, 
+                                                                                battery_max_voltage: preset.max, 
+                                                                                battery_nominal_voltage: preset.nom 
+                                                                            });
+                                                                        } else {
+                                                                            handleExtraParamChange(pin, { battery_preset: val });
+                                                                        }
+                                                                    }}
+                                                                    className="bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-amber-500"
+                                                                >
+                                                                    {BATTERY_TYPES.map(t => <option key={t.label} value={t.label}>{t.label}</option>)}
+                                                                </select>
+                                                            </div>
+                                                            <div className="flex flex-col gap-1">
+                                                                <label className="text-[10px] text-amber-800 dark:text-amber-400 font-medium">Dung lượng (Capacity)</label>
+                                                                <select
+                                                                    value={assignment.extra_params?.capacity_preset ?? "Nhỏ (< 1000mAh)"}
+                                                                    onChange={(e) => {
+                                                                        const val = e.target.value;
+                                                                        const preset = BATTERY_CAPACITIES.find(t => t.label === val);
+                                                                        if (preset && preset.r2) {
+                                                                            handleExtraParamChange(pin, { 
+                                                                                capacity_preset: val, 
+                                                                                resistor_2_kohm: preset.r2 
+                                                                            });
+                                                                        } else {
+                                                                            handleExtraParamChange(pin, { capacity_preset: val });
+                                                                        }
+                                                                    }}
+                                                                    className="bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-amber-500"
+                                                                >
+                                                                    {BATTERY_CAPACITIES.map(t => <option key={t.label} value={t.label}>{t.label}</option>)}
+                                                                </select>
+                                                            </div>
+                                                        </div>
                                                         <div className="grid grid-cols-2 gap-3">
                                                             <div className="flex flex-col gap-1">
                                                                 <label className="text-[10px] text-amber-800 dark:text-amber-400 font-medium">Max Battery Voltage (V)</label>
@@ -442,7 +503,7 @@ export function Step2Pins({
                                                                     type="number"
                                                                     step="0.1"
                                                                     value={assignment.extra_params?.battery_max_voltage ?? 4.2}
-                                                                    onChange={(e) => handleExtraParamChange(pin, { battery_max_voltage: parseFloat(e.target.value) || 4.2 })}
+                                                                    onChange={(e) => handleExtraParamChange(pin, { battery_max_voltage: parseFloat(e.target.value) || 4.2, battery_preset: "Tùy chỉnh (Custom)" })}
                                                                     className="bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-amber-500"
                                                                 />
                                                             </div>
@@ -461,7 +522,7 @@ export function Step2Pins({
                                                                 <input
                                                                     type="number"
                                                                     value={assignment.extra_params?.resistor_2_kohm ?? 100}
-                                                                    onChange={(e) => handleExtraParamChange(pin, { resistor_2_kohm: parseFloat(e.target.value) || 100 })}
+                                                                    onChange={(e) => handleExtraParamChange(pin, { resistor_2_kohm: parseFloat(e.target.value) || 100, capacity_preset: "Tùy chỉnh (Custom)" })}
                                                                     className="bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-amber-500"
                                                                 />
                                                             </div>
@@ -489,7 +550,7 @@ export function Step2Pins({
                                                                     type="number"
                                                                     step="0.1"
                                                                     value={assignment.extra_params?.battery_nominal_voltage || ""}
-                                                                    onChange={(e) => handleExtraParamChange(pin, { battery_nominal_voltage: parseFloat(e.target.value) || undefined })}
+                                                                    onChange={(e) => handleExtraParamChange(pin, { battery_nominal_voltage: parseFloat(e.target.value) || undefined, battery_preset: "Tùy chỉnh (Custom)" })}
                                                                     placeholder="e.g. 3.7"
                                                                     className="bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-amber-500"
                                                                 />
