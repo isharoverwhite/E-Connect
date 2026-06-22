@@ -13,6 +13,13 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+import ssl
+
+# Create an unverified SSL context for local dev environments where root certs might be missing
+try:
+    _SSL_CONTEXT = ssl._create_unverified_context()
+except Exception:
+    _SSL_CONTEXT = None
 
 
 logger = logging.getLogger(__name__)
@@ -193,7 +200,7 @@ def _fetch_latest_release_metadata() -> dict[str, Any] | None:
 
     url = f"{FIRMWARE_TEMPLATE_API_BASE_URL}/repos/{FIRMWARE_TEMPLATE_REPO}/releases/latest"
     try:
-        with urlopen(_build_github_request(url), timeout=FIRMWARE_TEMPLATE_HTTP_TIMEOUT_SECONDS) as response:
+        with urlopen(_build_github_request(url), timeout=FIRMWARE_TEMPLATE_HTTP_TIMEOUT_SECONDS, context=_SSL_CONTEXT) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         if exc.code == 404:
@@ -219,7 +226,7 @@ def _fetch_latest_release_metadata() -> dict[str, Any] | None:
 
 
 def _download_release_tarball(url: str, destination: Path) -> None:
-    with urlopen(_build_github_request(url), timeout=FIRMWARE_TEMPLATE_HTTP_TIMEOUT_SECONDS) as response:
+    with urlopen(_build_github_request(url), timeout=FIRMWARE_TEMPLATE_HTTP_TIMEOUT_SECONDS, context=_SSL_CONTEXT) as response:
         with destination.open("wb") as handle:
             shutil.copyfileobj(response, handle)
 
