@@ -435,6 +435,28 @@ const esp32C6Right = [
   pin(20, "GPIO20", "right", IO),
 ];
 
+const esp32C6SuperMiniLeft = [
+  pin(-1, "5V", "left", [], { reserved: true, note: "5V Power Input" }),
+  pin(-2, "GND", "left", [], { reserved: true, note: "Ground" }),
+  pin(-3, "3V3", "left", [], { reserved: true, note: "3.3V Power Output" }),
+  pin(22, "GPIO22", "left", IO),
+  pin(23, "GPIO23", "left", IO),
+  pin(21, "GPIO21", "left", IO),
+  pin(20, "GPIO20", "left", IO),
+  pin(19, "GPIO19", "left", IO),
+];
+
+const esp32C6SuperMiniRight = [
+  pin(18, "GPIO18", "right", IO),
+  pin(17, "GPIO17", "right", IO),
+  pin(16, "GPIO16", "right", IO),
+  pin(15, "GPIO15", "right", IO, { bootSensitive: true, note: "Strapping pin on ESP32-C6." }),
+  pin(14, "GPIO14", "right", IO),
+  pin(13, "GPIO13", "right", IO),
+  pin(12, "GPIO12", "right", IO),
+  pin(11, "GPIO11", "right", IO),
+];
+
 const esp32C61Left = [
   pin(0, "GPIO0", "left", IO_ADC),
   pin(1, "GPIO1", "left", IO),
@@ -948,6 +970,25 @@ export const BOARD_PROFILES: BoardProfile[] = [
     pinMarkers: [
       { gpio: 8, label: "RGB", tone: "sky" },
       { gpio: 0, label: "BATTERY", tone: "emerald" }
+    ],
+  },
+  {
+    id: "esp32-c6-super-mini",
+    name: "ESP32-C6 Super Mini",
+    family: "ESP32-C6",
+    chipLabel: "ESP32-C6",
+    description: "Ultra-compact C6 board with Wi-Fi 6, Thread/Zigbee support, and onboard RGB LED.",
+    layoutLabel: "Super Mini 2x8 layout",
+    serialBridge: "Native USB CDC",
+    warnings: [
+      "GPIO 15 is a strapping pin on ESP32-C6. Avoid connecting it to components that might pull it unexpectedly during boot.",
+      "The internal RGB LED is on GPIO 8 and is typically not broken out to the side headers.",
+      "Pinout printing may vary by manufacturer. Always double-check your board's silk screen."
+    ],
+    leftPins: esp32C6SuperMiniLeft,
+    rightPins: esp32C6SuperMiniRight,
+    pinMarkers: [
+      { gpio: 8, label: "RGB", tone: "sky" }
     ],
   },
   {
