@@ -958,6 +958,98 @@ export function Step2Pins({
                             })
                         )}
                         {renderBatteryCircuit({ board, pins, boardHeight, isDark, powerMode })}
+                        
+                        {/* Selected Pin Info Popover (Inside SVG) */}
+                        {selectedPinId && (() => {
+                            const selPin = boardPins.find(p => p.id === selectedPinId);
+                            if (!selPin) return null;
+                            const assignment = pins.find(p => p.gpio_pin === selPin.gpio);
+                            const pinMarkers = getBoardPinMarkers(board, selPin);
+                            
+                            const leftIndex = board.leftPins.findIndex(p => p.id === selectedPinId);
+                            const rightIndex = board.rightPins.findIndex(p => p.id === selectedPinId);
+                            const isLeft = leftIndex !== -1;
+                            const index = isLeft ? leftIndex : rightIndex;
+                            
+                            const top = 110;
+                            const bottom = boardHeight - 70;
+                            const totalRows = Math.max(board.leftPins.length, board.rightPins.length);
+                            const gap = totalRows === 1 ? 0 : (bottom - top) / (totalRows - 1);
+                            const y = top + gap * index;
+                            
+                            const popWidth = 240;
+                            const popHeight = 340;
+                            // Center the popover in the middle of the board (board spans 190 to 530, center is 360)
+                            const popX = 360 - popWidth / 2;
+                            // Keep popover near the pin's Y coordinate but constrain it within SVG bounds
+                            const popY = Math.max(20, Math.min(y - popHeight / 2, svgHeight - popHeight - 20));
+
+                            return (
+                                <foreignObject x={popX} y={popY} width={popWidth + 40} height={popHeight} className="overflow-visible pointer-events-none">
+                                    <div className="bg-white/95 dark:bg-slate-800/95 backdrop-blur border border-border-light dark:border-border-dark px-5 py-4 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.3)] text-slate-600 dark:text-slate-400 w-[240px] pointer-events-auto">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <h3 className="text-slate-900 dark:text-white font-black text-lg tracking-tight uppercase">{selPin.label}</h3>
+                                            <span className="text-blue-600 font-mono font-bold text-[10px] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">GPIO {selPin.gpio}</span>
+                                        </div>
+                                        <div className="flex flex-col gap-2 mt-4">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">{t("diy.step2pins.status")}</span>
+                                                <span className={assignment ? "text-emerald-600 font-bold" : "text-amber-500 font-bold"}>{assignment ? t("diy.step2pins.mapped").toUpperCase() : t("diy.step2pins.available").toUpperCase()}</span>
+                                            </div>
+                                            {assignment && (
+                                                <>
+                                                    <div className="flex justify-between text-xs">
+                                                        <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">{t("diy.step2pins.mode")}</span>
+                                                        <span className="text-slate-800 dark:text-slate-200 font-mono font-bold">{assignment.mode}</span>
+                                                    </div>
+                                                    {assignment.function && (
+                                                    <div className="flex justify-between text-xs">
+                                                        <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">{t("diy.step2pins.function")}</span>
+                                                        <span className="text-slate-800 dark:text-slate-200 font-mono">{assignment.function}</span>
+                                                    </div>
+                                                    )}
+                                                </>
+                                            )}
+                                            <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-border-light dark:border-border-dark">
+                                                <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">{t("diy.step2pins.capabilities")}</span>
+                                                <div className="flex flex-wrap gap-1">
+                                                    {selPin.capabilities.length > 0 ? selPin.capabilities.map(cap => (
+                                                        <span key={cap} className="text-[9px] bg-slate-100 dark:bg-slate-700 border border-border-light dark:border-border-dark px-1.5 py-0.5 rounded text-slate-500 dark:text-slate-300 uppercase font-mono">{cap}</span>
+                                                    )) : <span className="text-[10px] text-slate-400 italic">{t("diy.step2pins.none")}</span>}
+                                                </div>
+                                            </div>
+                                            {pinMarkers.length > 0 && (
+                                                <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-border-light dark:border-border-dark">
+                                                    <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">Board Markers</span>
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {pinMarkers.map((marker) => (
+                                                            <span
+                                                                key={`${selPin.id}-${marker.label}`}
+                                                                className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-mono font-bold ${
+                                                                    marker.tone === "sky"
+                                                                        ? "bg-sky-50 dark:bg-sky-900/30 border border-sky-200 dark:border-sky-800 text-sky-700 dark:text-sky-300"
+                                                                        : marker.tone === "rose"
+                                                                            ? "bg-rose-50 dark:bg-rose-900/30 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300"
+                                                                            : "bg-amber-50 dark:bg-amber-900/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300"
+                                                                }`}
+                                                            >
+                                                                {marker.label}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+                                            {selPin.bootSensitive && (
+                                                <div className="mt-2 text-amber-600 dark:text-amber-400 text-[10px] bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 px-2 py-1.5 rounded flex items-center gap-1.5">
+                                                    <span className="material-symbols-outlined text-[14px]">warning</span>
+                                                    <span className="font-bold uppercase tracking-wider">{t("diy.step2pins.boot_sensitive")}</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </foreignObject>
+                            );
+                        })()}
                     </svg>
                                 </TransformComponent>
                             </>
@@ -979,77 +1071,7 @@ export function Step2Pins({
                     <span className="opacity-70">{t("diy.step2pins.profile")}</span> <span className="text-slate-900 dark:text-white font-bold">{board.name}</span>
                 </div>
 
-                {/* Overlaid Pin Info Board on Top-Right */}
-                {selectedPinId && (() => {
-                    const selPin = boardPins.find(p => p.id === selectedPinId);
-                    if (!selPin) return null;
-                    const assignment = pins.find(p => p.gpio_pin === selPin.gpio);
-                    const pinMarkers = getBoardPinMarkers(board, selPin);
-                    return (
-                        <div className="absolute top-6 right-6 bg-white/95 dark:bg-slate-800/95 backdrop-blur border border-border-light dark:border-border-dark px-5 py-4 rounded-xl shadow-[0_8px_32px_rgba(0,0,0,0.1)] text-slate-600 dark:text-slate-400 min-w-[240px] pointer-events-none z-20">
-                            <div className="flex justify-between items-start mb-2">
-                                <h3 className="text-slate-900 dark:text-white font-black text-lg tracking-tight uppercase">{selPin.label}</h3>
-                                <span className="text-blue-600 font-mono font-bold text-[10px] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">GPIO {selPin.gpio}</span>
-                            </div>
-                            <div className="flex flex-col gap-2 mt-4">
-                                <div className="flex justify-between text-xs">
-                                    <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">{t("diy.step2pins.status")}</span>
-                                    <span className={assignment ? "text-emerald-600 font-bold" : "text-amber-500 font-bold"}>{assignment ? t("diy.step2pins.mapped").toUpperCase() : t("diy.step2pins.available").toUpperCase()}</span>
-                                </div>
-                                {assignment && (
-                                    <>
-                                        <div className="flex justify-between text-xs">
-                                            <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">{t("diy.step2pins.mode")}</span>
-                                            <span className="text-slate-800 dark:text-slate-200 font-mono font-bold">{assignment.mode}</span>
-                                        </div>
-                                        {assignment.function && (
-                                        <div className="flex justify-between text-xs">
-                                            <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">{t("diy.step2pins.function")}</span>
-                                            <span className="text-slate-800 dark:text-slate-200 font-mono">{assignment.function}</span>
-                                        </div>
-                                        )}
-                                    </>
-                                )}
-                                <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-border-light dark:border-border-dark">
-                                    <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">{t("diy.step2pins.capabilities")}</span>
-                                    <div className="flex flex-wrap gap-1">
-                                        {selPin.capabilities.length > 0 ? selPin.capabilities.map(cap => (
-                                            <span key={cap} className="text-[9px] bg-slate-100 border border-border-light dark:border-border-dark px-1.5 py-0.5 rounded text-slate-500 dark:text-slate-400 uppercase font-mono">{cap}</span>
-                                        )) : <span className="text-[10px] text-slate-400 italic">{t("diy.step2pins.none")}</span>}
-                                    </div>
-                                </div>
-                                {pinMarkers.length > 0 && (
-                                    <div className="flex flex-col gap-1.5 mt-2 pt-2 border-t border-border-light dark:border-border-dark">
-                                        <span className="text-slate-400 uppercase tracking-widest font-bold text-[10px]">Board Markers</span>
-                                        <div className="flex flex-wrap gap-1">
-                                            {pinMarkers.map((marker) => (
-                                                <span
-                                                    key={`${selPin.id}-${marker.label}`}
-                                                    className={`text-[9px] px-1.5 py-0.5 rounded uppercase font-mono font-bold ${
-                                                        marker.tone === "sky"
-                                                            ? "bg-sky-50 border border-sky-200 text-sky-700"
-                                                            : marker.tone === "rose"
-                                                                ? "bg-rose-50 border border-rose-200 text-rose-700"
-                                                                : "bg-amber-50 border border-amber-200 text-amber-700"
-                                                    }`}
-                                                >
-                                                    {marker.label}
-                                                </span>
-                                            ))}
-                                        </div>
-                                    </div>
-                                )}
-                                {selPin.bootSensitive && (
-                                    <div className="mt-2 text-amber-600 text-[10px] bg-amber-50 border border-amber-200 px-2 py-1.5 rounded flex items-center gap-1.5">
-                                        <span className="material-symbols-outlined text-[14px]">warning</span>
-                                        <span className="font-bold uppercase tracking-wider">{t("diy.step2pins.boot_sensitive")}</span>
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    );
-                })()}
-            </div>
+                </div>
 
             {/* Clear All Confirmation Modal */}
             {showClearConfirm && (
