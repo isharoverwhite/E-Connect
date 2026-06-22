@@ -362,7 +362,7 @@ export default function DIYBuilderPage() {
   const [boardConfigs, setBoardConfigs] = useState<DiyProjectRecord[]>([]);
   const [boardConfigsLoading, setBoardConfigsLoading] = useState(false);
   const [boardConfigsError, setBoardConfigsError] = useState("");
-  const [projectName, setProjectName] = useState(() => `${getBoardProfile(DEFAULT_BOARD_ID)?.name ?? BOARD_PROFILES[0].name} Config`);
+  const [projectName, setProjectName] = useState("");
   const [powerMode, setPowerMode] = useState<"power" | "battery">("power");
   const [deepSleepInterval, setDeepSleepInterval] = useState(60);
   const [roomId, setRoomId] = useState<number | null>(null);
@@ -444,21 +444,6 @@ export default function DIYBuilderPage() {
 
     return `browser-origin:${window.location.origin}`;
   }, []);
-
-  const prevBoardNameRef = useRef(board.name);
-  useEffect(() => {
-    if (board.name !== prevBoardNameRef.current) {
-      const defaultOld = `${prevBoardNameRef.current} Config`;
-      const defaultNew = `${board.name} Config`;
-      setProjectName((current) => {
-        if (!current.trim() || current === defaultOld) {
-          return defaultNew;
-        }
-        return current;
-      });
-      prevBoardNameRef.current = board.name;
-    }
-  }, [board.name]);
   const currentFirmwareTargetKey = firmwareNetworkTarget?.target_key ?? fallbackFirmwareTargetKey;
   const currentFirmwareTargetHost = useMemo(() => {
     if (firmwareNetworkTarget?.advertised_host) {
