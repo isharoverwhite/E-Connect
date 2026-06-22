@@ -1136,6 +1136,9 @@ def write_generated_firmware_config(
         input_type = "switch"
         switch_type = "momentary"
         dht_version = ""
+        adc_max_voltage = 0.0
+        adc_r1 = 0.0
+        adc_r2 = 0.0
 
         if isinstance(raw_extra_params, dict):
             # Output / PWM
@@ -1162,8 +1165,21 @@ def write_generated_firmware_config(
             switch_type = str(raw_extra_params.get("switch_type") or "momentary")
             dht_version = str(raw_extra_params.get("dht_version") or "")
 
+            # ADC
+            p_adc_max = raw_extra_params.get("adc_max_voltage")
+            if isinstance(p_adc_max, (int, float)):
+                adc_max_voltage = float(p_adc_max)
+            
+            p_adc_r1 = raw_extra_params.get("resistor_1_kohm")
+            if isinstance(p_adc_r1, (int, float)):
+                adc_r1 = float(p_adc_r1)
+                
+            p_adc_r2 = raw_extra_params.get("resistor_2_kohm")
+            if isinstance(p_adc_r2, (int, float)):
+                adc_r2 = float(p_adc_r2)
+
         pin_rows.append(
-            f'    {{ {gpio}, "{_escape_c_string(mode)}", "{_escape_c_string(function_name)}", "{_escape_c_string(label)}", {active_level}, {pwm_min}, {pwm_max}, "{_escape_c_string(i2c_role)}", "{_escape_c_string(i2c_address)}", "{_escape_c_string(i2c_library)}", "{_escape_c_string(i2c_device_version)}", "{_escape_c_string(input_type)}", "{_escape_c_string(switch_type)}", "{_escape_c_string(dht_version)}" }}'
+            f'    {{ {gpio}, "{_escape_c_string(mode)}", "{_escape_c_string(function_name)}", "{_escape_c_string(label)}", {active_level}, {pwm_min}, {pwm_max}, "{_escape_c_string(i2c_role)}", "{_escape_c_string(i2c_address)}", "{_escape_c_string(i2c_library)}", "{_escape_c_string(i2c_device_version)}", "{_escape_c_string(input_type)}", "{_escape_c_string(switch_type)}", "{_escape_c_string(dht_version)}", {adc_max_voltage}, {adc_r1}, {adc_r2} }}'
         )
 
     api_base_url_block = ""
@@ -1189,6 +1205,9 @@ struct EConnectPinConfig {{
   const char *input_type;
   const char *switch_type;
   const char *dht_version;
+  float adc_max_voltage;
+  float adc_r1;
+  float adc_r2;
 }};
 
 #define ECONNECT_HAS_PIN_CONFIGS 1
