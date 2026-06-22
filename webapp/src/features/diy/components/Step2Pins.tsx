@@ -880,6 +880,23 @@ export function Step2Pins({
                                         aria-label={`${board.name} SVG GPIO mapping`}
                                     >
                         <defs>
+                            <style>
+                                {`
+                                @keyframes drawLine {
+                                    from { stroke-dashoffset: 400; }
+                                    to { stroke-dashoffset: 0; }
+                                }
+                                .animate-draw-line {
+                                    stroke-dasharray: 400;
+                                    stroke-dashoffset: 400;
+                                    animation: drawLine 0.4s ease-out forwards;
+                                }
+                                @keyframes popInScale {
+                                    from { opacity: 0; transform: scale(0.9); }
+                                    to { opacity: 1; transform: scale(1); }
+                                }
+                                `}
+                            </style>
                             <linearGradient id="boardShell" x1="0%" x2="100%" y1="0%" y2="100%">
                                 <stop offset="0%" stopColor={isDark ? "#1e293b" : "#f1f5f9"} />
                                 <stop offset="100%" stopColor={isDark ? "#334155" : "#e2e8f0"} />
@@ -984,10 +1001,45 @@ export function Step2Pins({
                             // Keep popover near the pin's Y coordinate but constrain it within SVG bounds
                             const popY = Math.max(20, Math.min(y - popHeight / 2, svgHeight - popHeight - 20));
 
+                            const startX = isLeft ? 130 : 566;
+                            const startY = y;
+                            const lineEndX = isLeft ? popX : popX + popWidth;
+                            const lineEndY = popY + 40; // Point to the header
+                            
+                            const midX = (startX + lineEndX) / 2;
+                            const pathD = `M ${startX} ${startY} L ${midX} ${startY} L ${midX} ${lineEndY} L ${lineEndX} ${lineEndY}`;
+
                             return (
-                                <foreignObject x={popX} y={popY} width={popWidth + 40} height={popHeight} className="overflow-visible pointer-events-none">
-                                    <div className="bg-white/95 dark:bg-slate-800/95 backdrop-blur border border-border-light dark:border-border-dark px-5 py-4 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.3)] text-slate-600 dark:text-slate-400 w-[240px] pointer-events-auto">
-                                        <div className="flex justify-between items-start mb-2">
+                                <g key={`popover-${selPin.id}`}>
+                                    {/* Connecting Line */}
+                                    <path 
+                                        d={pathD} 
+                                        fill="none" 
+                                        stroke={isDark ? "#3b82f6" : "#2563eb"} 
+                                        strokeWidth="1.5" 
+                                        className="animate-draw-line"
+                                    />
+                                    {/* Connection Dot */}
+                                    <circle 
+                                        cx={startX} 
+                                        cy={startY} 
+                                        r="3" 
+                                        fill={isDark ? "#3b82f6" : "#2563eb"} 
+                                        style={{ opacity: 0, animation: 'popInScale 0.2s ease-out forwards' }}
+                                    />
+                                    <circle 
+                                        cx={lineEndX} 
+                                        cy={lineEndY} 
+                                        r="3" 
+                                        fill={isDark ? "#3b82f6" : "#2563eb"} 
+                                        style={{ opacity: 0, animation: 'popInScale 0.2s ease-out 0.4s forwards' }}
+                                    />
+                                    <foreignObject x={popX} y={popY} width={popWidth + 40} height={popHeight} className="overflow-visible pointer-events-none">
+                                        <div 
+                                            className="bg-white/95 dark:bg-slate-800/95 backdrop-blur border border-border-light dark:border-border-dark px-5 py-4 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.3)] text-slate-600 dark:text-slate-400 w-[240px] pointer-events-auto"
+                                            style={{ opacity: 0, transformOrigin: isLeft ? 'left center' : 'right center', animation: 'popInScale 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.3s forwards' }}
+                                        >
+                                            <div className="flex justify-between items-start mb-2">
                                             <h3 className="text-slate-900 dark:text-white font-black text-lg tracking-tight uppercase">{selPin.label}</h3>
                                             <span className="text-blue-600 font-mono font-bold text-[10px] bg-blue-50 px-2 py-0.5 rounded border border-blue-200">GPIO {selPin.gpio}</span>
                                         </div>
@@ -1048,6 +1100,7 @@ export function Step2Pins({
                                         </div>
                                     </div>
                                 </foreignObject>
+                                </g>
                             );
                         })()}
                     </svg>
