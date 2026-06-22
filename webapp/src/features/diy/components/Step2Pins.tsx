@@ -52,7 +52,7 @@ export function Step2Pins({
     const [showClearConfirm, setShowClearConfirm] = useState(false);
     const { resolvedTheme } = useTheme();
     const isDark = resolvedTheme === "dark";
-
+ 
     useEffect(() => {
         const fetchCatalog = async () => {
             try {
@@ -1401,6 +1401,28 @@ function renderBatteryCircuit({
     const rX = isLeft ? 83 + offset : 625 + offset;
     const rTextX = isLeft ? 99 + offset : 621 + offset;
 
+    const vccPins = [...board.leftPins, ...board.rightPins].filter(p => p.label === "3V3" || p.label === "3.3V" || p.label === "VIN" || p.label === "5V");
+    const gndPins = [...board.leftPins, ...board.rightPins].filter(p => p.label === "GND");
+    
+    const vccPin = vccPins.find(p => board.leftPins.includes(p) === isLeft) || vccPins[0];
+    const gndPin = gndPins.find(p => board.leftPins.includes(p) === isLeft) || gndPins[0];
+
+    const getPinCoords = (p: BoardPin | undefined) => {
+        if (!p) return null;
+        const pIsLeft = board.leftPins.includes(p);
+        const pIndex = pIsLeft ? board.leftPins.indexOf(p) : board.rightPins.indexOf(p);
+        return {
+            y: top + gap * pIndex,
+            x: pIsLeft ? 130 : 566,
+        };
+    };
+
+    const vcc = getPinCoords(vccPin);
+    const gnd = getPinCoords(gndPin);
+
+    const corridorVcc = isLeft ? 20 : 680;
+    const corridorGnd = isLeft ? 40 : 660;
+
     return (
         <g id="battery-circuit" opacity="0.95" className="pointer-events-none">
             {/* Background Box to hide text behind schematic */}
@@ -1412,6 +1434,20 @@ function renderBatteryCircuit({
             <text x={batCenter} y={y - 8} fontSize="12" fill="#22c55e" fontWeight="bold" textAnchor="middle">+</text>
             <text x={batCenter} y={y + 15} fontSize="14" fill={strokeColor} fontWeight="bold" textAnchor="middle">-</text>
             <text x={batCenter} y={y + 5} fontSize="9" fill={boldColor} fontWeight="bold" textAnchor="middle">{vmax}V</text>
+
+            {/* Wires to VCC and GND pins */}
+            {vcc && (
+                <>
+                    <path d={`M ${midX} ${y - 45} L ${corridorVcc} ${y - 45} L ${corridorVcc} ${vcc.y} L ${vcc.x} ${vcc.y}`} fill="none" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <circle cx={midX} cy={y - 45} r="2.5" fill="#ef4444" />
+                </>
+            )}
+            {gnd && (
+                <>
+                    <path d={`M ${midX} ${y + 50} L ${corridorGnd} ${y + 50} L ${corridorGnd} ${gnd.y} L ${gnd.x} ${gnd.y}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <circle cx={midX} cy={y + 50} r="2.5" fill="#64748b" />
+                </>
+            )}
 
             {isLeft ? (
                 <>
