@@ -1293,6 +1293,7 @@ function renderBatteryCircuit({
     const batteryX = isLeft ? 10 : 670;
     const batteryY = y - 40;
 
+    const strokeColor = isDark ? "#94a3b8" : "#475569";
     const textColor = isDark ? "#cbd5e1" : "#475569";
     const boldColor = isDark ? "#f8fafc" : "#0f172a";
 
