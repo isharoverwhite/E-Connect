@@ -736,11 +736,27 @@ def _resolve_device_activity_timestamp(
     return latest_seen_at
 
 
-def _device_has_recent_heartbeat(device: Device, *, reference_time: datetime) -> bool:
+def _get_device_effective_heartbeat_timeout(db: Session, device: Device) -> timedelta:
+    effective_timeout = DEVICE_HEARTBEAT_TIMEOUT
+    if device.provisioning_project_id:
+        project = db.query(DiyProject).filter(DiyProject.id == device.provisioning_project_id).first()
+        if project is not None and isinstance(project.config, dict):
+            power_mode = str(project.config.get("power_mode", "power")).lower()
+            if power_mode == "battery":
+                deep_sleep_interval = project.config.get("deep_sleep_interval_s")
+                if isinstance(deep_sleep_interval, int) and deep_sleep_interval > 0:
+                    effective_timeout = timedelta(seconds=deep_sleep_interval + 30)
+                else:
+                    effective_timeout = timedelta(seconds=60 + 30)
+    return effective_timeout
+
+
+def _device_has_recent_heartbeat(db: Session, device: Device, *, reference_time: datetime) -> bool:
     latest_seen_at = _resolve_device_activity_timestamp(device, reference_time=reference_time)
     if latest_seen_at is None:
         return False
-    return (reference_time - latest_seen_at) <= DEVICE_HEARTBEAT_TIMEOUT
+    effective_timeout = _get_device_effective_heartbeat_timeout(db, device)
+    return (reference_time - latest_seen_at) <= effective_timeout
 
 
 def _reconcile_stale_flashing_job(
@@ -763,7 +779,7 @@ def _reconcile_stale_flashing_job(
     if bound_device is None:
         return False
 
-    if _device_has_recent_heartbeat(bound_device, reference_time=reference_time):
+    if _device_has_recent_heartbeat(db, bound_device, reference_time=reference_time):
         return False
 
     if (
@@ -830,8 +846,11 @@ def _expire_device_if_stale(db: Session, device: Device, *, reference_time: date
         if current_last_seen is None or latest_seen_at > current_last_seen:
             device.last_seen = latest_seen_at
 
-    if latest_seen_at is not None and (reference_time - latest_seen_at) <= DEVICE_HEARTBEAT_TIMEOUT:
+    effective_timeout = _get_device_effective_heartbeat_timeout(db, device)
+    if latest_seen_at is not None and (reference_time - latest_seen_at) <= effective_timeout:
         return False
+
+    effective_timeout_seconds = int(effective_timeout.total_seconds())
 
     device.conn_status = ConnStatus.offline
     mqtt_manager.remember_runtime_connectivity(
@@ -846,7 +865,7 @@ def _expire_device_if_stale(db: Session, device: Device, *, reference_time: date
             payload=json.dumps(
                 {
                     "reason": "heartbeat_timeout",
-                    "timeout_seconds": DEVICE_HEARTBEAT_TIMEOUT_SECONDS,
+                    "timeout_seconds": effective_timeout_seconds,
                     "last_seen": latest_seen_at.isoformat() if latest_seen_at else None,
                     "evaluated_at": reference_time.isoformat(),
                 }
@@ -864,7 +883,7 @@ def _expire_device_if_stale(db: Session, device: Device, *, reference_time: date
         firmware_revision=device.firmware_revision,
         details={
             "reason": "heartbeat_timeout",
-            "timeout_seconds": DEVICE_HEARTBEAT_TIMEOUT_SECONDS,
+            "timeout_seconds": effective_timeout_seconds,
             "last_seen": latest_seen_at.isoformat() if latest_seen_at else None,
             "evaluated_at": reference_time.isoformat(),
         },
