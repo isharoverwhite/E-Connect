@@ -1110,6 +1110,7 @@ function renderSvgPin({
     assignment,
     onSelect,
     isDark,
+    powerMode,
 }: {
     pin: BoardPin;
     board: BoardProfile;
