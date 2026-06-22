@@ -328,7 +328,7 @@ export function Step1Board({
                         )
                     );
                     const hasDeepSleep = true; // All ESP boards support Deep Sleep
-                    const hasUlp = ["ESP32", "ESP32-S2", "ESP32-S3"].includes(item.id);
+                    const hasUlp = ["ESP32", "ESP32-S2", "ESP32-S3", "ESP32-C5", "ESP32-C6", "ESP32-P4"].includes(item.id);
                     
                     return (
                         <div
@@ -410,7 +410,7 @@ export function Step1Board({
                             profile.leftPins.some(p => p.label === "BAT" || p.id === "BAT") || 
                             profile.rightPins.some(p => p.label === "BAT" || p.id === "BAT");
                         const hasDeepSleep = true;
-                        const hasUlp = ["ESP32", "ESP32-S2", "ESP32-S3"].includes(profile.family);
+                        const hasUlp = ["ESP32", "ESP32-S2", "ESP32-S3", "ESP32-C5", "ESP32-C6", "ESP32-P4"].includes(profile.family);
 
                         return (
                             <button
