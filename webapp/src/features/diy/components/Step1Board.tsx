@@ -327,6 +327,7 @@ export function Step1Board({
                             profile.rightPins.some(p => p.label === "BAT" || p.id === "BAT")
                         )
                     );
+                    const hasDeepSleep = true; // All ESP boards support Deep Sleep
                     const hasUlp = ["ESP32", "ESP32-S2", "ESP32-S3"].includes(item.id);
                     
                     return (
@@ -346,13 +347,23 @@ export function Step1Board({
                                     src={BOARD_IMAGE_MAP[item.id] || BOARD_IMAGE_MAP["ESP32"]}
                                 />
                                 <div className="absolute bottom-2 right-2 flex gap-1.5 z-10">
+                                    {hasDeepSleep && (
+                                        <div className="group/deepsleep relative">
+                                            <div className="bg-slate-900/80 backdrop-blur-md p-1.5 rounded-lg border border-slate-700/50 flex items-center justify-center text-indigo-400 shadow-sm transition-all opacity-80 group-hover/deepsleep:opacity-100 cursor-help">
+                                                <span className="material-symbols-outlined text-[16px]">bedtime</span>
+                                            </div>
+                                            <div className="absolute bottom-full right-0 mb-2 w-max max-w-[200px] pointer-events-none opacity-0 group-hover/deepsleep:opacity-100 transition-all translate-y-1 group-hover/deepsleep:translate-y-0 bg-slate-800 text-white text-xs px-3 py-2 rounded-lg shadow-xl border border-slate-700/50 whitespace-normal text-right">
+                                                Supports Deep Sleep
+                                            </div>
+                                        </div>
+                                    )}
                                     {hasUlp && (
                                         <div className="group/ulp relative">
                                             <div className="bg-slate-900/80 backdrop-blur-md p-1.5 rounded-lg border border-slate-700/50 flex items-center justify-center text-sky-400 shadow-sm transition-all opacity-80 group-hover/ulp:opacity-100 cursor-help">
                                                 <span className="material-symbols-outlined text-[16px]">mode_standby</span>
                                             </div>
                                             <div className="absolute bottom-full right-0 mb-2 w-max max-w-[200px] pointer-events-none opacity-0 group-hover/ulp:opacity-100 transition-all translate-y-1 group-hover/ulp:translate-y-0 bg-slate-800 text-white text-xs px-3 py-2 rounded-lg shadow-xl border border-slate-700/50 whitespace-normal text-right">
-                                                Supports Deep Sleep & ULP Co-processor
+                                                Supports ULP Co-processor
                                             </div>
                                         </div>
                                     )}
