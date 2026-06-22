@@ -282,21 +282,31 @@ export function Step1Board({
                         ))}
                     </select>
 
-                    <div className="grid gap-3 md:grid-cols-[1fr_auto]">
+                    <div className="relative group">
                         <input
                             type="text"
                             value={newRoomName}
                             onChange={(event) => setNewRoomName(event.target.value)}
-                            className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-base text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white"
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && newRoomName.trim() && !creatingRoom) {
+                                    e.preventDefault();
+                                    void onCreateRoom();
+                                }
+                            }}
+                            className="w-full rounded-xl border-2 border-border-light dark:border-border-dark bg-slate-50 dark:bg-slate-800/50 px-4 py-3 text-base text-slate-900 dark:text-white outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10 dark:border-slate-800 dark:bg-slate-900/50 dark:text-white pr-28"
                             placeholder={t("diy.step1.new_room.placeholder")}
                         />
                         <button
                             type="button"
                             onClick={() => void onCreateRoom()}
                             disabled={creatingRoom || !newRoomName.trim()}
-                            className="rounded-xl bg-primary px-5 py-3 text-sm font-bold text-white shadow-lg shadow-primary/20 transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                            className={`absolute right-2 top-2 bottom-2 rounded-lg bg-primary px-4 text-sm font-bold text-white shadow shadow-primary/20 transition-all duration-300 hover:bg-primary/90 disabled:cursor-not-allowed ${
+                                newRoomName.trim() 
+                                ? "opacity-100 translate-y-0 translate-x-0" 
+                                : "opacity-0 translate-x-4 pointer-events-none"
+                            }`}
                         >
-                            {creatingRoom ? "Creating..." : "Create area"}
+                            {creatingRoom ? "..." : "Create"}
                         </button>
                     </div>
 

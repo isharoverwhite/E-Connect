@@ -917,12 +917,17 @@ export default function DIYBuilderPage() {
       setRooms((currentRooms) => [...currentRooms, createdRoom].sort((left, right) => left.name.localeCompare(right.name)));
       setRoomId(createdRoom.room_id);
       setNewRoomName("");
+      showToast({
+        type: "success",
+        title: "Area created",
+        description: `Area "${createdRoom.name}" has been successfully created and selected.`,
+      });
     } catch (error) {
       setRoomError(getErrorMessage(error));
     } finally {
       setCreatingRoom(false);
     }
-  }, [handleBuildAuthFailure, newRoomName]);
+  }, [handleBuildAuthFailure, newRoomName, showToast]);
 
   const refreshFirmwareNetworkTargets = useCallback(async () => {
     const token = getToken();
