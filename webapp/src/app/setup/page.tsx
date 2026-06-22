@@ -361,7 +361,7 @@ export default function SetupPage() {
                                 <span className="material-icons-round opacity-60">arrow_forward</span>
                             </Link>
                         </div>
-                        <button onClick={() => router.push('/login')} className="mt-6 w-full text-center text-sm text-slate-500 hover:text-slate-400 transition-colors">
+                        <button onClick={() => router.push('/login')} className="mt-6 w-full text-center text-sm text-blue-500 hover:text-blue-400 font-medium transition-colors">
                             Skip — go to login
                         </button>
                     </motion.div>
