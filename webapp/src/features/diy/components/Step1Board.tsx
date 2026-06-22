@@ -345,11 +345,15 @@ export function Step1Board({
                                     src={BOARD_IMAGE_MAP[item.id] || BOARD_IMAGE_MAP["ESP32"]}
                                 />
                                 {hasBattery && (
-                                    <div 
-                                        className="absolute bottom-2 right-2 bg-slate-900/80 backdrop-blur-md p-1.5 rounded-lg border border-slate-700/50 flex items-center justify-center text-emerald-400 shadow-sm transition-all opacity-80 group-hover:opacity-100"
-                                        title={t("diy.step1.battery_support")}
-                                    >
-                                        <span className="material-symbols-outlined text-[16px]">battery_charging_full</span>
+                                    <div className="absolute bottom-2 right-2 group/battery z-10">
+                                        <div 
+                                            className="bg-slate-900/80 backdrop-blur-md p-1.5 rounded-lg border border-slate-700/50 flex items-center justify-center text-emerald-400 shadow-sm transition-all opacity-80 group-hover/battery:opacity-100 cursor-help"
+                                        >
+                                            <span className="material-symbols-outlined text-[16px]">battery_charging_full</span>
+                                        </div>
+                                        <div className="absolute bottom-full right-0 mb-2 w-max max-w-[200px] pointer-events-none opacity-0 group-hover/battery:opacity-100 transition-all translate-y-1 group-hover/battery:translate-y-0 bg-slate-800 text-white text-xs px-3 py-2 rounded-lg shadow-xl border border-slate-700/50 whitespace-normal text-right">
+                                            {t("diy.step1.battery_support")}
+                                        </div>
                                     </div>
                                 )}
                             </div>
