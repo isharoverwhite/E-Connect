@@ -1293,71 +1293,72 @@ function renderBatteryCircuit({
     const batteryX = isLeft ? 10 : 670;
     const batteryY = y - 40;
 
-    const strokeColor = isDark ? "#94a3b8" : "#475569";
-    const batteryColor = "#22c55e"; // emerald-500
+    const textColor = isDark ? "#cbd5e1" : "#475569";
+    const boldColor = isDark ? "#f8fafc" : "#0f172a";
 
     return (
-        <g id="battery-circuit" opacity="0.9" className="pointer-events-none">
-            {/* Battery Body */}
-            <rect x={batteryX} y={batteryY} width="40" height="80" rx="4" fill={isDark ? "#1e293b" : "#f8fafc"} stroke={strokeColor} strokeWidth="2" />
-            {/* Battery Terminals */}
-            <rect x={batteryX + 10} y={batteryY - 4} width="20" height="4" fill={strokeColor} />
-            <text x={batteryX + 20} y={batteryY + 20} fontSize="14" fill={batteryColor} fontWeight="bold" textAnchor="middle">+</text>
-            <text x={batteryX + 20} y={batteryY + 70} fontSize="14" fill={strokeColor} fontWeight="bold" textAnchor="middle">-</text>
-            <text x={batteryX + 20} y={batteryY + 45} fontSize="12" fill={strokeColor} fontWeight="bold" textAnchor="middle">{vmax}V</text>
+        <g id="battery-circuit" opacity="0.95" className="pointer-events-none">
+            {/* Background Box to hide text behind schematic */}
+            <rect x={isLeft ? 10 : 590} y={y - 65} width="120" height="135" rx="8" fill={isDark ? "#0f172a" : "#ffffff"} fillOpacity="0.9" stroke={strokeColor} strokeWidth="1" strokeDasharray="4 4" />
 
-            {/* Path from Positive -> R1 -> Pin -> R2 -> GND */}
+            {/* Battery Box */}
+            <rect x={isLeft ? 35 : 655} y={y - 20} width="30" height="40" rx="4" fill={isDark ? "#1e293b" : "#f8fafc"} stroke={strokeColor} strokeWidth="1.5" />
+            <rect x={isLeft ? 45 : 665} y={y - 23} width="10" height="3" fill={strokeColor} />
+            <text x={isLeft ? 50 : 670} y={y - 8} fontSize="12" fill="#22c55e" fontWeight="bold" textAnchor="middle">+</text>
+            <text x={isLeft ? 50 : 670} y={y + 15} fontSize="14" fill={strokeColor} fontWeight="bold" textAnchor="middle">-</text>
+            <text x={isLeft ? 50 : 670} y={y + 5} fontSize="9" fill={boldColor} fontWeight="bold" textAnchor="middle">{vmax}V</text>
+
             {isLeft ? (
                 <>
                     {/* Positive Wire to R1 */}
-                    <path d={`M ${batteryX + 20} ${batteryY - 4} L ${batteryX + 20} ${y - 60} L 80 ${y - 60}`} fill="none" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" />
-                    {/* R1 (Top) */}
-                    <rect x="80" y={y - 70} width="30" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.5" />
-                    <text x="95" y={y - 73} fontSize="9" fill={strokeColor} textAnchor="middle" fontWeight="bold">R1</text>
-                    <text x="95" y={y - 56} fontSize="9" fill={isDark ? "#cbd5e1" : "#334155"} textAnchor="middle">{r1Text}</text>
-                    {/* R1 to Pin */}
-                    <path d={`M 110 ${y - 60} L 130 ${y - 60} L 130 ${y}`} fill="none" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" />
-
-                    {/* Pin to R2 */}
-                    <path d={`M 130 ${y} L 80 ${y + 30}`} fill="none" stroke="#3b82f6" strokeWidth="2" strokeDasharray="4" />
-                    {/* R2 (Bottom) */}
-                    <rect x="50" y={y + 20} width="30" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.5" />
-                    <text x="65" y={y + 17} fontSize="9" fill={strokeColor} textAnchor="middle" fontWeight="bold">R2</text>
-                    <text x="65" y={y + 34} fontSize="9" fill={isDark ? "#cbd5e1" : "#334155"} textAnchor="middle">{r2k}kΩ</text>
-                    {/* R2 to GND */}
-                    <path d={`M 50 ${y + 30} L 30 ${y + 30} L 30 ${batteryY + 80}`} fill="none" stroke="#64748b" strokeWidth="2" strokeDasharray="4" />
-
-                    {/* Negative Wire to GND */}
-                    <path d={`M ${batteryX + 20} ${batteryY + 80} L ${batteryX + 20} ${batteryY + 90} L 30 ${batteryY + 90} L 30 ${batteryY + 80}`} fill="none" stroke="#64748b" strokeWidth="2" strokeDasharray="4" />
-
+                    <path d={`M 50 ${y - 23} L 50 ${y - 45} L 89 ${y - 45} L 89 ${y - 35}`} fill="none" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    
+                    {/* R1 */}
+                    <rect x="83" y={y - 35} width="12" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.2" />
+                    <text x="99" y={y - 22} fontSize="9" fill={boldColor} textAnchor="start" fontWeight="bold">R1</text>
+                    <text x="99" y={y - 10} fontSize="8.5" fill={textColor} textAnchor="start">{r1Text}</text>
+                    
+                    {/* R1 to Pin & R2 */}
+                    <path d={`M 89 ${y - 15} L 89 ${y} L 130 ${y}`} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d={`M 89 ${y} L 89 ${y + 15}`} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <circle cx="89" cy={y} r="2.5" fill="#3b82f6" />
+                    
+                    {/* R2 */}
+                    <rect x="83" y={y + 15} width="12" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.2" />
+                    <text x="99" y={y + 18} fontSize="9" fill={boldColor} textAnchor="start" fontWeight="bold">R2</text>
+                    <text x="99" y={y + 30} fontSize="8.5" fill={textColor} textAnchor="start">{r2k}kΩ</text>
+                    
+                    {/* R2 to GND & Battery - */}
+                    <path d={`M 89 ${y + 35} L 89 ${y + 50} L 50 ${y + 50} L 50 ${y + 20}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    
                     {/* GND Symbol */}
-                    <path d={`M 20 ${batteryY + 90} L 40 ${batteryY + 90} M 25 ${batteryY + 94} L 35 ${batteryY + 94} M 28 ${batteryY + 98} L 32 ${batteryY + 98}`} fill="none" stroke={strokeColor} strokeWidth="2" />
+                    <path d={`M 79 ${y + 50} L 99 ${y + 50} M 83 ${y + 54} L 95 ${y + 54} M 87 ${y + 58} L 91 ${y + 58}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
                 </>
             ) : (
                 <>
                     {/* Positive Wire to R1 */}
-                    <path d={`M ${batteryX + 20} ${batteryY - 4} L ${batteryX + 20} ${y - 60} L 640 ${y - 60}`} fill="none" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" />
-                    {/* R1 (Top) */}
-                    <rect x="610" y={y - 70} width="30" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.5" />
-                    <text x="625" y={y - 73} fontSize="9" fill={strokeColor} textAnchor="middle" fontWeight="bold">R1</text>
-                    <text x="625" y={y - 56} fontSize="9" fill={isDark ? "#cbd5e1" : "#334155"} textAnchor="middle">{r1Text}</text>
-                    {/* R1 to Pin */}
-                    <path d={`M 610 ${y - 60} L 590 ${y - 60} L 590 ${y}`} fill="none" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" />
-
-                    {/* Pin to R2 */}
-                    <path d={`M 590 ${y} L 640 ${y + 30}`} fill="none" stroke="#3b82f6" strokeWidth="2" strokeDasharray="4" />
-                    {/* R2 (Bottom) */}
-                    <rect x="640" y={y + 20} width="30" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.5" />
-                    <text x="655" y={y + 17} fontSize="9" fill={strokeColor} textAnchor="middle" fontWeight="bold">R2</text>
-                    <text x="655" y={y + 34} fontSize="9" fill={isDark ? "#cbd5e1" : "#334155"} textAnchor="middle">{r2k}kΩ</text>
-                    {/* R2 to GND */}
-                    <path d={`M 670 ${y + 30} L 690 ${y + 30} L 690 ${batteryY + 80}`} fill="none" stroke="#64748b" strokeWidth="2" strokeDasharray="4" />
-
-                    {/* Negative Wire to GND */}
-                    <path d={`M ${batteryX + 20} ${batteryY + 80} L ${batteryX + 20} ${batteryY + 90} L 690 ${batteryY + 90} L 690 ${batteryY + 80}`} fill="none" stroke="#64748b" strokeWidth="2" strokeDasharray="4" />
-
+                    <path d={`M 670 ${y - 23} L 670 ${y - 45} L 631 ${y - 45} L 631 ${y - 35}`} fill="none" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    
+                    {/* R1 */}
+                    <rect x="625" y={y - 35} width="12" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.2" />
+                    <text x="621" y={y - 22} fontSize="9" fill={boldColor} textAnchor="end" fontWeight="bold">R1</text>
+                    <text x="621" y={y - 10} fontSize="8.5" fill={textColor} textAnchor="end">{r1Text}</text>
+                    
+                    {/* R1 to Pin & R2 */}
+                    <path d={`M 631 ${y - 15} L 631 ${y} L 566 ${y}`} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d={`M 631 ${y} L 631 ${y + 15}`} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <circle cx="631" cy={y} r="2.5" fill="#3b82f6" />
+                    
+                    {/* R2 */}
+                    <rect x="625" y={y + 15} width="12" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.2" />
+                    <text x="621" y={y + 18} fontSize="9" fill={boldColor} textAnchor="end" fontWeight="bold">R2</text>
+                    <text x="621" y={y + 30} fontSize="8.5" fill={textColor} textAnchor="end">{r2k}kΩ</text>
+                    
+                    {/* R2 to GND & Battery - */}
+                    <path d={`M 631 ${y + 35} L 631 ${y + 50} L 670 ${y + 50} L 670 ${y + 20}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    
                     {/* GND Symbol */}
-                    <path d={`M 680 ${batteryY + 90} L 700 ${batteryY + 90} M 685 ${batteryY + 94} L 695 ${batteryY + 94} M 688 ${batteryY + 98} L 692 ${batteryY + 98}`} fill="none" stroke={strokeColor} strokeWidth="2" />
+                    <path d={`M 621 ${y + 50} L 641 ${y + 50} M 625 ${y + 54} L 637 ${y + 54} M 629 ${y + 58} L 633 ${y + 58}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
                 </>
             )}
         </g>
