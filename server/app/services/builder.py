@@ -836,11 +836,14 @@ def generate_platformio_ini(project, project_dir: str):
     seen_libs = set()
     needs_dht = False
     has_actuator_pins = False
+    has_pwm_pins = False
 
     for pin in raw_pins if isinstance(raw_pins, list) else []:
         mode = str(pin.get("mode")).upper()
         if mode in {"OUTPUT", "PWM"}:
             has_actuator_pins = True
+        if mode == "PWM":
+            has_pwm_pins = True
         extra = pin.get("extra_params")
         if isinstance(extra, dict):
             if mode == "I2C":
@@ -867,6 +870,15 @@ def generate_platformio_ini(project, project_dir: str):
     power_mode = str(config_json.get("power_mode") or "power").lower()
     if power_mode == "battery":
         build_flags.append("-D ECONNECT_BATTERY_MODE=1")
+        
+        # Calculate optimal sleep mode based on pin configurations
+        if has_pwm_pins:
+            build_flags.append("-D ECONNECT_SLEEP_MODE=0")  # Modem Sleep (CPU Awake, WiFi off)
+        elif has_actuator_pins:
+            build_flags.append("-D ECONNECT_SLEEP_MODE=1")  # Light Sleep (CPU Paused, GPIO preserved)
+        else:
+            build_flags.append("-D ECONNECT_SLEEP_MODE=2")  # Deep Sleep (Max Power Saving)
+            
         deep_sleep_interval = config_json.get("deep_sleep_interval_s")
         if isinstance(deep_sleep_interval, int) and deep_sleep_interval > 0:
             build_flags.append(f"-D ECONNECT_DEEP_SLEEP_INTERVAL_S={deep_sleep_interval}")
