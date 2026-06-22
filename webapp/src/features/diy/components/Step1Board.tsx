@@ -319,6 +319,15 @@ export function Step1Board({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
                 {BOARD_FAMILIES.map((item) => {
                     const isSelected = family === item.id;
+                    const hasBattery = BOARD_PROFILES.some(profile => 
+                        profile.family === item.id && 
+                        (
+                            profile.pinMarkers?.some(m => m.label === "BATTERY") ||
+                            profile.leftPins.some(p => p.label === "BAT" || p.id === "BAT") || 
+                            profile.rightPins.some(p => p.label === "BAT" || p.id === "BAT")
+                        )
+                    );
+                    
                     return (
                         <div
                             key={item.id}
@@ -335,6 +344,14 @@ export function Step1Board({
                                         }`}
                                     src={BOARD_IMAGE_MAP[item.id] || BOARD_IMAGE_MAP["ESP32"]}
                                 />
+                                {hasBattery && (
+                                    <div 
+                                        className="absolute bottom-2 right-2 bg-slate-900/80 backdrop-blur-md p-1.5 rounded-lg border border-slate-700/50 flex items-center justify-center text-emerald-400 shadow-sm transition-all opacity-80 group-hover:opacity-100"
+                                        title="Battery-powered boards available in this family"
+                                    >
+                                        <span className="material-symbols-outlined text-[16px]">battery_charging_full</span>
+                                    </div>
+                                )}
                             </div>
                             <div>
                                 <h3 className="text-slate-900 dark:text-white dark:text-white text-lg font-bold mb-1">{item.title}</h3>
