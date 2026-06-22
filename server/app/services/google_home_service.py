@@ -4,7 +4,6 @@
 import base64
 import json
 import logging
-import os
 import time
 import uuid
 from typing import Any
@@ -15,14 +14,8 @@ from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
-_ENV_PROJECT_ID = os.getenv("GOOGLE_HOME_PROJECT_ID", "")
-_ENV_SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_HOME_SERVICE_ACCOUNT_JSON", "")
-_ENV_CLIENT_ID = os.getenv("GOOGLE_HOME_CLIENT_ID", "")
-_ENV_CLIENT_SECRET = os.getenv("GOOGLE_HOME_CLIENT_SECRET", "")
-
 
 def _get_db_config() -> "dict[str, str]":
-    """Return the Google Home config stored in the DB, or empty dict if unavailable."""
     try:
         from app.database import SessionLocal
         from app.sql_models import GoogleHomeConfig
@@ -44,23 +37,19 @@ def _get_db_config() -> "dict[str, str]":
 
 
 def get_effective_client_id() -> str:
-    db_cfg = _get_db_config()
-    return db_cfg.get("client_id") or _ENV_CLIENT_ID
+    return _get_db_config().get("client_id", "")
 
 
 def get_effective_client_secret() -> str:
-    db_cfg = _get_db_config()
-    return db_cfg.get("client_secret") or _ENV_CLIENT_SECRET
+    return _get_db_config().get("client_secret", "")
 
 
 def get_effective_project_id() -> str:
-    db_cfg = _get_db_config()
-    return db_cfg.get("project_id") or _ENV_PROJECT_ID
+    return _get_db_config().get("project_id", "")
 
 
 def get_effective_service_account_json() -> str:
-    db_cfg = _get_db_config()
-    return db_cfg.get("service_account_json") or _ENV_SERVICE_ACCOUNT_JSON
+    return _get_db_config().get("service_account_json", "")
 
 
 def is_google_home_configured() -> bool:

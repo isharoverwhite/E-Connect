@@ -1,0 +1,216 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
+# End-user self-hosted stack for E-Connect.
+#
+# Quick start:
+#   1. Edit the few values in `x-user-config` below.
+#   2. Run:
+#        docker compose up -d
+#   3. Open:
+#        https://localhost:3443
+#
+# Public LAN discovery entrypoint:
+#   https://find.isharoverwhite.com
+#   The public page scans from the user's browser on the same LAN. Do not add
+#   find_website to this self-hosted stack.
+#
+# Main WebUI:
+#   https://localhost:3443
+#
+# Built-in alias-first discovery:
+#   The `server` container runs on host networking so it can auto-detect the
+#   host LAN IP and publish `econnect.local` directly from the main app
+#   process. No separate discovery-mdns helper is required.
+#
+# Built-in extension discovery helper:
+#   The stack also starts a small host-network helper for extension protocols
+#   whose LAN discovery replies do not cross the default Docker bridge.
+#   No extra action is required.
+
+x-user-config:
+  # Most users only need to change these:
+  # - db_root_password
+  # - db_password
+  # - secret_key
+  # - https_ips if you open the WebUI from another phone/computer by LAN IP
+  # - https_hosts if you use a LAN hostname such as econnect.local
+  # Real example for a home LAN server at 192.168.1.25:
+  # - db_root_password: &db_root_password "HomeRoot!2026"
+  # - db_password: &db_password "HomeApp!2026"
+  # - secret_key: &secret_key "change-this-to-a-long-random-secret-key"
+  # - https_hosts: &https_hosts localhost,econnect.local
+  # - https_ips: &https_ips "192.168.1.25"
+  #
+  # Then run `docker compose up -d` and open:
+  # - https://localhost:3443 on the Docker host itself
+  # - https://192.168.1.25:3443 from another device on the same LAN
+  #
+  # Time zone used by all containers.
+  timezone: &timezone Asia/Ho_Chi_Minh
+
+  # Internal database settings.
+  # Most end users can leave db_name and db_user unchanged.
+  db_name: &db_name e_connect_db
+  db_user: &db_user econnect
+  db_root_password: &db_root_password "econnect_root_password_change_me"
+  db_password: &db_password "econnect_password_change_me"
+
+  # App secret used for auth tokens and provisioning payloads.
+  secret_key: &secret_key "change-this-secret-key-before-public-use"
+
+  # HTTPS certificate coverage for the WebUI on port 3443.
+  # Keep localhost if you open the UI on the Docker host itself.
+  https_hosts: &https_hosts localhost,econnect.local,e-connect.local
+  https_ips: &https_ips ""
+
+  # Published Docker images for the end-user stack.
+  mqtt_image: &mqtt_image docker.io/ryzen30xx/econnect-mqtt:latest
+  server_image: &server_image docker.io/ryzen30xx/econnect-server:latest
+  webapp_image: &webapp_image docker.io/ryzen30xx/econnect-webapp:latest
+
+services:
+  db:
+    image: docker.io/library/mariadb:10.11
+    pull_policy: always
+    container_name: e-connect-db
+    restart: always
+    environment:
+      TZ: *timezone
+      MYSQL_ROOT_PASSWORD: *db_root_password
+      MYSQL_DATABASE: *db_name
+      MYSQL_USER: *db_user
+      MYSQL_PASSWORD: *db_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mqtt:
+    image: *mqtt_image
+    pull_policy: always
+    container_name: e-connect-mqtt
+    restart: always
+    environment:
+      TZ: *timezone
+    ports:
+      - "1883:1883"
+
+  server:
+    image: *server_image
+    pull_policy: always
+    container_name: e-connect-server
+    restart: always
+    # Host networking lets the main app see the real LAN interfaces so it can
+    # auto-detect the reachable server IP and publish mDNS without a helper.
+    network_mode: host
+    command:
+      - python
+      - -c
+      - |
+        import os, urllib.parse
+        user = urllib.parse.quote(os.environ["DB_USER"], safe="")
+        password = urllib.parse.quote(os.environ["DB_PASSWORD"], safe="")
+        host = os.environ.get("DB_HOST", "127.0.0.1")
+        name = os.environ["DB_NAME"]
+        os.environ["DATABASE_URL"] = f"mysql+pymysql://{user}:{password}@{host}:3306/{name}"
+        os.execvp("uvicorn", ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"])
+    environment:
+      TZ: *timezone
+      DB_HOST: 127.0.0.1
+      DB_NAME: *db_name
+      DB_USER: *db_user
+      DB_PASSWORD: *db_password
+      SECRET_KEY: *secret_key
+      ACCESS_TOKEN_EXPIRE_MINUTES: "43200"
+      MQTT_BROKER: 127.0.0.1
+      MQTT_PORT: "1883"
+      MQTT_NAMESPACE: local
+      FIRMWARE_PUBLIC_SCHEME: http
+      FIRMWARE_PUBLIC_PORT: "3000"
+      FIRMWARE_MQTT_BROKER: ""
+      FIRMWARE_TEMPLATE_AUTO_UPDATE: "1"
+      FIRMWARE_TEMPLATE_UPDATE_CHECK_SECONDS: "60"
+      MDNS_HOSTNAME: ""
+      MDNS_ADVERTISED_IPS: ""
+      MDNS_DISCOVERY_PORT: "8000"
+      MDNS_WEBAPP_PORT: "3443"
+      HOST_OS_ROOT: /hostfs
+    volumes:
+      - server_data:/data
+      # Optional host storage visibility for the System Health screen.
+      # Uncomment only if you want the dashboard to show real host disk limits.
+      # - /:/hostfs:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      mqtt:
+        condition: service_started
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import json, urllib.request; data = json.loads(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5).read().decode()); assert data.get("status") == "ok"
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 5s
+
+  webapp:
+    image: *webapp_image
+    pull_policy: always
+    container_name: e-connect-webapp
+    restart: always
+    ports:
+      - "3000:3000"
+      - "3443:3443"
+    volumes:
+      - webapp_tls:/app/.local-https
+    extra_hosts:
+      # Bridge-network containers need the host gateway alias to reach the
+      # host-network `server` service on Linux-class Docker hosts.
+      - "host.docker.internal:host-gateway"
+    environment:
+      TZ: *timezone
+      ALLOW_INSECURE_HTTP: "1"
+      NEXT_PUBLIC_API_URL: /api/v1
+      BACKEND_INTERNAL_URL: http://host.docker.internal:8000
+      HTTPS_HOSTS: *https_hosts
+      HTTPS_IPS: *https_ips
+      HTTPS_PORT: 3443
+    depends_on:
+      server:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - const main = async () => { const res = await fetch("http://127.0.0.1:3000/login"); if (!res.ok) process.exit(1); }; main().catch(() => process.exit(1))
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 5s
+
+  extension_discovery_helper:
+    image: *server_image
+    pull_policy: always
+    container_name: e-connect-extension-discovery-helper
+    restart: always
+    network_mode: host
+    command: ["python", "/app/scripts/yeelight_discovery_helper.py"]
+    environment:
+      TZ: *timezone
+    depends_on:
+      server:
+        condition: service_healthy
+
+volumes:
+  db_data:
+  server_data:
+  webapp_tls:

@@ -1,0 +1,244 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
+@import "tailwindcss";
+@import "leaflet/dist/leaflet.css";
+
+@custom-variant dark (&:is(.dark *));
+@theme {
+  --color-primary: #3b82f6;
+  --color-secondary: #8b5cf6;
+  --color-navy-500: #64748b;
+  --color-navy-600: #475569;
+  --color-navy-700: #334155;
+  --color-navy-800: #1e293b;
+  --color-navy-900: #0f172a;
+  --color-navy-950: #020617;
+  --color-background-light: #f1f5f9;
+  --color-background-dark: #0f172a;
+  --color-panel-light: #ffffff;
+  --color-panel-dark: #1e293b;
+  --color-border-light: #cbd5e1;
+  --color-border-dark: #334155;
+  --color-surface-light: #ffffff;
+  --color-surface-dark: #1e293b;
+  --color-surface-darker: #161e26;
+  --color-terminal-bg: #0d1117;
+  --font-sans: "Inter", sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", monospace;
+}
+
+@utility glass-panel {
+  background-color: white;
+  border-width: 1px;
+  border-color: var(--color-slate-200);
+  box-shadow: var(--shadow-sm);
+}
+
+@layer components {
+  @keyframes slide-in-right {
+    from {
+      transform: translateX(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+
+  @keyframes fade-out {
+    from {
+      opacity: 1;
+      transform: scale(1);
+    }
+    to {
+      opacity: 0;
+      transform: scale(0.95);
+    }
+  }
+
+  .animate-slide-in {
+    animation: slide-in-right 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  @keyframes dashboard-area-swipe-right {
+    from {
+      opacity: 0;
+      transform: translate3d(42px, 0, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  @keyframes dashboard-area-swipe-left {
+    from {
+      opacity: 0;
+      transform: translate3d(-42px, 0, 0);
+    }
+    to {
+      opacity: 1;
+      transform: translate3d(0, 0, 0);
+    }
+  }
+
+  .animate-dashboard-area-swipe-right {
+    animation: dashboard-area-swipe-right 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+    will-change: transform, opacity;
+  }
+
+  .animate-dashboard-area-swipe-left {
+    animation: dashboard-area-swipe-left 0.34s cubic-bezier(0.22, 1, 0.36, 1) both;
+    will-change: transform, opacity;
+  }
+
+  .animate-fade-out {
+    animation: fade-out 0.2s ease-out forwards;
+  }
+
+  @keyframes shake {
+    0%, 100% {
+      transform: translateX(0);
+    }
+    20%, 60% {
+      transform: translateX(-4px);
+    }
+    40%, 80% {
+      transform: translateX(4px);
+    }
+  }
+
+  .animate-shake {
+    animation: shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+  }
+
+  @keyframes weather-cloud-move {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-4px); }
+    75% { transform: translateX(4px); }
+  }
+
+  @keyframes weather-rain-fall {
+    0% { transform: rotate(15deg) translateY(-4px); opacity: 0; }
+    20% { opacity: 1; transform: rotate(15deg) translateY(0); }
+    80% { opacity: 1; transform: rotate(15deg) translateY(6px); }
+    100% { transform: rotate(15deg) translateY(10px); opacity: 0; }
+  }
+
+  @keyframes weather-sun-rays-spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes weather-moon-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+  }
+
+  .animate-weather-cloud {
+    animation: weather-cloud-move 1.5s ease-in-out 2 forwards;
+  }
+
+  .animate-weather-rain-1 {
+    animation: weather-rain-fall 1s linear 3;
+  }
+  .animate-weather-rain-2 {
+    animation: weather-rain-fall 1s linear 3;
+    animation-delay: 0.2s;
+  }
+  .animate-weather-rain-3 {
+    animation: weather-rain-fall 1s linear 3;
+    animation-delay: 0.4s;
+  }
+
+  .animate-weather-sun-rays {
+    animation: weather-sun-rays-spin 3s linear forwards;
+  }
+
+  .animate-weather-moon {
+    animation: weather-moon-float 2.4s ease-in-out infinite;
+  }
+
+  @keyframes stripe-slide {
+    from {
+      background-position: 0 0;
+    }
+    to {
+      background-position: 40px 0;
+    }
+  }
+
+  .animate-stripe-slide {
+    animation: stripe-slide 2s linear infinite;
+  }
+
+  .canvas-dot-bg {
+    background-image: radial-gradient(circle, #cbd5e1 1.5px, transparent 1.5px);
+    background-size: 20px 20px;
+  }
+  
+  .dark .canvas-dot-bg {
+    background-image: radial-gradient(circle, #334155 1.5px, transparent 1.5px);
+  }
+
+  .home-location-map .leaflet-control-attribution {
+    font-size: 10px;
+  }
+
+  .home-location-map .leaflet-control-zoom a {
+    color: #0f172a;
+  }
+
+  .dark .home-location-map .leaflet-control-zoom a {
+    color: #e2e8f0;
+    background-color: #0f172a;
+    border-color: #334155;
+  }
+
+  .dark .home-location-map .leaflet-control-attribution {
+    background-color: rgba(15, 23, 42, 0.9);
+    color: #cbd5e1;
+  }
+
+  .dark .home-location-map .leaflet-control-attribution a {
+    color: #93c5fd;
+  }
+
+  .home-location-marker {
+    background: transparent;
+    border: 0;
+  }
+
+  .home-location-marker__pin {
+    display: flex;
+    height: 42px;
+    width: 42px;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9999px;
+    background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+    border: 3px solid rgba(255, 255, 255, 0.96);
+    color: white;
+    box-shadow: 0 14px 30px rgba(37, 99, 235, 0.32);
+    position: relative;
+  }
+
+  .home-location-marker__pin::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    bottom: -10px;
+    height: 18px;
+    width: 18px;
+    transform: translateX(-50%) rotate(45deg);
+    border-radius: 0 0 4px 0;
+    background: #1d4ed8;
+    z-index: -1;
+  }
+
+  .home-location-marker__icon {
+    font-size: 22px;
+    line-height: 1;
+  }
+}

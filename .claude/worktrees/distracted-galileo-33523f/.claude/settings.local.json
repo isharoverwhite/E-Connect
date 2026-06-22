@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git worktree *)",
+      "Bash(git --version)",
+      "Bash(git sparse-checkout *)",
+      "Bash(git checkout *)",
+      "Bash(git push *)",
+      "Bash(xargs ls -la)",
+      "Bash(python3 -c ' *)",
+      "Bash(python -m pytest tests/test_extensions_api.py -x -q --tb=short -k \"test_execute_external_device_command\")",
+      "Bash(python3 -m pytest tests/test_extensions_api.py -x -q --tb=short -k \"test_execute_external_device_command\")",
+      "Bash(python3 -m pytest tests/test_extensions_api.py -x -q --tb=short -k \"yeelight\")",
+      "Bash(python3 -m pytest tests/test_extensions_api.py -x -q --tb=short)",
+      "Bash(python3 -m pytest tests/test_extensions_api.py tests/test_automation.py -q --tb=short)",
+      "Bash(sshpass -p Hienkhanh69 ssh -o StrictHostKeyChecking=no ryzen30xx@192.168.2.230 'sudo -S bash -c '\\\\''PATH=/usr/local/bin:$PATH docker inspect e-connect-server --format \"{{json .Mounts}}\"'\\\\''')",
+      "Bash(python3 -m json.tool)",
+      "Bash(cat)",
+      "Bash(sshpass -p \"Hienkhanh69\" scp -o StrictHostKeyChecking=no /tmp/check_db.py ryzen30xx@192.168.2.230:/tmp/check_db.py)",
+      "Bash(sshpass -p Hienkhanh69 ssh -o StrictHostKeyChecking=no ryzen30xx@192.168.2.230 'sudo -S bash -c '\\\\''PATH=/usr/local/bin:$PATH docker cp /tmp/check_db.py e-connect-server:/tmp/check_db.py && docker exec e-connect-server python3 /tmp/check_db.py'\\\\''')",
+      "Bash(cp server/tests/fixtures/Yeelight_control/yeelight_control.py /tmp/yeelight_control_updated.py)",
+      "Read(//tmp/**)",
+      "Bash(sshpass -p \"Hienkhanh69\" ssh -o StrictHostKeyChecking=no ryzen30xx@192.168.2.230 \"base64 -d > /tmp/yeelight_control_updated.py && echo 'transfer OK' && wc -l /tmp/yeelight_control_updated.py\")",
+      "Bash(openssl base64 *)",
+      "Bash(sshpass -p \"Hienkhanh69\" ssh -o StrictHostKeyChecking=no ryzen30xx@192.168.2.230 \"echo 'Hienkhanh69' | sudo -S env PATH=/usr/local/bin:/usr/bin:/bin docker logs e-connect-server --tail 10 2>&1\")",
+      "Bash(sshpass -p \"Hienkhanh69\" ssh -o StrictHostKeyChecking=no ryzen30xx@192.168.2.230 \"echo 'Hienkhanh69' | sudo -S env PATH=/usr/local/bin:/usr/bin:/bin docker logs e-connect-server --tail 15 2>&1\")",
+      "Bash(sshpass -p Hienkhanh69 ssh -o StrictHostKeyChecking=no ryzen30xx@192.168.2.230 'echo '\\\\''Hienkhanh69'\\\\'' | sudo -S sh -c '\\\\''export PATH=/usr/local/bin:$PATH && docker ps --filter name=e-connect-server --format \"{{.Status}}\"'\\\\''')"
+    ]
+  }
+}

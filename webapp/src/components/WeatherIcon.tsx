@@ -9,7 +9,7 @@ function resetStyles(els: HTMLElement | HTMLElement[], props: string[]) {
   targets.forEach(el => props.forEach(p => el.style.removeProperty(p)));
 }
 
-export type WeatherSize = "hero" | "inline";
+export type WeatherSize = "hero" | "inline" | "forecast";
 
 // ─── Sun ─────────────────────────────────────────────────────────────────────
 
@@ -23,7 +23,7 @@ export function WeatherSunIcon({
   const raysRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    if (size !== "inline" || !raysRef.current) return;
+    if (size === "hero" || !raysRef.current) return;
     const el = raysRef.current;
     const anim = animate(el, {
       rotate: "1turn",
@@ -34,19 +34,20 @@ export function WeatherSunIcon({
     return () => { anim.pause(); };
   }, [size]);
 
-  const containerClass = size === "hero" ? "h-10 w-10" : "h-5 w-5";
-  const coreClass = size === "hero" ? "h-6 w-6" : "h-3 w-3";
-  const coreShadow =
-    size === "hero"
-      ? "shadow-[0_0_12px_rgba(251,191,36,0.35)]"
-      : "shadow-[0_0_10px_rgba(251,191,36,0.35)]";
+  const containerClass = size === "hero" ? "h-10 w-10" : size === "forecast" ? "h-7 w-7" : "h-5 w-5";
+  const coreClass = size === "hero" ? "h-6 w-6" : size === "forecast" ? "h-4 w-4" : "h-3 w-3";
+  const coreShadow = "shadow-[0_0_10px_rgba(251,191,36,0.35)]";
   const longRay =
     size === "hero"
       ? "top-[-2px] h-[8px] w-[2px]"
+      : size === "forecast"
+      ? "top-[-1.5px] h-[6px] w-[1.5px]"
       : "top-[-1px] h-[4px] w-[1.5px]";
   const shortRay =
     size === "hero"
       ? "top-[2px] h-[4px] w-[2px]"
+      : size === "forecast"
+      ? "top-[1.5px] h-[3px] w-[1.5px]"
       : "top-[1px] h-[2px] w-[1.5px]";
 
   return (
@@ -85,7 +86,7 @@ export function WeatherMoonIcon({
   const moonRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    if (size !== "inline" || !moonRef.current) return;
+    if (size === "hero" || !moonRef.current) return;
     const el = moonRef.current;
     const anim = animate(el, {
       y: [{ to: -3 }, { to: 0 }],
@@ -96,11 +97,12 @@ export function WeatherMoonIcon({
     return () => { anim.pause(); };
   }, [size]);
 
-  if (size === "inline") {
+  if (size !== "hero") {
+    const szClass = size === "forecast" ? "text-[22px]" : "text-[18px]";
     return (
       <span
         ref={moonRef}
-        className={`material-icons-round inline-block shrink-0 align-middle text-[18px] leading-none ${className}`}
+        className={`material-icons-round inline-block shrink-0 align-middle ${szClass} leading-none ${className}`}
       >
         dark_mode
       </span>
@@ -130,7 +132,7 @@ export function WeatherRainyIcon({
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (size !== "inline" || !containerRef.current) return;
+    if (size === "hero" || !containerRef.current) return;
     const cloud = containerRef.current.querySelector<HTMLElement>(".wcloud");
     const drops = Array.from(
       containerRef.current.querySelectorAll<HTMLElement>(".wdrop")
@@ -169,16 +171,17 @@ export function WeatherRainyIcon({
     );
   }
 
+  const sz = size === "forecast";
   return (
     <div
       ref={containerRef}
-      className={`relative mr-1 h-5 w-5 flex items-center justify-center ${className}`}
+      className={`relative flex items-center justify-center ${sz ? "h-7 w-7" : "mr-1 h-5 w-5"} ${className}`}
     >
-      <span className="material-symbols-rounded text-sm wcloud relative z-10">cloud</span>
-      <div className="absolute top-[12px] left-1/2 -translate-x-1/2 flex items-center gap-[2px]">
-        <div className="wdrop w-[1.5px] h-[6px] bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg]" />
-        <div className="wdrop w-[1.5px] h-[6px] bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] mt-[2px]" />
-        <div className="wdrop w-[1.5px] h-[6px] bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg]" />
+      <span className={`material-symbols-rounded wcloud relative z-10 ${sz ? "text-xl" : "text-sm"}`}>cloud</span>
+      <div className={`absolute left-1/2 -translate-x-1/2 flex items-center ${sz ? "top-[16px] gap-[3px]" : "top-[12px] gap-[2px]"}`}>
+        <div className={`wdrop bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] ${sz ? "w-[2px] h-[8px]" : "w-[1.5px] h-[6px]"}`} />
+        <div className={`wdrop bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] ${sz ? "w-[2px] h-[8px] mt-[2px]" : "w-[1.5px] h-[6px] mt-[2px]"}`} />
+        <div className={`wdrop bg-sky-500 dark:bg-sky-400 rounded-full rotate-[15deg] ${sz ? "w-[2px] h-[8px]" : "w-[1.5px] h-[6px]"}`} />
       </div>
     </div>
   );
@@ -196,7 +199,7 @@ export function WeatherThunderstormIcon({
   const iconRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    if (size !== "inline" || !iconRef.current) return;
+    if (size === "hero" || !iconRef.current) return;
     const el = iconRef.current;
 
     const tl = createTimeline({ autoplay: true });
@@ -214,6 +217,8 @@ export function WeatherThunderstormIcon({
       className={`material-symbols-rounded ${
         size === "hero"
           ? "text-6xl text-sky-500 dark:text-sky-400 group-hover:text-sky-600 dark:group-hover:text-sky-300 transition-colors"
+          : size === "forecast"
+          ? "text-[26px] text-sky-500 dark:text-sky-400 inline-block"
           : "text-sm mr-1 inline-block"
       } ${className}`}
     >
@@ -234,7 +239,7 @@ export function WeatherSnowIcon({
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (size !== "inline" || !containerRef.current) return;
+    if (size === "hero" || !containerRef.current) return;
     const cloud = containerRef.current.querySelector<HTMLElement>(".wcloud");
     const flakes = Array.from(
       containerRef.current.querySelectorAll<HTMLElement>(".wflake")
@@ -277,16 +282,17 @@ export function WeatherSnowIcon({
     );
   }
 
+  const sz = size === "forecast";
   return (
     <div
       ref={containerRef}
-      className={`relative mr-1 h-5 w-5 flex items-center justify-center ${className}`}
+      className={`relative flex items-center justify-center ${sz ? "h-7 w-7" : "mr-1 h-5 w-5"} ${className}`}
     >
-      <span className="material-symbols-rounded text-sm wcloud relative z-10">cloud</span>
-      <div className="absolute top-[12px] left-1/2 -translate-x-1/2 flex items-center gap-[2px]">
-        <div className="wflake w-[3px] h-[3px] bg-sky-200 dark:bg-sky-100 rounded-full" />
-        <div className="wflake w-[3px] h-[3px] bg-sky-200 dark:bg-sky-100 rounded-full mt-[1px]" />
-        <div className="wflake w-[3px] h-[3px] bg-sky-200 dark:bg-sky-100 rounded-full" />
+      <span className={`material-symbols-rounded wcloud relative z-10 ${sz ? "text-xl" : "text-sm"}`}>cloud</span>
+      <div className={`absolute left-1/2 -translate-x-1/2 flex items-center ${sz ? "top-[16px] gap-[3px]" : "top-[12px] gap-[2px]"}`}>
+        <div className={`wflake bg-sky-200 dark:bg-sky-100 rounded-full ${sz ? "w-[4px] h-[4px]" : "w-[3px] h-[3px]"}`} />
+        <div className={`wflake bg-sky-200 dark:bg-sky-100 rounded-full ${sz ? "w-[4px] h-[4px] mt-[1px]" : "w-[3px] h-[3px] mt-[1px]"}`} />
+        <div className={`wflake bg-sky-200 dark:bg-sky-100 rounded-full ${sz ? "w-[4px] h-[4px]" : "w-[3px] h-[3px]"}`} />
       </div>
     </div>
   );
@@ -304,7 +310,7 @@ export function WeatherCloudyIcon({
   const cloudRef = useRef<HTMLSpanElement>(null);
 
   useEffect(() => {
-    if (size !== "inline" || !cloudRef.current) return;
+    if (size === "hero" || !cloudRef.current) return;
     const el = cloudRef.current;
     const anim = animate(el, {
       x: [{ to: -3 }, { to: 3 }, { to: 0 }],
@@ -321,6 +327,8 @@ export function WeatherCloudyIcon({
       className={`material-symbols-rounded ${
         size === "hero"
           ? "text-6xl text-sky-500 dark:text-sky-400 group-hover:text-sky-600 dark:group-hover:text-sky-300 transition-colors"
+          : size === "forecast"
+          ? "text-[26px] text-sky-500 dark:text-sky-400 inline-block"
           : "text-sm mr-1 inline-block"
       } ${className}`}
     >

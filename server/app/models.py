@@ -186,6 +186,15 @@ class GeneralSettingsResponse(BaseModel):
     house_temperature_device_name: Optional[str] = None
 
 
+class DailyForecastDay(BaseModel):
+    date: str
+    weather_code: int
+    description: str
+    icon: str
+    temp_max: Optional[float] = None
+    temp_min: Optional[float] = None
+
+
 class CurrentWeatherResponse(BaseModel):
     temperature: float
     weather_code: int
@@ -196,6 +205,16 @@ class CurrentWeatherResponse(BaseModel):
     longitude: float
     is_day: Optional[bool] = None
     observed_at: Optional[str] = None
+    secondary_description: Optional[str] = None
+    secondary_icon: Optional[str] = None
+    secondary_temperature: Optional[float] = None
+    secondary_source: Optional[str] = None
+    metar_temperature: Optional[float] = None
+    metar_description: Optional[str] = None
+    metar_icon: Optional[str] = None
+    metar_source: Optional[str] = None
+    metar_observed_at: Optional[str] = None
+    daily_forecast: Optional[List[DailyForecastDay]] = None
 
 
 class HouseTemperatureResponse(BaseModel):

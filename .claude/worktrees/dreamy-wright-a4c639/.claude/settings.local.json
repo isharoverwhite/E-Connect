@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git worktree *)",
+      "Bash(git --version)",
+      "Bash(git sparse-checkout *)",
+      "Bash(git checkout *)",
+      "Bash(git push *)",
+      "Bash(gh pr *)",
+      "Bash(git fetch *)",
+      "Read(//Users/kiendinhtrung/Documents/GitHub/Final-Project/**)",
+      "Bash(git -C /Users/kiendinhtrung/Documents/GitHub/Final-Project status --short)",
+      "Bash(git -C /Users/kiendinhtrung/Documents/GitHub/Final-Project diff --stat)",
+      "Bash(sshpass -p 'Hienkhanh69' ssh -o StrictHostKeyChecking=no -o ConnectTimeout=15 -o ServerAliveInterval=5 ryzen30xx@192.168.2.230 \"echo connected && echo 'Hienkhanh69' | sudo -S /volume1/@appstore/ContainerManager/usr/bin/docker ps 2>&1 | head -20\")",
+      "Bash(git -C /Users/kiendinhtrung/Documents/GitHub/Final-Project branch --show-current)",
+      "Bash(git -C /Users/kiendinhtrung/Documents/GitHub/Final-Project checkout main)",
+      "Bash(git -C /Users/kiendinhtrung/Documents/GitHub/Final-Project pull origin main)",
+      "Bash(git -C /Users/kiendinhtrung/Documents/GitHub/Final-Project add webapp/src/app/globals.css webapp/src/app/page.tsx)",
+      "Bash(git -C /Users/kiendinhtrung/Documents/GitHub/Final-Project commit -m ' *)"
+    ]
+  }
+}

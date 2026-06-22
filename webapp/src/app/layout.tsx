@@ -11,6 +11,7 @@ import { LanguageProvider } from "@/components/LanguageContext";
 import MqttWarningBanner from "@/components/MqttWarningBanner";
 import WifiWarningBanner from "@/components/WifiWarningBanner";
 import { AppEventListener } from "@/components/AppEventListener";
+import { FaviconController } from "@/components/FaviconController";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 const fira_code = Fira_Code({ subsets: ["latin"], variable: "--font-fira-code" });
@@ -48,6 +49,7 @@ export default function RootLayout({
             <AuthProvider>
               <ToastProvider>
                 <AppEventListener />
+                <FaviconController />
                 <MqttWarningBanner />
                 <WifiWarningBanner />
                 {children}

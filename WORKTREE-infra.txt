@@ -1,0 +1,135 @@
+# =============================================================================
+# WORKTREE: infra
+# E-Connect infrastructure — Docker Compose, CI/CD, MQTT broker, deployment
+# =============================================================================
+# Contains:  Docker Compose stacks, GitHub Actions workflows, Jenkinsfile,
+#            Mosquitto MQTT broker config, helper scripts, deploy templates
+# =============================================================================
+
+================================================================================
+DOCKER COMPOSE
+================================================================================
+
+docker-compose.yml
+  Development Docker Compose stack. Defines 4 core services (db, mqtt, server,
+  webapp) plus an optional discovery_mdns profile. Server connects to MariaDB
+  and Mosquitto, exposes port 8000. Webapp runs on 3000 (HTTP) + 3443 (HTTPS)
+  with auto-generated TLS cert. All services have healthchecks. Uses local
+  Dockerfile builds (context: ./server, ./webapp, ./mqtt).
+
+docker-compose.user.yml
+  End-user self-hosted Docker Compose stack. Uses pre-built images from Docker Hub
+  (ryzen30xx/econnect-*) instead of local builds. Includes x-user-config YAML
+  anchor section for easy customization (DB passwords, secret key, HTTPS hosts/IPs,
+  timezone). Adds extension_discovery_helper service (host network, Yeelight SSDP
+  relay) and optional discovery_mdns profile for mDNS alias publication.
+  Designed for one-command deployment by end users.
+
+docker-compose.mqtt-host.yml
+  Override file for running Mosquitto on the Docker host network instead of the
+  default bridge network. Sets mqtt service to network_mode: host and adds
+  extra_hosts entries to the server container so it can reach the host-network
+  broker. Used when direct LAN MQTT access is needed.
+
+================================================================================
+CI/CD (GitHub Actions)
+================================================================================
+
+.github/workflows/ci.yml
+  Main CI pipeline triggered on push/PR to main/master. Four jobs:
+  1. repo-protection-check: runs scripts/repo_protection.py audit for copyright
+     header compliance.
+  2. webapp-check: npm ci → npm run lint → npm run build.
+  3. server-check: pip install → pytest tests/.
+  4. playwright-e2e (depends on webapp+server): installs Playwright Chromium,
+     builds webapp, runs npm run test:e2e, uploads artifacts on failure.
+
+.github/workflows/pr-checks.yml
+  PR quality gates triggered on pull_request and pull_request_target:
+  - changelog: enforces CHANGELOG.md update via changelog-enforcer.
+  - stale: auto-closes PRs after 30 days inactive + 14 days stale.
+  - maintainer-can-modify: blocks PRs that don't allow maintainer edits.
+  - npm-check: npm ci + lint in webapp.
+  - pytest-check: pip install + pytest in server.
+  - pr-bot: auto-labeler for PR categorization.
+  - socket-security: Socket.dev supply chain security scan (non-blocking).
+
+.github/workflows/end-user-images.yml
+  Docker image publishing pipeline triggered on push to main (server/**, webapp/**,
+  mqtt/** changes) or manual workflow_dispatch. Builds multi-arch images
+  (linux/amd64 + linux/arm64 via QEMU) for server, webapp, and mqtt. Pushes to
+  Docker Hub as ryzen30xx/econnect-{server,webapp,mqtt}:latest and sha-{short}.
+  Uses GitHub Actions cache for build layers.
+
+.github/dependabot.yml
+  Dependabot configuration for automated dependency updates (npm and pip).
+
+.github/labeler.yml
+  Auto-labeler rules for PRs — assigns labels based on changed file paths.
+
+================================================================================
+JENKINS CD PIPELINE
+================================================================================
+
+Jenkinsfile
+  Jenkins pipeline for multi-arch Docker image builds on main/master.
+  Stages: Checkout → Preflight (resolve branch, verify Docker Buildx) →
+  Build & Push CD (buildx build --platform linux/amd64,linux/arm64 for
+  mqtt, server, webapp → push to Docker Hub ryzen30xx). Includes post-build
+  cleanup (prune old images and build cache).
+
+================================================================================
+MQTT BROKER
+================================================================================
+
+mqtt/Dockerfile
+  Mosquitto MQTT broker Docker image. Based on eclipse-mosquitto:2, copies a
+  custom mosquitto.conf.
+
+mqtt/mosquitto.conf
+  Mosquitto MQTT broker configuration. Sets listener on port 1883, allows
+  anonymous connections (LAN-local), configures persistence, logging, and
+  maximum message sizes. Tuned for local smart home device communication.
+
+================================================================================
+SCRIPTS
+================================================================================
+
+scripts/repo_protection.py
+  Repository protection audit script. Scans all source files for the mandatory
+  copyright header ("Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.").
+  Reports files that are missing the header, have incorrect format, or contain
+  outdated copyright notices. Must pass before any Git push. Also checks for
+  license file presence and source notice compliance.
+
+scripts/run-playwright-backend.sh
+  Playwright E2E test backend launcher. Starts the FastAPI server on localhost:8000
+  using uvicorn with an SQLite test database. Sets env vars for CI-safe testing
+  (non-existent MQTT broker to avoid reconnect spam, disabled network discovery).
+  Waits for the /health endpoint to respond before signaling readiness.
+
+scripts/run-playwright-webapp.sh
+  Playwright E2E test webapp launcher. Builds the Next.js app (if not already built)
+  and starts the production server on the configured port. In CI: starts on port
+  3001 as plain HTTP (ALLOW_INSECURE_HTTP=1). Locally: uses the HTTPS proxy on
+  3443. Waits for /login to respond before signaling readiness.
+
+run-local-server-webapp.sh
+  Local development convenience script. Starts both the backend (uvicorn on :8000)
+  and frontend (npm run dev on :3443) in a single command. Handles Python venv
+  activation, npm install, and cleanup on exit.
+
+================================================================================
+DEPLOYMENT
+================================================================================
+
+deploy/user/compose.yml
+  End-user deployment compose file (distributed version). Simplified single-file
+  compose for users who download it via curl. Contains x-user-config with
+  customizable passwords/keys/hosts. Same structure as docker-compose.user.yml
+  but optimized for standalone distribution.
+
+deploy/avahi/hosts.example
+  Example Avahi mDNS host configuration for Linux servers. Shows how to publish
+  econnect.local via Avahi daemon as an alternative to the built-in zeroconf
+  Python publisher.

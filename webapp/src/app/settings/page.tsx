@@ -42,6 +42,16 @@ import { useToast } from "@/components/ToastContext";
 import { useLanguage } from "@/components/LanguageContext";
 import ConfirmModal from "@/components/ConfirmModal";
 
+function SectionDivider({ icon, label }: { icon: string; label: string }) {
+    return (
+        <div className="flex items-center gap-3 mb-5">
+            <span className="material-icons-round text-[18px] text-slate-400 dark:text-slate-500">{icon}</span>
+            <span className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{label}</span>
+            <div className="flex-1 h-px bg-slate-200 dark:bg-slate-700" />
+        </div>
+    );
+}
+
 function formatAccountTypeLabel(accountType?: string | null) {
     return accountType === "admin" ? "admin" : "user";
 }
@@ -73,7 +83,7 @@ function formatServerTimePreview(value?: string | null, timezone?: string | null
     });
 }
 
-type SettingsPanel = "general" | "apiKeys" | "users" | "rooms" | "wifi" | "configs" | "googleHome" | "security";
+type SettingsPanel = "general" | "account" | "household" | "network" | "integrations";
 type AccountType = ManagedUser["account_type"];
 type TemperatureSourceOption = {
     device_id: string;
@@ -287,7 +297,7 @@ export default function SettingsPage() {
             loadTemperatureSourceOptionsForEffect();
         }
 
-        if (activePanel === "users" || activePanel === "rooms") {
+        if (activePanel === "household") {
             loadManagedUsersForEffect();
             loadRoomsForEffect();
         }
@@ -663,10 +673,10 @@ export default function SettingsPage() {
                     <p className="text-slate-500 dark:text-slate-400 mt-1">{t("settings.description")}</p>
                 </header>
 
-                <div className="px-8 border-b border-slate-200 dark:border-slate-800 flex gap-8">
+                <div className="px-8 border-b border-slate-200 dark:border-slate-800 flex gap-8 overflow-x-auto">
                     <button
                         onClick={() => setActivePanel("general")}
-                        className={`py-4 text-sm font-semibold transition-colors ${
+                        className={`py-4 text-sm font-semibold transition-colors whitespace-nowrap ${
                             activePanel === "general"
                                 ? "border-b-[3px] border-primary text-primary"
                                 : "text-slate-500 hover:text-primary dark:text-slate-400"
@@ -675,82 +685,48 @@ export default function SettingsPage() {
                         {t("settings.tabs.general")}
                     </button>
                     <button
-                        onClick={() => setActivePanel("apiKeys")}
-                        className={`py-4 text-sm font-semibold transition-colors ${
-                            activePanel === "apiKeys"
+                        onClick={() => setActivePanel("account")}
+                        className={`py-4 text-sm font-semibold transition-colors whitespace-nowrap ${
+                            activePanel === "account"
                                 ? "border-b-[3px] border-primary text-primary"
                                 : "text-slate-500 hover:text-primary dark:text-slate-400"
                         }`}
                     >
-                        {t("settings.tabs.apiKeys")}
+                        {t("settings.tabs.account")}
                     </button>
                     {isAdmin ? (
                         <button
-                            onClick={() => setActivePanel("users")}
-                            className={`py-4 text-sm font-semibold transition-colors ${
-                                activePanel === "users"
+                            onClick={() => setActivePanel("household")}
+                            className={`py-4 text-sm font-semibold transition-colors whitespace-nowrap ${
+                                activePanel === "household"
                                     ? "border-b-[3px] border-primary text-primary"
                                     : "text-slate-500 hover:text-primary dark:text-slate-400"
                             }`}
                         >
-                            {t("settings.tabs.users")}
+                            {t("settings.tabs.household")}
                         </button>
                     ) : null}
                     {isAdmin ? (
                         <button
-                            onClick={() => setActivePanel("rooms")}
-                            className={`py-4 text-sm font-semibold transition-colors ${
-                                activePanel === "rooms"
+                            onClick={() => setActivePanel("network")}
+                            className={`py-4 text-sm font-semibold transition-colors whitespace-nowrap ${
+                                activePanel === "network"
                                     ? "border-b-[3px] border-primary text-primary"
                                     : "text-slate-500 hover:text-primary dark:text-slate-400"
                             }`}
                         >
-                            {t("settings.tabs.rooms")}
-                        </button>
-                    ) : null}
-                    {isAdmin ? (
-                        <button
-                            onClick={() => setActivePanel("configs")}
-                            className={`py-4 text-sm font-semibold transition-colors ${
-                                activePanel === "configs"
-                                    ? "border-b-[3px] border-primary text-primary"
-                                    : "text-slate-500 hover:text-primary dark:text-slate-400"
-                            }`}
-                        >
-                            {t("settings.tabs.configs")}
-                        </button>
-                    ) : null}
-                    {isAdmin ? (
-                        <button
-                            onClick={() => setActivePanel("wifi")}
-                            className={`py-4 text-sm font-semibold transition-colors ${
-                                activePanel === "wifi"
-                                    ? "border-b-[3px] border-primary text-primary"
-                                    : "text-slate-500 hover:text-primary dark:text-slate-400"
-                            }`}
-                        >
-                            {t("settings.tabs.wifi")}
+                            {t("settings.tabs.network")}
                         </button>
                     ) : null}
                     <button
-                        onClick={() => setActivePanel("googleHome")}
-                        className={`py-4 text-sm font-semibold transition-colors ${
-                            activePanel === "googleHome"
+                        onClick={() => setActivePanel("integrations")}
+                        className={`py-4 text-sm font-semibold transition-colors whitespace-nowrap ${
+                            activePanel === "integrations"
                                 ? "border-b-[3px] border-primary text-primary"
                                 : "text-slate-500 hover:text-primary dark:text-slate-400"
                         }`}
                     >
-                        {t("google_home.title")}
-                    </button>
-                    <button
-                        onClick={() => setActivePanel("security")}
-                        className={`py-4 text-sm font-semibold transition-colors ${
-                            activePanel === "security"
-                                ? "border-b-[3px] border-primary text-primary"
-                                : "text-slate-500 hover:text-primary dark:text-slate-400"
-                        }`}
-                    >
-                        {t("settings.tabs.security")}
+                        {t("settings.tabs.integrations")}
                     </button>
                 </div>
 
@@ -1024,13 +1000,23 @@ export default function SettingsPage() {
                             </div>
                         ) : null}
 
-                        {activePanel === "apiKeys" ? (
-                            <ApiKeysPanel timezone={generalSettings?.effective_timezone ?? null} />
+                        {activePanel === "account" ? (
+                            <div className="space-y-10">
+                                <div>
+                                    <SectionDivider icon="shield" label={t("settings.section.security")} />
+                                    <TwoFactorPanel />
+                                </div>
+                                <div>
+                                    <SectionDivider icon="vpn_key" label={t("settings.section.api_keys")} />
+                                    <ApiKeysPanel timezone={generalSettings?.effective_timezone ?? null} />
+                                </div>
+                            </div>
                         ) : null}
 
-                        {activePanel === "users" ? (
+                        {activePanel === "household" ? (
                             isAdmin ? (
                                 <div className="space-y-10">
+                                    <SectionDivider icon="group" label={t("settings.section.users")} />
                                     <section className="max-w-5xl">
                                         <div className="flex justify-between items-start mb-6">
                                             <div>
@@ -1238,9 +1224,10 @@ export default function SettingsPage() {
                             )
                         ) : null}
 
-                        {activePanel === "rooms" ? (
+                        {activePanel === "household" ? (
                             isAdmin ? (
                                 <div className="space-y-6">
+                                    <SectionDivider icon="location_on" label={t("settings.section.areas")} />
                                     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-700 dark:bg-surface-dark">
                                         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                                             <div>
@@ -1503,20 +1490,33 @@ export default function SettingsPage() {
                             )
                         ) : null}
 
-                        {activePanel === "configs" ? (
-                            <ConfigsPanel timezone={generalSettings?.effective_timezone ?? null} />
+                        {activePanel === "network" ? (
+                            isAdmin ? (
+                                <div className="space-y-10">
+                                    <div>
+                                        <SectionDivider icon="wifi" label={t("settings.section.wifi")} />
+                                        <WifiCredentialsPanel timezone={generalSettings?.effective_timezone ?? null} />
+                                    </div>
+                                    <div>
+                                        <SectionDivider icon="settings_applications" label={t("settings.section.configs")} />
+                                        <ConfigsPanel timezone={generalSettings?.effective_timezone ?? null} />
+                                    </div>
+                                </div>
+                            ) : (
+                                <section className="rounded-3xl border border-slate-200 bg-white p-10 text-center shadow-sm dark:border-slate-700 dark:bg-surface-dark">
+                                    <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300">
+                                        <span className="material-icons-round text-4xl">admin_panel_settings</span>
+                                    </div>
+                                    <h2 className="mt-5 text-2xl font-semibold text-slate-900 dark:text-white">{t("settings.users.admin_req.title")}</h2>
+                                    <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-500 dark:text-slate-400">
+                                        {t("settings.users.admin_req.desc")}
+                                    </p>
+                                </section>
+                            )
                         ) : null}
 
-                        {activePanel === "wifi" ? (
-                            <WifiCredentialsPanel timezone={generalSettings?.effective_timezone ?? null} />
-                        ) : null}
-
-                        {activePanel === "googleHome" ? (
+                        {activePanel === "integrations" ? (
                             <GoogleHomePanel />
-                        ) : null}
-
-                        {activePanel === "security" ? (
-                            <TwoFactorPanel />
                         ) : null}
                     </div>
                 </div>

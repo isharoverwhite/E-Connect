@@ -44,7 +44,7 @@ from .models import (
     DeviceHistoryCreate, DeviceHistoryResponse,
     SystemLogAcknowledgeResponse, SystemLogListResponse, SystemLogResponse, SystemStatusResponse,
     FirmwareTemplateStatusResponse,
-    CurrentWeatherResponse, GeneralSettingsResponse, GeneralSettingsUpdate, HouseholdLocationCreate, HouseholdLocationResponse,
+    CurrentWeatherResponse, DailyForecastDay, GeneralSettingsResponse, GeneralSettingsUpdate, HouseholdLocationCreate, HouseholdLocationResponse,
     HouseTemperatureResponse,
     FirmwareResponse, DeviceMode, AccountType, EventType,
     RoomAccessUpdate, RoomUpdate, RoomCreate, RoomResponse, GenerateConfigRequest, GenerateConfigResponse,
@@ -176,7 +176,7 @@ from .services.automation_devices import (
     serialize_external_device_automation_pins,
 )
 from .services.command_ordering import command_ordering_manager
-from .services.weather import WeatherProviderError, fetch_current_weather_for_location
+from .services.weather import WeatherProviderError, fetch_current_weather_for_location, fetch_wttr_weather_for_location, fetch_metar_for_location, fetch_daily_forecast_for_location
 from .deps import (
     oauth2_scheme,
     _utcnow_naive,
@@ -3500,11 +3500,25 @@ def get_current_weather(
             detail={"error": "weather_provider_unavailable", "message": str(exc)},
         ) from exc
 
+    wttr = fetch_wttr_weather_for_location(location.latitude, location.longitude)
+    metar = fetch_metar_for_location(location.latitude, location.longitude)
+    daily_raw = fetch_daily_forecast_for_location(location.latitude, location.longitude)
+
     return CurrentWeatherResponse(
         **weather_payload,
         location_name=location.label or household.name,
         latitude=location.latitude,
         longitude=location.longitude,
+        secondary_description=wttr["description"] if wttr else None,
+        secondary_icon=wttr["icon"] if wttr else None,
+        secondary_temperature=wttr["temperature"] if wttr else None,
+        secondary_source="wttr.in" if wttr else None,
+        metar_temperature=metar["temperature"] if metar else None,
+        metar_description=metar["description"] if metar else None,
+        metar_icon=metar["icon"] if metar else None,
+        metar_source=metar["source"] if metar else None,
+        metar_observed_at=metar["observed_at"] if metar else None,
+        daily_forecast=[DailyForecastDay(**d) for d in daily_raw] if daily_raw else None,
     )
 
 

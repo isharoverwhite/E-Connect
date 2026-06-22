@@ -1,0 +1,366 @@
+# =============================================================================
+# WORKTREE: server
+# E-Connect backend — FastAPI application, services, tests, build pipeline
+# =============================================================================
+# Path:       server/
+# Language:   Python 3.11
+# Framework:  FastAPI + SQLAlchemy + Paho MQTT + PlatformIO
+# Port:       8000
+# Entry:      main.py → uvicorn main:app
+# =============================================================================
+
+================================================================================
+SERVER ROOT
+================================================================================
+
+server/main.py
+  FastAPI application entry point. Defines the app, CORS middleware, lifespan
+  startup/shutdown (7 async watchdogs for device sweep, metrics, network refresh,
+  log pruning, automation triggers, firmware updates, external device polling),
+  root route (→ redirects to WebUI), /health endpoint, /web-assistant.js JSONP
+  endpoint, /discovery-bridge for LAN discovery, and static file mount.
+
+server/requirements.txt
+  Production Python dependencies: fastapi, uvicorn, pydantic, sqlalchemy,
+  pymysql, passlib[bcrypt], python-jose (JWT), paho-mqtt>=2.0.0, platformio,
+  zeroconf (mDNS), psutil (system metrics).
+
+server/requirements-dev.txt
+  Dev dependencies: includes requirements.txt plus pytest and httpx for testing.
+
+server/Dockerfile
+  Multi-arch (ARM64 + AMD64) Docker build with 3 stages: base (deps install),
+  test (runs pytest), runtime (production image). Sets up PlatformIO cache dirs
+  and /data volume.
+
+server/.dockerignore
+  Files excluded from Docker build context (pycache, .git, venv, etc.).
+
+server/.gitignore
+  Git ignores for Python (__pycache__, *.pyc, .env, build artifacts).
+
+================================================================================
+SERVER APP (server/app/)
+================================================================================
+
+server/app/__init__.py
+  Package init — makes server/app a Python package.
+
+server/app/api.py                                          (~6400 lines)
+  Single monolithic API router mounted at /api/v1. Contains all REST endpoints:
+  auth (login, token, refresh, initial server setup), device CRUD, device
+  approval/rejection, device commands, DIY project config generation + build,
+  firmware artifact serving, automation CRUD + trigger, Wi-Fi credential vault,
+  user management, room/household management, extension install/uninstall,
+  external device management, system logs, serial session, WebSocket endpoint,
+  system status, weather, general settings, OTA update. Every endpoint carries
+  role-based access guards and validation at the boundary.
+
+server/app/auth.py
+  JWT authentication module. Token creation (access + refresh), password hashing
+  with bcrypt, OAuth2 bearer scheme, API key authentication, token verification
+  and decoding, role extraction from tokens.
+
+server/app/database.py
+  SQLAlchemy database setup. Creates engine and SessionLocal from DATABASE_URL
+  env var, provides get_db dependency for FastAPI, initialize_database() for
+  first-run table creation, check_database_connection() for health checks.
+  Test suite overrides via dependency_overrides to use SQLite in-memory.
+
+server/app/models.py
+  Pydantic request/response models for the entire API surface: user,
+  device, automation, DIY project, build job, Wi-Fi credential, room,
+  household, extension, external device, system log, weather, API key,
+  serial session, OTA, firmware template.
+
+server/app/sql_models.py
+  SQLAlchemy ORM models mapping to MariaDB tables: User, Device, Automation,
+  DeviceHistory, Room, Household, HouseholdMembership, DiyProject,
+  DiyProjectConfig, BuildJob, SerialSession, WifiCredential, SystemLog,
+  InstalledExtension, ExternalDevice, ApiKey, HouseholdLocation,
+  AutomationExecutionLog, BackupArchive, RoomPermission.
+
+server/app/mqtt.py
+  MQTT client manager (Paho MQTT v2). Connects to broker, subscribes to device
+  state topics, publishes commands. Handles device pairing (handshake → pending →
+  approved), OTA flashing reconciliation, command ordering, automation state
+  event dispatch, device state prediction (optimistic updates before device ACK),
+  stale online-device expiration.
+
+server/app/ws_manager.py
+  WebSocket connection manager. Broadcasts real-time events to connected WebUI
+  clients: device state changes, build job progress, system metrics, serial
+  monitor output, MQTT connection status. Used by dashboard for live updates.
+
+server/app/runtime_timestamps.py
+  Timestamp normalization utilities. Converts build job timestamps and device
+  state timestamps to UTC-naive format for consistent DB storage.
+
+server/app/data/wikipedia_timezones.json
+  Timezone database mapping (tz identifiers → UTC offsets, region names).
+  Used for server timezone settings.
+
+================================================================================
+SERVER SERVICES (server/app/services/)
+================================================================================
+
+server/app/services/__init__.py
+  Package init for services.
+
+server/app/services/builder.py
+  Server-side PlatformIO firmware build pipeline. Takes a DIY project config
+  (board, pin map, Wi-Fi credential, capabilities), generates an Arduino sketch,
+  invokes PlatformIO to compile, stores build artifacts (.bin files) to disk,
+  tracks job state (queued → building → artifact_ready / build_failed).
+  Also handles runtime firmware network target resolution (auto-detect LAN IP
+  for provisioning), firmware template release refresh, and webapp transport
+  resolution (HTTP vs HTTPS).
+
+server/app/services/device_registration.py
+  Device handshake and pairing payload builders. Constructs pairing request
+  events for the WebUI (device asks to join), generates registration ACK
+  payloads sent back to approved devices via MQTT. Also builds rejection
+  notification payloads.
+
+server/app/services/diy_validation.py
+  DIY project config validation. Checks GPIO pin conflicts (reserved pins,
+  I2C/SPI bus conflicts, boot-sensitive pins), validates pin mode/capability
+  compatibility, resolves board definitions (ESP32 family variants), validates
+  I2C device library selections.
+
+server/app/services/automation_runtime.py
+  Automation rule engine. Evaluates saved automation graphs (trigger → condition
+  → action) when device state events arrive via MQTT or time triggers fire.
+  Walks the graph nodes, evaluates conditions against current device state,
+  dispatches action commands via MQTT, records execution logs.
+
+server/app/services/automation_devices.py
+  External device automation command dispatcher. Bridges automation action
+  commands to external device runtimes (e.g., Yeelight lights) — validates
+  commands, executes via the extension/external runtime, and records results.
+
+server/app/services/extensions.py
+  Extension package management. Validates uploaded ZIP archives (manifest.json
+  schema check, capability declarations, Python hook files), extracts to
+  data/extensions/, enforces size limits and naming conventions. Defines
+  supported card types (light, switch, fan, sensor) and their capabilities.
+
+server/app/services/extension_runtime_loader.py
+  Dynamically loads installed extension Python modules at runtime. Resolves
+  hook functions (validate_command, execute_command, probe_state) from extension
+  packages, handles import errors and missing hooks gracefully.
+
+server/app/services/extension_runtime_api.py
+  Runtime API surface exposed to extension Python code. Defines the contract
+  extensions must follow: error types, validation interfaces, command execution
+  interfaces, state probing interfaces.
+
+server/app/services/external_runtime.py
+  Built-in external device drivers (no extension needed). Implements Yeelight
+  SSDP discovery (multicast scan on 239.255.255.250:1982), Yeelight TCP command
+  protocol (power, brightness, RGB, color temperature), session management,
+  and reconciliation (poll actual device state after command). Also provides
+  a discovery helper service for Docker bridge network traversal.
+
+server/app/services/firmware_template_repo.py
+  Firmware template release manager. Downloads and caches the Arduino/PlatformIO
+  firmware template from a remote Git repository (tar.gz archive), tracks
+  release tags and revisions, provides auto-update polling with configurable
+  interval, emits system log notifications on new releases.
+
+server/app/services/i2c_registry.py
+  I2C device library registry. Maps I2C device names (e.g., "BME280", "SSD1306")
+  to PlatformIO library identifiers, pin requirements, and configuration
+  templates. Used by the DIY builder to validate I2C pin assignments.
+
+server/app/services/mdns.py
+  Multicast DNS (mDNS) publisher using zeroconf. Publishes econnect.local alias
+  with discovery service (_http._tcp on port 8000) and WebUI service
+  (_https._tcp on port 3443). Resolves registration config from env vars or
+  runtime network state.
+
+server/app/services/provisioning.py
+  Firmware identity and secret management. Extracts project secrets from DIY
+  build payloads, generates firmware identity strings (board + version hash),
+  used during device handshake to verify a device was built by this server.
+
+server/app/services/system_logs.py
+  Structured system logging. Creates log entries with event codes, severity
+  levels (info/warning/error/critical), categories (health, auth, device,
+  firmware, automation, extension, system), and optional JSON details.
+  Prunes expired logs based on retention policy. Records server startup/shutdown.
+
+server/app/services/system_metrics.py
+  System health metrics collection via psutil. Gathers CPU usage (per-core +
+  overall), memory usage (total/available/used/percent), disk usage for /data
+  and /hostfs volumes, uptime. Published every second via WebSocket broadcast.
+
+server/app/services/timezone_settings.py
+  Server timezone resolution. Applies effective timezone from household settings
+  or falls back to TZ env var / system default. Loads Wikipedia timezone data
+  for the timezone selector UI.
+
+server/app/services/user_management.py
+  Admin-only user CRUD operations. Create/delete managed users, change roles,
+  enforce household membership boundaries. Validates that only admins can
+  manage users and non-admin users cannot escalate privileges.
+
+server/app/services/weather.py
+  External weather data integration. Fetches current weather from a remote API
+  for the configured household location, caches results, provides temperature,
+  humidity, and conditions for automation rule conditions.
+
+server/app/services/command_ordering.py
+  Per-device command sequencing. Assigns monotonically increasing sequence
+  numbers to commands for the same device, tracks superseded commands, prevents
+  race conditions when multiple commands are issued rapidly. Thread-safe.
+
+================================================================================
+SERVER SCRIPTS (server/scripts/)
+================================================================================
+
+server/scripts/__init__.py
+  Package init for scripts.
+
+server/scripts/publish_mdns_alias.py
+  Standalone mDNS alias publisher. Runs in a separate Docker container
+  (discovery_mdns service profile) with host network mode. Publishes
+  econnect.local via zeroconf so LAN devices can discover the server.
+
+server/scripts/yeelight_discovery_helper.py
+  Yeelight SSDP discovery helper. Runs in a host-network container to receive
+  Yeelight multicast discovery replies (which don't cross Docker bridge).
+  Exposes discovered devices via HTTP to the main server container.
+
+================================================================================
+SERVER TESTS (server/tests/)
+================================================================================
+
+server/tests/conftest.py
+  Pytest configuration. Adds the server root directory to sys.path so test
+  modules can import from app.* and main.
+
+server/tests/test_auth.py
+  Authentication tests: login, token refresh, initial server setup, password
+  validation, role guards, token expiration.
+
+server/tests/test_api_keys.py
+  API key CRUD tests: create, list, revoke API keys; authenticate requests
+  using API key headers; role-based access control for key management.
+
+server/tests/test_automation.py
+  Automation rule engine tests: create/update/delete automation graphs,
+  trigger execution, condition evaluation, action dispatch, execution log
+  verification, invalid graph rejection.
+
+server/tests/test_database_config.py
+  Database configuration and lifecycle tests: table initialization, migration
+  behavior, schema verification, config history CRUD, data integrity.
+
+server/tests/test_device_heartbeat.py
+  Device heartbeat and online status tests: last_seen updates, stale device
+  detection, offline transition, heartbeat timeout behavior.
+
+server/tests/test_diy_api.py
+  DIY project API tests: project CRUD, pin mapping validation, config generation,
+  build job creation, artifact retrieval, board profile resolution.
+
+server/tests/test_diy_ota_config.py        (largest test file, ~123KB)
+  DIY OTA and device configuration tests: full build→flash lifecycle,
+  Wi-Fi credential assignment, managed device reconfiguration, OTA update
+  flow, serial session coordination, artifact serving.
+
+server/tests/test_extensions_api.py
+  Extension management tests: upload/extract/validate extension ZIPs, install
+  and uninstall, capability manifest validation, external device provisioning
+  with extension runtimes.
+
+server/tests/test_firmware_runtime_network.py
+  Runtime network target resolution tests: auto-detect LAN IP, firmware
+  template network state, advertised host resolution.
+
+server/tests/test_firmware_template_repo.py
+  Firmware template repository tests: release download, version tracking,
+  auto-update polling, cache management.
+
+server/tests/test_general_settings.py
+  General settings tests: household location, timezone, language preferences,
+  server configuration endpoints.
+
+server/tests/test_mdns.py
+  mDNS publisher tests: hostname normalization, address validation,
+  registration config resolution.
+
+server/tests/test_mqtt_scheduling.py
+  MQTT command scheduling tests: publish ordering, sequence numbers,
+  superseded command tracking, command acknowledgment flow.
+
+server/tests/test_reject_semantics.py
+  Device rejection semantics tests: reject payload format, rejection
+  notification, device state after rejection.
+
+server/tests/test_room_access.py
+  Room/permission access control tests: room CRUD, room-device assignment,
+  room-based visibility filtering, permission inheritance.
+
+server/tests/test_root_route.py
+  Root route and discovery endpoint tests: / → WebUI redirect, /health
+  response, /web-assistant.js JSONP, /discovery-bridge HTML page.
+
+server/tests/test_system_logs.py
+  System log tests: log creation with categories/severity, log retrieval
+  and filtering, retention pruning, startup/shutdown event recording.
+
+server/tests/test_system_metrics.py
+  System metrics tests: CPU/memory/disk collection, WebSocket broadcast
+  format verification.
+
+server/tests/test_ws_manager.py
+  WebSocket manager tests: connection lifecycle, broadcast to subscribers,
+  event type routing, disconnection handling.
+
+-----------------------------------------------------------------------
+TEST FIXTURES
+-----------------------------------------------------------------------
+
+server/tests/fixtures/MultiCard_control/main.py
+  Multi-card extension fixture entry point — registers the extension.
+
+server/tests/fixtures/MultiCard_control/manifest.json
+  Extension manifest declaring metadata and hooks for the multi-card test fixture.
+
+server/tests/fixtures/MultiCard_control/multicard_control.py
+  Multi-card device control logic: implements validate_command, execute_command,
+  probe_state for a device with multiple control cards.
+
+server/tests/fixtures/Yeelight_control/main.py
+  Yeelight extension fixture entry point — registers the Yeelight driver.
+
+server/tests/fixtures/Yeelight_control/manifest.json
+  Extension manifest declaring metadata and hooks for the Yeelight test fixture.
+
+server/tests/fixtures/Yeelight_control/yeelight_control.py
+  Yeelight control runtime: implements validate_command, execute_command,
+  probe_state for Yeelight-compatible bulbs.
+
+-----------------------------------------------------------------------
+MANUAL TEST SCRIPTS
+-----------------------------------------------------------------------
+
+server/tests/manual/fake_board/harness.py
+  Hardware test harness for a fake/emulated board. Simulates device handshake,
+  MQTT state reporting, and command acknowledgment for integration testing.
+
+server/tests/manual/fake_board/README.md
+  Instructions for running the fake board hardware test harness.
+
+server/tests/manual/fake_board/APP_BEHAVIOR_FAKE_BOARD_JITTER.md
+  Notes on jitter/timing behavior of the fake board emulation.
+
+server/tests/manual/firmware/read_serial_esp32.py
+  Serial port reader script for ESP32 firmware debugging — reads serial output
+  from a connected ESP32 board.
+
+server/tests/manual/firmware/read_serial_esp8266.py
+  Serial port reader script for ESP8266 firmware debugging — reads serial output
+  from a connected ESP8266 board.

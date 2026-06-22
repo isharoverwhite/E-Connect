@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+pydantic
+certifi
+python-multipart
+sqlalchemy
+pymysql
+python-dotenv
+passlib[bcrypt]
+python-jose
+paho-mqtt>=2.0.0
+platformio
+zeroconf
+psutil

@@ -62,6 +62,7 @@ services:
       MDNS_DISCOVERY_PORT: ${MDNS_DISCOVERY_PORT:-8000}
       MDNS_WEBAPP_PORT: ${MDNS_WEBAPP_PORT:-3443}
       HOST_OS_ROOT: /hostfs
+      EXTENSIONS_DATA_DIR: /data/extensions
     volumes:
       - server_data:/data
       # To monitor the real host's storage limits from the System Health dashboard, uncomment the line below.
@@ -77,10 +78,10 @@ services:
         - CMD
         - python
         - -c
-        - import json, urllib.request; data = json.loads(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5).read().decode()); assert data.get("status") == "ok"
-      interval: 5s
+        - import urllib.request; urllib.request.urlopen("http://127.0.0.1:8000/livez", timeout=3)
+      interval: 10s
       timeout: 5s
-      retries: 24
+      retries: 12
       start_period: 5s
 
   webapp:

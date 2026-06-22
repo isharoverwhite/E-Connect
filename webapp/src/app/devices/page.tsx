@@ -21,6 +21,7 @@ import { fetchRooms, RoomRecord } from "@/lib/rooms";
 import { rebuildFirmware, fetchDevice } from "@/lib/api";
 import { OtaUpdateModal } from "@/components/OtaUpdateModal";
 import { useOtaUpdate } from "@/hooks/useOtaUpdate";
+import { FleetOtaPanel } from "@/components/FleetOtaPanel";
 
 
 function readTrimmedString(value: unknown): string | null {
@@ -89,6 +90,7 @@ export default function DevicesPage() {
     const [passwordError, setPasswordError] = useState<string | null>(null);
     const [isRebuilding, setIsRebuilding] = useState(false);
     const [isScanModalOpen, setIsScanModalOpen] = useState(false);
+    const [isFleetOtaOpen, setIsFleetOtaOpen] = useState(false);
     
     const isAdmin = user?.account_type === "admin";
     const primaryActionButtonClassName =
@@ -634,6 +636,13 @@ export default function DevicesPage() {
                 />
             )}
 
+            {isAdmin && isFleetOtaOpen && (
+                <FleetOtaPanel
+                    devices={filteredDevices as DeviceConfig[]}
+                    onClose={() => setIsFleetOtaOpen(false)}
+                />
+            )}
+
             {passwordModal.isOpen && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
                     <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity dark:bg-slate-950/60" onClick={() => !isRebuilding && setPasswordModal({ isOpen: false, deviceId: null, deviceName: null })}></div>
@@ -719,6 +728,15 @@ export default function DevicesPage() {
                                     <span className="hidden sm:inline">{t("devices.btn_create_new")}</span>
                                     <span className="sm:hidden">{t("devices.btn_create")}</span>
                                 </Link>
+                                <button
+                                    type="button"
+                                    onClick={() => setIsFleetOtaOpen(true)}
+                                    className={`${secondaryActionButtonClassName} !min-h-9 !py-1.5`}
+                                    title="Fleet OTA — push firmware to multiple devices"
+                                >
+                                    <span className="material-icons-round text-sm">system_update_alt</span>
+                                    <span className="hidden sm:inline">Fleet OTA</span>
+                                </button>
                                 <button
                                     type="button"
                                     onClick={() => setIsScanModalOpen(true)}

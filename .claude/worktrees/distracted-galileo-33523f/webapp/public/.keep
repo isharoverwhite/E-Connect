@@ -1,0 +1,1 @@
+# Keep this directory tracked so Docker release builds can always copy /app/public.

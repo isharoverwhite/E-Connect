@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git worktree *)",
+      "Bash(git --version)",
+      "Bash(git sparse-checkout *)",
+      "Bash(git checkout *)",
+      "Bash(git push *)",
+      "Bash(open -a Docker)",
+      "Bash(docker info *)",
+      "Bash(docker compose up *)",
+      "Bash(curl -s http://localhost:8000/api/v1/setup/status)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s http://localhost:8000/openapi.json)",
+      "Bash(python3 -c ' *)",
+      "Bash(curl -s http://localhost:8000/api/v1/auth/initialserver)",
+      "Bash(docker exec e-connect-db *)",
+      "Bash(open \"http://localhost:3000\")",
+      "Bash(sshpass *)",
+      "Bash(tar czf *)",
+      "Bash(tee /tmp/nas-webapp-build.log)",
+      "Bash(tee /tmp/nas-webapp-build2.log)",
+      "Bash(python -m pytest tests/ -x -q)",
+      "Bash(npm run *)",
+      "Bash(COPYFILE_DISABLE=1 tar czf /tmp/econnect-webapp-src.tar.gz --exclude=webapp/node_modules --exclude=webapp/.next --exclude=webapp/.local-https -C /Users/kiendinhtrung/Documents/GitHub/Final-Project webapp/)"
+    ]
+  }
+}

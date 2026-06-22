@@ -1,0 +1,11 @@
+# Copyright (c) 2026 Đinh Trung Kiên. All rights reserved.
+
+services:
+  mqtt:
+    network_mode: host
+    ports: !reset []
+
+  server:
+    extra_hosts:
+      - "mqtt:host-gateway"
+      - "host.docker.internal:host-gateway"

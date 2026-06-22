@@ -1,0 +1,2335 @@
+/* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
+
+"use client";
+
+import { useLanguage } from "@/components/LanguageContext";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useAuth } from "@/components/AuthProvider";
+import { useToast } from "@/components/ToastContext";
+import { getToken, removeToken } from "@/lib/auth";
+import { API_URL, fetchServerTimeContext, type ServerTimeContextResponse } from "@/lib/api";
+import { createRoom, fetchRooms, type RoomRecord } from "@/lib/rooms";
+import { buildProvisioningHeaders } from "@/lib/secure-origin";
+import { fetchWifiCredentials, type WifiCredentialRecord } from "@/lib/wifi-credentials";
+import {
+  BOARD_PROFILES,
+  MODE_METADATA,
+  getBoardProfile,
+  type BoardProfile,
+  type ChipFamily,
+} from "@/features/diy/board-profiles";
+import { resolveProjectBoardProfileId } from "@/features/diy/project-board";
+import {
+  type BuildJobStatus,
+  type FlashSource,
+  type PinMapping,
+  type ProjectSyncState,
+  type ServerBuildState,
+  type ValidationResult,
+  sanitizePins,
+} from "@/features/diy/types";
+import { Step1Board } from "@/features/diy/components/Step1Board";
+import { Step2Configs, type SavedBoardConfigOption } from "@/features/diy/components/Step2Configs";
+import { Step2Pins } from "@/features/diy/components/Step2Pins";
+import { Step3Validate } from "@/features/diy/components/Step3Validate";
+import { Step4Flash } from "@/features/diy/components/Step4Flash";
+import { boardRequiresFullFlashBundle, buildFlashManifest } from "@/features/diy/flash-manifest";
+import { validatePinMappings } from "@/features/diy/validation";
+import PromptModal from "@/components/PromptModal";
+const FLASHER_SCRIPT =
+  "https://unpkg.com/esp-web-tools@10.1.0/dist/web/install-button.js?module";
+const DEFAULT_BOARD_ID = "dfrobot-beetle-esp32-c3";
+const DEFAULT_SERIAL_PORT = "browser-web-serial";
+const BUILD_POLL_INTERVAL_MS = 2000;
+const WIZARD_STEPS = [
+  { id: 1, label: "Boards" },
+  { id: 2, label: "Configs" },
+  { id: 3, label: "Pins" },
+  { id: 4, label: "Review" },
+  { id: 5, label: "Flash" },
+] as const;
+const TERMINAL_BUILD_STATES = new Set<BuildJobStatus>([
+  "artifact_ready",
+  "flashed",
+  "build_failed",
+  "flash_failed",
+  "cancelled",
+]);
+const POLLING_BUILD_STATES = new Set<BuildJobStatus>([
+  "draft_config",
+  "validated",
+  "queued",
+  "building",
+  "flashing",
+]);
+const ACTIVE_BUILD_STATES = new Set<BuildJobStatus>([
+  "queued",
+  "building",
+  "flashing",
+]);
+
+interface DiyProjectRecord {
+  id: string;
+  user_id: number;
+  room_id?: number | null;
+  wifi_credential_id?: number | null;
+  name: string;
+  board_profile: string;
+  config?: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BuildJobRecord {
+  id: string;
+  project_id: string;
+  status: BuildJobStatus;
+  artifact_path?: string | null;
+  log_path?: string | null;
+  finished_at?: string | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+interface BuildLogsRecord {
+  logs: string;
+}
+
+interface FirmwareNetworkTargetRecord {
+  advertised_host: string;
+  api_base_url: string;
+  mqtt_broker: string;
+  mqtt_port: number;
+  target_key: string;
+  warning?: string | null;
+  stale_project_count?: number;
+  stale_device_count?: number;
+}
+
+type ServerArtifactKind = "firmware" | "bootloader" | "partitions" | "boot_app0";
+
+interface SerialStatusRecord {
+  locked: boolean;
+  port: string;
+  device_id?: string | null;
+  user_id?: number | null;
+  job_id?: string | null;
+}
+
+type BrowserSerialPortHandle = {
+  close?: () => Promise<void>;
+};
+
+type BrowserSerialApi = {
+  getPorts?: () => Promise<BrowserSerialPortHandle[]>;
+};
+
+type BrowserSerialNavigator = Navigator & {
+  serial?: BrowserSerialApi;
+};
+
+type EspWebInstallButtonElement = HTMLElement & {
+  shadowRoot: ShadowRoot | null;
+};
+
+type EspWebInstallDialogElement = HTMLElement & {
+  _closeDialog?: () => void;
+  port?: BrowserSerialPortHandle;
+};
+
+function createEmptyBuildState(): ServerBuildState {
+  return {
+    jobId: null,
+    status: "idle",
+    logs: "",
+    error: null,
+    warnings: [],
+    artifactUrl: null,
+    artifactName: null,
+    bootloaderUrl: null,
+    partitionsUrl: null,
+    bootApp0Url: null,
+    configKey: null,
+    updatedAt: null,
+    finishedAt: null,
+    errorMessage: null,
+  };
+}
+
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : "Unexpected request failure.";
+}
+
+class ApiRequestError extends Error {
+  status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiRequestError";
+    this.status = status;
+  }
+}
+
+async function parseApiError(response: Response) {
+  const fallback = `Request failed with HTTP ${response.status}`;
+
+  try {
+    const payload = (await response.json()) as
+      | { detail?: string | { error?: string; message?: string; messages?: string[] } }
+      | { error?: string; message?: string; messages?: string[] };
+
+    if ("detail" in payload && typeof payload.detail === "string") {
+      return payload.detail;
+    }
+
+    const candidate = "detail" in payload ? payload.detail : payload;
+    if (!candidate || typeof candidate === "string") {
+      return candidate || fallback;
+    }
+
+    if ("messages" in candidate && Array.isArray(candidate.messages) && candidate.messages.length > 0) {
+      return candidate.messages.join(" ");
+    }
+
+    if ("message" in candidate && candidate.message) {
+      return candidate.message;
+    }
+
+    if ("error" in candidate && candidate.error) {
+      return candidate.error;
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
+}
+
+async function createApiRequestError(response: Response) {
+  return new ApiRequestError(response.status, await parseApiError(response));
+}
+
+function isAuthApiRequestError(error: unknown): error is ApiRequestError {
+  return error instanceof ApiRequestError && (error.status === 401 || error.status === 403);
+}
+
+function buildConfigKey({
+  boardId,
+  projectName,
+  roomId,
+  wifiCredentialId,
+  wifiCredentialVersion,
+  pins,
+  cpuMhz,
+  flashSize,
+  psramSize,
+  networkTargetKey,
+  }: {
+  boardId: string;
+  projectName: string;
+  roomId: number | null;
+  wifiCredentialId: number | null;
+  wifiCredentialVersion: string | null;
+  pins: PinMapping[];
+  cpuMhz: number | null;
+  flashSize: string | null;
+  psramSize: string | null;
+  networkTargetKey: string;
+  }) {
+  return JSON.stringify({
+    boardId,
+    cpuMhz,
+    flashSize,
+    networkTargetKey,
+    psramSize,
+    projectName: projectName.trim(),
+    roomId,
+    wifiCredentialId,
+    wifiCredentialVersion,
+    pins: pins.map((mapping) => ({
+      gpio_pin: mapping.gpio_pin,
+      mode: mapping.mode,
+      function: mapping.function ?? "",
+      label: mapping.label ?? "",
+      extra_params: mapping.extra_params ?? undefined,
+    })),
+  });
+}
+
+function createProjectPayload({
+  board,
+  projectName,
+  roomId,
+  wifiCredentialId,
+  flashSource,
+  pins,
+  serialPort,
+  buildJobId,
+  buildKey,
+  cpuMhz,
+  flashSize,
+  psramSize,
+  }: {
+  board: BoardProfile;
+  projectName: string;
+  roomId: number | null;
+  wifiCredentialId: number | null;
+  flashSource: FlashSource;
+  pins: PinMapping[];
+  serialPort: string;
+  buildJobId: string | null;
+  buildKey: string | null;
+  cpuMhz: number | null;
+  flashSize: string | null;
+  psramSize: string | null;
+  }) {
+  const normalizedProjectName = projectName.trim();
+  const config: Record<string, unknown> = {
+    schema_version: 1,
+    project_name: normalizedProjectName,
+    room_id: roomId,
+    family: board.family,
+    board_id: board.id,
+    board_profile: board.id,
+    board_type: board.family,
+    flash_source: flashSource,
+    serial_port: serialPort,
+    cpu_mhz: cpuMhz,
+    flash_size: flashSize,
+    psram_size: psramSize,
+    wifi_credential_id: wifiCredentialId,
+    pins: pins.map((mapping) => ({
+      gpio_pin: mapping.gpio_pin,
+      mode: mapping.mode,
+      function: mapping.function ?? MODE_METADATA[mapping.mode].defaultFunction,
+      label: mapping.label ?? `GPIO ${mapping.gpio_pin}`,
+      extra_params: mapping.extra_params ?? undefined,
+    })),
+  };
+
+  if (buildJobId && buildKey) {
+    config.latest_build_job_id = buildJobId;
+    config.latest_build_config_key = buildKey;
+  }
+
+  return {
+    name: normalizedProjectName,
+    board_profile: board.id,
+    room_id: roomId,
+    wifi_credential_id: wifiCredentialId,
+    config,
+  };
+}
+
+function shortId(value: string | null | undefined) {
+  return value ? value.slice(0, 8) : "n/a";
+}
+
+function sortProjects(projects: DiyProjectRecord[]) {
+  return [...projects].sort((left, right) => {
+    const leftTime = Date.parse(left.updated_at || left.created_at || "");
+    const rightTime = Date.parse(right.updated_at || right.created_at || "");
+    return rightTime - leftTime;
+  });
+}
+
+function normalizeFlashSource(source: unknown, hasDemoFirmware: boolean): FlashSource {
+  if (source === "demo" && hasDemoFirmware) {
+    return "demo";
+  }
+
+  return "server";
+}
+
+export default function DIYBuilderPage() {
+  const { t } = useLanguage();
+  const router = useRouter();
+  const { user, logout } = useAuth();
+  const isAdmin = user?.account_type === "admin";
+  const { showToast } = useToast();
+
+  const [currentStep, setCurrentStep] = useState(1);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [templateConfigId, setTemplateConfigId] = useState<string | null>(null);
+  const [boardConfigs, setBoardConfigs] = useState<DiyProjectRecord[]>([]);
+  const [boardConfigsLoading, setBoardConfigsLoading] = useState(false);
+  const [boardConfigsError, setBoardConfigsError] = useState("");
+  const [projectName, setProjectName] = useState("");
+  const [roomId, setRoomId] = useState<number | null>(null);
+  const [rooms, setRooms] = useState<RoomRecord[]>([]);
+  const [roomsLoading, setRoomsLoading] = useState(true);
+  const [roomError, setRoomError] = useState("");
+  const [newRoomName, setNewRoomName] = useState("");
+  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [wifiCredentials, setWifiCredentials] = useState<WifiCredentialRecord[]>([]);
+  const [wifiCredentialsLoading, setWifiCredentialsLoading] = useState(true);
+  const [wifiCredentialsError, setWifiCredentialsError] = useState("");
+  const [selectedWifiCredentialId, setSelectedWifiCredentialId] = useState<number | null>(null);
+  const [family, setFamily] = useState<ChipFamily>(
+    () => getBoardProfile(DEFAULT_BOARD_ID)?.family ?? BOARD_PROFILES[0].family,
+  );
+  const [boardId, setBoardId] = useState(DEFAULT_BOARD_ID);
+  const [cpuMhz, setCpuMhz] = useState<number | null>(null);
+  const [flashSize, setFlashSize] = useState<string | null>(null);
+  const [psramSize, setPsramSize] = useState<string | null>(null);
+  const [pins, setPins] = useState<PinMapping[]>([]);
+  const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
+  const [flashSource, setFlashSource] = useState<FlashSource>("server");
+  const [manifestUrl, setManifestUrl] = useState<string | null>(null);
+  const [browserSupportsSerial, setBrowserSupportsSerial] = useState(false);
+  const [eraseFirst, setEraseFirst] = useState(false);
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const [projectHydrated, setProjectHydrated] = useState(false);
+  const hasHydratedRef = useRef(false);
+  const serialArtifactRefreshRef = useRef<string | null>(null);
+  const artifactSerialReleaseRef = useRef<string | null>(null);
+  const webFlasherElementRef = useRef<EspWebInstallButtonElement | null>(null);
+  const [browserIsSecureContext, setBrowserIsSecureContext] = useState(false);
+  const [configBusy, setConfigBusy] = useState(false);
+  const [projectSyncState, setProjectSyncState] = useState<ProjectSyncState>("loading");
+  const [projectSyncMessage, setProjectSyncMessage] = useState(t("diy.sync_msg.loading"));
+  const [attachedConfigBoardId, setAttachedConfigBoardId] = useState<string | null>(null);
+  const [buildBusy, setBuildBusy] = useState(false);
+  const [serverBuild, setServerBuild] = useState<ServerBuildState>(() => createEmptyBuildState());
+  const [firmwareNetworkTarget, setFirmwareNetworkTarget] = useState<FirmwareNetworkTargetRecord | null>(null);
+  const [serverTimeContext, setServerTimeContext] = useState<ServerTimeContextResponse | null>(null);
+  const [serialPort, setSerialPort] = useState(DEFAULT_SERIAL_PORT);
+  const [serialBusy, setSerialBusy] = useState(false);
+  const [serialLocked, setSerialLocked] = useState(false);
+  const [serialJobId, setSerialJobId] = useState<string | null>(null);
+  const [serialMessage, setSerialMessage] = useState(
+    "Successful server builds release this port automatically. Flash becomes available when the port is free.",
+  );
+  const [promptModalConfig, setPromptModalConfig] = useState<{
+    isOpen: boolean;
+    initialValue: string;
+    resolve: (value: string | null) => void;
+  }>({
+    isOpen: false,
+    initialValue: "",
+    resolve: () => {},
+  });
+  const [serialError, setSerialError] = useState<string | null>(null);
+  const [webFlasherResetKey, setWebFlasherResetKey] = useState(0);
+  const [flasherClosed, setFlasherClosed] = useState(false);
+
+  const familyOptions = useMemo(
+    () => BOARD_PROFILES.filter((profile) => profile.family === family),
+    [family],
+  );
+  const board = getBoardProfile(boardId) ?? familyOptions[0] ?? BOARD_PROFILES[0];
+  const boardPins = useMemo(() => [...board.leftPins, ...board.rightPins], [board]);
+  const selectedWifiCredential = useMemo(
+    () => wifiCredentials.find((credential) => credential.id === selectedWifiCredentialId) ?? null,
+    [selectedWifiCredentialId, wifiCredentials],
+  );
+  const validation = validatePinMappings(board, pins, {
+    requireWifiCredentials: true,
+    hasWifiCredential: selectedWifiCredentialId !== null,
+  });
+  const fallbackFirmwareTargetKey = useMemo(() => {
+    if (typeof window === "undefined") {
+      return "browser-origin:unknown";
+    }
+
+    return `browser-origin:${window.location.origin}`;
+  }, []);
+  const currentFirmwareTargetKey = firmwareNetworkTarget?.target_key ?? fallbackFirmwareTargetKey;
+  const currentFirmwareTargetHost = useMemo(() => {
+    if (firmwareNetworkTarget?.advertised_host) {
+      return firmwareNetworkTarget.advertised_host;
+    }
+    if (typeof window === "undefined") {
+      return null;
+    }
+    return window.location.hostname || null;
+  }, [firmwareNetworkTarget]);
+  const currentFirmwareTargetMqttBroker = firmwareNetworkTarget?.mqtt_broker ?? currentFirmwareTargetHost;
+  const currentFirmwareTargetMqttPort = firmwareNetworkTarget?.mqtt_port ?? null;
+  const effectiveTimezone = serverTimeContext?.effective_timezone ?? null;
+  const currentBuildConfigKey = useMemo(
+    () =>
+      buildConfigKey({
+        boardId: board.id,
+        projectName,
+        roomId,
+        wifiCredentialId: selectedWifiCredentialId,
+        wifiCredentialVersion: selectedWifiCredential?.updated_at ?? null,
+        pins,
+        cpuMhz,
+        flashSize,
+        psramSize,
+        networkTargetKey: currentFirmwareTargetKey,
+      }),
+    [
+      board.id,
+      currentFirmwareTargetKey,
+      selectedWifiCredential?.updated_at,
+      selectedWifiCredentialId,
+      pins,
+      projectName,
+      roomId,
+      cpuMhz,
+      flashSize,
+      psramSize,
+    ],
+  );
+  const activeBuildJobId =
+    serverBuild.configKey === currentBuildConfigKey ? serverBuild.jobId : null;
+  const activeBuildKey =
+    serverBuild.configKey === currentBuildConfigKey ? serverBuild.configKey : null;
+  const hasActiveServerBuild =
+    Boolean(serverBuild.jobId) && ACTIVE_BUILD_STATES.has(serverBuild.status as BuildJobStatus);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    void fetchServerTimeContext()
+      .then((context) => {
+        if (!cancelled) {
+          setServerTimeContext(context);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setServerTimeContext(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const projectPayload = useMemo(
+    () =>
+      createProjectPayload({
+        board,
+        projectName,
+        roomId,
+        wifiCredentialId: selectedWifiCredentialId,
+        flashSource,
+        pins,
+        serialPort,
+        buildJobId: activeBuildJobId,
+        buildKey: activeBuildKey,
+        cpuMhz,
+        flashSize,
+        psramSize,
+      }),
+    [
+      activeBuildJobId,
+      activeBuildKey,
+      board,
+      flashSource,
+      pins,
+      projectName,
+      roomId,
+      selectedWifiCredentialId,
+      serialPort,
+      cpuMhz,
+      flashSize,
+      psramSize,
+    ],
+  );
+  const projectPayloadJson = useMemo(() => JSON.stringify(projectPayload), [projectPayload]);
+  const draftConfig = projectPayload.config as Record<string, unknown>;
+  const serverBuildIsStale =
+    flashSource === "server" &&
+    Boolean(serverBuild.jobId) &&
+    serverBuild.configKey !== null &&
+    serverBuild.configKey !== currentBuildConfigKey;
+  const serverBuildHasFullBundle = Boolean(
+    serverBuild.artifactUrl &&
+      serverBuild.bootloaderUrl &&
+      serverBuild.partitionsUrl &&
+      serverBuild.bootApp0Url,
+  );
+  const boardConfigOptions = useMemo<SavedBoardConfigOption[]>(
+    () =>
+      boardConfigs.map((project) => {
+        const config = (project.config ?? {}) as Record<string, unknown>;
+        return {
+          id: project.id,
+          name: project.name,
+          pinCount: Array.isArray(config.pins) ? config.pins.length : 0,
+          createdAt: project.created_at,
+          updatedAt: project.updated_at,
+        };
+      }),
+    [boardConfigs],
+  );
+  const activeBoardConfigId = useMemo(
+    () => (boardConfigs.some((project) => project.id === projectId) ? projectId : null),
+    [boardConfigs, projectId],
+  );
+  const highlightedBoardConfigId = activeBoardConfigId ?? templateConfigId;
+  const selectedConfigMode =
+    activeBoardConfigId !== null ? "saved" : highlightedBoardConfigId !== null ? "template" : null;
+  const canContinueToPinMapping = useMemo(() => {
+    const nameValid = selectedConfigMode !== null || projectName.trim().length > 0;
+    return nameValid && roomId !== null && selectedWifiCredentialId !== null;
+  }, [selectedConfigMode, projectName, roomId, selectedWifiCredentialId]);
+
+  const lastSavedPayloadRef = useRef<string | null>(null);
+  const latestBoardConfigRequestRef = useRef(0);
+  const latestBuildUrlsRef = useRef<{
+    artifact: string | null;
+    bootloader: string | null;
+    partitions: string | null;
+    bootApp0: string | null;
+  }>({
+    artifact: null,
+    bootloader: null,
+    partitions: null,
+    bootApp0: null,
+  });
+  const logPanelRef = useRef<HTMLDivElement | null>(null);
+  const sseJobIdRef = useRef<string | null>(null);
+  const authRedirectTimeoutRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const observer = new MutationObserver((mutations) => {
+      let isClosed = false;
+      for (const mutation of mutations) {
+        for (const addedNode of Array.from(mutation.addedNodes)) {
+          if (addedNode.nodeName === "EWT-INSTALL-DIALOG") {
+            setFlasherClosed(false);
+          }
+        }
+        for (const removedNode of Array.from(mutation.removedNodes)) {
+          if (removedNode.nodeName === "EWT-INSTALL-DIALOG") {
+            isClosed = true;
+          }
+        }
+      }
+      
+      if (isClosed) {
+        setFlasherClosed(true);
+      }
+    });
+
+    observer.observe(document.body, { childList: true });
+
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const nextUrls = {
+      artifact: serverBuild.artifactUrl,
+      bootloader: serverBuild.bootloaderUrl,
+      partitions: serverBuild.partitionsUrl,
+      bootApp0: serverBuild.bootApp0Url,
+    };
+    const previousUrls = latestBuildUrlsRef.current;
+
+    if (
+      previousUrls.artifact === nextUrls.artifact &&
+      previousUrls.bootloader === nextUrls.bootloader &&
+      previousUrls.partitions === nextUrls.partitions &&
+      previousUrls.bootApp0 === nextUrls.bootApp0
+    ) {
+      return;
+    }
+
+    [
+      previousUrls.artifact,
+      previousUrls.bootloader,
+      previousUrls.partitions,
+      previousUrls.bootApp0,
+    ].forEach((url) => {
+      if (url && !Object.values(nextUrls).includes(url)) {
+        URL.revokeObjectURL(url);
+      }
+    });
+
+    latestBuildUrlsRef.current = nextUrls;
+  }, [
+    serverBuild.artifactUrl,
+    serverBuild.bootloaderUrl,
+    serverBuild.partitionsUrl,
+    serverBuild.bootApp0Url,
+  ]);
+
+  useEffect(() => {
+    return () => {
+      const previousUrls = latestBuildUrlsRef.current;
+      [
+        previousUrls.artifact,
+        previousUrls.bootloader,
+        previousUrls.partitions,
+        previousUrls.bootApp0,
+      ].forEach((url) => {
+        if (url) {
+          URL.revokeObjectURL(url);
+        }
+      });
+      if (authRedirectTimeoutRef.current !== null) {
+        window.clearTimeout(authRedirectTimeoutRef.current);
+      }
+    }
+  }, []);
+
+  const handleBuildAuthFailure = useCallback((error: ApiRequestError) => {
+    const message =
+      error.status === 401
+        ? "Session expired. Sign in again before starting another server build."
+        : "Your account is not authorized to use the server build flow.";
+
+    setProjectSyncState("error");
+    setProjectSyncMessage(message);
+    setServerBuild((previous) => ({
+      ...previous,
+      error: message,
+    }));
+
+    if (error.status === 401) {
+      removeToken();
+      if (authRedirectTimeoutRef.current === null && typeof window !== "undefined") {
+        authRedirectTimeoutRef.current = window.setTimeout(() => {
+          authRedirectTimeoutRef.current = null;
+          logout();
+        }, 1200);
+      }
+    }
+  }, [logout]);
+
+  const refreshBoardConfigs = useCallback(async (targetBoardId: string = board.id) => {
+    if (!isAdmin) {
+      return;
+    }
+
+    const requestId = latestBoardConfigRequestRef.current + 1;
+    latestBoardConfigRequestRef.current = requestId;
+
+    const token = getToken();
+    if (!token) {
+      return;
+    }
+
+    setBoardConfigsLoading(true);
+    setBoardConfigsError("");
+
+    try {
+      const response = await fetch(
+        `${API_URL}/diy/projects?board_profile=${encodeURIComponent(targetBoardId)}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        },
+      );
+
+      if (!response.ok) {
+        throw await createApiRequestError(response);
+      }
+
+      const nextConfigs = sortProjects((await response.json()) as DiyProjectRecord[]);
+      if (latestBoardConfigRequestRef.current === requestId) {
+        setBoardConfigs(nextConfigs);
+      }
+    } catch (error) {
+      if (isAuthApiRequestError(error)) {
+        handleBuildAuthFailure(error);
+        return;
+      }
+
+      if (latestBoardConfigRequestRef.current === requestId) {
+        setBoardConfigsError(getErrorMessage(error));
+      }
+    } finally {
+      if (latestBoardConfigRequestRef.current === requestId) {
+        setBoardConfigsLoading(false);
+      }
+    }
+  }, [board.id, handleBuildAuthFailure, isAdmin]);
+
+  const persistProject = useCallback(async (
+    payloadJson: string,
+    options?: { forceCreate?: boolean },
+  ) => {
+    if (!projectName.trim()) {
+      setProjectSyncState("idle");
+      setProjectSyncMessage(t("diy.sync_msg.no_project_name_save"));
+      return null;
+    }
+
+    if (!roomId) {
+      setProjectSyncState("idle");
+      setProjectSyncMessage(t("diy.sync_msg.no_area"));
+      return null;
+    }
+
+    if (!selectedWifiCredentialId) {
+      setProjectSyncState("idle");
+      setProjectSyncMessage(t("diy.sync_msg.no_wifi"));
+      return null;
+    }
+
+    const token = getToken();
+    if (!token) {
+      handleBuildAuthFailure(
+        new ApiRequestError(401, "Missing auth token. Sign in again before syncing DIY projects."),
+      );
+      return null;
+    }
+
+    const targetProjectId = options?.forceCreate ? null : projectId;
+
+    if (targetProjectId && payloadJson === lastSavedPayloadRef.current && !options?.forceCreate) {
+      return targetProjectId;
+    }
+
+    setProjectSyncState("saving");
+    setProjectSyncMessage(
+      targetProjectId
+        ? t("diy.sync_msg.saving")
+        : options?.forceCreate
+          ? t("diy.sync_msg.creating_new")
+          : t("diy.sync_msg.creating_draft"),
+    );
+
+    try {
+      const response = await fetch(
+        targetProjectId ? `${API_URL}/diy/projects/${targetProjectId}` : `${API_URL}/diy/projects`,
+        {
+          method: targetProjectId ? "PUT" : "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: payloadJson,
+        },
+      );
+
+      if (!response.ok) {
+        throw await createApiRequestError(response);
+      }
+
+      const savedProject = (await response.json()) as DiyProjectRecord;
+      const savedProjectBoardId = resolveProjectBoardProfileId(savedProject);
+      lastSavedPayloadRef.current = payloadJson;
+      setProjectId(savedProject.id);
+      setTemplateConfigId(null);
+      setAttachedConfigBoardId(savedProjectBoardId);
+      setBoardConfigs((currentConfigs) =>
+        savedProjectBoardId === board.id
+          ? sortProjects([
+              savedProject,
+              ...currentConfigs.filter((project) => project.id !== savedProject.id),
+            ])
+          : currentConfigs.filter((project) => project.id !== savedProject.id),
+      );
+      setProjectSyncState("saved");
+      setProjectSyncMessage(
+        options?.forceCreate
+          ? t("diy.sync_msg.saved_new").replace("{name}", savedProject.name)
+          : t("diy.sync_msg.saved_draft").replace("{name}", savedProject.name),
+      );
+      return savedProject.id;
+    } catch (error) {
+      setProjectSyncState("error");
+      if (isAuthApiRequestError(error)) {
+        handleBuildAuthFailure(error);
+      } else {
+        setProjectSyncMessage(getErrorMessage(error));
+      }
+      return null;
+    }
+  }, [board.id, handleBuildAuthFailure, projectId, projectName, roomId, selectedWifiCredentialId]);
+
+  const loadRooms = useCallback(async (token: string) => {
+    setRoomsLoading(true);
+    setRoomError("");
+
+    try {
+      const nextRooms = await fetchRooms(token);
+      setRooms(nextRooms);
+      setRoomId((currentRoomId) => {
+        if (currentRoomId && nextRooms.some((room) => room.room_id === currentRoomId)) {
+          return currentRoomId;
+        }
+        return nextRooms[0]?.room_id ?? null;
+      });
+    } catch (error) {
+      setRoomError(getErrorMessage(error));
+    } finally {
+      setRoomsLoading(false);
+    }
+  }, []);
+
+  const loadWifiCredentials = useCallback(async (token: string, preferredCredentialId?: number | null) => {
+    setWifiCredentialsLoading(true);
+    setWifiCredentialsError("");
+
+    try {
+      const nextCredentials = await fetchWifiCredentials(token);
+      setWifiCredentials(nextCredentials);
+      setSelectedWifiCredentialId((currentId) => {
+        const preferredId =
+          typeof preferredCredentialId === "number" ? preferredCredentialId : currentId;
+        if (preferredId && nextCredentials.some((credential) => credential.id === preferredId)) {
+          return preferredId;
+        }
+        if (currentId && nextCredentials.some((credential) => credential.id === currentId)) {
+          return currentId;
+        }
+        return nextCredentials[0]?.id ?? null;
+      });
+    } catch (error) {
+      setWifiCredentialsError(getErrorMessage(error));
+    } finally {
+      setWifiCredentialsLoading(false);
+    }
+  }, []);
+
+  const handleCreateRoom = useCallback(async () => {
+    const token = getToken();
+    if (!token) {
+      handleBuildAuthFailure(
+        new ApiRequestError(401, "Missing auth token. Sign in again before creating an area."),
+      );
+      return;
+    }
+
+    if (!newRoomName.trim()) {
+      setRoomError("Enter an area name before creating it.");
+      return;
+    }
+
+    setCreatingRoom(true);
+    setRoomError("");
+
+    try {
+      const createdRoom = await createRoom({ name: newRoomName.trim() }, token);
+      setRooms((currentRooms) => [...currentRooms, createdRoom].sort((left, right) => left.name.localeCompare(right.name)));
+      setRoomId(createdRoom.room_id);
+      setNewRoomName("");
+    } catch (error) {
+      setRoomError(getErrorMessage(error));
+    } finally {
+      setCreatingRoom(false);
+    }
+  }, [handleBuildAuthFailure, newRoomName]);
+
+  const refreshFirmwareNetworkTargets = useCallback(async () => {
+    const token = getToken();
+    if (!token) {
+      return null;
+    }
+
+    const response = await fetch(`${API_URL}/diy/network-targets`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...buildProvisioningHeaders(),
+      },
+      cache: "no-store",
+    });
+
+    if (!response.ok) {
+      throw await createApiRequestError(response);
+    }
+
+    const payload = (await response.json()) as FirmwareNetworkTargetRecord;
+    setFirmwareNetworkTarget(payload);
+    return payload;
+  }, []);
+
+  async function fetchBuildLogs(jobId: string, token: string) {
+    const response = await fetch(`${API_URL}/diy/build/${jobId}/logs`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw await createApiRequestError(response);
+    }
+
+    const payload = (await response.json()) as BuildLogsRecord;
+    return payload.logs;
+  }
+
+  async function fetchBuildArtifact(jobId: string, token: string, artifactKind: ServerArtifactKind) {
+    const artifactPath =
+      artifactKind === "firmware"
+        ? `${API_URL}/diy/build/${jobId}/artifact`
+        : `${API_URL}/diy/build/${jobId}/artifact/${artifactKind}`;
+    const response = await fetch(artifactPath, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+
+    if (response.status === 400 || response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw await createApiRequestError(response);
+    }
+
+    const artifactBlob = await response.blob();
+    return {
+      url: URL.createObjectURL(artifactBlob),
+      name: `${artifactKind}-${jobId}.bin`,
+    };
+  }
+
+  const refreshBuildJob = useCallback(
+    async (jobId: string, buildKey: string | null, overridingBoardId?: string) => {
+      const token = getToken();
+      if (!token) {
+        return;
+      }
+
+      try {
+        const effectiveBoard = getBoardProfile(overridingBoardId ?? board.id) ?? board;
+        const expectsFullBundle = boardRequiresFullFlashBundle(effectiveBoard);
+        const jobResponse = await fetch(`${API_URL}/diy/build/${jobId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+
+      if (!jobResponse.ok) {
+        throw await createApiRequestError(jobResponse);
+      }
+
+      const job = (await jobResponse.json()) as BuildJobRecord;
+      // Always fetch logs so Refresh works regardless of terminal state
+      const [logs, artifact, bootloader, partitions, bootApp0] = await Promise.all([
+        fetchBuildLogs(job.id, token).catch(() => null),
+        job.status === "artifact_ready"
+          ? fetchBuildArtifact(job.id, token, "firmware").catch(() => null)
+          : Promise.resolve(null),
+        job.status === "artifact_ready" && expectsFullBundle
+          ? fetchBuildArtifact(job.id, token, "bootloader").catch(() => null)
+          : Promise.resolve(null),
+        job.status === "artifact_ready" && expectsFullBundle
+          ? fetchBuildArtifact(job.id, token, "partitions").catch(() => null)
+          : Promise.resolve(null),
+        job.status === "artifact_ready" && expectsFullBundle
+          ? fetchBuildArtifact(job.id, token, "boot_app0").catch(() => null)
+          : Promise.resolve(null),
+      ]);
+
+      startTransition(() => {
+        setServerBuild((previous) => ({
+          ...previous,
+          jobId: job.id,
+          status: job.status,
+          logs: logs ?? previous.logs,
+          error:
+            job.status === "build_failed"
+              ? previous.error || "Server build failed. Inspect the build log below."
+              : previous.error,
+          artifactUrl: artifact?.url ?? previous.artifactUrl,
+          artifactName: artifact?.name ?? previous.artifactName,
+          bootloaderUrl: bootloader?.url ?? previous.bootloaderUrl,
+          partitionsUrl: partitions?.url ?? previous.partitionsUrl,
+          bootApp0Url: bootApp0?.url ?? previous.bootApp0Url,
+          configKey: buildKey,
+          updatedAt: job.updated_at,
+          finishedAt: job.finished_at ?? previous.finishedAt,
+          errorMessage: job.error_message ?? previous.errorMessage,
+        }));
+      });
+    } catch (error) {
+      if (isAuthApiRequestError(error)) {
+        handleBuildAuthFailure(error);
+        return;
+      }
+      setServerBuild((previous) => ({
+        ...previous,
+        error: getErrorMessage(error),
+      }));
+    }
+  }, [board, handleBuildAuthFailure]);
+
+  const refreshSerialStatus = useCallback(async (options?: { silent?: boolean; freeMessage?: string }) => {
+    if (!isAdmin) {
+      return;
+    }
+
+    const token = getToken();
+    if (!token || !serialPort.trim()) {
+      return;
+    }
+
+    if (!options?.silent) {
+      setSerialBusy(true);
+    }
+    setSerialError(null);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/serial/status?port=${encodeURIComponent(serialPort.trim())}`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+        },
+      );
+
+      if (!response.ok) {
+        throw new Error(await parseApiError(response));
+      }
+
+      const payload = (await response.json()) as SerialStatusRecord;
+      setSerialLocked(payload.locked);
+      setSerialJobId(payload.job_id ?? null);
+      setSerialMessage(
+        payload.locked
+          ? t("diy.step4flash.serial.busy_msg")
+              .replace("{port}", payload.port)
+              .replace("{jobInfo}", payload.job_id ? t("diy.step4flash.serial.busy_job_info").replace("{jobId}", shortId(payload.job_id)) : "")
+          : options?.freeMessage ?? t("diy.step4flash.serial.free_msg").replace("{port}", payload.port),
+      );
+    } catch (error) {
+      setSerialError(getErrorMessage(error));
+    } finally {
+      if (!options?.silent) {
+        setSerialBusy(false);
+      }
+    }
+  }, [isAdmin, serialPort]);
+
+  const cleanupExistingWebFlasherSessions = useCallback(async () => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    const dialogs = Array.from(
+      document.querySelectorAll("ewt-install-dialog"),
+    ) as EspWebInstallDialogElement[];
+
+    for (const dialog of dialogs) {
+      try {
+        dialog._closeDialog?.();
+      } catch {
+        // Ignore stale dialog close failures and continue best-effort cleanup.
+      }
+
+      try {
+        await dialog.port?.close?.();
+      } catch {
+        // Ignore already-closed or externally-held ports.
+      }
+
+      if (dialog.isConnected) {
+        dialog.remove();
+      }
+    }
+
+    const browserSerial = (navigator as BrowserSerialNavigator).serial;
+    if (!browserSerial?.getPorts) {
+      return;
+    }
+
+    try {
+      const grantedPorts = await browserSerial.getPorts();
+      for (const port of grantedPorts) {
+        try {
+          await port.close?.();
+        } catch {
+          // Ignore ports this page does not currently own.
+        }
+      }
+    } catch {
+      // Ignore browser serial cleanup failures; DB unlock still provides the main guardrail.
+    }
+  }, []);
+
+  const applyProjectToWorkspace = useCallback(async (
+    project: DiyProjectRecord,
+    options?: { asTemplate?: boolean },
+  ) => {
+    const asTemplate = options?.asTemplate ?? false;
+    const config = (project.config ?? {}) as Record<string, unknown>;
+    const resolvedBoardId = resolveProjectBoardProfileId(project) ?? DEFAULT_BOARD_ID;
+    const nextBoard = getBoardProfile(resolvedBoardId) ?? getBoardProfile(DEFAULT_BOARD_ID) ?? BOARD_PROFILES[0];
+    const nextPins = sanitizePins(
+      Array.isArray(config.pins) ? (config.pins as PinMapping[]) : [],
+      MODE_METADATA,
+    );
+    const nextWifiCredentialId =
+      typeof project.wifi_credential_id === "number"
+        ? project.wifi_credential_id
+        : typeof config.wifi_credential_id === "number"
+          ? config.wifi_credential_id
+          : null;
+    const nextCpuMhz = typeof config.cpu_mhz === "number" ? config.cpu_mhz : null;
+    const nextFlashSize = typeof config.flash_size === "string" ? config.flash_size : null;
+    const nextPsramSize = typeof config.psram_size === "string" ? config.psram_size : null;
+    const nextProjectName =
+      typeof config.project_name === "string" && config.project_name.trim()
+        ? config.project_name
+        : project.name;
+    const savedBuildKey =
+      typeof config.latest_build_config_key === "string" ? config.latest_build_config_key : null;
+    const savedBuildJobId =
+      typeof config.latest_build_job_id === "string" ? config.latest_build_job_id : null;
+    const nextFlashSource = normalizeFlashSource(config.flash_source, Boolean(nextBoard.demoFirmware));
+    const shouldRewriteFlashSource = nextFlashSource !== config.flash_source;
+
+    setProjectId(asTemplate ? null : project.id);
+    setTemplateConfigId(asTemplate ? project.id : null);
+    setAttachedConfigBoardId(nextBoard.id);
+    setProjectName(nextProjectName);
+    setRoomId((currentRoomId) =>
+      currentRoomId ??
+      (typeof project.room_id === "number"
+        ? project.room_id
+        : typeof config.room_id === "number"
+          ? config.room_id
+          : null),
+    );
+    setSelectedWifiCredentialId((currentWifiCredentialId) =>
+      currentWifiCredentialId ?? nextWifiCredentialId,
+    );
+    setFamily(nextBoard.family);
+    setBoardId(nextBoard.id);
+    setPins(nextPins);
+    setSelectedPinId(null);
+    setCpuMhz(nextCpuMhz);
+    setFlashSize(nextFlashSize);
+    setPsramSize(nextPsramSize);
+    setFlashSource(nextFlashSource);
+    setSerialPort(
+      typeof config.serial_port === "string" && config.serial_port.trim()
+        ? config.serial_port
+        : DEFAULT_SERIAL_PORT,
+    );
+    if (asTemplate) {
+      setServerBuild(createEmptyBuildState());
+      lastSavedPayloadRef.current = null;
+      setProjectSyncState("idle");
+      setProjectSyncMessage(
+        t("diy.sync_msg.loaded_template").replace("{name}", project.name)
+      );
+    } else {
+      setServerBuild({
+        ...createEmptyBuildState(),
+        jobId: savedBuildJobId,
+        status: savedBuildJobId ? "queued" : "idle",
+        configKey: savedBuildJobId ? savedBuildKey : null,
+      });
+      const normalizedPayload = JSON.stringify(
+        createProjectPayload({
+          board: nextBoard,
+          projectName: nextProjectName,
+          roomId:
+            typeof project.room_id === "number"
+              ? project.room_id
+              : typeof config.room_id === "number"
+                ? config.room_id
+                : null,
+          wifiCredentialId: nextWifiCredentialId,
+          flashSource: nextFlashSource,
+          pins: nextPins,
+          serialPort:
+            typeof config.serial_port === "string" && config.serial_port.trim()
+              ? config.serial_port
+              : DEFAULT_SERIAL_PORT,
+          buildJobId: savedBuildJobId,
+          buildKey: savedBuildJobId ? savedBuildKey : null,
+          cpuMhz: nextCpuMhz,
+          flashSize: nextFlashSize,
+          psramSize: nextPsramSize,
+        }),
+      );
+      lastSavedPayloadRef.current = shouldRewriteFlashSource ? null : normalizedPayload;
+      setProjectSyncState("saved");
+      setProjectSyncMessage(t("diy.sync_msg.loaded_saved").replace("{name}", project.name));
+    }
+    setBoardConfigsError("");
+
+    if (!asTemplate && savedBuildJobId) {
+      void refreshBuildJob(savedBuildJobId, savedBuildKey, nextBoard.id);
+    }
+  }, [refreshBuildJob]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    if (document.querySelector('script[data-esp-web-tools="true"]')) {
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.type = "module";
+    script.src = FLASHER_SCRIPT;
+    script.dataset.espWebTools = "true";
+    document.head.appendChild(script);
+
+    return () => {
+      script.remove();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      return;
+    }
+
+    void refreshFirmwareNetworkTargets().catch((error) => {
+      console.warn("Failed to resolve firmware network targets:", error);
+    });
+  }, [isAdmin, refreshFirmwareNetworkTargets]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateBuilder() {
+      if (!isAdmin) {
+        setRoomsLoading(false);
+        setWifiCredentialsLoading(false);
+        setDraftLoaded(true);
+        setProjectHydrated(true);
+        return;
+      }
+
+      if (hasHydratedRef.current) {
+        return;
+      }
+      hasHydratedRef.current = true;
+
+      if (typeof window === "undefined") {
+        return;
+      }
+
+      setBrowserIsSecureContext(window.isSecureContext);
+      setBrowserSupportsSerial("serial" in navigator);
+
+      const token = getToken();
+      if (!token) {
+        if (!cancelled) {
+          setProjectSyncState("error");
+          setProjectSyncMessage(t("diy.sync_msg.missing_auth"));
+          setRoomsLoading(false);
+          setDraftLoaded(true);
+          setProjectHydrated(true);
+        }
+        return;
+      }
+
+      await loadRooms(token);
+      await loadWifiCredentials(token, null);
+
+      if (!cancelled) {
+        setProjectSyncState("idle");
+        setProjectSyncMessage(t("diy.sync_msg.choose_board"));
+        setDraftLoaded(true);
+        setProjectHydrated(true);
+      }
+    }
+
+    void hydrateBuilder();
+
+    return () => {
+      cancelled = true;
+      hasHydratedRef.current = false;
+    };
+  }, [isAdmin, loadRooms, loadWifiCredentials]);
+
+  useEffect(() => {
+    if (!draftLoaded || !projectHydrated || !isAdmin) {
+      return;
+    }
+
+    void refreshBoardConfigs();
+  }, [board.id, draftLoaded, isAdmin, projectHydrated, refreshBoardConfigs]);
+
+  useEffect(() => {
+    if (!draftLoaded || !projectHydrated || !attachedConfigBoardId) {
+      return;
+    }
+
+    if (board.id === attachedConfigBoardId) {
+      return;
+    }
+
+    lastSavedPayloadRef.current = null;
+    setProjectId(null);
+    setTemplateConfigId(null);
+    setAttachedConfigBoardId(null);
+    setServerBuild(createEmptyBuildState());
+    setProjectSyncState("idle");
+    setProjectSyncMessage(
+      t("diy.sync_msg.original_config")
+    );
+  }, [attachedConfigBoardId, board.id, draftLoaded, projectHydrated]);
+
+  useEffect(() => {
+    const nextOptions = BOARD_PROFILES.filter((profile) => profile.family === family);
+    if (!nextOptions.some((profile) => profile.id === boardId)) {
+      setBoardId(nextOptions[0]?.id ?? BOARD_PROFILES[0].id);
+    }
+  }, [family, boardId]);
+
+  useEffect(() => {
+    const validPins = new Set(boardPins.map((pin) => pin.gpio));
+    setPins((previous) => previous.filter((mapping) => validPins.has(mapping.gpio_pin)));
+
+    if (selectedPinId && !boardPins.some((pin) => pin.id === selectedPinId)) {
+      setSelectedPinId(null);
+    }
+
+    if (!board.demoFirmware && flashSource === "demo") {
+      setFlashSource("server");
+    }
+  }, [board.demoFirmware, boardPins, flashSource, selectedPinId]);
+
+  useEffect(() => {
+    if (!draftLoaded || !projectHydrated) {
+      return;
+    }
+
+    if (!projectId) {
+      return;
+    }
+
+    const token = getToken();
+    if (!token) {
+      return;
+    }
+
+    if (projectId && projectPayloadJson === lastSavedPayloadRef.current) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void persistProject(projectPayloadJson);
+    }, 700);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [draftLoaded, persistProject, projectHydrated, projectId, projectPayloadJson]);
+
+  useEffect(() => {
+    let manifestObjectUrl: string | null = null;
+
+    const manifest = buildFlashManifest({
+      board,
+      projectName,
+      flashSource,
+      serverArtifactUrls: serverBuildIsStale
+        ? null
+        : {
+            firmware: serverBuild.artifactUrl,
+            bootloader: serverBuild.bootloaderUrl,
+            partitions: serverBuild.partitionsUrl,
+            bootApp0: serverBuild.bootApp0Url,
+          },
+    });
+
+    if (manifest) {
+      manifestObjectUrl = URL.createObjectURL(
+        new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }),
+      );
+      setManifestUrl(manifestObjectUrl);
+    } else {
+      setManifestUrl(null);
+    }
+
+    return () => {
+      if (manifestObjectUrl) {
+        URL.revokeObjectURL(manifestObjectUrl);
+      }
+    };
+  }, [
+    board,
+    flashSource,
+    projectName,
+    serverBuild.artifactUrl,
+    serverBuild.bootloaderUrl,
+    serverBuild.partitionsUrl,
+    serverBuild.bootApp0Url,
+    serverBuildIsStale,
+  ]);
+
+  useEffect(() => {
+    if (!serverBuild.jobId) {
+      return;
+    }
+
+    const buildStatus = serverBuild.status;
+    if (
+      buildStatus === "idle" ||
+      TERMINAL_BUILD_STATES.has(buildStatus as BuildJobStatus) ||
+      !POLLING_BUILD_STATES.has(buildStatus as BuildJobStatus)
+    ) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshBuildJob(serverBuild.jobId ?? "", serverBuild.configKey ?? currentBuildConfigKey);
+    }, BUILD_POLL_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [currentBuildConfigKey, refreshBuildJob, serverBuild.configKey, serverBuild.jobId, serverBuild.status]);
+
+  // SSE log-streaming: open an EventSource during active builds for live log updates.
+  // The existing status-poll remains the authority for status, finishedAt, errorMessage.
+  useEffect(() => {
+    const jobId = serverBuild.jobId;
+    const buildStatus = serverBuild.status;
+
+    if (
+      !jobId ||
+      buildStatus === "idle" ||
+      TERMINAL_BUILD_STATES.has(buildStatus as BuildJobStatus) ||
+      !POLLING_BUILD_STATES.has(buildStatus as BuildJobStatus)
+    ) {
+      return;
+    }
+
+    // Avoid reopening the same stream if jobId hasn't changed
+    if (sseJobIdRef.current === jobId) {
+      return;
+    }
+
+    const token = getToken();
+    if (!token) {
+      return;
+    }
+
+    sseJobIdRef.current = jobId;
+    // EventSource doesn't support custom headers; pass token as query param.
+    // The backend currently validates via Depends(get_current_user) which reads the
+    // Authorization header — so we fall back to polling for logs in that case.
+    // We use fetch-based streaming via ReadableStream instead:
+    let cancelled = false;
+    const controller = new AbortController();
+
+    const streamLogs = async () => {
+      try {
+        const response = await fetch(`${API_URL}/diy/build/${jobId}/logs/stream`, {
+          headers: { Authorization: `Bearer ${token}` },
+          cache: "no-store",
+          signal: controller.signal,
+        });
+
+        if (!response.ok || !response.body) {
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let sawDoneEvent = false;
+
+        while (!cancelled) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const text = line.slice(6);
+              startTransition(() => {
+                setServerBuild((prev) => ({ ...prev, logs: prev.logs + text + "\n" }));
+              });
+              // Auto-scroll to bottom
+              if (logPanelRef.current) {
+                logPanelRef.current.scrollTop = logPanelRef.current.scrollHeight;
+              }
+            } else if (line.startsWith("event: done")) {
+              sawDoneEvent = true;
+              cancelled = true;
+              break;
+            }
+          }
+        }
+
+        if (!sawDoneEvent && cancelled) {
+          await reader.cancel().catch(() => undefined);
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          return;
+        }
+        // Network/SSE failure — status polling already handles recovery
+      }
+    };
+
+    void streamLogs();
+
+    return () => {
+      cancelled = true;
+      controller.abort();
+      sseJobIdRef.current = null;
+    };
+  }, [serverBuild.jobId, serverBuild.status]);
+
+  useEffect(() => {
+    if (!draftLoaded || !projectHydrated || !serialPort.trim()) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void refreshSerialStatus({ silent: true });
+    }, 250);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [draftLoaded, projectHydrated, refreshSerialStatus, serialPort]);
+
+  const releaseSerialLock = useCallback(
+    async (options?: { silent?: boolean; nextMessage?: string; resetFlasher?: boolean }) => {
+      if (!serialPort.trim()) {
+        return;
+      }
+
+      const token = getToken();
+      if (!token) {
+        return;
+      }
+
+      if (!options?.silent) {
+        setSerialBusy(true);
+      }
+      setSerialError(null);
+
+      try {
+        const response = await fetch(
+          `${API_URL}/serial/unlock?port=${encodeURIComponent(serialPort.trim())}`,
+          {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` },
+          },
+        );
+
+        if (!response.ok) {
+          throw new Error(await parseApiError(response));
+        }
+
+        await cleanupExistingWebFlasherSessions();
+
+        setSerialLocked(false);
+        setSerialJobId(null);
+        setSerialMessage(
+          options?.nextMessage ?? t("diy.step4flash.serial.released_msg").replace("{port}", serialPort.trim()),
+        );
+
+        if (options?.resetFlasher !== false) {
+          setWebFlasherResetKey((previous) => previous + 1);
+        }
+      } catch (error) {
+        setSerialError(getErrorMessage(error));
+      } finally {
+        if (!options?.silent) {
+          setSerialBusy(false);
+        }
+      }
+    },
+    [cleanupExistingWebFlasherSessions, serialPort],
+  );
+
+  useEffect(() => {
+    if (
+      serverBuild.status !== "artifact_ready" ||
+      !serverBuild.jobId ||
+      serialArtifactRefreshRef.current === serverBuild.jobId ||
+      !serialPort.trim()
+    ) {
+      return;
+    }
+
+    const freeMessage = t("diy.step4flash.serial.ready_free_msg").replace("{jobId}", shortId(serverBuild.jobId)).replace("{port}", serialPort.trim());
+    serialArtifactRefreshRef.current = serverBuild.jobId;
+    void refreshSerialStatus({
+      silent: true,
+      freeMessage,
+    });
+  }, [refreshSerialStatus, serialPort, serverBuild.jobId, serverBuild.status]);
+
+  useEffect(() => {
+    if (
+      serverBuild.status !== "artifact_ready" ||
+      !serverBuild.jobId ||
+      artifactSerialReleaseRef.current === serverBuild.jobId ||
+      !serialPort.trim()
+    ) {
+      return;
+    }
+
+    const freeMessage = t("diy.step4flash.serial.ready_free_msg").replace("{jobId}", shortId(serverBuild.jobId)).replace("{port}", serialPort.trim());
+    artifactSerialReleaseRef.current = serverBuild.jobId;
+    void (async () => {
+      await releaseSerialLock({
+        silent: true,
+        nextMessage: freeMessage,
+      });
+      await refreshSerialStatus({
+        silent: true,
+        freeMessage,
+      });
+    })();
+  }, [refreshSerialStatus, releaseSerialLock, serialPort, serverBuild.jobId, serverBuild.status]);
+
+  const generateConfig = async () => {
+    setConfigBusy(true);
+
+    try {
+      const blob = new Blob([JSON.stringify(draftConfig, null, 2)], {
+        type: "application/json",
+      });
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `${slugify(projectName || board.name)}.config.json`;
+      link.click();
+      URL.revokeObjectURL(objectUrl);
+    } finally {
+      setConfigBusy(false);
+    }
+  };
+
+  const saveProjectNow = useCallback(async () => {
+    await persistProject(projectPayloadJson);
+  }, [persistProject, projectPayloadJson]);
+
+  const saveProjectAsNewConfig = useCallback(async () => {
+    const newName = await new Promise<string | null>((resolve) => {
+      setPromptModalConfig({
+        isOpen: true,
+        initialValue: projectName + " (Copy)",
+        resolve,
+      });
+    });
+
+    setPromptModalConfig((prev) => ({ ...prev, isOpen: false }));
+
+    if (!newName || !newName.trim()) {
+      return;
+    }
+
+    const payloadObj = JSON.parse(projectPayloadJson);
+    payloadObj.name = newName.trim();
+    const newPayloadJson = JSON.stringify(payloadObj);
+
+    try {
+      await persistProject(newPayloadJson, { forceCreate: true });
+      setProjectName(newName.trim());
+      showToast(t("diy.step2configs.toast.clone_success").replace("{name}", newName.trim()), "success");
+    } catch (error) {
+      showToast(t("diy.step2configs.toast.clone_error"), "error");
+    }
+  }, [projectName, projectPayloadJson, persistProject, showToast, t]);
+
+  const continueToPinMapping = useCallback(async () => {
+    if (!projectName.trim()) {
+      setProjectSyncState("idle");
+      setProjectSyncMessage(t("diy.sync_msg.no_project_name_next"));
+      return;
+    }
+
+    if (activeBoardConfigId) {
+      setCurrentStep(3);
+      return;
+    }
+
+    const clonedProjectId = await persistProject(projectPayloadJson, { forceCreate: true });
+    if (!clonedProjectId) {
+      return;
+    }
+
+    setCurrentStep(3);
+  }, [activeBoardConfigId, persistProject, projectName, projectPayloadJson, t]);
+
+  const handleCreateNewConfig = useCallback(() => {
+    setProjectId(null);
+    setTemplateConfigId(null);
+    setProjectName("");
+    setPins([]);
+    setProjectSyncMessage("");
+    setProjectSyncState("idle");
+  }, []);
+
+  const loadBoardConfig = useCallback(async (configId: string) => {
+    const selectedConfig = boardConfigs.find((project) => project.id === configId);
+    if (!selectedConfig) {
+      return;
+    }
+
+    await applyProjectToWorkspace(selectedConfig, {
+      asTemplate: false,
+    });
+  }, [applyProjectToWorkspace, boardConfigs]);
+
+  const triggerServerBuild = async () => {
+    if (hasActiveServerBuild && serverBuild.jobId) {
+      setFlashSource("server");
+      setServerBuild((previous) => ({
+        ...previous,
+        error: null,
+      }));
+      setProjectSyncMessage(t("diy.sync_msg.build_in_progress").replace("{jobId}", shortId(serverBuild.jobId)));
+      await refreshBuildJob(serverBuild.jobId, serverBuild.configKey ?? currentBuildConfigKey);
+      return;
+    }
+
+    if (validation.errors.length > 0) {
+      setFlashSource("server");
+      setServerBuild((previous) => ({
+        ...previous,
+        error: "Fix the blocking GPIO validation errors before queueing a server build.",
+      }));
+      return;
+    }
+
+    const ensuredProjectId = await persistProject(projectPayloadJson);
+    if (!ensuredProjectId) {
+      return;
+    }
+
+    const token = getToken();
+    if (!token) {
+      handleBuildAuthFailure(
+        new ApiRequestError(401, "Session expired. Sign in again before starting another server build."),
+      );
+      return;
+    }
+
+    setBuildBusy(true);
+    setFlashSource("server");
+    setServerBuild((previous) => ({
+      ...previous,
+      error: null,
+      warnings: validation.warnings,
+    }));
+
+    try {
+      const latestNetworkTarget = await refreshFirmwareNetworkTargets().catch(() => null);
+      const buildTargetKey = latestNetworkTarget?.target_key ?? currentFirmwareTargetKey;
+      const nextBuildConfigKey = buildConfigKey({
+        boardId: board.id,
+        projectName,
+        roomId,
+        wifiCredentialId: selectedWifiCredentialId,
+        wifiCredentialVersion: selectedWifiCredential?.updated_at ?? null,
+        pins,
+        cpuMhz,
+        flashSize,
+        psramSize,
+        networkTargetKey: buildTargetKey,
+      });
+      const response = await fetch(
+        `${API_URL}/diy/build?project_id=${encodeURIComponent(ensuredProjectId)}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            ...buildProvisioningHeaders(),
+          },
+        },
+      );
+
+      if (!response.ok) {
+        throw await createApiRequestError(response);
+      }
+
+      const job = (await response.json()) as BuildJobRecord;
+      setServerBuild({
+        ...createEmptyBuildState(),
+        jobId: job.id,
+        status: job.status,
+        warnings: validation.warnings,
+        configKey: nextBuildConfigKey,
+        updatedAt: job.updated_at,
+      });
+      setProjectSyncState("saving");
+      setProjectSyncMessage(t("diy.sync_msg.build_queued").replace("{jobId}", shortId(job.id)));
+      setSerialMessage(
+        `Build ${shortId(job.id)} queued. Port ${serialPort.trim() || DEFAULT_SERIAL_PORT} will be released automatically when the artifact is ready.`,
+      );
+      await refreshBuildJob(job.id, nextBuildConfigKey);
+      await persistProject(
+        JSON.stringify(
+          createProjectPayload({
+            board,
+            projectName,
+            roomId,
+            wifiCredentialId: selectedWifiCredentialId,
+            flashSource: "server",
+            pins,
+            serialPort,
+            buildJobId: job.id,
+            buildKey: nextBuildConfigKey,
+            cpuMhz,
+            flashSize,
+            psramSize,
+          }),
+        ),
+      );
+    } catch (error) {
+      if (isAuthApiRequestError(error)) {
+        handleBuildAuthFailure(error);
+        return;
+      }
+      setServerBuild((previous) => ({
+        ...previous,
+        error: getErrorMessage(error),
+        warnings: validation.warnings,
+      }));
+    } finally {
+      setBuildBusy(false);
+    }
+  };
+
+  const downloadServerArtifact = () => {
+    if (!serverBuild.artifactUrl || !serverBuild.artifactName) {
+      return;
+    }
+
+    const link = document.createElement("a");
+    link.href = serverBuild.artifactUrl;
+    link.download = serverBuild.artifactName;
+    link.click();
+  };
+
+  const openWebFlasher = () => {
+    if (flashLockedReason) {
+      return;
+    }
+
+    const installButton = webFlasherElementRef.current;
+    const nativeButton = installButton?.shadowRoot?.querySelector("button");
+    if (!(nativeButton instanceof HTMLButtonElement)) {
+      setSerialError("Web flasher is still initializing. Refresh the page and try again.");
+      return;
+    }
+
+    setSerialError(null);
+    nativeButton.click();
+  };
+
+  const resetDraft = () => {
+    if (!window.confirm("Reset the current SVG builder draft?")) {
+      return;
+    }
+
+    const nextBoard = getBoardProfile(DEFAULT_BOARD_ID) ?? BOARD_PROFILES[0];
+    setProjectId(null);
+    setTemplateConfigId(null);
+    setAttachedConfigBoardId(null);
+    setProjectName("");
+    setRoomId(rooms[0]?.room_id ?? null);
+    setNewRoomName("");
+    setRoomError("");
+    setFamily(nextBoard.family);
+    setBoardId(nextBoard.id);
+    setPins([]);
+    setSelectedPinId(null);
+    setFlashSource("server");
+    setServerBuild(createEmptyBuildState());
+    setSerialPort(DEFAULT_SERIAL_PORT);
+    setSerialLocked(false);
+    setSerialJobId(null);
+    setSerialMessage(
+      "Successful server builds release this port automatically. Flash becomes available when the port is free.",
+    );
+    setSerialError(null);
+    setEraseFirst(false);
+    setCurrentStep(1);
+    lastSavedPayloadRef.current = null;
+    setProjectSyncState("idle");
+    setProjectSyncMessage(t("diy.sync_msg.choose_board"));
+  };
+
+  const flashLockedReason = getFlashLockedReason({
+    validation,
+    browserIsSecureContext,
+    browserSupportsSerial,
+    manifestUrl,
+    flashSource,
+    board,
+    eraseFirst,
+    serialLocked,
+    serialPort,
+    serverBuildStatus: serverBuild.status,
+    serverBuildError: serverBuild.error,
+    serverBuildIsStale,
+    serverBuildHasFullBundle,
+    t,
+  });
+
+  if (!isAdmin) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 px-6 dark:bg-slate-950">
+        <div className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
+          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-300">
+            <span className="material-symbols-outlined text-4xl">admin_panel_settings</span>
+          </div>
+          <h1 className="mt-5 text-2xl font-bold text-slate-900 dark:text-white">Admin access required</h1>
+          <p className="mt-3 text-sm leading-6 text-slate-500 dark:text-slate-400">
+            Pairing, creating, and flashing new devices are reserved for administrators. You can still return to the dashboard to control areas that were explicitly assigned to your account.
+          </p>
+          <button
+            onClick={() => router.push("/devices")}
+            className="mt-6 rounded-2xl bg-primary px-5 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-blue-600"
+          >
+            Back to devices
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!draftLoaded) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-slate-50 dark:bg-slate-950">
+        <p className="text-slate-500">Loading SVG builder...</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={
+        currentStep === 3
+          ? "h-screen flex flex-col overflow-hidden bg-slate-50 font-sans text-slate-900 transition-colors dark:bg-[#0b1120] dark:text-slate-100"
+          : "min-h-screen flex flex-col bg-slate-50 font-sans text-slate-900 transition-colors dark:bg-[#0b1120] dark:text-slate-100"
+    }>
+      <header className={`sticky top-0 z-30 w-full border-b border-slate-200 bg-white/80 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/80 ${currentStep === 3 ? 'flex-none' : ''}`}>
+        <div className="mx-auto flex min-h-16 max-w-7xl flex-wrap items-center justify-between gap-4 px-4 py-4 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-4">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+              <span className="material-symbols-outlined">developer_board</span>
+            </div>
+            <div className="flex flex-col gap-0.5">
+              <h2 className="text-lg font-bold tracking-tight text-slate-900 dark:text-white">{t("diy.wizard.title")}</h2>
+              <p className="text-xs font-medium uppercase tracking-[0.2em] text-slate-400 dark:text-slate-500">{t("diy.wizard.subtitle")}</p>
+            </div>
+          </div>
+
+          <nav className="hidden items-center gap-8 md:flex">
+            {WIZARD_STEPS.map((step) => {
+              const active = currentStep === step.id;
+              const completed = currentStep > step.id;
+
+              return (
+                <div key={step.id} className="flex items-center gap-2">
+                  <span
+                    className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold transition-colors ${active
+                      ? "bg-primary text-white"
+                      : completed
+                        ? "bg-primary/10 text-primary"
+                        : "bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500"
+                      }`}
+                  >
+                    {step.id}
+                  </span>
+                  <span
+                    className={`text-sm font-medium transition-colors ${active
+                      ? "text-primary"
+                      : completed
+                        ? "text-slate-700 dark:text-slate-200"
+                        : "text-slate-400 dark:text-slate-500"
+                      }`}
+                  >{t(`diy.wizard.step${step.id}`)}</span>
+                </div>
+              );
+            })}
+          </nav>
+
+          <div className="flex items-center gap-4">
+            <div className="hidden flex-col items-end md:flex">
+              <span className="text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
+                {t("diy.wizard.step_x_of_y").replace("{current}", currentStep.toString()).replace("{total}", WIZARD_STEPS.length.toString())}
+              </span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                {t("diy.wizard.percent_complete").replace("{percent}", Math.round((currentStep / WIZARD_STEPS.length) * 100).toString())}
+              </span>
+            </div>
+            <span className="hidden rounded-full border border-slate-200 bg-slate-50 px-3 py-1 font-mono text-xs font-bold uppercase tracking-widest text-slate-500 dark:border-slate-700 dark:bg-slate-800 sm:inline-block">
+              {projectName || board.name}
+            </span>
+            <button
+              onClick={resetDraft}
+              className="p-2 text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-300"
+              title="Restart setup"
+            >
+              <span className="material-symbols-outlined">restart_alt</span>
+            </button>
+            <button
+              onClick={() => router.push("/devices")}
+              className="p-2 text-slate-400 transition-colors hover:text-slate-600 dark:hover:text-slate-300"
+              title="Close setup"
+            >
+              <span className="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="h-1 w-full bg-slate-200 dark:bg-slate-800">
+          <div
+            className="h-full bg-primary transition-all duration-300 ease-in-out"
+            style={{ width: `${(currentStep / WIZARD_STEPS.length) * 100}%` }}
+          />
+        </div>
+      </header>
+
+      <main className={
+        currentStep === 3
+          ? "w-full flex-1 min-h-0 overflow-hidden flex flex-col"
+          : "mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6 lg:px-8 lg:py-12"
+      }>
+        {currentStep === 1 && (
+          <Step1Board
+            projectName={projectName}
+            setProjectName={setProjectName}
+            rooms={rooms}
+            selectedRoomId={roomId}
+            setSelectedRoomId={setRoomId}
+            newRoomName={newRoomName}
+            setNewRoomName={setNewRoomName}
+            roomsLoading={roomsLoading}
+            roomError={roomError}
+            creatingRoom={creatingRoom}
+            onCreateRoom={handleCreateRoom}
+            cpuMhz={cpuMhz}
+            setCpuMhz={setCpuMhz}
+            flashSize={flashSize}
+            setFlashSize={setFlashSize}
+            psramSize={psramSize}
+            setPsramSize={setPsramSize}
+            wifiCredentials={wifiCredentials}
+            wifiCredentialsLoading={wifiCredentialsLoading}
+            wifiCredentialsError={wifiCredentialsError}
+            selectedWifiCredentialId={selectedWifiCredentialId}
+            setSelectedWifiCredentialId={setSelectedWifiCredentialId}
+            family={family}
+            setFamily={setFamily}
+            board={board}
+            setBoardId={setBoardId}
+            familyOptions={familyOptions}
+            onSaveDraft={saveProjectNow}
+            projectSyncState={projectSyncState}
+            projectSyncMessage={projectSyncMessage}
+            onNext={() => setCurrentStep(2)}
+          />
+        )}
+
+        {currentStep === 2 && (
+          <Step2Configs
+            board={board}
+            projectName={projectName}
+            setProjectName={setProjectName}
+            configs={boardConfigOptions}
+            configsLoading={boardConfigsLoading}
+            configListError={boardConfigsError}
+            hasSavedConfig={Boolean(activeBoardConfigId)}
+            canContinue={canContinueToPinMapping}
+            selectedConfigId={highlightedBoardConfigId}
+            selectedConfigMode={selectedConfigMode}
+            projectSyncState={projectSyncState}
+            projectSyncMessage={projectSyncMessage}
+            onSelectConfig={loadBoardConfig}
+            onCreateNewConfig={handleCreateNewConfig}
+            onSaveConfig={saveProjectNow}
+            onSaveAsNewConfig={saveProjectAsNewConfig}
+            onBack={() => setCurrentStep(1)}
+            onNext={continueToPinMapping}
+            timezone={effectiveTimezone}
+          />
+        )}
+
+        {currentStep === 3 && (
+          <Step2Pins
+            board={board}
+            boardPins={boardPins}
+            pins={pins}
+            setPins={setPins}
+            selectedPinId={selectedPinId}
+            setSelectedPinId={setSelectedPinId}
+            projectName={projectName}
+            configBusy={configBusy}
+            projectSyncState={projectSyncState}
+            onExportConfig={generateConfig}
+            onBack={() => setCurrentStep(2)}
+            onNext={() => setCurrentStep(4)}
+          />
+        )}
+
+        {currentStep === 4 && (
+          <Step3Validate
+            validation={validation}
+            pins={pins}
+            isReady={validation.errors.length === 0}
+            onBack={() => setCurrentStep(3)}
+            onNext={() => setCurrentStep(5)}
+          />
+        )}
+
+        {currentStep === 5 && (
+          <Step4Flash
+            board={board}
+            bootSensitivePins={[...new Set(pins.filter((mapping) => boardPins.find((pin) => pin.gpio === mapping.gpio_pin)?.bootSensitive).map((mapping) => mapping.gpio_pin))].sort((left, right) => left - right)}
+            projectId={projectId}
+            projectName={projectName}
+            flashSource={flashSource}
+            setFlashSource={setFlashSource}
+            eraseFirst={eraseFirst}
+            setEraseFirst={setEraseFirst}
+            manifestUrl={manifestUrl}
+            flashLockedReason={flashLockedReason}
+            configBusy={configBusy}
+            draftConfig={draftConfig}
+            generateConfig={generateConfig}
+            pinsLength={pins.length}
+            projectSyncState={projectSyncState}
+            projectSyncMessage={projectSyncMessage}
+            serverBuild={serverBuild}
+            firmwareTargetHost={currentFirmwareTargetHost}
+            firmwareTargetMqttBroker={currentFirmwareTargetMqttBroker}
+            firmwareTargetMqttPort={currentFirmwareTargetMqttPort}
+            buildBusy={buildBusy}
+            hasActiveBuild={hasActiveServerBuild}
+            onTriggerServerBuild={triggerServerBuild}
+            onRefreshBuild={() => serverBuild.jobId ? refreshBuildJob(serverBuild.jobId, serverBuild.configKey ?? currentBuildConfigKey) : Promise.resolve()}
+            onDownloadArtifact={downloadServerArtifact}
+            serialPort={serialPort}
+            setSerialPort={setSerialPort}
+            serialBusy={serialBusy}
+            serialLocked={serialLocked}
+            serialJobId={serialJobId}
+            serialMessage={serialMessage}
+            serialError={serialError}
+            webFlasherResetKey={webFlasherResetKey}
+            onSetWebFlasherElement={(element) => {
+              webFlasherElementRef.current = element;
+            }}
+            onOpenWebFlasher={openWebFlasher}
+            onReleaseSerialLock={() => releaseSerialLock()}
+            onRefreshSerialStatus={() => refreshSerialStatus()}
+            onLogPanelRef={(el) => { logPanelRef.current = el; }}
+            onBack={() => setCurrentStep(4)}
+            onOpenDevices={() => router.push("/devices")}
+            flasherClosed={flasherClosed}
+            timezone={effectiveTimezone}
+          />
+        )}
+      </main>
+      <PromptModal
+        isOpen={promptModalConfig.isOpen}
+        title={t("diy.step2configs.prompt.new_name")}
+        message=""
+        initialValue={promptModalConfig.initialValue}
+        onConfirm={promptModalConfig.resolve}
+        onCancel={() => promptModalConfig.resolve(null)}
+      />
+    </div>
+  );
+}
+
+function resolveSecureCompanionOrigin() {
+  if (typeof window === "undefined") {
+    return "the secure HTTPS companion origin";
+  }
+
+  if (window.location.protocol === "https:") {
+    return window.location.origin;
+  }
+
+  return `https://${window.location.hostname}:3443`;
+}
+
+function getFlashLockedReason({
+  validation,
+  browserSupportsSerial,
+  browserIsSecureContext,
+  manifestUrl,
+  flashSource,
+  board,
+  eraseFirst,
+  serialLocked,
+  serialPort,
+  serverBuildStatus,
+  serverBuildError,
+  serverBuildIsStale,
+  serverBuildHasFullBundle,
+  t,
+}: {
+  validation: ValidationResult;
+  browserSupportsSerial: boolean;
+  browserIsSecureContext: boolean;
+  manifestUrl: string | null;
+  flashSource: FlashSource;
+  board: BoardProfile;
+  eraseFirst: boolean;
+  serialLocked: boolean;
+  serialPort: string;
+  serverBuildStatus: ServerBuildState["status"];
+  serverBuildError: string | null;
+  serverBuildIsStale: boolean;
+  serverBuildHasFullBundle: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  t: (key: string, options?: any) => string;
+}) {
+  if (validation.errors.length > 0) {
+    return "Fix the blocking GPIO validation errors before the web flasher becomes available.";
+  }
+
+  if (!browserIsSecureContext) {
+    return `Web Serial requires a secure context. Reopen the page on ${resolveSecureCompanionOrigin()} before using the browser flasher.`;
+  }
+
+  if (!browserSupportsSerial) {
+    return "This browser does not expose Web Serial. Use a current Chromium-based browser for ESP Web Tools.";
+  }
+
+  if (!serialPort.trim()) {
+    return "Enter the target COM or tty port label first so the server can coordinate serial access.";
+  }
+
+  if (flashSource === "server") {
+    if (serverBuildIsStale) {
+      return "The GPIO mapping changed after the last server build. Rebuild before flashing.";
+    }
+
+    if (boardRequiresFullFlashBundle(board) && !serverBuildHasFullBundle) {
+      return t("diy.step4flash.flash_locked.esp32_bundle");
+    }
+
+    if (eraseFirst && !serverBuildHasFullBundle) {
+      return board.family === "ESP8266"
+        ? "ESP8266 server builds expose a single firmware.bin only. Leave 'erase all flash' disabled."
+        : t("diy.step4flash.flash_locked.esp32_erase");
+    }
+
+    if (serverBuildStatus !== "artifact_ready") {
+      return serverBuildError || "Run the server build and wait for the artifact before flashing.";
+    }
+  }
+
+  if (!manifestUrl) {
+    return flashSource === "demo"
+      ? `No demo manifest is available for ${board.name}. Switch to "Server build".`
+      : "The server build artifact is not ready yet.";
+  }
+
+  if (serialLocked) {
+    return "Release the active serial session before flashing so the browser can claim this port.";
+  }
+
+  return null;
+}
+
+function slugify(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/(^-|-$)+/g, "");
+}

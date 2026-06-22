@@ -1,0 +1,481 @@
+# =============================================================================
+# WORKTREE: webapp
+# E-Connect frontend — Next.js 16 App Router, React 19, Playwright E2E tests
+# =============================================================================
+# Path:       webapp/
+# Language:   TypeScript + React (TSX)
+# Framework:  Next.js 16 (App Router) + Tailwind CSS 4 + Framer Motion
+# Ports:      3000 (HTTP dev), 3443 (HTTPS production)
+# Entry:      npm run dev → local-https.mjs → Next.js dev server
+# =============================================================================
+
+================================================================================
+WEBAPP ROOT CONFIG
+================================================================================
+
+webapp/package.json
+  NPM package manifest. Dependencies: next 16.1.1, react 19.2.3, framer-motion,
+  leaflet (map). Dev: @playwright/test, tailwindcss 4, eslint 9, typescript 5.
+  Scripts: dev, build, start, lint, test:e2e, test:e2e:list.
+
+webapp/package-lock.json
+  Locked dependency tree for reproducible installs (npm ci).
+
+webapp/tsconfig.json
+  TypeScript configuration for the Next.js project.
+
+webapp/next.config.ts
+  Next.js configuration: output standalone (for Docker), experimental settings,
+  environment variable passthrough.
+
+webapp/eslint.config.mjs
+  ESLint 9 flat config using eslint-config-next for code quality rules.
+
+webapp/postcss.config.mjs
+  PostCSS configuration enabling Tailwind CSS 4 processing.
+
+webapp/playwright.config.ts
+  Playwright E2E test configuration. Spawns backend (run-playwright-backend.sh)
+  and webapp (run-playwright-webapp.sh) as webServer dependencies. Uses 1 worker
+  (fullyParallel: false), 60s timeout, retains trace on failure. Locally targets
+  https://localhost:3443; in CI targets http://127.0.0.1:3001.
+
+webapp/Dockerfile
+  Multi-stage Docker build. Stage 1 (deps): npm ci. Stage 2 (check): lint +
+  build. Stage 3 (runner): production standalone server with TLS scripts.
+  Entry: node scripts/serve-production-https.mjs.
+
+webapp/.dockerignore
+  Files excluded from Docker build context (node_modules, .next, test artifacts).
+
+webapp/.gitignore
+  Git ignores for Next.js (.next/, node_modules/, test-results/, etc.).
+
+================================================================================
+WEBAPP PUBLIC ASSETS
+================================================================================
+
+webapp/public/.keep
+  Placeholder to ensure the public/ directory exists in the repository.
+
+webapp/public/boards/esp32.png          Board pinout diagram — ESP32 (38-pin)
+webapp/public/boards/esp32-s2.png       Board pinout diagram — ESP32-S2
+webapp/public/boards/esp32-s3.png       Board pinout diagram — ESP32-S3
+webapp/public/boards/esp32-c2.png       Board pinout diagram — ESP32-C2 (RISC-V)
+webapp/public/boards/esp32-c3.png       Board pinout diagram — ESP32-C3 (RISC-V)
+webapp/public/boards/esp32-c5.png       Board pinout diagram — ESP32-C5 (RISC-V)
+webapp/public/boards/esp32-c6.png       Board pinout diagram — ESP32-C6 (RISC-V)
+webapp/public/boards/esp32-c61.png      Board pinout diagram — ESP32-C61 (RISC-V)
+webapp/public/boards/esp32-h2.png       Board pinout diagram — ESP32-H2 (RISC-V)
+webapp/public/boards/esp32-p4.png       Board pinout diagram — ESP32-P4
+webapp/public/boards/esp8266.png        Board pinout diagram — ESP8266
+  SVG pinout images displayed in the DIY flasher Step 2 (pin mapping). Each
+  image shows the physical pin layout of the board for interactive GPIO assignment.
+
+================================================================================
+WEBAPP SCRIPTS
+================================================================================
+
+webapp/scripts/serve-standalone-https.mjs
+  Development HTTPS server. Generates a self-signed TLS certificate via openssl
+  (stored in .local-https/), then launches next dev on port 3000 and an HTTPS
+  proxy on port 3443. Used by `npm run dev`.
+
+webapp/scripts/serve-production-https.mjs
+  Production HTTPS server. Loads TLS certificate from .local-https/ (or generates
+  a new one), then runs the Next.js standalone server on port 3000 with an HTTPS
+  proxy on port 3443. Used by `npm start` and the Docker image. Respects
+  HTTPS_HOSTS and HTTPS_IPS env vars for certificate SAN coverage.
+
+webapp/scripts/local-https.mjs
+  Shared TLS certificate management. Generates self-signed certificates with
+  Subject Alternative Names (SANs) covering localhost, configured hosts, and IPs.
+  Used by both serve-standalone-https and serve-production-https.
+
+webapp/scripts/discovery-smoke.cjs
+  LAN discovery smoke test script. Scans common LAN addresses to verify the
+  server's /health endpoint is reachable from the browser. Used for manual
+  debugging of the discovery flow.
+
+================================================================================
+WEBAPP SOURCE (webapp/src/)
+================================================================================
+
+--- Middleware ---
+
+webapp/src/proxy.ts
+  Next.js middleware (edge). Enforces HTTPS: if ALLOW_INSECURE_HTTP is not set,
+  redirects all HTTP requests to HTTPS (308 Permanent Redirect). Sets HSTS
+  header on secure connections. Matches all routes except static assets.
+
+--- App Router Pages ---
+
+webapp/src/app/layout.tsx
+  Root layout. Wraps all pages with ThemeProvider, AuthProvider, LanguageContext,
+  ToastContext, and the Sidebar + MQTT warning banner. Sets HTML lang attribute,
+  meta viewport, and favicon.
+
+webapp/src/app/page.tsx
+  Dashboard home page. Renders device cards grouped by area/room using
+  visibility-based filtering. Connects to WebSocket for live device state updates.
+  Includes area/room switcher and device quick-control (on/off, brightness).
+
+webapp/src/app/login/page.tsx
+  Login page. Username + password form, JWT token acquisition, redirect to
+  dashboard on success. Shows error states for invalid credentials and
+  server unavailability.
+
+webapp/src/app/register/page.tsx
+  Registration page placeholder. In the current baseline, only admins create
+  users — this page is conditionally shown during initial setup or admin flow.
+
+webapp/src/app/setup/page.tsx
+  Initial server setup wizard. Creates the first admin account + household
+  atomically. Only accessible when the server is uninitialized (no users exist).
+  Blocks re-initialization after successful setup.
+
+webapp/src/app/devices/page.tsx
+  Device inventory page. Lists all devices with filtering by area, auth status
+  (pending/approved/rejected), and online state. Each device card shows type,
+  room, last seen, and quick actions.
+
+webapp/src/app/devices/diy/page.tsx
+  DIY flasher page. Multi-step wizard (Step 1: board selection → Step 2: pin
+  mapping → Step 3: validation → Step 4: build & flash). Orchestrates the
+  server-side build pipeline and browser-side Web Serial flash.
+
+webapp/src/app/devices/discovery/page.tsx
+  Device discovery page. Shows pending devices awaiting admin approval, with
+  device identity, capabilities, and approve/reject buttons.
+
+webapp/src/app/devices/[id]/config/page.tsx
+  Per-device configuration page. Shows device identity, pin configuration,
+  assigned Wi-Fi credential, OTA update controls, serial monitor, and
+  device reconfiguration options.
+
+webapp/src/app/devices/pro-code/page.tsx
+  Pro-code device page. Advanced interface for developers — shows raw device
+  state, MQTT topics, command history, and debug tools.
+
+webapp/src/app/automation/page.tsx
+  Automation list page. Shows all automation rules with enable/disable toggles,
+  last execution status, and quick-create button.
+
+webapp/src/app/automation/[id]/page.tsx
+  Automation editor page. Visual rule graph builder where users connect
+  trigger nodes (device state, time, sensor threshold) → condition nodes
+  (AND/OR/comparison) → action nodes (set output, send command).
+
+webapp/src/app/extensions/page.tsx
+  Extension management page. Lists installed extensions with card type, status,
+  and controls to upload new extensions (ZIP), enable/disable, or uninstall.
+
+webapp/src/app/extensions/[id]/page.tsx
+  Extension detail page. Shows extension metadata, supported capabilities,
+  configuration fields, and devices using this extension.
+
+webapp/src/app/logs/page.tsx
+  System logs viewer. Displays server logs with filtering by category (health,
+  auth, device, firmware, automation), severity, and date range. Real-time
+  updates via WebSocket.
+
+webapp/src/app/settings/page.tsx
+  Settings dashboard. Tabbed interface with panels: Wi-Fi credentials
+  (WifiCredentialsPanel), API keys (ApiKeysPanel), configs (ConfigsPanel),
+  general settings (timezone, household location, language).
+
+webapp/src/app/settings/WifiCredentialsPanel.tsx
+  Wi-Fi credential vault UI. Admin-only: create, edit, delete SSID/password
+  entries. Passwords are masked; reveal requires re-entering account password.
+  Lists credentials used by devices and DIY projects.
+
+webapp/src/app/settings/ApiKeysPanel.tsx
+  API key management UI. Create, copy, revoke API keys for programmatic access.
+  Shows creation date, last used, and status.
+
+webapp/src/app/settings/ConfigsPanel.tsx
+  Config history panel. Lists saved DIY project configurations with rename and
+  delete actions.
+
+webapp/src/app/settings/SvgPinMapPreview.tsx
+  SVG pin map preview component. Renders an interactive SVG of a board pinout
+  with colored highlights for assigned/available/conflicting pins.
+
+webapp/src/app/favicon.ico/route.ts
+  Favicon route handler — serves the app icon.
+
+webapp/src/app/globals.css
+  Global CSS: Tailwind directives (@import "tailwindcss"), CSS custom properties
+  for theming (light/dark mode colors), base element styles.
+
+webapp/src/app/icon.svg
+  SVG app icon used as favicon.
+
+webapp/src/app/api/diy/demo-firmware/[board]/[artifact]/route.ts
+  API route that proxies firmware artifact requests to the backend server.
+  Handles dynamic board/artifact path segments for demo firmware downloads.
+
+--- Components ---
+
+webapp/src/components/AuthProvider.tsx
+  React Context provider for authentication state. Manages JWT token in memory
+  and localStorage, exposes login/logout/refresh functions, checks token
+  expiration, handles 401 responses by redirecting to login.
+
+webapp/src/components/ThemeProvider.tsx
+  React Context provider for light/dark theme. Uses next-themes under the hood,
+  persists preference, applies Tailwind dark class to <html>.
+
+webapp/src/components/ThemeToggle.tsx
+  Light/dark mode toggle button (sun/moon icon). Reads and sets theme via
+  ThemeProvider context.
+
+webapp/src/components/LanguageContext.tsx
+  React Context provider for UI language (en/vi). Persists language preference
+  to user account via API, provides translation function. Uses a slot-machine
+  animation effect when switching languages.
+
+webapp/src/components/ToastContext.tsx
+  React Context provider for toast notifications. Manages a queue of toast
+  messages with auto-dismiss and manual close.
+
+webapp/src/components/Toast.tsx
+  Individual toast notification component. Renders with slide-in animation
+  (framer-motion), supports info/success/warning/error variants.
+
+webapp/src/components/Sidebar.tsx
+  App sidebar navigation. Links to dashboard, devices, automations, extensions,
+  logs, settings. Shows active route highlight, collapses on mobile. Displays
+  server connection status indicator.
+
+webapp/src/components/DeviceCard.tsx
+  Device card component for the dashboard. Shows device name, room, online/offline
+  indicator, control buttons (on/off, brightness slider), and quick action menu.
+  Uses optimistic UI updates via WebSocket.
+
+webapp/src/components/DeviceScanConnectPanel.tsx
+  Device scan and connect panel. Initiates LAN device discovery scan, shows
+  discovered devices with pairing status, provides connect/approve workflow.
+
+webapp/src/components/ConfirmModal.tsx
+  Reusable confirmation dialog with title, message, confirm/cancel buttons,
+  and support for destructive actions (red confirm button).
+
+webapp/src/components/PromptModal.tsx
+  Reusable prompt dialog with text input field, submit/cancel buttons.
+  Used for rename, password entry, and other single-input prompts.
+
+webapp/src/components/MqttWarningBanner.tsx
+  Warning banner displayed when the server's MQTT broker is disconnected.
+  Shows reconnect attempt count and troubleshooting link.
+
+webapp/src/components/WifiWarningBanner.tsx
+  Warning banner displayed when no Wi-Fi credentials are configured. Prompts
+  admin to add credentials in Settings before building firmware.
+
+webapp/src/components/OtaUpdateModal.tsx
+  OTA firmware update modal. Shows available firmware versions, update progress
+  bar, success/failure state, and rollback option.
+
+webapp/src/components/HomeLocationMap.tsx
+  Static map component showing the household's configured location. Used in
+  settings for location visualization.
+
+webapp/src/components/HomeLocationPicker.tsx
+  Interactive map picker for selecting a household location. Uses Leaflet
+  (via react-leaflet) with search and click-to-select.
+
+webapp/src/components/HomeLocationLeafletMap.tsx
+  Leaflet-based interactive map wrapper. Configures tile layer, default view,
+  and marker rendering for the household location map.
+
+--- DIY Flasher Feature ---
+
+webapp/src/features/diy/types.ts
+  TypeScript type definitions for the DIY flasher feature: FlashManifest,
+  FlashSource, BuildJobStatus, PinAssignment, BuildArtifact, etc.
+
+webapp/src/features/diy/board-profiles.ts
+  Board profile definitions for all supported ESP32/ESP8266 variants. Each
+  profile defines: chip family, flash size, GPIO pin list with labels and
+  constraints (input-only, ADC-capable, boot-sensitive, reserved), default
+  I2C pins, and SVG image reference. Returns sorted GPIO arrays for the
+  interactive pin mapping grid.
+
+webapp/src/features/diy/validation.ts
+  Client-side DIY config validation. Checks GPIO conflicts (shared pins between
+  components), reserved/boot pin violations, I2C bus address conflicts,
+  capability-mode mismatches (e.g., analog pin used for digital output).
+  Mirrors server-side validation for instant feedback.
+
+webapp/src/features/diy/project-board.ts
+  Project-board state management. Manages the current DIY project's board
+  selection, pin assignments, I2C device list, and Wi-Fi credential choice.
+  Persists to server via API.
+
+webapp/src/features/diy/managed-config-sync.ts
+  Config synchronization for managed (already-deployed) devices. Compares
+  server-side config with local edits, detects drift, handles merge conflicts
+  when reconfiguring a device that was previously built via DIY flasher.
+
+webapp/src/features/diy/flash-manifest.ts
+  Flash manifest builder. Constructs the ESP Web Tools flash manifest (array
+  of {address, data} entries) from server build artifacts. Calculates flash
+  offset addresses per chip family (ESP32: 0x10000 app, 0x8000 partitions,
+  0xE000 boot_app0; ESP8266: different layout). Generates the manifest used
+  by the Web Serial flasher to write firmware to the board.
+
+webapp/src/features/diy/components/Step1Board.tsx
+  Step 1: Board selection. Grid of board cards with chip image, name, and
+  specs (flash size, GPIO count). User selects target ESP32/ESP8266 variant.
+
+webapp/src/features/diy/components/Step2Pins.tsx
+  Step 2a: GPIO pin mapping. Interactive SVG overlay on the board pinout image.
+  User clicks GPIO pins to assign them to components (LED, relay, sensor, I2C).
+  Color-coded: green=assigned, red=conflict, yellow=reserved, gray=available.
+  Real-time validation feedback.
+
+webapp/src/features/diy/components/Step2Configs.tsx
+  Step 2b: Component configuration. For each assigned component, configures
+  parameters (pin mode: input/output/input_pullup, I2C address, device type).
+  Also selects Wi-Fi credential from vault and sets device name.
+
+webapp/src/features/diy/components/Step3Validate.tsx
+  Step 3: Validation summary. Shows full pin map preview (SVG) with all
+  assignments, component list, selected Wi-Fi network, and any warnings/errors.
+  Block build button if config has unresolved conflicts.
+
+webapp/src/features/diy/components/Step4Flash.tsx
+  Step 4: Build & flash. Sends config to server → monitors build job via
+  WebSocket (queued → building → artifact_ready) → downloads firmware artifact
+  → initiates Web Serial flash using ESP Web Tools. Shows build log output,
+  flash progress bar, and success/failure state.
+
+--- Hooks ---
+
+webapp/src/hooks/useWebSocket.ts
+  WebSocket hook. Connects to the server's WebSocket endpoint, handles
+  reconnection with exponential backoff, parses incoming JSON events, dispatches
+  to registered handlers by event type (device_state, build_progress,
+  system_metrics, serial_output, mqtt_status).
+
+webapp/src/hooks/useOtaUpdate.ts
+  OTA update hook. Manages firmware version comparison, update trigger,
+  progress tracking, and rollback logic.
+
+--- Library Modules ---
+
+webapp/src/lib/api.ts
+  Core API client. Constructs fetch requests to the backend with auth headers
+  (JWT Bearer token), handles response parsing, error normalization, and
+  retry logic. Exports typed functions: getDevices, getAutomations, sendCommand,
+  etc. Resolves API base URL from NEXT_PUBLIC_API_URL env var.
+
+webapp/src/lib/auth.ts
+  Authentication utilities. Token storage (localStorage with fallback), token
+  decoding (JWT claims extraction), token expiry check, logout cleanup.
+  Provides getToken/setToken/removeToken used by api.ts and AuthProvider.
+
+webapp/src/lib/api-keys.ts
+  API key management API client. Functions for create/list/revoke API keys,
+  with typed request/response interfaces.
+
+webapp/src/lib/api-automation.ts
+  Automation API client. CRUD operations for automation rules, trigger execution,
+  execution log retrieval.
+
+webapp/src/lib/automation-utils.ts
+  Automation graph utilities. Node/edge manipulation helpers, graph validation
+  (detect cycles, dangling edges, incompatible port types), default graph
+  templates for common patterns (motion sensor → light, temperature → fan).
+
+webapp/src/lib/device-config.ts
+  Device configuration utilities. Parses and normalizes device config payloads,
+  maps between UI state and API models for pin configurations, capability
+  declarations, and Wi-Fi credential assignments.
+
+webapp/src/lib/device-display.ts
+  Device display name and icon resolution. Maps device types and capabilities
+  to human-readable labels and Material Design icons for the dashboard cards.
+
+webapp/src/lib/rooms.ts
+  Room management API client. CRUD for rooms, room-device assignment,
+  room-based visibility filtering.
+
+webapp/src/lib/wifi-credentials.ts
+  Wi-Fi credential API client. CRUD for credentials, masked list display,
+  password reveal flow (requires account password re-authentication).
+
+webapp/src/lib/secure-origin.ts
+  Secure origin resolution. Determines the correct API base URL considering
+  HTTPS vs HTTP, forwarded headers, and Docker internal networking. Builds
+  provisioning headers for device handshake requests.
+
+webapp/src/lib/home-location.ts
+  Household location utilities. Geocoding (address → coordinates), reverse
+  geocoding (coordinates → address), map view state management.
+
+webapp/src/lib/i18n.ts
+  Internationalization. Translation dictionary (en/vi) for all UI strings,
+  dynamic locale detection, number/date formatting.
+
+webapp/src/lib/server-time.ts
+  Server time utilities. Fetches server timezone offset, formats timestamps
+  in server-local time for display consistency.
+
+webapp/src/lib/system-log.ts
+  System log API client. Log retrieval with category/severity/date filtering,
+  log acknowledgment, real-time log streaming via WebSocket.
+
+--- Type Definitions ---
+
+webapp/src/types/device.ts
+  Device type definitions: DeviceConfig, DeviceStateSnapshot, DeviceDirectoryEntry,
+  PinMode enum (input/output/input_pullup/analog), AuthStatus enum
+  (pending/approved/rejected), Capability types.
+
+webapp/src/types/automation.ts
+  Automation type definitions: graph node/edge types, trigger types
+  (device_state/time/sensor), condition operators, action types, execution
+  status enum.
+
+webapp/src/types/esp-web-tools.d.ts
+  TypeScript declaration file for the ESP Web Tools library (Web Serial flashing).
+  Declares the global ESPTool interface for type-safe Web Serial API usage.
+
+================================================================================
+WEBAPP E2E TESTS (webapp/tests/)
+================================================================================
+
+webapp/tests/support/e2e.ts
+  Shared E2E test utilities. Authentication helpers (login fixture), API response
+  mocking utilities, page object helpers for common UI interactions.
+
+webapp/tests/test_config_board_scope.spec.ts
+  E2E: Board scope tests. Verifies that configs and pin assignments are correctly
+  scoped to the selected board type, board switching preserves compatible configs.
+
+webapp/tests/test_board_switch_loop.spec.ts
+  E2E: Board switch loop test. Verifies rapid board switching in the DIY flasher
+  doesn't corrupt state or cause race conditions.
+
+webapp/tests/test_delete_config.spec.ts
+  E2E: Config deletion test. Verifies config CRUD lifecycle: create → rename →
+  delete with confirmation, including edge cases.
+
+webapp/tests/test_ws_realtime.spec.ts
+  E2E: WebSocket real-time update test. Verifies that device state changes
+  pushed via WebSocket are reflected in the UI without page refresh.
+
+webapp/tests/board_reserved_sync.spec.ts
+  E2E: Reserved pin synchronization. Verifies that reserved/boot-sensitive pins
+  shown in the UI match the board profile definitions and are correctly blocked.
+
+webapp/tests/flash_manifest.spec.ts
+  E2E: Flash manifest generation. Verifies the flash manifest built for Web
+  Serial flashing has correct addresses, sizes, and artifact references per
+  board family.
+
+webapp/tests/managed_config_sync_state.spec.ts
+  E2E: Managed config sync. Verifies that reconfiguring a previously-built
+  device correctly syncs config state between server and UI.

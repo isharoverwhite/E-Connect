@@ -42,6 +42,7 @@ import {
   WeatherSnowIcon,
   WeatherCloudyIcon,
 } from "@/components/WeatherIcon";
+import { StateHistoryModal } from "@/components/StateHistoryModal";
 
 const ADMIN_SUPPLEMENTAL_REFRESH_DEBOUNCE_MS = 750;
 const WEATHER_LOCATION_MAX_LENGTH = 15;
@@ -158,7 +159,7 @@ function HomeLocationSetupPrompt({
   );
 }
 
-type WeatherVisualSize = "hero" | "inline";
+type WeatherVisualSize = "hero" | "inline" | "forecast";
 
 function renderWeatherIcon(weatherData: CurrentWeatherResponse | null, size: WeatherVisualSize) {
   if (!weatherData) {
@@ -193,6 +194,34 @@ function renderWeatherIcon(weatherData: CurrentWeatherResponse | null, size: Wea
   );
 }
 
+function renderIconByName(iconName: string, isDaytime: boolean | null | undefined, size: WeatherVisualSize) {
+  const inlineCls = size === "inline" ? "mr-1" : "";
+  if (iconName === "sunny") {
+    return isDaytime === false
+      ? <WeatherMoonIcon size={size} className={inlineCls} />
+      : <WeatherSunIcon size={size} className={inlineCls} />;
+  }
+  if (iconName === "rainy") return <WeatherRainyIcon size={size} />;
+  if (iconName === "thunderstorm") return <WeatherThunderstormIcon size={size} />;
+  if (iconName === "ac_unit") return <WeatherSnowIcon size={size} />;
+  if (iconName === "cloud") return <WeatherCloudyIcon size={size} />;
+  const fallbackCls =
+    size === "hero"
+      ? "text-6xl text-sky-500 dark:text-sky-400 group-hover:text-sky-600 dark:group-hover:text-sky-300 transition-colors"
+      : size === "forecast"
+      ? "text-[26px] text-sky-500 dark:text-sky-400"
+      : "text-sm mr-1";
+  return <span className={`material-symbols-rounded ${fallbackCls}`}>{iconName}</span>;
+}
+
+function getDayLabel(dateStr: string, index: number, todayLabel: string, lang: string): string {
+  if (index === 0) return todayLabel;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  const locale = lang === "vi" ? "vi-VN" : "en-US";
+  return date.toLocaleDateString(locale, { weekday: "short" });
+}
+
 function SortableDeviceWrapper({
   config,
   isOnline,
@@ -212,6 +241,8 @@ function SortableDeviceWrapper({
   cardMinHeight: number;
   cardMaxWidth: number;
 }) {
+  const { t } = useLanguage();
+  const [historyOpen, setHistoryOpen] = useState(false);
   const {
     attributes,
     listeners,
@@ -269,13 +300,32 @@ function SortableDeviceWrapper({
       <div className={`w-full h-full transition-opacity duration-200 ${editMode && !visible ? "opacity-40" : ""}`}>
         <DynamicDeviceCard config={config} isOnline={isOnline} />
       </div>
+
+      {!editMode && (
+        <button
+          type="button"
+          onClick={() => setHistoryOpen(true)}
+          className="absolute bottom-2 right-2 z-20 flex h-6 w-6 items-center justify-center rounded-md bg-white/80 dark:bg-slate-800/80 shadow-sm border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-indigo-500 dark:hover:text-indigo-400 transition-colors"
+          title={t("devices.card.state_history")}
+        >
+          <span className="material-icons-round text-[14px]">history</span>
+        </button>
+      )}
+
+      {historyOpen && (
+        <StateHistoryModal
+          deviceId={config.device_id}
+          deviceName={config.name}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
 export default function Dashboard() {
   const { user } = useAuth();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const router = useRouter();
   const { showToast } = useToast();
   const [devices, setDevices] = useState<DeviceConfig[]>([]);
@@ -377,9 +427,7 @@ export default function Dashboard() {
     if (!user) return;
     let cancelled = false;
     void loadHomeWeather({ silent: true, isCancelled: () => cancelled });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, [loadHomeWeather, user]);
 
   const loadHouseTemperature = useCallback(async (options?: { silent?: boolean; isCancelled?: () => boolean }) => {
@@ -1202,18 +1250,27 @@ export default function Dashboard() {
                 {t("dashboard.non_admin_message")}
               </div>
             ) : null}
-            <div className="grid grid-cols-1 gap-6 mb-8 md:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-6 mb-8 md:grid-cols-2 lg:grid-cols-3">
               <div
-                className="bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300"
+                className="md:col-span-2 lg:col-span-3 bg-surface-light dark:bg-surface-dark hover:bg-slate-50 dark:hover:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-500 shadow-sm hover:shadow-md relative overflow-hidden group transition-all duration-300"
               >
-                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1">
-                  {renderWeatherIcon(weatherData, "hero")}
+                <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-40 transition-all duration-300 transform group-hover:scale-110 group-hover:-translate-y-1 pointer-events-none">
+                  {weatherData?.secondary_icon
+                    ? renderIconByName(weatherData.secondary_icon, weatherData.is_day, "hero")
+                    : renderWeatherIcon(weatherData, "hero")}
                 </div>
+                <button
+                  onClick={() => void loadHomeWeather({})}
+                  disabled={weatherLoading}
+                  title={t("dashboard.reload_weather")}
+                  className="absolute top-3 right-3 z-10 p-1.5 rounded-full text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-white/80 dark:hover:bg-slate-700/60 opacity-0 group-hover:opacity-100 transition-all duration-200 disabled:cursor-default disabled:opacity-30"
+                >
+                  <span className={`material-symbols-rounded text-base leading-none ${weatherLoading ? "animate-spin" : ""}`}>
+                    refresh
+                  </span>
+                </button>
                 <div className="relative z-10 transform group-hover:scale-[1.03] origin-left transition-transform duration-300">
-                  <p
-                    className="text-slate-500 dark:text-slate-400 text-sm font-medium"
-                    title={weatherLocationName}
-                  >
+                  <p className="text-slate-500 dark:text-slate-400 text-sm font-medium" title={weatherLocationName}>
                     {t("dashboard.weather")}
                   </p>
 
@@ -1229,19 +1286,49 @@ export default function Dashboard() {
                     </div>
                   ) : weatherData ? (
                     <>
-                      <h3 className="text-3xl font-bold text-slate-900 dark:text-white mt-2 flex items-start">
-                        {Math.round(weatherData.temperature)}<span className="text-lg font-medium text-slate-500 mt-1">°C</span>
-                      </h3>
-                      <div className="mt-2 text-xs flex items-center font-medium text-slate-500 dark:text-slate-400">
-                        {renderWeatherIcon(weatherData, "inline")}
-                        {weatherData.description}
+                      <div className="flex items-end gap-8 mt-2">
+                        <div>
+                          <h3 className="text-3xl font-bold text-slate-900 dark:text-white flex items-start">
+                            {Math.round(weatherData.secondary_temperature ?? weatherData.temperature)}
+                            <span className="text-lg font-medium text-slate-500 mt-1">°C</span>
+                          </h3>
+                          <div className="mt-2 text-xs flex items-center font-medium text-slate-500 dark:text-slate-400">
+                            {weatherData.secondary_icon
+                              ? renderIconByName(weatherData.secondary_icon, weatherData.is_day, "inline")
+                              : renderWeatherIcon(weatherData, "inline")}
+                            {weatherData.secondary_description ?? weatherData.description}
+                          </div>
+                          <p className="mt-2 truncate text-xs text-slate-400 dark:text-slate-500" title={weatherLocationName}>
+                            {weatherLocationName}
+                          </p>
+                        </div>
                       </div>
-                      <p
-                        className="mt-4 truncate text-xs text-slate-400 dark:text-slate-500"
-                        title={weatherLocationName}
-                      >
-                        {weatherLocationName}
-                      </p>
+
+                      {weatherData.daily_forecast && weatherData.daily_forecast.length > 0 && (
+                        <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800">
+                          <div className="grid grid-cols-7 gap-1">
+                            {weatherData.daily_forecast.map((day, i) => (
+                              <div
+                                key={day.date}
+                                className="flex flex-col items-center gap-0.5 py-2 px-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                              >
+                                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide">
+                                  {getDayLabel(day.date, i, t("dashboard.forecast_today"), language)}
+                                </span>
+                                <span className="my-0.5 flex items-center justify-center">
+                                  {renderIconByName(day.icon, weatherData.is_day, "forecast")}
+                                </span>
+                                <span className="text-xs font-bold text-slate-800 dark:text-white">
+                                  {day.temp_max != null ? `${Math.round(day.temp_max)}°` : "—"}
+                                </span>
+                                <span className="text-[10px] text-slate-400 dark:text-slate-500">
+                                  {day.temp_min != null ? `${Math.round(day.temp_min)}°` : "—"}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </>
                   ) : null}
                 </div>

@@ -134,6 +134,15 @@ export interface HouseholdLocationResponse {
 
 export type HouseholdLocationPayload = Pick<HouseholdLocationResponse, "latitude" | "longitude" | "label" | "source">;
 
+export interface DailyForecastDay {
+    date: string;
+    weather_code: number;
+    description: string;
+    icon: string;
+    temp_max?: number | null;
+    temp_min?: number | null;
+}
+
 export interface CurrentWeatherResponse {
     temperature: number;
     weather_code: number;
@@ -144,6 +153,16 @@ export interface CurrentWeatherResponse {
     longitude: number;
     is_day?: boolean | null;
     observed_at?: string | null;
+    secondary_description?: string | null;
+    secondary_icon?: string | null;
+    secondary_temperature?: number | null;
+    secondary_source?: string | null;
+    metar_temperature?: number | null;
+    metar_description?: string | null;
+    metar_icon?: string | null;
+    metar_source?: string | null;
+    metar_observed_at?: string | null;
+    daily_forecast?: DailyForecastDay[] | null;
 }
 
 export interface HouseTemperatureResponse {
@@ -1025,6 +1044,42 @@ export interface BatchOtaResult {
   status: "triggered" | "already_queued" | "not_found" | "error";
   job_id?: string;
   message?: string;
+}
+
+export type DeviceHistoryEventType = "state_change" | "online" | "offline" | "command_requested" | "command_failed";
+
+export interface DeviceHistoryEntry {
+  id: number;
+  device_id: string;
+  timestamp: string;
+  event_type: DeviceHistoryEventType;
+  payload: string;
+  changed_by: number | null;
+  changed_by_username: string | null;
+}
+
+export async function fetchDeviceStateHistory(
+  deviceId: string,
+  options: {
+    event_type?: DeviceHistoryEventType | null;
+    limit?: number;
+    offset?: number;
+  } = {}
+): Promise<DeviceHistoryEntry[]> {
+  const token = getToken();
+  if (!token) throw new Error("Missing session token. Please sign in again.");
+
+  const params = new URLSearchParams();
+  if (options.event_type) params.set("event_type", options.event_type);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+
+  const qs = params.toString();
+  const response = await fetch(`${API_URL}/device/${deviceId}/history${qs ? `?${qs}` : ""}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!response.ok) throw new Error("Failed to fetch device history");
+  return response.json();
 }
 
 export async function batchOTA(
