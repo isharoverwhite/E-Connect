@@ -2,7 +2,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, useRef, type FormEvent } from "react";
 import { initializeServer, fetchSystemStatus } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -10,6 +10,8 @@ import { useToast } from "@/components/ToastContext";
 import { useLanguage, LanguageCode } from "@/components/LanguageContext";
 import { HomeLocation } from "@/lib/home-location";
 import HomeLocationPicker from "@/components/HomeLocationPicker";
+// @ts-expect-error - no types for animejs installed
+import { animate, cubicBezier, steps } from "animejs";
 
 type SetupStep = 1 | 2;
 
@@ -37,6 +39,10 @@ export default function SetupPage() {
     const [splashAnimating, setSplashAnimating] = useState(false);
     const [setupDone, setSetupDone] = useState(false);
 
+    const iconRef = useRef<HTMLSpanElement>(null);
+    const titleRef = useRef<HTMLHeadingElement>(null);
+    const subtitleRef = useRef<HTMLParagraphElement>(null);
+
     const router = useRouter();
     const { showToast } = useToast();
 
@@ -52,6 +58,43 @@ export default function SetupPage() {
                         setIsCheckingStatus(false);
                         setShowSplash(true);
 
+                        // Start animejs timeline after render
+                        setTimeout(() => {
+                            if (!mounted) return;
+                            
+                            const easeBezier = cubicBezier(0.1, 0.8, 0.2, 1);
+                            
+                            if (iconRef.current) {
+                                animate(iconRef.current, {
+                                    rotate: [-1080, 0],
+                                    scale: [0, 1],
+                                    opacity: [0, 1],
+                                    duration: 1200,
+                                    ease: easeBezier
+                                });
+                            }
+                            
+                            if (titleRef.current) {
+                                animate(titleRef.current, {
+                                    x: [-50, 0],
+                                    opacity: [0, 1],
+                                    duration: 800,
+                                    delay: 800,
+                                    ease: easeBezier
+                                });
+                            }
+
+                            if (subtitleRef.current) {
+                                animate(subtitleRef.current, {
+                                    y: [20, 0],
+                                    opacity: [0, 1],
+                                    duration: 800,
+                                    delay: 1100,
+                                    ease: easeBezier
+                                });
+                            }
+                        }, 50);
+
                         setTimeout(() => {
                             if (mounted) {
                                 setSplashAnimating(true);
@@ -59,7 +102,7 @@ export default function SetupPage() {
                                     if (mounted) setShowSplash(false);
                                 }, 700);
                             }
-                        }, 4300);
+                        }, 3700);
                     }
                 }
             } catch (error: unknown) {
@@ -262,45 +305,19 @@ export default function SetupPage() {
                 <div className={`fixed inset-0 z-[100] flex flex-col items-center justify-center bg-white dark:bg-slate-950 transition-all duration-700 ease-in-out ${
                     splashAnimating ? "opacity-0 scale-110 pointer-events-none" : "opacity-100 scale-100"
                 }`}>
-                    <style>{`
-                        @keyframes wheel-spin {
-                            0% { transform: rotate(-1080deg) scale(0); opacity: 0; }
-                            100% { transform: rotate(0deg) scale(1); opacity: 1; }
-                        }
-                        @keyframes text-slide-right {
-                            0% { transform: translateX(-50px); opacity: 0; }
-                            100% { transform: translateX(0); opacity: 1; }
-                        }
-                        @keyframes typing-reveal {
-                            0% { clip-path: inset(0 100% 0 0); opacity: 1; }
-                            100% { clip-path: inset(0 0 0 0); opacity: 1; }
-                        }
-                        .animate-wheel {
-                            animation: wheel-spin 1.2s cubic-bezier(0.1, 0.8, 0.2, 1) forwards;
-                        }
-                        .animate-text-slide {
-                            opacity: 0;
-                            animation: text-slide-right 0.8s cubic-bezier(0.1, 0.8, 0.2, 1) forwards;
-                            animation-delay: 0.8s;
-                        }
-                        .animate-typing-text {
-                            opacity: 0;
-                            animation: typing-reveal 1.2s steps(23) forwards;
-                            animation-delay: 1.5s;
-                        }
-                    `}</style>
                     <div className="flex items-center justify-center">
                         <span 
-                            className="material-icons-round text-primary mr-6 animate-wheel relative z-10 bg-white dark:bg-slate-950"
+                            ref={iconRef}
+                            className="material-icons-round text-primary mr-6 relative z-10 bg-white dark:bg-slate-950 opacity-0"
                             style={{ fontSize: "140px", lineHeight: "1" }}
                         >
                             hub
                         </span>
                         <div className="flex flex-col items-end">
-                            <h1 className="text-slate-900 dark:text-white text-6xl sm:text-[96px] font-extrabold tracking-tight leading-none animate-text-slide" style={{ marginTop: "10px" }}>
+                            <h1 ref={titleRef} className="text-slate-900 dark:text-white text-6xl sm:text-[96px] font-extrabold tracking-tight leading-none opacity-0" style={{ marginTop: "10px" }}>
                                 E-Connect
                             </h1>
-                            <p className="text-slate-500 dark:text-slate-400 mt-2 text-sm sm:text-base font-semibold tracking-widest uppercase animate-typing-text">
+                            <p ref={subtitleRef} className="text-slate-500 dark:text-slate-400 mt-2 text-sm sm:text-base font-semibold tracking-widest uppercase opacity-0">
                                 Connect All Your Things
                             </p>
                         </div>

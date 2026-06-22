@@ -31,6 +31,12 @@ export interface PinMapping {
         input_type?: "switch" | "tachometer" | "dht";
         switch_type?: "momentary" | "momentary_toggle" | "toggle";
         dht_version?: "DHT11" | "DHT22" | "DHT21";
+        battery_max_voltage?: number;
+        battery_nominal_voltage?: number;
+        battery_capacity?: number;
+        resistor_1_kohm?: number;
+        resistor_2_kohm?: number;
+        adc_max_voltage?: number;
     } | null;
 }
 

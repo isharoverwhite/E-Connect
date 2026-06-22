@@ -864,6 +864,15 @@ def generate_platformio_ini(project, project_dir: str):
     if board_definition.platform in {"espressif32", "espressif8266"} and not has_actuator_pins:
         build_flags.append("-D ECONNECT_WIFI_SLEEP=1")
 
+    power_mode = str(config_json.get("power_mode") or "power").lower()
+    if power_mode == "battery":
+        build_flags.append("-D ECONNECT_BATTERY_MODE=1")
+        deep_sleep_interval = config_json.get("deep_sleep_interval_s")
+        if isinstance(deep_sleep_interval, int) and deep_sleep_interval > 0:
+            build_flags.append(f"-D ECONNECT_DEEP_SLEEP_INTERVAL_S={deep_sleep_interval}")
+        else:
+            build_flags.append("-D ECONNECT_DEEP_SLEEP_INTERVAL_S=60")
+
     build_flags_block = "\n".join(f"    {flag}" for flag in build_flags) if build_flags else ""
     board_configs_block = "\n".join(board_config_lines) + "\n" if board_config_lines else ""
     lib_deps_block = "\n".join(f"    {lib}" for lib in lib_deps)

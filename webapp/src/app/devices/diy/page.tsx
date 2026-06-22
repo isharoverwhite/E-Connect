@@ -284,6 +284,8 @@ function createProjectPayload({
   cpuMhz: number | null;
   flashSize: string | null;
   psramSize: string | null;
+  powerMode: "power" | "battery";
+  deepSleepInterval: number;
   }) {
   const normalizedProjectName = projectName.trim();
   const config: Record<string, unknown> = {
@@ -299,6 +301,8 @@ function createProjectPayload({
     cpu_mhz: cpuMhz,
     flash_size: flashSize,
     psram_size: psramSize,
+    power_mode: powerMode,
+    deep_sleep_interval_s: deepSleepInterval,
     wifi_credential_id: wifiCredentialId,
     pins: pins.map((mapping) => ({
       gpio_pin: mapping.gpio_pin,
@@ -357,6 +361,8 @@ export default function DIYBuilderPage() {
   const [boardConfigsLoading, setBoardConfigsLoading] = useState(false);
   const [boardConfigsError, setBoardConfigsError] = useState("");
   const [projectName, setProjectName] = useState("");
+  const [powerMode, setPowerMode] = useState<"power" | "battery">("power");
+  const [deepSleepInterval, setDeepSleepInterval] = useState(60);
   const [roomId, setRoomId] = useState<number | null>(null);
   const [rooms, setRooms] = useState<RoomRecord[]>([]);
   const [roomsLoading, setRoomsLoading] = useState(true);
@@ -1172,6 +1178,8 @@ export default function DIYBuilderPage() {
       typeof config.latest_build_job_id === "string" ? config.latest_build_job_id : null;
     const nextFlashSource = normalizeFlashSource(config.flash_source, Boolean(nextBoard.demoFirmware));
     const shouldRewriteFlashSource = nextFlashSource !== config.flash_source;
+    const nextPowerMode = config.power_mode === "battery" ? "battery" : "power";
+    const nextDeepSleepInterval = typeof config.deep_sleep_interval_s === "number" ? config.deep_sleep_interval_s : 60;
 
     setProjectId(asTemplate ? null : project.id);
     setTemplateConfigId(asTemplate ? project.id : null);
@@ -1196,6 +1204,8 @@ export default function DIYBuilderPage() {
     setFlashSize(nextFlashSize);
     setPsramSize(nextPsramSize);
     setFlashSource(nextFlashSource);
+    setPowerMode(nextPowerMode);
+    setDeepSleepInterval(nextDeepSleepInterval);
     setSerialPort(
       typeof config.serial_port === "string" && config.serial_port.trim()
         ? config.serial_port
@@ -1237,6 +1247,8 @@ export default function DIYBuilderPage() {
           cpuMhz: nextCpuMhz,
           flashSize: nextFlashSize,
           psramSize: nextPsramSize,
+          powerMode: nextPowerMode,
+          deepSleepInterval: nextDeepSleepInterval,
         }),
       );
       lastSavedPayloadRef.current = shouldRewriteFlashSource ? null : normalizedPayload;
@@ -1870,6 +1882,8 @@ export default function DIYBuilderPage() {
             cpuMhz,
             flashSize,
             psramSize,
+            powerMode,
+            deepSleepInterval,
           }),
         ),
       );
@@ -2126,6 +2140,10 @@ export default function DIYBuilderPage() {
             board={board}
             projectName={projectName}
             setProjectName={setProjectName}
+            powerMode={powerMode}
+            setPowerMode={setPowerMode}
+            powerMode={powerMode}
+            setPowerMode={setPowerMode}
             configs={boardConfigOptions}
             configsLoading={boardConfigsLoading}
             configListError={boardConfigsError}
@@ -2151,6 +2169,7 @@ export default function DIYBuilderPage() {
             boardPins={boardPins}
             pins={pins}
             setPins={setPins}
+            powerMode={powerMode}
             selectedPinId={selectedPinId}
             setSelectedPinId={setSelectedPinId}
             projectName={projectName}

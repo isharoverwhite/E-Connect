@@ -14,6 +14,7 @@ export interface Step2PinsProps {
     setPins: React.Dispatch<React.SetStateAction<PinMapping[]>>;
     board: BoardProfile;
     boardPins: BoardPin[];
+    powerMode: "power" | "battery";
     selectedPinId: string | null;
     setSelectedPinId: React.Dispatch<React.SetStateAction<string | null>>;
     projectName: string;
@@ -33,6 +34,7 @@ export function Step2Pins({
     setPins,
     board,
     boardPins,
+    powerMode,
     selectedPinId,
     setSelectedPinId,
     projectName,
@@ -350,6 +352,98 @@ export function Step2Pins({
                                                 />
                                             </div>
                                         )}
+                                    </div>
+                                )}
+
+                                {powerMode === "battery" && getBoardPinMarkers(board, pin).some(m => m.label === "BATTERY") && (
+                                    <div className="mt-2 rounded bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/40 p-3">
+                                        <div className="flex gap-2.5 items-start">
+                                            <span className="material-symbols-outlined text-amber-500 text-[18px] mt-0.5">warning</span>
+                                            <div className="flex flex-col gap-1.5 w-full">
+                                                <p className="text-[11px] font-bold text-amber-800 dark:text-amber-300 uppercase tracking-widest">
+                                                    Voltage Divider & Battery Config
+                                                </p>
+                                                <div className="text-[11px] text-amber-700/90 dark:text-amber-400/80 leading-relaxed space-y-2">
+                                                    <p><strong>Các bước nối dây chi tiết:</strong></p>
+                                                    <ol className="list-decimal pl-4 space-y-1">
+                                                        <li><strong>Từ cực Dương (+) của Pin/Ắc quy:</strong> Nối cực dương của pin vào một đầu của điện trở R1.</li>
+                                                        <li><strong>Điểm giao giữa R1 và R2 (V_out):</strong> Nối đầu còn lại của R1 với một đầu của R2. Tại điểm nối chung này, cắm thẳng vào Chân ADC ({pin.label}).</li>
+                                                        <li><strong>Từ cực Âm (-) của Pin/Ắc quy:</strong> Nối đầu còn lại của R2 vào cực âm (-) của pin.</li>
+                                                        <li><strong>ĐẶC BIỆT QUAN TRỌNG:</strong> Bạn phải nối cực âm (-) của pin vào chân GND của vi điều khiển. Việc chung mass này là bắt buộc để vi điều khiển đo đạc chính xác.</li>
+                                                    </ol>
+                                                    <p>⚠️ <strong>Lưu ý an toàn:</strong> Dùng đồng hồ VOM đo thử điện áp tại điểm giao R1 và R2 so với GND. Đảm bảo mức điện áp không vượt quá điện áp tham chiếu của chip khi pin đầy nhất.</p>
+                                                </div>
+
+                                                {assignment?.mode === "ADC" ? (
+                                                    <div className="mt-3 flex flex-col gap-3 border-t border-amber-200/50 dark:border-amber-800/30 pt-3">
+                                                        <div className="grid grid-cols-2 gap-3">
+                                                            <div className="flex flex-col gap-1">
+                                                                <label className="text-[10px] text-amber-800 dark:text-amber-400 font-medium">Max Battery Voltage (V)</label>
+                                                                <input
+                                                                    type="number"
+                                                                    step="0.1"
+                                                                    value={assignment.extra_params?.battery_max_voltage ?? 4.2}
+                                                                    onChange={(e) => handleExtraParamChange(pin, { battery_max_voltage: parseFloat(e.target.value) || 4.2 })}
+                                                                    className="bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-amber-500"
+                                                                />
+                                                            </div>
+                                                            <div className="flex flex-col gap-1">
+                                                                <label className="text-[10px] text-amber-800 dark:text-amber-400 font-medium">Max ADC Input (V)</label>
+                                                                <input
+                                                                    type="number"
+                                                                    step="0.1"
+                                                                    value={assignment.extra_params?.adc_max_voltage ?? 3.3}
+                                                                    onChange={(e) => handleExtraParamChange(pin, { adc_max_voltage: parseFloat(e.target.value) || 3.3 })}
+                                                                    className="bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-amber-500"
+                                                                />
+                                                            </div>
+                                                            <div className="flex flex-col gap-1">
+                                                                <label className="text-[10px] text-amber-800 dark:text-amber-400 font-medium">R2 Resistor (kΩ)</label>
+                                                                <input
+                                                                    type="number"
+                                                                    value={assignment.extra_params?.resistor_2_kohm ?? 100}
+                                                                    onChange={(e) => handleExtraParamChange(pin, { resistor_2_kohm: parseFloat(e.target.value) || 100 })}
+                                                                    className="bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-amber-500"
+                                                                />
+                                                            </div>
+                                                            <div className="flex flex-col gap-1">
+                                                                <label className="text-[10px] text-amber-800 dark:text-amber-400 font-bold">Calculated R1 (kΩ)</label>
+                                                                <div className="bg-amber-100 dark:bg-amber-900/40 border border-amber-300 dark:border-amber-700 text-amber-900 dark:text-amber-200 rounded py-1 px-2 text-xs font-bold flex items-center h-[26px]">
+                                                                    {(() => {
+                                                                        const vmax = assignment.extra_params?.battery_max_voltage ?? 4.2;
+                                                                        const vadc = assignment.extra_params?.adc_max_voltage ?? 3.3;
+                                                                        const r2 = assignment.extra_params?.resistor_2_kohm ?? 100;
+                                                                        if (vadc >= vmax) return "0 (Direct)";
+                                                                        const r1 = r2 * (vmax / vadc - 1);
+                                                                        
+                                                                        // Delay state update to avoid rendering loops
+                                                                        if (assignment.extra_params?.resistor_1_kohm !== parseFloat(r1.toFixed(2))) {
+                                                                            setTimeout(() => handleExtraParamChange(pin, { resistor_1_kohm: parseFloat(r1.toFixed(2)) }), 0);
+                                                                        }
+                                                                        return r1.toFixed(2);
+                                                                    })()}
+                                                                </div>
+                                                            </div>
+                                                            <div className="flex flex-col gap-1 col-span-2">
+                                                                <label className="text-[10px] text-amber-800 dark:text-amber-400 font-medium">Nominal Voltage (V) - Optional</label>
+                                                                <input
+                                                                    type="number"
+                                                                    step="0.1"
+                                                                    value={assignment.extra_params?.battery_nominal_voltage || ""}
+                                                                    onChange={(e) => handleExtraParamChange(pin, { battery_nominal_voltage: parseFloat(e.target.value) || undefined })}
+                                                                    placeholder="e.g. 3.7"
+                                                                    className="bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-slate-800 dark:text-slate-200 rounded py-1 px-2 text-xs outline-none focus:border-amber-500"
+                                                                />
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <p className="mt-2 text-[10px] font-bold text-amber-600 dark:text-amber-400 bg-amber-100/50 dark:bg-amber-900/30 p-2 rounded border border-amber-200 dark:border-amber-800/40">
+                                                        👉 Select "Analog Input (ADC)" mode to configure voltage divider parameters.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
                                     </div>
                                 )}
 
@@ -791,6 +885,7 @@ export function Step2Pins({
                                 assignment: pins.find((mapping) => mapping.gpio_pin === pin.gpio),
                                 onSelect: handlePinSelection,
                                 isDark: isDark,
+                                powerMode: powerMode,
                             })
                         )}
                         {board.rightPins.map((pin, index) =>
@@ -800,8 +895,10 @@ export function Step2Pins({
                                 assignment: pins.find((mapping) => mapping.gpio_pin === pin.gpio),
                                 onSelect: handlePinSelection,
                                 isDark: isDark,
+                                powerMode: powerMode,
                             })
                         )}
+                        {renderBatteryCircuit({ board, pins, boardHeight, isDark, powerMode })}
                     </svg>
                                 </TransformComponent>
                             </>
@@ -965,6 +1062,7 @@ function renderSvgPin({
     assignment?: PinMapping;
     onSelect: (pin: BoardPin) => void;
     isDark: boolean;
+    powerMode: "power" | "battery";
 }) {
     const top = 110;
     const bottom = boardHeight - 70;
@@ -987,16 +1085,18 @@ function renderSvgPin({
     const anchor = side === "left" ? "end" : "start";
     const isI2C = pin.capabilities.includes("I2C");
     const stemCenter = side === "left" ? 171 : 549;
-    const pinMarkers = getBoardPinMarkers(board, pin);
+    const pinMarkers = getBoardPinMarkers(board, pin).filter((marker) => marker.label !== "BATTERY" || powerMode === "battery");
     const markerLabels = [
         ...pinMarkers.map((marker) => ({
             label: marker.label,
             fill:
                 marker.tone === "sky"
                     ? isDark ? "#38bdf8" : "#0284c7"
-                    : marker.tone === "rose"
-                        ? isDark ? "#fb7185" : "#e11d48"
-                        : isDark ? "#fbbf24" : "#ea580c",
+                    : marker.tone === "emerald"
+                        ? isDark ? "#34d399" : "#10b981"
+                        : marker.tone === "rose"
+                            ? isDark ? "#fb7185" : "#e11d48"
+                            : isDark ? "#fbbf24" : "#ea580c",
         })),
         ...(isI2C ? [{ label: "I2C", fill: isDark ? "#38bdf8" : "#0284c7" }] : []),
     ];
@@ -1019,31 +1119,55 @@ function renderSvgPin({
             <line x1={stemStart} x2={stemEnd} y1={y} y2={y} stroke={isDark ? "#94a3b8" : "#475569"} strokeWidth="3" />
 
             {markerLabels.map((marker, markerIndex) => (
-                <text
-                    key={`${pin.id}-${marker.label}-${markerIndex}`}
-                    x={stemCenter}
-                    y={markerTop + markerIndex * 13}
-                    fontSize="8.5"
-                    fill={marker.fill}
-                    textAnchor="middle"
-                    fontWeight="bold"
-                    className="pointer-events-none"
-                >
-                    {marker.label}
-                </text>
+                <g key={marker.label} transform={`translate(0, ${markerTop + markerIndex * 13})`}>
+                    <rect
+                        x={labelX - (side === "left" ? 18 : -2)}
+                        y="-5"
+                        width="16"
+                        height="10"
+                        rx="2"
+                        fill={marker.fill}
+                        opacity="0.2"
+                    />
+                    <text
+                        x={labelX - (side === "left" ? 10 : -10)}
+                        y="2.5"
+                        fill={marker.fill}
+                        fontSize="7"
+                        fontFamily="monospace"
+                        fontWeight="bold"
+                        textAnchor="middle"
+                    >
+                        {marker.label === "I2C" ? "I2C" : marker.label.substring(0, 2)}
+                    </text>
+                </g>
             ))}
 
+            <circle cx={stemCenter} cy={y} r="3" fill={isDark ? "#cbd5e1" : "#e2e8f0"} stroke={isDark ? "#475569" : "#94a3b8"} strokeWidth="1" />
+
             <rect
-                x={pinX}
-                y={y - 11}
-                width="28"
-                height="22"
-                rx="6"
+                x={pinX - (side === "left" ? 20 : 0)}
+                y={y - 10}
+                width="20"
+                height="20"
+                rx="4"
                 fill={fill}
-                stroke={isSelected ? "#bfdbfe" : "transparent"}
-                strokeWidth="3"
-                className="transition-colors group-hover:stroke-slate-400"
+                stroke={isSelected ? "#3b82f6" : isDark ? "#475569" : "#cbd5e1"}
+                strokeWidth={isSelected ? "2" : "1"}
+                className="transition-colors group-hover:stroke-blue-400"
             />
+            <text
+                x={pinX - (side === "left" ? 10 : -10)}
+                y={y + 4}
+                fill={isSelected || assignment ? "#ffffff" : isDark ? "#cbd5e1" : "#475569"}
+                fontSize="10"
+                fontWeight="bold"
+                fontFamily="monospace"
+                textAnchor="middle"
+            >
+                {pin.gpio}
+            </text>
+
             <text
                 x={labelX}
                 y={y + 5}
@@ -1064,6 +1188,118 @@ function renderSvgPin({
             >
                 {assignment ? `${assignment.mode} · ${assignment.label || `GPIO ${pin.gpio}`}` : `GPIO ${pin.gpio}`}
             </text>
+        </g>
+    );
+}
+
+function renderBatteryCircuit({
+    board,
+    pins,
+    boardHeight,
+    isDark,
+    powerMode
+}: {
+    board: BoardProfile;
+    pins: PinMapping[];
+    boardHeight: number;
+    isDark: boolean;
+    powerMode: "power" | "battery";
+}) {
+    if (powerMode !== "battery") return null;
+
+    const batteryPin = [...board.leftPins, ...board.rightPins].find(p => getBoardPinMarkers(board, p).some(m => m.label === "BATTERY"));
+    if (!batteryPin) return null;
+
+    const assignment = pins.find(p => p.gpio_pin === batteryPin.gpio);
+    const vmax = assignment?.extra_params?.battery_max_voltage ?? 4.2;
+    const vadc = assignment?.extra_params?.adc_max_voltage ?? 3.3;
+    const r2k = assignment?.extra_params?.resistor_2_kohm ?? 100;
+
+    let r1Text = "0 (Direct)";
+    if (vadc < vmax) {
+        const r1 = r2k * (vmax / vadc - 1);
+        r1Text = `${r1.toFixed(2)}kΩ`;
+    }
+
+    const isLeft = board.leftPins.includes(batteryPin);
+    const index = isLeft ? board.leftPins.indexOf(batteryPin) : board.rightPins.indexOf(batteryPin);
+
+    const top = 110;
+    const bottom = boardHeight - 70;
+    const totalRows = Math.max(board.leftPins.length, board.rightPins.length);
+    const gap = totalRows === 1 ? 0 : (bottom - top) / (totalRows - 1);
+    const y = top + gap * index;
+
+    const batteryX = isLeft ? 10 : 670;
+    const batteryY = y - 40;
+
+    const strokeColor = isDark ? "#94a3b8" : "#475569";
+    const batteryColor = "#22c55e"; // emerald-500
+
+    return (
+        <g id="battery-circuit" opacity="0.9" className="pointer-events-none">
+            {/* Battery Body */}
+            <rect x={batteryX} y={batteryY} width="40" height="80" rx="4" fill={isDark ? "#1e293b" : "#f8fafc"} stroke={strokeColor} strokeWidth="2" />
+            {/* Battery Terminals */}
+            <rect x={batteryX + 10} y={batteryY - 4} width="20" height="4" fill={strokeColor} />
+            <text x={batteryX + 20} y={batteryY + 20} fontSize="14" fill={batteryColor} fontWeight="bold" textAnchor="middle">+</text>
+            <text x={batteryX + 20} y={batteryY + 70} fontSize="14" fill={strokeColor} fontWeight="bold" textAnchor="middle">-</text>
+            <text x={batteryX + 20} y={batteryY + 45} fontSize="12" fill={strokeColor} fontWeight="bold" textAnchor="middle">{vmax}V</text>
+
+            {/* Path from Positive -> R1 -> Pin -> R2 -> GND */}
+            {isLeft ? (
+                <>
+                    {/* Positive Wire to R1 */}
+                    <path d={`M ${batteryX + 20} ${batteryY - 4} L ${batteryX + 20} ${y - 60} L 80 ${y - 60}`} fill="none" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" />
+                    {/* R1 (Top) */}
+                    <rect x="80" y={y - 70} width="30" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.5" />
+                    <text x="95" y={y - 73} fontSize="9" fill={strokeColor} textAnchor="middle" fontWeight="bold">R1</text>
+                    <text x="95" y={y - 56} fontSize="9" fill={isDark ? "#cbd5e1" : "#334155"} textAnchor="middle">{r1Text}</text>
+                    {/* R1 to Pin */}
+                    <path d={`M 110 ${y - 60} L 130 ${y - 60} L 130 ${y}`} fill="none" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" />
+
+                    {/* Pin to R2 */}
+                    <path d={`M 130 ${y} L 80 ${y + 30}`} fill="none" stroke="#3b82f6" strokeWidth="2" strokeDasharray="4" />
+                    {/* R2 (Bottom) */}
+                    <rect x="50" y={y + 20} width="30" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.5" />
+                    <text x="65" y={y + 17} fontSize="9" fill={strokeColor} textAnchor="middle" fontWeight="bold">R2</text>
+                    <text x="65" y={y + 34} fontSize="9" fill={isDark ? "#cbd5e1" : "#334155"} textAnchor="middle">{r2k}kΩ</text>
+                    {/* R2 to GND */}
+                    <path d={`M 50 ${y + 30} L 30 ${y + 30} L 30 ${batteryY + 80}`} fill="none" stroke="#64748b" strokeWidth="2" strokeDasharray="4" />
+
+                    {/* Negative Wire to GND */}
+                    <path d={`M ${batteryX + 20} ${batteryY + 80} L ${batteryX + 20} ${batteryY + 90} L 30 ${batteryY + 90} L 30 ${batteryY + 80}`} fill="none" stroke="#64748b" strokeWidth="2" strokeDasharray="4" />
+
+                    {/* GND Symbol */}
+                    <path d={`M 20 ${batteryY + 90} L 40 ${batteryY + 90} M 25 ${batteryY + 94} L 35 ${batteryY + 94} M 28 ${batteryY + 98} L 32 ${batteryY + 98}`} fill="none" stroke={strokeColor} strokeWidth="2" />
+                </>
+            ) : (
+                <>
+                    {/* Positive Wire to R1 */}
+                    <path d={`M ${batteryX + 20} ${batteryY - 4} L ${batteryX + 20} ${y - 60} L 640 ${y - 60}`} fill="none" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" />
+                    {/* R1 (Top) */}
+                    <rect x="610" y={y - 70} width="30" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.5" />
+                    <text x="625" y={y - 73} fontSize="9" fill={strokeColor} textAnchor="middle" fontWeight="bold">R1</text>
+                    <text x="625" y={y - 56} fontSize="9" fill={isDark ? "#cbd5e1" : "#334155"} textAnchor="middle">{r1Text}</text>
+                    {/* R1 to Pin */}
+                    <path d={`M 610 ${y - 60} L 590 ${y - 60} L 590 ${y}`} fill="none" stroke="#ef4444" strokeWidth="2" strokeDasharray="4" />
+
+                    {/* Pin to R2 */}
+                    <path d={`M 590 ${y} L 640 ${y + 30}`} fill="none" stroke="#3b82f6" strokeWidth="2" strokeDasharray="4" />
+                    {/* R2 (Bottom) */}
+                    <rect x="640" y={y + 20} width="30" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.5" />
+                    <text x="655" y={y + 17} fontSize="9" fill={strokeColor} textAnchor="middle" fontWeight="bold">R2</text>
+                    <text x="655" y={y + 34} fontSize="9" fill={isDark ? "#cbd5e1" : "#334155"} textAnchor="middle">{r2k}kΩ</text>
+                    {/* R2 to GND */}
+                    <path d={`M 670 ${y + 30} L 690 ${y + 30} L 690 ${batteryY + 80}`} fill="none" stroke="#64748b" strokeWidth="2" strokeDasharray="4" />
+
+                    {/* Negative Wire to GND */}
+                    <path d={`M ${batteryX + 20} ${batteryY + 80} L ${batteryX + 20} ${batteryY + 90} L 690 ${batteryY + 90} L 690 ${batteryY + 80}`} fill="none" stroke="#64748b" strokeWidth="2" strokeDasharray="4" />
+
+                    {/* GND Symbol */}
+                    <path d={`M 680 ${batteryY + 90} L 700 ${batteryY + 90} M 685 ${batteryY + 94} L 695 ${batteryY + 94} M 688 ${batteryY + 98} L 692 ${batteryY + 98}`} fill="none" stroke={strokeColor} strokeWidth="2" />
+                </>
+            )}
         </g>
     );
 }

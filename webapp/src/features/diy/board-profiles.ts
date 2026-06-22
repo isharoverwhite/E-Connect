@@ -29,8 +29,8 @@ export interface BoardPin {
 
 export interface BoardPinMarker {
   gpio: number;
-  label: "LED" | "RGB" | "FLASH";
-  tone?: "amber" | "sky" | "rose";
+  label: "LED" | "RGB" | "FLASH" | "BATTERY";
+  tone?: "amber" | "sky" | "rose" | "emerald";
 }
 
 export interface DemoFirmwarePart {
@@ -595,6 +595,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: classicEsp32Left,
     rightPins: classicEsp32Right,
+    pinMarkers: [{ gpio: 34, label: "BATTERY", tone: "emerald" }],
     i2cDefaults: { sda: 21, scl: 22 },
   },
   {
@@ -611,6 +612,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: nodemcuLeft,
     rightPins: nodemcuRight,
+    pinMarkers: [{ gpio: 17, label: "BATTERY", tone: "emerald" }],
     defaultCpuMhz: 80,
     defaultFlashSize: "4MB",
     defaultPsram: "None",
@@ -630,7 +632,10 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: d1MiniLeft,
     rightPins: d1MiniRight,
-    pinMarkers: [{ gpio: 2, label: "LED", tone: "amber" }],
+    pinMarkers: [
+      { gpio: 2, label: "LED", tone: "amber" },
+      { gpio: 17, label: "BATTERY", tone: "emerald" }
+    ],
     defaultCpuMhz: 80,
     defaultFlashSize: "4MB",
     defaultPsram: "None",
@@ -650,7 +655,10 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: d1MiniProLeft,
     rightPins: d1MiniProRight,
-    pinMarkers: [{ gpio: 2, label: "LED", tone: "amber" }],
+    pinMarkers: [
+      { gpio: 2, label: "LED", tone: "amber" },
+      { gpio: 17, label: "BATTERY", tone: "emerald" }
+    ],
     defaultCpuMhz: 80,
     defaultFlashSize: "16MB",
     defaultPsram: "None",
@@ -688,6 +696,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp12eLeft,
     rightPins: esp12eRight,
+    pinMarkers: [{ gpio: 17, label: "BATTERY", tone: "emerald" }],
     defaultCpuMhz: 80,
     defaultFlashSize: "4MB",
     defaultPsram: "None",
@@ -711,6 +720,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
       { gpio: 0, label: "RGB", tone: "sky" },
       { gpio: 2, label: "RGB", tone: "sky" },
       { gpio: 4, label: "RGB", tone: "sky" },
+      { gpio: 34, label: "BATTERY", tone: "emerald" },
     ],
     i2cDefaults: { sda: 21, scl: 22 },
   },
@@ -743,7 +753,10 @@ export const BOARD_PROFILES: BoardProfile[] = [
       pin(33, "GPIO33", "right", IO),
       pin(32, "GPIO32", "right", IO),
     ],
-    pinMarkers: [{ gpio: 4, label: "FLASH", tone: "amber" }],
+    pinMarkers: [
+      { gpio: 4, label: "FLASH", tone: "amber" },
+      { gpio: 33, label: "BATTERY", tone: "emerald" }
+    ],
   },
   {
     id: "esp32-s2-saola-1",
@@ -760,7 +773,10 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32S2Left,
     rightPins: esp32S2Right,
-    pinMarkers: [{ gpio: 18, label: "RGB", tone: "sky" }],
+    pinMarkers: [
+      { gpio: 18, label: "RGB", tone: "sky" },
+      { gpio: 1, label: "BATTERY", tone: "emerald" }
+    ],
     i2cDefaults: { sda: 8, scl: 9 },
   },
   {
@@ -777,6 +793,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32S2Left.slice(0, 7),
     rightPins: esp32S2Right.slice(0, 7),
+    pinMarkers: [{ gpio: 1, label: "BATTERY", tone: "emerald" }],
   },
   {
     id: "esp32-s3-devkitc-1",
@@ -793,6 +810,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32S3Left,
     rightPins: esp32S3Right,
+    pinMarkers: [{ gpio: 4, label: "BATTERY", tone: "emerald" }],
     i2cDefaults: { sda: 8, scl: 9 },
   },
   {
@@ -817,7 +835,10 @@ export const BOARD_PROFILES: BoardProfile[] = [
       pin(14, "GPIO14", "right", IO),
       pin(21, "GPIO21", "right", IO_ADC),
     ],
-    pinMarkers: [{ gpio: 21, label: "RGB", tone: "sky" }],
+    pinMarkers: [
+      { gpio: 21, label: "RGB", tone: "sky" },
+      { gpio: 4, label: "BATTERY", tone: "emerald" }
+    ],
   },
   {
     id: "esp32-c2-reference",
@@ -833,6 +854,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32C2Left,
     rightPins: esp32C2Right,
+    pinMarkers: [{ gpio: 0, label: "BATTERY", tone: "emerald" }],
   },
   {
     id: "esp32-c3-devkitm-1",
@@ -848,7 +870,10 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32C3Left,
     rightPins: esp32C3Right,
-    pinMarkers: [{ gpio: 8, label: "RGB", tone: "sky" }],
+    pinMarkers: [
+      { gpio: 8, label: "RGB", tone: "sky" },
+      { gpio: 3, label: "BATTERY", tone: "emerald" }
+    ],
     i2cDefaults: { sda: 8, scl: 9 },
   },
   {
@@ -865,7 +890,10 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32C3SuperMiniLeft,
     rightPins: esp32C3SuperMiniRight,
-    pinMarkers: [{ gpio: 8, label: "LED", tone: "amber" }],
+    pinMarkers: [
+      { gpio: 8, label: "LED", tone: "amber" },
+      { gpio: 3, label: "BATTERY", tone: "emerald" }
+    ],
     i2cDefaults: { sda: 6, scl: 7 },
   },
   {
@@ -882,7 +910,10 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: dfrobotBeetleEsp32C3Left,
     rightPins: dfrobotBeetleEsp32C3Right,
-    pinMarkers: [{ gpio: 10, label: "LED", tone: "amber" }],
+    pinMarkers: [
+      { gpio: 10, label: "LED", tone: "amber" },
+      { gpio: 3, label: "BATTERY", tone: "emerald" }
+    ],
   },
   {
     id: "esp32-c5-reference",
@@ -898,6 +929,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32C5Left,
     rightPins: esp32C5Right,
+    pinMarkers: [{ gpio: 0, label: "BATTERY", tone: "emerald" }],
   },
   {
     id: "esp32-c6-devkitc-1",
@@ -913,7 +945,10 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32C6Left,
     rightPins: esp32C6Right,
-    pinMarkers: [{ gpio: 8, label: "RGB", tone: "sky" }],
+    pinMarkers: [
+      { gpio: 8, label: "RGB", tone: "sky" },
+      { gpio: 0, label: "BATTERY", tone: "emerald" }
+    ],
   },
   {
     id: "esp32-c61-reference",
@@ -929,6 +964,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32C61Left,
     rightPins: esp32C61Right,
+    pinMarkers: [{ gpio: 0, label: "BATTERY", tone: "emerald" }],
   },
   {
     id: "esp32-h2-devkitm-1",
@@ -944,7 +980,10 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32H2Left,
     rightPins: esp32H2Right,
-    pinMarkers: [{ gpio: 8, label: "RGB", tone: "sky" }],
+    pinMarkers: [
+      { gpio: 8, label: "RGB", tone: "sky" },
+      { gpio: 0, label: "BATTERY", tone: "emerald" }
+    ],
   },
   {
     id: "esp32-p4-reference",
@@ -960,6 +999,7 @@ export const BOARD_PROFILES: BoardProfile[] = [
     ],
     leftPins: esp32P4Left,
     rightPins: esp32P4Right,
+    pinMarkers: [{ gpio: 0, label: "BATTERY", tone: "emerald" }],
   },
 ];
 
