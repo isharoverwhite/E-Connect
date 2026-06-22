@@ -15,6 +15,7 @@ export interface Step2PinsProps {
     board: BoardProfile;
     boardPins: BoardPin[];
     powerMode: "power" | "battery";
+    setPowerMode: React.Dispatch<React.SetStateAction<"power" | "battery">>;
     selectedPinId: string | null;
     setSelectedPinId: React.Dispatch<React.SetStateAction<string | null>>;
     projectName: string;
@@ -35,6 +36,7 @@ export function Step2Pins({
     board,
     boardPins,
     powerMode,
+    setPowerMode,
     selectedPinId,
     setSelectedPinId,
     projectName,
@@ -263,6 +265,63 @@ export function Step2Pins({
 
                 {/* Scrollable list */}
                 <div className="flex-1 overflow-y-auto p-4 custom-scrollbar flex flex-col gap-4">
+                    <div className="flex flex-col gap-3">
+                        <span className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Operation Mode</span>
+                        <div className="grid grid-cols-2 gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setPowerMode("power")}
+                                className={`rounded-xl border-2 px-4 py-3 text-sm font-semibold transition ${
+                                    powerMode === "power"
+                                        ? "border-primary bg-primary/10 text-primary"
+                                        : "border-border-light bg-slate-50 text-slate-600 hover:border-primary/40 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-400"
+                                }`}
+                            >
+                                <div className="flex items-center justify-center gap-2">
+                                    <span className="material-symbols-outlined text-[20px]">power</span>
+                                    Always On
+                                </div>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setPowerMode("battery")}
+                                className={`rounded-xl border-2 px-4 py-3 text-sm font-semibold transition ${
+                                    powerMode === "battery"
+                                        ? "border-primary bg-primary/10 text-primary"
+                                        : "border-border-light bg-slate-50 text-slate-600 hover:border-primary/40 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-400"
+                                }`}
+                            >
+                                <div className="flex items-center justify-center gap-2">
+                                    <span className="material-symbols-outlined text-[20px]">battery_charging_full</span>
+                                    Battery Mode
+                                </div>
+                            </button>
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                            {powerMode === "power" 
+                                ? "Device remains constantly connected to Wi-Fi and MQTT for immediate responsiveness."
+                                : "Device utilizes Deep Sleep (and ULP if capable) to save power, waking up periodically to report status. Actuators cannot be controlled instantly in this mode."}
+                        </p>
+                    </div>
+
+                    {powerMode === "battery" && (
+                        <div className="rounded-2xl border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800/40 p-4">
+                            <div className="flex gap-3 items-start">
+                                <span className="material-symbols-outlined text-amber-500 mt-0.5">info</span>
+                                <div className="flex flex-col gap-1">
+                                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+                                        Automatic Deep Sleep
+                                    </p>
+                                    <p className="text-xs text-amber-700/80 dark:text-amber-400/80">
+                                        The device will automatically manage its deep sleep interval to maximize battery life. On ESP8266, please ensure D0 is connected to RST to wake up properly.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="h-px w-full bg-border-light dark:bg-border-dark my-2"></div>
+
                     <div className="flex items-center justify-between pl-1 pr-1 mb-1">
                         <span className="text-xs font-bold uppercase tracking-widest text-blue-600">{t("diy.step2pins.gpio_pins")}</span>
                         <button onClick={clearAll} className="text-slate-400 hover:text-slate-600 dark:text-slate-400 transition-colors text-[10px] uppercase font-bold tracking-wider">{t("diy.step2pins.reset_all")}</button>

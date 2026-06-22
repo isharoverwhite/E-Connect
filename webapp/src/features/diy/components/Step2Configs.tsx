@@ -17,8 +17,6 @@ interface Step2ConfigsProps {
     board: BoardProfile;
     projectName: string;
     setProjectName: (value: string) => void;
-    powerMode: "power" | "battery";
-    setPowerMode: (mode: "power" | "battery") => void;
     configs: SavedBoardConfigOption[];
     configsLoading: boolean;
     configListError: string;
@@ -54,8 +52,6 @@ export function Step2Configs({
     board,
     projectName,
     setProjectName,
-    powerMode,
-    setPowerMode,
     configs,
     configsLoading,
     configListError,
@@ -233,60 +229,7 @@ export function Step2Configs({
                                 )}
                             </label>
 
-                            <div className="flex flex-col gap-3">
-                                <span className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Operation Mode</span>
-                                <div className="grid grid-cols-2 gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => setPowerMode("power")}
-                                        className={`rounded-xl border-2 px-4 py-3 text-sm font-semibold transition ${
-                                            powerMode === "power"
-                                                ? "border-primary bg-primary/10 text-primary"
-                                                : "border-border-light bg-slate-50 text-slate-600 hover:border-primary/40 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-400"
-                                        }`}
-                                    >
-                                        <div className="flex items-center justify-center gap-2">
-                                            <span className="material-symbols-outlined text-[20px]">power</span>
-                                            Always On
-                                        </div>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setPowerMode("battery")}
-                                        className={`rounded-xl border-2 px-4 py-3 text-sm font-semibold transition ${
-                                            powerMode === "battery"
-                                                ? "border-primary bg-primary/10 text-primary"
-                                                : "border-border-light bg-slate-50 text-slate-600 hover:border-primary/40 dark:border-slate-800 dark:bg-slate-900/50 dark:text-slate-400"
-                                        }`}
-                                    >
-                                        <div className="flex items-center justify-center gap-2">
-                                            <span className="material-symbols-outlined text-[20px]">battery_charging_full</span>
-                                            Battery Mode
-                                        </div>
-                                    </button>
-                                </div>
-                                <p className="text-xs text-slate-500 dark:text-slate-400">
-                                    {powerMode === "power" 
-                                        ? "Device remains constantly connected to Wi-Fi and MQTT for immediate responsiveness."
-                                        : "Device utilizes Deep Sleep (and ULP if capable) to save power, waking up periodically to report status. Actuators cannot be controlled instantly in this mode."}
-                                </p>
-                            </div>
 
-                            {powerMode === "battery" && (
-                                <div className="rounded-2xl border border-amber-200 bg-amber-50 dark:bg-amber-900/20 dark:border-amber-800/40 p-4">
-                                    <div className="flex gap-3 items-start">
-                                        <span className="material-symbols-outlined text-amber-500 mt-0.5">info</span>
-                                        <div className="flex flex-col gap-1">
-                                            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-                                                Automatic Deep Sleep
-                                            </p>
-                                            <p className="text-xs text-amber-700/80 dark:text-amber-400/80">
-                                                The device will automatically manage its deep sleep interval to maximize battery life. On ESP8266, please ensure D0 is connected to RST to wake up properly.
-                                            </p>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
                         </div>
                     )}
 

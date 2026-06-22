@@ -2147,10 +2147,6 @@ export default function DIYBuilderPage() {
             board={board}
             projectName={projectName}
             setProjectName={setProjectName}
-            powerMode={powerMode}
-            setPowerMode={setPowerMode}
-            powerMode={powerMode}
-            setPowerMode={setPowerMode}
             configs={boardConfigOptions}
             configsLoading={boardConfigsLoading}
             configListError={boardConfigsError}
@@ -2177,6 +2173,7 @@ export default function DIYBuilderPage() {
             pins={pins}
             setPins={setPins}
             powerMode={powerMode}
+            setPowerMode={setPowerMode}
             selectedPinId={selectedPinId}
             setSelectedPinId={setSelectedPinId}
             projectName={projectName}
