@@ -54,12 +54,12 @@ export function WifiCredentialsPanel({ timezone }: { timezone?: string | null })
   const ssidInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (searchParams.get("focus") === "wifi") {
+    if (!loading && searchParams.get("focus") === "wifi") {
       setTimeout(() => {
         ssidInputRef.current?.focus();
       }, 100);
     }
-  }, [searchParams]);
+  }, [searchParams, loading]);
 
   async function loadCredentials() {
     const token = getToken();
