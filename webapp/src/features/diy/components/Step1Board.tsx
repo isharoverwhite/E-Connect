@@ -405,28 +405,56 @@ export function Step1Board({
             <div className="mt-2 mb-8">
                 <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 dark:text-slate-300 uppercase tracking-wider mb-4">{t("diy.step1.board")}</label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {familyOptions.map((profile) => (
-                        <button
-                            key={profile.id}
-                            onClick={() => setBoardId(profile.id)}
-                            className={`w-full rounded-xl border-2 px-6 py-4 text-left transition ${board.id === profile.id
-                                ? "border-primary bg-primary/5 dark:bg-primary/10 shadow-sm"
-                                : "border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark hover:border-primary/50 dark:border-slate-800 dark:bg-slate-900/50"
-                                }`}
-                        >
-                            <div className="flex items-center justify-between gap-4">
-                                <div>
-                                    <p className="text-base font-bold text-slate-950 dark:text-white">{profile.name}</p>
-                                    <p className="mt-1 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-400">{profile.description}</p>
+                    {familyOptions.map((profile) => {
+                        const hasBattery = profile.pinMarkers?.some(m => m.label === "BATTERY") ||
+                            profile.leftPins.some(p => p.label === "BAT" || p.id === "BAT") || 
+                            profile.rightPins.some(p => p.label === "BAT" || p.id === "BAT");
+                        const hasDeepSleep = true;
+                        const hasUlp = ["ESP32", "ESP32-S2", "ESP32-S3"].includes(profile.family);
+
+                        return (
+                            <button
+                                key={profile.id}
+                                onClick={() => setBoardId(profile.id)}
+                                className={`w-full rounded-xl border-2 px-6 py-4 text-left transition ${board.id === profile.id
+                                    ? "border-primary bg-primary/5 dark:bg-primary/10 shadow-sm"
+                                    : "border-border-light dark:border-border-dark bg-surface-light dark:bg-surface-dark hover:border-primary/50 dark:border-slate-800 dark:bg-slate-900/50"
+                                    }`}
+                            >
+                                <div className="flex items-start justify-between gap-4">
+                                    <div className="flex-1">
+                                        <p className="text-base font-bold text-slate-950 dark:text-white">{profile.name}</p>
+                                        <p className="mt-1 mb-3 text-sm text-slate-500 dark:text-slate-400 dark:text-slate-400">{profile.description}</p>
+                                        <div className="flex flex-wrap gap-2">
+                                            {hasDeepSleep && (
+                                                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                                                    <span className="material-symbols-outlined text-[14px] text-indigo-500">bedtime</span>
+                                                    Deep Sleep
+                                                </div>
+                                            )}
+                                            {hasUlp && (
+                                                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                                                    <span className="material-symbols-outlined text-[14px] text-sky-500">mode_standby</span>
+                                                    ULP Co-processor
+                                                </div>
+                                            )}
+                                            {hasBattery && (
+                                                <div className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                                                    <span className="material-symbols-outlined text-[14px] text-emerald-500">battery_charging_full</span>
+                                                    Battery
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    {profile.demoFirmware ? (
+                                        <span className="shrink-0 rounded-full bg-emerald-100 text-emerald-700 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] dark:bg-emerald-500/20 dark:text-emerald-300">
+                                            Web flash
+                                        </span>
+                                    ) : null}
                                 </div>
-                                {profile.demoFirmware ? (
-                                    <span className="rounded-full bg-emerald-100 text-emerald-700 px-3 py-1 text-[10px] font-bold uppercase tracking-[0.18em] dark:bg-emerald-500/20 dark:text-emerald-300">
-                                        Web flash
-                                    </span>
-                                ) : null}
-                            </div>
-                        </button>
-                    ))}
+                            </button>
+                        );
+                    })}
                 </div>
             </div>
 
