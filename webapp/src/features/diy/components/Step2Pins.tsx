@@ -874,7 +874,7 @@ export function Step2Pins({
 
                                 <TransformComponent wrapperClass="!w-full !h-full" contentClass="!w-full !h-full flex items-center justify-center p-8">
                                     <svg
-                                        viewBox={`0 0 720 ${svgHeight}`}
+                                        viewBox={`-160 0 1040 ${svgHeight}`}
                                         className="max-h-full max-w-full origin-center"
                                         role="img"
                                         aria-label={`${board.name} SVG GPIO mapping`}
@@ -1290,76 +1290,84 @@ function renderBatteryCircuit({
     const gap = totalRows === 1 ? 0 : (bottom - top) / (totalRows - 1);
     const y = top + gap * index;
 
-    const batteryX = isLeft ? 10 : 670;
-    const batteryY = y - 40;
-
     const strokeColor = isDark ? "#94a3b8" : "#475569";
     const textColor = isDark ? "#cbd5e1" : "#475569";
     const boldColor = isDark ? "#f8fafc" : "#0f172a";
 
+    const offset = isLeft ? -130 : 130;
+    const pinStemX = isLeft ? 130 : 566;
+
+    const bgX = isLeft ? 10 + offset : 590 + offset;
+    const batX = isLeft ? 35 + offset : 655 + offset;
+    const batTerminalX = isLeft ? 45 + offset : 665 + offset;
+    const batCenter = isLeft ? 50 + offset : 670 + offset;
+    const midX = isLeft ? 89 + offset : 631 + offset;
+    const rX = isLeft ? 83 + offset : 625 + offset;
+    const rTextX = isLeft ? 99 + offset : 621 + offset;
+
     return (
         <g id="battery-circuit" opacity="0.95" className="pointer-events-none">
             {/* Background Box to hide text behind schematic */}
-            <rect x={isLeft ? 10 : 590} y={y - 65} width="120" height="135" rx="8" fill={isDark ? "#0f172a" : "#ffffff"} fillOpacity="0.9" stroke={strokeColor} strokeWidth="1" strokeDasharray="4 4" />
+            <rect x={bgX} y={y - 65} width="120" height="135" rx="8" fill={isDark ? "#0f172a" : "#ffffff"} fillOpacity="0.9" stroke={strokeColor} strokeWidth="1" strokeDasharray="4 4" />
 
             {/* Battery Box */}
-            <rect x={isLeft ? 35 : 655} y={y - 20} width="30" height="40" rx="4" fill={isDark ? "#1e293b" : "#f8fafc"} stroke={strokeColor} strokeWidth="1.5" />
-            <rect x={isLeft ? 45 : 665} y={y - 23} width="10" height="3" fill={strokeColor} />
-            <text x={isLeft ? 50 : 670} y={y - 8} fontSize="12" fill="#22c55e" fontWeight="bold" textAnchor="middle">+</text>
-            <text x={isLeft ? 50 : 670} y={y + 15} fontSize="14" fill={strokeColor} fontWeight="bold" textAnchor="middle">-</text>
-            <text x={isLeft ? 50 : 670} y={y + 5} fontSize="9" fill={boldColor} fontWeight="bold" textAnchor="middle">{vmax}V</text>
+            <rect x={batX} y={y - 20} width="30" height="40" rx="4" fill={isDark ? "#1e293b" : "#f8fafc"} stroke={strokeColor} strokeWidth="1.5" />
+            <rect x={batTerminalX} y={y - 23} width="10" height="3" fill={strokeColor} />
+            <text x={batCenter} y={y - 8} fontSize="12" fill="#22c55e" fontWeight="bold" textAnchor="middle">+</text>
+            <text x={batCenter} y={y + 15} fontSize="14" fill={strokeColor} fontWeight="bold" textAnchor="middle">-</text>
+            <text x={batCenter} y={y + 5} fontSize="9" fill={boldColor} fontWeight="bold" textAnchor="middle">{vmax}V</text>
 
             {isLeft ? (
                 <>
                     {/* Positive Wire to R1 */}
-                    <path d={`M 50 ${y - 23} L 50 ${y - 45} L 89 ${y - 45} L 89 ${y - 35}`} fill="none" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d={`M ${batCenter} ${y - 23} L ${batCenter} ${y - 45} L ${midX} ${y - 45} L ${midX} ${y - 35}`} fill="none" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                     
                     {/* R1 */}
-                    <rect x="83" y={y - 35} width="12" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.2" />
-                    <text x="99" y={y - 22} fontSize="9" fill={boldColor} textAnchor="start" fontWeight="bold">R1</text>
-                    <text x="99" y={y - 10} fontSize="8.5" fill={textColor} textAnchor="start">{r1Text}</text>
+                    <rect x={rX} y={y - 35} width="12" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.2" />
+                    <text x={rTextX} y={y - 22} fontSize="9" fill={boldColor} textAnchor="start" fontWeight="bold">R1</text>
+                    <text x={rTextX} y={y - 10} fontSize="8.5" fill={textColor} textAnchor="start">{r1Text}</text>
                     
                     {/* R1 to Pin & R2 */}
-                    <path d={`M 89 ${y - 15} L 89 ${y} L 130 ${y}`} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d={`M 89 ${y} L 89 ${y + 15}`} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    <circle cx="89" cy={y} r="2.5" fill="#3b82f6" />
+                    <path d={`M ${midX} ${y - 15} L ${midX} ${y} L ${pinStemX} ${y}`} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d={`M ${midX} ${y} L ${midX} ${y + 15}`} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <circle cx={midX} cy={y} r="2.5" fill="#3b82f6" />
                     
                     {/* R2 */}
-                    <rect x="83" y={y + 15} width="12" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.2" />
-                    <text x="99" y={y + 18} fontSize="9" fill={boldColor} textAnchor="start" fontWeight="bold">R2</text>
-                    <text x="99" y={y + 30} fontSize="8.5" fill={textColor} textAnchor="start">{r2k}kΩ</text>
+                    <rect x={rX} y={y + 15} width="12" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.2" />
+                    <text x={rTextX} y={y + 18} fontSize="9" fill={boldColor} textAnchor="start" fontWeight="bold">R2</text>
+                    <text x={rTextX} y={y + 30} fontSize="8.5" fill={textColor} textAnchor="start">{r2k}kΩ</text>
                     
                     {/* R2 to GND & Battery - */}
-                    <path d={`M 89 ${y + 35} L 89 ${y + 50} L 50 ${y + 50} L 50 ${y + 20}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d={`M ${midX} ${y + 35} L ${midX} ${y + 50} L ${batCenter} ${y + 50} L ${batCenter} ${y + 20}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                     
                     {/* GND Symbol */}
-                    <path d={`M 79 ${y + 50} L 99 ${y + 50} M 83 ${y + 54} L 95 ${y + 54} M 87 ${y + 58} L 91 ${y + 58}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+                    <path d={`M ${midX - 10} ${y + 50} L ${midX + 10} ${y + 50} M ${midX - 6} ${y + 54} L ${midX + 6} ${y + 54} M ${midX - 2} ${y + 58} L ${midX + 2} ${y + 58}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
                 </>
             ) : (
                 <>
                     {/* Positive Wire to R1 */}
-                    <path d={`M 670 ${y - 23} L 670 ${y - 45} L 631 ${y - 45} L 631 ${y - 35}`} fill="none" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d={`M ${batCenter} ${y - 23} L ${batCenter} ${y - 45} L ${midX} ${y - 45} L ${midX} ${y - 35}`} fill="none" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                     
                     {/* R1 */}
-                    <rect x="625" y={y - 35} width="12" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.2" />
-                    <text x="621" y={y - 22} fontSize="9" fill={boldColor} textAnchor="end" fontWeight="bold">R1</text>
-                    <text x="621" y={y - 10} fontSize="8.5" fill={textColor} textAnchor="end">{r1Text}</text>
+                    <rect x={rX} y={y - 35} width="12" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.2" />
+                    <text x={rTextX} y={y - 22} fontSize="9" fill={boldColor} textAnchor="end" fontWeight="bold">R1</text>
+                    <text x={rTextX} y={y - 10} fontSize="8.5" fill={textColor} textAnchor="end">{r1Text}</text>
                     
                     {/* R1 to Pin & R2 */}
-                    <path d={`M 631 ${y - 15} L 631 ${y} L 566 ${y}`} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d={`M 631 ${y} L 631 ${y + 15}`} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    <circle cx="631" cy={y} r="2.5" fill="#3b82f6" />
+                    <path d={`M ${midX} ${y - 15} L ${midX} ${y} L ${pinStemX} ${y}`} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d={`M ${midX} ${y} L ${midX} ${y + 15}`} fill="none" stroke="#3b82f6" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <circle cx={midX} cy={y} r="2.5" fill="#3b82f6" />
                     
                     {/* R2 */}
-                    <rect x="625" y={y + 15} width="12" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.2" />
-                    <text x="621" y={y + 18} fontSize="9" fill={boldColor} textAnchor="end" fontWeight="bold">R2</text>
-                    <text x="621" y={y + 30} fontSize="8.5" fill={textColor} textAnchor="end">{r2k}kΩ</text>
+                    <rect x={rX} y={y + 15} width="12" height="20" fill={isDark ? "#334155" : "#e2e8f0"} stroke={strokeColor} strokeWidth="1.2" />
+                    <text x={rTextX} y={y + 18} fontSize="9" fill={boldColor} textAnchor="end" fontWeight="bold">R2</text>
+                    <text x={rTextX} y={y + 30} fontSize="8.5" fill={textColor} textAnchor="end">{r2k}kΩ</text>
                     
                     {/* R2 to GND & Battery - */}
-                    <path d={`M 631 ${y + 35} L 631 ${y + 50} L 670 ${y + 50} L 670 ${y + 20}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d={`M ${midX} ${y + 35} L ${midX} ${y + 50} L ${batCenter} ${y + 50} L ${batCenter} ${y + 20}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                     
                     {/* GND Symbol */}
-                    <path d={`M 621 ${y + 50} L 641 ${y + 50} M 625 ${y + 54} L 637 ${y + 54} M 629 ${y + 58} L 633 ${y + 58}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
+                    <path d={`M ${midX - 10} ${y + 50} L ${midX + 10} ${y + 50} M ${midX - 6} ${y + 54} L ${midX + 6} ${y + 54} M ${midX - 2} ${y + 58} L ${midX + 2} ${y + 58}`} fill="none" stroke="#64748b" strokeWidth="1.5" strokeLinecap="round" />
                 </>
             )}
         </g>
