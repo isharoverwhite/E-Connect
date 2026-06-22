@@ -1,9 +1,11 @@
 /* Copyright (c) 2026 Đinh Trung Kiên. All rights reserved. */
 
 import type { ValidationResult, PinMapping } from "../types";
+import type { BoardProfile } from "../board-profiles";
 import { useLanguage } from "@/components/LanguageContext";
 
 export interface Step3ValidateProps {
+    board: BoardProfile;
     validation: ValidationResult;
     pins: PinMapping[];
     onNext: () => void;
@@ -11,9 +13,13 @@ export interface Step3ValidateProps {
     isReady: boolean;
 }
 
-export function Step3Validate({ validation, pins, onNext, onBack, isReady }: Step3ValidateProps) {
+export function Step3Validate({ board, validation, pins, onNext, onBack, isReady }: Step3ValidateProps) {
     const { t } = useLanguage();
     const isSetupValid = validation.errors.length === 0;
+    
+    const hasDeepSleep = true;
+    const hasULP = ["ESP32", "ESP32-S2", "ESP32-S3", "ESP32-C5", "ESP32-C6", "ESP32-P4"].includes(board.family);
+    const hasBattery = board.pinMarkers?.some(m => m.label.toUpperCase() === "BATTERY") || false;
 
     return (
         <div className="flex flex-col max-w-[960px] mx-auto w-full gap-8">
@@ -40,7 +46,7 @@ export function Step3Validate({ validation, pins, onNext, onBack, isReady }: Ste
                 </div>
             )}
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="flex flex-col gap-2 rounded-xl p-6 border border-border-light dark:border-border-dark dark:border-slate-800 bg-surface-light dark:bg-surface-dark dark:bg-slate-900/50">
                     <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 dark:text-slate-400 mb-1">
                         <span className="material-symbols-outlined text-sm">settings_input_component</span>
@@ -58,6 +64,29 @@ export function Step3Validate({ validation, pins, onNext, onBack, isReady }: Ste
                     <p className="text-slate-900 dark:text-white dark:text-white tracking-tight text-3xl font-bold leading-tight">
                         3.3V <span className="text-sm font-normal text-slate-500 dark:text-slate-400">DC</span>
                     </p>
+                </div>
+                <div className="flex flex-col gap-2 rounded-xl p-6 border border-border-light dark:border-border-dark dark:border-slate-800 bg-surface-light dark:bg-surface-dark dark:bg-slate-900/50">
+                    <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 dark:text-slate-400 mb-1">
+                        <span className="material-symbols-outlined text-sm">memory</span>
+                        <p className="text-sm font-medium leading-normal">Features</p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-wrap mt-1">
+                        {hasDeepSleep && (
+                            <div className="bg-slate-100 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 flex items-center justify-center text-indigo-500 dark:text-indigo-400 shadow-sm" title="Deep Sleep">
+                                <span className="material-symbols-outlined text-lg">snooze</span>
+                            </div>
+                        )}
+                        {hasULP && (
+                            <div className="bg-slate-100 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 flex items-center justify-center text-violet-500 dark:text-violet-400 shadow-sm" title="ULP Co-processor">
+                                <span className="material-symbols-outlined text-lg">microchip</span>
+                            </div>
+                        )}
+                        {hasBattery && (
+                            <div className="bg-slate-100 dark:bg-slate-800 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 flex items-center justify-center text-emerald-500 dark:text-emerald-400 shadow-sm" title="Battery Support">
+                                <span className="material-symbols-outlined text-lg">battery_charging_full</span>
+                            </div>
+                        )}
+                    </div>
                 </div>
                 <div className="flex flex-col gap-2 rounded-xl p-6 border border-border-light dark:border-border-dark dark:border-slate-800 bg-surface-light dark:bg-surface-dark dark:bg-slate-900/50">
                     <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400 dark:text-slate-400 mb-1">

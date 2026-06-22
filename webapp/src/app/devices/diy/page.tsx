@@ -362,7 +362,7 @@ export default function DIYBuilderPage() {
   const [boardConfigs, setBoardConfigs] = useState<DiyProjectRecord[]>([]);
   const [boardConfigsLoading, setBoardConfigsLoading] = useState(false);
   const [boardConfigsError, setBoardConfigsError] = useState("");
-  const [projectName, setProjectName] = useState("");
+  const [projectName, setProjectName] = useState(() => `${getBoardProfile(DEFAULT_BOARD_ID)?.name ?? BOARD_PROFILES[0].name} Config`);
   const [powerMode, setPowerMode] = useState<"power" | "battery">("power");
   const [deepSleepInterval, setDeepSleepInterval] = useState(60);
   const [roomId, setRoomId] = useState<number | null>(null);
@@ -444,6 +444,21 @@ export default function DIYBuilderPage() {
 
     return `browser-origin:${window.location.origin}`;
   }, []);
+
+  const prevBoardNameRef = useRef(board.name);
+  useEffect(() => {
+    if (board.name !== prevBoardNameRef.current) {
+      const defaultOld = `${prevBoardNameRef.current} Config`;
+      const defaultNew = `${board.name} Config`;
+      setProjectName((current) => {
+        if (!current.trim() || current === defaultOld) {
+          return defaultNew;
+        }
+        return current;
+      });
+      prevBoardNameRef.current = board.name;
+    }
+  }, [board.name]);
   const currentFirmwareTargetKey = firmwareNetworkTarget?.target_key ?? fallbackFirmwareTargetKey;
   const currentFirmwareTargetHost = useMemo(() => {
     if (firmwareNetworkTarget?.advertised_host) {
@@ -1770,11 +1785,11 @@ export default function DIYBuilderPage() {
   const handleCreateNewConfig = useCallback(() => {
     setProjectId(null);
     setTemplateConfigId(null);
-    setProjectName("");
+    setProjectName(`${board.name} Config`);
     setPins([]);
     setProjectSyncMessage("");
     setProjectSyncState("idle");
-  }, []);
+  }, [board.name]);
 
   const loadBoardConfig = useCallback(async (configId: string) => {
     const selectedConfig = boardConfigs.find((project) => project.id === configId);
@@ -1945,7 +1960,7 @@ export default function DIYBuilderPage() {
     setProjectId(null);
     setTemplateConfigId(null);
     setAttachedConfigBoardId(null);
-    setProjectName("");
+    setProjectName(`${nextBoard.name} Config`);
     setRoomId(rooms[0]?.room_id ?? null);
     setNewRoomName("");
     setRoomError("");
@@ -2187,6 +2202,7 @@ export default function DIYBuilderPage() {
 
         {currentStep === 4 && (
           <Step3Validate
+            board={board}
             validation={validation}
             pins={pins}
             isReady={validation.errors.length === 0}
