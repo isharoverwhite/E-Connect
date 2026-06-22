@@ -1049,17 +1049,16 @@ export function Step2Pins({
                                         fill={lineColor} 
                                         style={{ opacity: 0, transformOrigin: `${startX}px ${startY}px`, animation: 'fadeInDot 0.2s ease-out forwards', filter: dropShadow || undefined }}
                                     />
-                                    <circle 
-                                        cx={lineEndX} 
-                                        cy={lineEndY} 
-                                        r="3" 
-                                        fill={lineColor} 
-                                        style={{ opacity: 0, transformOrigin: `${lineEndX}px ${lineEndY}px`, animation: 'fadeInDot 0.2s ease-out 0.4s forwards', filter: dropShadow || undefined }}
-                                    />
                                     <foreignObject x={popX} y={popY} width={popWidth + 40} height={popHeight} className="overflow-visible pointer-events-none">
                                         <div 
-                                            className="bg-white/95 dark:bg-slate-800/95 backdrop-blur border border-border-light dark:border-border-dark px-5 py-4 rounded-xl shadow-[0_20px_60px_rgba(0,0,0,0.3)] text-slate-600 dark:text-slate-400 w-[240px] pointer-events-auto"
-                                            style={{ opacity: 0, transformOrigin: isLeft ? 'left center' : 'right center', animation: 'popInScale 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.3s forwards' }}
+                                            className="bg-white/95 dark:bg-slate-800/95 backdrop-blur border px-5 py-4 rounded-xl text-slate-600 dark:text-slate-400 w-[240px] pointer-events-auto"
+                                            style={{ 
+                                                borderColor: lineColor,
+                                                boxShadow: `0 0 20px ${lineColor}40, 0 20px 60px rgba(0,0,0,0.4)`,
+                                                opacity: 0, 
+                                                transformOrigin: isLeft ? 'left center' : 'right center', 
+                                                animation: 'popInScale 0.3s cubic-bezier(0.16, 1, 0.3, 1) 0.3s forwards' 
+                                            }}
                                         >
                                             <div className="flex justify-between items-start mb-2">
                                             <h3 className="text-slate-900 dark:text-white font-black text-lg tracking-tight uppercase">{selPin.label}</h3>
